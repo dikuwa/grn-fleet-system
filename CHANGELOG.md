@@ -123,4 +123,66 @@
 
 ### Implementation status
 
-Phase 2 complete. Phase 3 ready to begin.
+Phase 3 complete. Phase 4 ready to begin.
+
+## 2026-07-14 — Phase 3: Staff directory, offices and CSV import
+
+### Added
+
+**Staff Directory**
+- Server component with DB-backed queries (employees, departments, offices joins)
+- Search by name, employee number, email, job title
+- Filters by office, department, employment status
+- Paginated results with URL search params
+- Clean state handling: DB-not-configured, empty results, query errors
+
+**Employee Detail**
+- Profile card with initials avatar, contact info, status, department/office
+- Driver profile section with status, authorisation, licence count
+- Driver licence history with class, number, issue/expiry, verification status
+- Documents section with document type, name, expiry, verification badge
+
+**Offices & Departments**
+- Hierarchical office tree (head office → constituency → settlement)
+- Colour-coded office type indicators
+- Employee counts per office and department
+- Departments listing with code display
+
+**Import Wizard (Client Component)**
+- 4-step flow: Upload → Column Mapping → Preview/Validate → Complete
+- Auto-mapping of known CSV column names
+- Row-level validation with error reporting
+- Summary cards (total, valid, errors)
+- Paginated data preview table
+- Validation error detail cards
+- Committing state with spinner animation
+- Completion state with navigation actions
+
+**Import History**
+- Server component with DB-backed batch listing
+- Status badges, row counts, date display
+- Empty state for no imports
+
+**Button Component**
+- `asChild` prop support using `React.Children.only` + `cloneElement`
+- Enables composable button-links (e.g., `<Button asChild><Link>...</Link></Button>`)
+
+### Fixed
+- `isNotNull` import from `drizzle-orm` instead of column method call
+- `notFound()` handling extracted outside try/catch
+- Removed `.xlsx` from import accept list (XLSX parsing not yet implemented)
+- All JSX moved outside try/catch blocks (ESLint compliance)
+- Removed unused imports and dead variables
+
+### Known Gaps
+- CSV parser uses naive `split(',')` — upgrade to `papaparse` (already in package.json)
+- Import commit handler is a placeholder (`setTimeout`) — needs DB insert logic
+- Tenant isolation not yet enforced on queries (needs auth session)
+- Download Template button is non-functional
+
+### Commands verified
+
+- `pnpm typecheck` — passes
+- `pnpm lint` — passes (0 errors, 0 warnings)
+- `pnpm test` — passes (7 tests)
+- `pnpm build` — passes
