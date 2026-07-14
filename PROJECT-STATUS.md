@@ -37,7 +37,7 @@
 
 ## In progress
 
-- [ ] Phase 1 — Design system and application shell
+- [ ] Phase 2 — Database, authentication, tenancy and RBAC
 
 ## Blockers
 
@@ -45,4 +45,4 @@ None. Credentials may be added during implementation through placeholders and se
 
 ## Next action
 
-Proceed to Phase 1 — Design system and application shell. Implement approved tokens, layout, responsive navigation, sidebar, top bar, buttons, forms, status badges, cards, tables, dialogs and states.
+Proceed to Phase 2 — Database schema, authentication, tenancy and RBAC. Define the tenant model, staff and account separation, roles and acting appointments. Set up Neon/Drizzle, Better Auth, and tenant isolation.

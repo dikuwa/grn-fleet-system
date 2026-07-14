@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-07-14 — Phase 1: Design system and application shell
+
+### Added
+
+- **UI Components:**
+  - Button component with 7 variants (primary, secondary, tertiary, destructive, ghost, outline, emergency)
+  - Badge and StatusBadge with dot + label pattern for workflow statuses
+  - Card, StatCard, CardHeader, CardTitle, CardDescription, CardContent, CardFooter
+  - Dialog component with Radix UI (overlay, content, header, footer, title, description)
+  - Input, Textarea, Label, FieldWrapper, FormError components
+  - Select component with Radix UI (trigger, content, item, separator)
+  - ConfirmDialog with typed confirmation support and useConfirm hook
+  - EmptyState, LoadingSkeleton, LoadingState, ErrorState, PermissionDenied, OfflineBanner
+
+- **Application Shell:**
+  - Sidebar with 7 navigation groups, collapsed/expanded states (248px/72px)
+  - MobileSidebar as slide-over drawer for mobile navigation
+  - TopBar with search, notifications indicator, profile dropdown
+  - PageHeader with title, description, action slot
+  - Breadcrumbs component
+  - DashboardShell orchestrating sidebar + topbar + content
+
+- **Route Groups:**
+  - `(dashboard)` route group with DashboardShell layout
+  - Dashboard home page with KPI cards, recent requests, fleet summary
+  - `(auth)` route group with centered layout
+  - Login page with password visibility toggle
+
+- `tailwindcss-animate` package installed for Radix UI transitions
+- All lint warnings fixed (0 warnings, 0 errors)
+
+### Commands verified
+
+- `pnpm typecheck` — passes
+- `pnpm lint` — passes (0 errors, 0 warnings)
+- `pnpm test` — passes (7 tests)
+- `pnpm build` — passes
+
 ## 2026-07-14 — Phase 0: Repository and verified foundation
 
 ### Added
@@ -42,4 +80,4 @@
 
 ### Implementation status
 
-Phase 0 complete. Phase 1 ready to begin.
+Phase 1 complete. Phase 2 ready to begin.
