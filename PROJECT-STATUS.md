@@ -35,9 +35,15 @@
 - [x] Architecture.md updated with implemented versions
 - [x] Lockfile generated and committed
 
+## Completed
+
+- [x] Phase 2 — Database schema, authentication, tenancy and RBAC
+
+All 30+ Drizzle ORM tables defined across 11 schema files. Better Auth configured with password-only flow, no public sign-up. Permission constants (30+ codes) and 9 role definitions matching permission matrix. Tenant resolver, scoped query helper, RLS context utilities. Full seed data for Kavango East tenant.
+
 ## In progress
 
-- [ ] Phase 2 — Database, authentication, tenancy and RBAC
+- [ ] Phase 3 — Offices, departments, staff and imports
 
 ## Blockers
 
@@ -45,4 +51,4 @@ None. Credentials may be added during implementation through placeholders and se
 
 ## Next action
 
-Proceed to Phase 2 — Database schema, authentication, tenancy and RBAC. Define the tenant model, staff and account separation, roles and acting appointments. Set up Neon/Drizzle, Better Auth, and tenant isolation.
+Proceed to Phase 3 — Offices, departments, staff and imports. Build employee directory UI, controlled bulk imports with CSV/XLSX mapping, preview, duplicate detection, and import history. Licence/document management and expiry status.
