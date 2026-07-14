@@ -1,0 +1,105 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Brand palette */
+  --color-brand-950: #102a4c;
+  --color-brand-900: #163a69;
+  --color-brand-800: #1f4e8c;
+  --color-brand-700: #2862aa;
+  --color-brand-600: #3478c8;
+  --color-brand-100: #dcebfa;
+  --color-brand-50: #f1f7fd;
+
+  /* Secondary accent */
+  --color-teal-700: #0f766e;
+  --color-teal-50: #ecfdf5;
+
+  /* Neutral palette */
+  --color-ink-950: #111827;
+  --color-ink-700: #374151;
+  --color-ink-500: #6b7280;
+  --color-surface: #ffffff;
+  --color-canvas: #f6f8fb;
+  --color-muted: #f0f3f7;
+  --color-border: #d9e0e8;
+
+  /* Semantic status colours */
+  --color-status-success-bg: #ecfdf3;
+  --color-status-success-text: #067647;
+  --color-status-pending-bg: #fff7e6;
+  --color-status-pending-text: #b54708;
+  --color-status-info-bg: #eaf2ff;
+  --color-status-info-text: #175cd3;
+  --color-status-error-bg: #fef3f2;
+  --color-status-error-text: #b42318;
+  --color-status-cancelled-bg: #f2f4f7;
+  --color-status-cancelled-text: #475467;
+  --color-status-emergency-bg: #fff1f3;
+  --color-status-emergency-text: #c01048;
+
+  /* Typography */
+  --font-family-onest: 'Onest', sans-serif;
+
+  /* Spacing */
+  --spacing-input: 40px;
+  --spacing-input-touch: 44px;
+  --spacing-row-compact: 44px;
+  --spacing-row-comfortable: 52px;
+
+  /* Radius */
+  --radius-input: 8px;
+  --radius-card: 10px;
+  --radius-dialog: 14px;
+}
+
+/*
+  Base styles
+*/
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    font-family: var(--font-family-onest);
+    color: var(--color-ink-700);
+    background-color: var(--color-canvas);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    color: var(--color-ink-950);
+    font-weight: 650;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+  }
+
+  /* Tabular numerals for data-heavy elements */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Hide scrollbar for clean drawers */
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Focus ring */
+  .focus-ring {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    transition: outline-color 150ms ease;
+  }
+  .focus-ring:focus-visible {
+    outline-color: var(--color-brand-600);
+  }
+}

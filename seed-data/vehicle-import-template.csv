@@ -1,0 +1,2 @@
+grn,registration_number,make,model,year,colour,category,body_type,fuel_type,transmission,office,current_odometer_km,licence_expiry,roadworthy_expiry,insurance_expiry,service_interval_km,next_service_odometer_km,status
+GRN-DEMO-001,N 00000 KE,Toyota,Corolla Quest,2024,White,Sedan,Sedan,Petrol,Manual,Head Office,10000,,,,10000,20000,AVAILABLE
