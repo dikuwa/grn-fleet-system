@@ -47,16 +47,23 @@ All 30+ Drizzle ORM tables defined across 11 schema files. Better Auth configure
 
 DB-backed staff directory with search, filters, pagination. Employee detail with profile, licences, documents. Hierarchical office tree view. CSV import wizard (upload → column mapping → preview → commit). Import history with batch listing.
 
+## Completed
+
+- [x] Phase 4 — Fleet, defects, maintenance and CSV parser fix
+
+Fleet vehicle list with search, filters, pagination, summary cards, defect/maintenance counts. Vehicle detail with 4-tab interface (documents, defects, maintenance, odometer history). Cross-fleet defect tracking with severity sorting and open/resolved filtering. Maintenance history with cost summary and upcoming services tracking. CSV parser upgraded from naive split(',') to papaparse.
+
 ## In progress
 
-- [ ] Phase 4 — Transport request workflow
+- [ ] Phase 5 — Transport request workflow and route calculation
 
-## Known Gaps (Phase 3)
+## Known Gaps (Phase 3–4)
 
-- CSV parser uses naive `split(',')` — should upgrade to `papaparse`
 - Import commit handler is a placeholder — needs DB insert logic
 - Tenant isolation not yet enforced on queries
 - Download Template button is non-functional
+- Phase 4 pages missing try/catch error boundaries (unlike Phase 3)
+- Vehicle detail tab data uses loose types — needs proper result interfaces
 
 ## Blockers
 
@@ -64,4 +71,4 @@ None. Credentials may be added during implementation through placeholders and se
 
 ## Next action
 
-Proceed to Phase 4 — Transport request workflow, approvals and route management.
+Proceed to Phase 5 — Transport request workflow, route calculation, and approval management.

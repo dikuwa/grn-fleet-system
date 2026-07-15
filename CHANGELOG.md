@@ -123,7 +123,65 @@
 
 ### Implementation status
 
-Phase 3 complete. Phase 4 ready to begin.
+Phase 4 complete. Phase 5 ready to begin.
+
+## 2026-07-14 — Phase 4: Fleet, defects, maintenance and CSV parser fix
+
+### Added
+
+**Fleet Vehicle List**
+- DB-backed server component with search, filters, pagination
+- Summary cards (available, on-trip, maintenance, out-of-service)
+- Vehicle rows with make/model, GRN, odometer, status badges
+- Defect and maintenance counts per vehicle
+- Filter by status, category, and free-text search (GRN, make, model)
+
+**Vehicle Detail Page**
+- Summary card with full vehicle details (GRN, registration, year, colour, transmission, engine, fuel card)
+- Tabbed interface: Documents, Defects, Maintenance, Odometer History
+- Explicit Drizzle joins (no relations API) with proper getDb() pattern
+- Documents table with type badges, expiry, verification status
+- Defect cards with severity badges, open/resolved status, blocking indicators
+- Maintenance events with dates, odometer, cost, vendor, upcoming services
+- Odometer history table with source tracking
+
+**Defect Tracking Page**
+- Cross-fleet defect list with severity-based sorting (critical → informational)
+- Summary cards (total, open, resolved)
+- Filter by status (open/resolved/all) and severity
+- Blocking defect highlighting with visual emphasis
+
+**Maintenance History Page**
+- Cross-fleet maintenance events with service filters
+- Summary cards (total events, total cost, upcoming services, scheduled)
+- Vendor tracking and next-service-due dates
+
+**Tabs Shell (Client Component)**
+- Reusable tab navigation client component for vehicle detail page
+
+**CSV Parser Fix**
+- Upgraded from naive `split(',')` to `papaparse` (already in package.json)
+- Properly handles quoted fields, commas within fields, multi-line values
+- Preserves all existing auto-mapping, validation, and error reporting
+
+### Fixed
+- All Phase 4 pages use `getDb()` pattern instead of nullable `db` export
+- Explicit Drizzle joins replace missing relations API usage
+- `isNotNull` imported correctly from `drizzle-orm`
+- `sql<number>\`count(*)\`` used instead of non-existent `.count()` method
+- Unused imports and variables cleaned across all pages
+- Severity badge variants use proper type-safe mappings
+
+### Known Gaps (Phase 4)
+- No try/catch error boundaries on data fetching (unlike Phase 3 pages)
+- Vehicle detail tab data uses loose `Record<string, unknown>` types (needs proper result interfaces)
+
+### Commands verified
+
+- `pnpm typecheck` — passes (0 errors)
+- `pnpm lint` — passes (0 errors, 0 warnings)
+- `pnpm test` — passes (7 tests)
+- `pnpm build` — passes
 
 ## 2026-07-14 — Phase 3: Staff directory, offices and CSV import
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import Papa from 'papaparse';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -54,65 +55,65 @@ export default function StaffImportPage() {
 
     setFileName(file.name);
 
-    // Parse CSV (plain text only)
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      const lines = text.split('\n').filter((l) => l.trim());
-      if (lines.length < 2) {
-        return;
-      }
+    // Parse CSV using papaparse (handles quotes, commas in fields, headers)
+    Papa.parse<string[]>(file, {
+      header: false,
+      skipEmptyLines: true,
+      complete: (result) => {
+        if (result.data.length < 1) return;
 
-      const headers = lines[0].split(',').map((h) => h.trim().replace(/^["']|["']$/g, ''));
-      const dataRows: ImportRow[] = lines.slice(1).map((line, idx) => {
-        const values = line.split(',').map((v) => v.trim().replace(/^["']|["']$/g, ''));
-        const rowData: Record<string, string> = {};
-        headers.forEach((h, i) => {
-          rowData[h] = values[i] || '';
-        });
-        return {
-          rowNumber: idx + 2,
-          data: rowData,
-          errors: [],
-          isDuplicate: false,
-        };
-      });
-
-      setRows(dataRows);
-
-      // Auto-map known columns
-      const mapping: Record<string, string> = {};
-      for (const col of STAFF_TEMPLATE_COLUMNS) {
-        const match = headers.find(
-          (h) =>
-            h.toLowerCase().replace(/[\s_-]/g, '') ===
-            col.key.toLowerCase().replace(/[\s_-]/g, ''),
+        const headers = result.data[0].map((h: string) => h.trim());
+        const parsedRows: ImportRow[] = result.data.slice(1).map(
+          (values: string[], idx: number) => {
+            const rowData: Record<string, string> = {};
+            headers.forEach((h, i) => {
+              rowData[h] = (values[i] || '').trim();
+            });
+            return {
+              rowNumber: idx + 2,
+              data: rowData,
+              errors: [],
+              isDuplicate: false,
+            };
+          },
         );
-        if (match) {
-          mapping[match] = col.key;
-        }
-      }
-      setColumnMapping(mapping);
 
-      // Validate
-      const validated = dataRows.map((row) => {
-        const errors: string[] = [];
+        // Auto-map known columns
+        const mapping: Record<string, string> = {};
         for (const col of STAFF_TEMPLATE_COLUMNS) {
-          if (!col.required) continue;
-          const mappedKey = Object.entries(mapping).find(
-            ([, v]) => v === col.key,
-          )?.[0];
-          if (!mappedKey || !row.data[mappedKey]?.trim()) {
-            errors.push(`Missing required field: ${col.label}`);
+          const match = headers.find(
+            (h) =>
+              h.toLowerCase().replace(/[\s_-]/g, '') ===
+              col.key.toLowerCase().replace(/[\s_-]/g, ''),
+          );
+          if (match) {
+            mapping[match] = col.key;
           }
         }
-        return { ...row, errors };
-      });
-      setRows(validated);
+        setColumnMapping(mapping);
 
-      setStep('mapping');
-    };
-    reader.readAsText(file);
+        // Validate
+        const validated = parsedRows.map((row) => {
+          const errors: string[] = [];
+          for (const col of STAFF_TEMPLATE_COLUMNS) {
+            if (!col.required) continue;
+            const mappedKey = Object.entries(mapping).find(
+              ([, v]) => v === col.key,
+            )?.[0];
+            if (!mappedKey || !row.data[mappedKey]?.trim()) {
+              errors.push(`Missing required field: ${col.label}`);
+            }
+          }
+          return { ...row, errors };
+        });
+        setRows(validated);
+
+        setStep('mapping');
+      },
+      error: () => {
+        // Silently fail — user can retry
+      },
+    });
   }, []);
 
   const handleCommitImport = useCallback(async () => {
