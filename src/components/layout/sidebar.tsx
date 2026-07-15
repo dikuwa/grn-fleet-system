@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   FileText,
   ClipboardCheck,
+  ClipboardList,
   Truck,
   Gauge,
   Fuel,
@@ -53,6 +54,7 @@ const navGroups: NavGroup[] = [
       { label: 'Trips', href: '/dashboard/trips', icon: Gauge },
       { label: 'Daily Logs', href: '/dashboard/logs', icon: ClipboardCheck },
       { label: 'Fuel Records', href: '/dashboard/fuel', icon: Fuel },
+      { label: 'Reimbursements', href: '/dashboard/reimbursements', icon: ClipboardList },
     ],
   },
   {

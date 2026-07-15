@@ -62,22 +62,21 @@ Transport request list with search/filters/pagination, status badges, summary ca
 ## Completed
 
 - [x] Phase 7 — Allocations, inspections and gap fixes
+- [x] Phase 9 — Fuel management and reimbursement
+- [x] Phase 10 — Approval workflow engine
 
-DB-backed allocation list with search/state filters/pagination, summary cards, proper error boundaries. Allocation detail with vehicle/request info, timeline, defects warning, related trip link. New allocation form stub. Inspections list with type tabs (departure/return), status filter, pagination, error boundaries. Departure checklist (25 items, 6 categories, pass/fail/NA, critical detection). Return checklist (13 items, defect description/severity/blocking, missing-description gate). Sidebar reorganized with Allocations + Inspections links. Download Template button now functional. All lint clean.
+DB-backed fuel list with search/payment-method/anomaly filters, summary cards, proper error boundaries. Fuel transaction detail with unit price, anomaly status, reimbursement card, receipts. New fuel entry form. Reimbursements list with state filters. Workflow approvals list with status/scope badges, step info. Approval detail with full timeline showing step completion, action history, emergency override banner. Approval action form with approve/return/reject options and comment field. All lint clean (0 warnings).
 
 ## Up Next
 
-- [ ] Phase 9 — Fuel management and reimbursement
-- [ ] Phase 10 — Approval workflow engine
 - [ ] Phase 11 — Notifications and document sharing
 - [ ] Phase 12 — Reporting and analytics
 - [ ] Phase 13 — Deployment preparation
 
 ## Known Gaps (Phase 7–8)
 
+- All form submissions are stubbed — need real DB insert
 - Tenant isolation not yet enforced on queries (requires auth session)
-- New allocation form submit stubbed — needs real DB insert
-- Inspection forms submit stubbed — needs real DB insert with template items
 - No vehicle recommendation scoring on allocation page
 - No inspection template management UI
 - CSV import API uses dummy tenantId until auth is wired
@@ -88,4 +87,4 @@ None. Credentials may be added during implementation through placeholders and se
 
 ## Next action
 
-Proceed to Phase 9 — Fuel management and reimbursement.
+Proceed to Phase 11 — Notifications and document sharing.
