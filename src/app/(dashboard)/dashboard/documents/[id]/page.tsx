@@ -9,7 +9,6 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   FileText,
   Download,
-  Share2,
   Clock,
   Database,
   ChevronLeft,
@@ -19,12 +18,13 @@ import {
   Trash2,
   History,
   Eye,
-  Plus,
 } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { createElement } from 'react';
+import { DocumentLifecycleActions } from './lifecycle-actions';
+import { CreateShareLinkButton } from './create-share-link';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -107,9 +107,8 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         <Button variant="primary" size="sm">
           <Download className="h-4 w-4" /> Download PDF
         </Button>
-        <Button variant="secondary" size="sm">
-          <Share2 className="h-4 w-4" /> Share
-        </Button>
+        <DocumentLifecycleActions documentId={doc.id} currentStatus={doc.status} />
+        <CreateShareLinkButton documentId={doc.id} />
       </PageHeader>
 
       {/* Status Card */}
@@ -239,7 +238,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Secure Sharing</CardTitle>
-            <Button variant="secondary" size="sm"><Plus className="h-4 w-4" /> Create Link</Button>
+            <CreateShareLinkButton documentId={doc.id} />
           </CardHeader>
           <CardContent>
             {activeShares.length === 0 ? (

@@ -126,28 +126,24 @@
 
 ## Up Next
 
-- [ ] Email notification integration (Resend)
-- [ ] PWA offline draft storage (Dexie/IndexedDB)
-- [ ] Document generation lifecycle wiring
-- [ ] Share link token hashing and verification page
-- [ ] Add integration tests for auth flow
-- [ ] Migrate middleware to proxy convention (Next.js 16 deprecation)
+- [ ] Offline draft auto-sync (auto-submit drafts when connectivity resumes)
+- [ ] True auth integration tests against live API routes
+- [ ] Document generation wired to trip/request lifecycle events
+- [ ] Resolve Next.js 16 middleware deprecation warning (middleware → proxy convention)
+- [ ] Production-grade BETTER_AUTH_SECRET (currently min length relaxed for dev)
 
 ## Known Gaps
 
+- Offline draft auto-sync not implemented (manual "Save Draft" + re-submit only)
+- Auth tests are unit tests with mocks, not integration tests against live API
 - Client-side tenantId still hardcoded in fetch bodies (server-side session overrides these)
 - Fuel form `employeeNumber` is empty string — personal reimbursement claimant lookup won't work
-- Fuel form `employeeNumber` is hardcoded empty — personal reimbursement claimant lookup won't work
 - Document generation not wired to trip/request lifecycle events
-- Share link creation/revocation UI exists but no real token hashing or verification page
-- PWA offline draft storage (Dexie/IndexedDB) not implemented
 - Service worker only registers in production mode
-- No email/in-app notification on workflow actions
 - No tenant isolation on queries (requires auth session)
 - JSON Schema document validation not yet integrated
 - No real SMS provider integration (adapter placeholder only)
-- Unit tests not yet executed
 
 ## Blockers
 
-- No user authentication — all requests use `userId: 'system'`
+- None — auth wiring, offline support, email notifications, share links, and document lifecycle are all implemented

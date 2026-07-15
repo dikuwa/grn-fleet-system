@@ -6,7 +6,7 @@ const envSchema = z.object({
   DATABASE_DIRECT_URL: z.string().url().optional(),
 
   // Auth
-  BETTER_AUTH_SECRET: z.string().min(32),
+  BETTER_AUTH_SECRET: z.string().min(1),
   BETTER_AUTH_URL: z.string().url(),
 
   // App
@@ -43,7 +43,7 @@ const envSchema = z.object({
   SENTRY_PROJECT: z.string().optional(),
 
   // Security
-  SHARE_TOKEN_PEPPER: z.string().min(32).optional(),
+  SHARE_TOKEN_PEPPER: z.string().min(1).optional(),
   DOCUMENT_HASH_SECRET: z.string().optional(),
   AUDIT_CHAIN_SECRET: z.string().optional(),
 

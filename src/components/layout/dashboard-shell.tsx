@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Sidebar, MobileSidebar } from '@/components/layout/sidebar';
 import { Topbar } from '@/components/layout/topbar';
+import { OfflineIndicator } from '@/components/ui/offline-status';
 import { cn } from '@/lib/utils';
 
 interface DashboardShellProps {
@@ -39,6 +40,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
         <main className="mx-auto max-w-[1440px] px-4 py-6 md:px-6 lg:px-8">
           {children}
         </main>
+        <OfflineIndicator />
       </div>
     </div>
   );

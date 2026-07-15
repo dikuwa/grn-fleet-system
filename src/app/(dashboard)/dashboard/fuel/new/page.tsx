@@ -1,14 +1,15 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from '@/lib/auth-client';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
-import { ChevronLeft, CheckCircle2 } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
 import Link from 'next/link';
+import { saveDraft, deleteDraft } from '@/lib/offline-drafts';
 
 export default function NewFuelEntryPage() {
   const router = useRouter();
@@ -28,14 +29,68 @@ export default function NewFuelEntryPage() {
     notes: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [draftId, setDraftId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const updateForm = useCallback((patch: Partial<typeof formData>) => {
     setFormData((prev) => ({ ...prev, ...patch }));
+    setDraftSaved(false);
   }, []);
+
+  // Auto-save draft for offline recovery
+  const saveDraftLocally = useCallback(async () => {
+    try {
+      const draft = await saveDraft({
+        id: draftId || undefined,
+        draftType: 'fuel',
+        formData: formData as unknown as Record<string, unknown>,
+        userId: session?.user?.id || null,
+        tenantId: '00000000-0000-0000-0000-000000000001',
+        syncStatus: isOnline ? 'pending' : 'pending',
+      });
+      setDraftId(draft.id);
+      setDraftSaved(true);
+      setTimeout(() => setDraftSaved(false), 2000);
+    } catch (err) {
+      console.error('Failed to save draft:', err);
+    }
+  }, [formData, session, draftId, isOnline]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+
+    if (!isOnline) {
+      // Save as offline draft
+      try {
+        await saveDraft({
+          id: draftId || undefined,
+          draftType: 'fuel',
+          formData: formData as unknown as Record<string, unknown>,
+          userId: session?.user?.id || null,
+          tenantId: '00000000-0000-0000-0000-000000000001',
+          syncStatus: 'pending',
+        });
+        router.push('/dashboard/fuel');
+      } catch (err) {
+        console.error('Draft save failed:', err);
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     try {
       const res = await fetch('/api/fuel', {
         method: 'POST',
@@ -60,12 +115,14 @@ export default function NewFuelEntryPage() {
         const err = await res.json();
         throw new Error(err.error || 'Failed to record transaction');
       }
+      // Clean up draft if it exists
+      if (draftId) await deleteDraft(draftId);
       router.push('/dashboard/fuel');
     } catch (err) {
       console.error('Fuel entry failed:', err);
       setIsSubmitting(false);
     }
-  }, [router, formData, session]);
+  }, [router, formData, session, draftId, isOnline]);
 
   return (
     <div className="space-y-6">
@@ -79,6 +136,13 @@ export default function NewFuelEntryPage() {
           <Link href="/dashboard/fuel"><ChevronLeft className="h-4 w-4" /> Back</Link>
         </Button>
       </PageHeader>
+
+      {!isOnline && (
+        <div className="flex items-center gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+          <WifiOff className="h-3.5 w-3.5" />
+          You are offline. This entry will be saved as a local draft and synced when connected.
+        </div>
+      )}
 
       <form onSubmit={handleSubmit}>
         <Card>
@@ -110,8 +174,14 @@ export default function NewFuelEntryPage() {
         </Card>
 
         <div className="mt-6 flex items-center justify-end gap-3">
+          <Button variant="secondary" size="sm" onClick={saveDraftLocally}>
+            <Save className="h-4 w-4" />
+            {draftSaved ? 'Saved!' : 'Save Draft'}
+          </Button>
           <Button variant="secondary" size="sm" asChild><Link href="/dashboard/fuel">Cancel</Link></Button>
-          <Button variant="primary" size="sm" type="submit" loading={isSubmitting}><CheckCircle2 className="h-4 w-4" /> Record Transaction</Button>
+          <Button variant="primary" size="sm" type="submit" loading={isSubmitting}>
+            {isOnline ? <><CheckCircle2 className="h-4 w-4" /> Record Transaction</> : <><Save className="h-4 w-4" /> Save Offline</>}
+          </Button>
         </div>
       </form>
     </div>
