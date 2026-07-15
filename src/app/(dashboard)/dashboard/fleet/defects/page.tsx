@@ -1,4 +1,4 @@
-import { getDb } from '@/db';
+import { getDb, isDbConnected } from '@/db';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { eq, desc, isNull, isNotNull, and, sql, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Database } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import {
@@ -115,7 +116,46 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
 
 export default async function DefectsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
-  const result = await fetchDefects(sp);
+
+  if (!isDbConnected()) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Fleet', href: '/dashboard/fleet' },
+          { label: 'Defects' },
+        ]} />
+        <PageHeader title="Vehicle Defects" description="Track and manage vehicle issues across the fleet" />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Database Not Configured"
+          description="Set the DATABASE_URL environment variable and run migrations."
+        />
+      </div>
+    );
+  }
+
+  let result: Awaited<ReturnType<typeof fetchDefects>>;
+  try {
+    result = await fetchDefects(sp);
+  } catch (error) {
+    console.error('Defects query failed:', error);
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Fleet', href: '/dashboard/fleet' },
+          { label: 'Defects' },
+        ]} />
+        <PageHeader title="Vehicle Defects" description="Track and manage vehicle issues across the fleet" />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Unable to Load Defects"
+          description="The database query failed. Please run migrations and seed first."
+        />
+      </div>
+    );
+  }
 
   const openCount = result.rows.filter((r) => !r.resolvedAt).length;
   const resolvedCount = result.rows.filter((r) => r.resolvedAt).length;

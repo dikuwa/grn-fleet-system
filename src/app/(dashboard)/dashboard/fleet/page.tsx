@@ -1,4 +1,4 @@
-import { getDb } from '@/db';
+import { getDb, isDbConnected } from '@/db';
 import { vehicles, vehicleCategories, vehicleDefects, maintenanceEvents } from '@/db/schema/fleet';
 import { offices } from '@/db/schema/people';
 import { eq, and, sql, like, or, isNull, type SQL } from 'drizzle-orm';
@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Database } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import {
   Truck,
@@ -166,7 +167,38 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
 
 export default async function FleetPage({ searchParams }: PageProps) {
   const sp = await searchParams;
-  const result = await fetchFleetData(sp);
+
+  if (!isDbConnected()) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fleet' }]} />
+        <PageHeader title="Fleet" description="Manage vehicles, view status, defects and maintenance" />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Database Not Configured"
+          description="Set the DATABASE_URL environment variable and run migrations to enable the fleet module."
+        />
+      </div>
+    );
+  }
+
+  let result: Awaited<ReturnType<typeof fetchFleetData>>;
+  try {
+    result = await fetchFleetData(sp);
+  } catch (error) {
+    console.error('Fleet query failed:', error);
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fleet' }]} />
+        <PageHeader title="Fleet" description="Manage vehicles, view status, defects and maintenance" />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Unable to Load Fleet Data"
+          description="The database query failed. Please run migrations and seed first."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

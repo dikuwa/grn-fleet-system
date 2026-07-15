@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-07-14 — Phase 5: Transport requests and route calculation
+
+### Added
+
+**Transport Request List Page**
+- DB-backed server component with search, status/scope filters, pagination
+- Summary cards (total, pending approval, active/in-progress, closed)
+- Status badges using STATUS_VARIANTS from constants
+- Scope badges (regional = info, national = emergency)
+- Proper error boundary: `isDbConnected()` check + try/catch fallback
+
+**Transport Request Detail Page**
+- Request summary card with requester info, department, purpose, authorised km
+- Programme of Activities table with dates, venue, estimated km
+- Passengers card with employee/external display, status badges
+- Drivers card with driver type labels, confirmation + licence validation status
+- Routes section with origin/destination visual layout, mapped distance, duration, override reasons
+- Attachments section with file metadata
+- Special Authority banner when applicable
+
+**New Transport Request Wizard (Client Component)**
+- 5-step form: Basic Info → Activities → Passengers & Drivers → Route → Review
+- Step indicator with progress state (inactive/active/complete)
+- Basic info: scope selector, purpose textarea, department input, special authority checkbox
+- Activities: dynamic CRUD with title, venue, dates, estimated km, description
+- Passengers & Drivers: dynamic CRUD with employee/external toggle
+- Routes: origin/destination pairs with estimated distance and adapter message
+- Review: reference preview, summary cards, itinerary list, detail panel
+- Submit placeholder (simulates API call — ready for DB insert)
+
+### Fixed
+- Phase 4 vehicle detail page: missing `EmptyState` and `Database` imports causing TS2304 errors — added imports
+- Unused imports cleaned from all new files (lint compliance)
+- Unescaped entities in JSX fixed (`react/no-unescaped-entities`)
+
+### Known Gaps (Phase 5)
+- New request wizard submit handler simulates API call — needs real DB insert
+- Route calculation uses manual estimate input — distance adapter not yet wired
+- No tenant isolation on queries (requires auth session)
+- No approval workflow integration yet
+
+### Commands verified
+
+- `pnpm typecheck` — passes (0 errors)
+- `pnpm lint` — passes (0 errors, 0 warnings)
+- `pnpm test` — passes (7 tests)
+- `pnpm build` — passes
+
 ## 2026-07-14 — Phase 2: Database, authentication, tenancy and RBAC
 
 ### Added

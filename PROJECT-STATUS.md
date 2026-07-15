@@ -53,9 +53,15 @@ DB-backed staff directory with search, filters, pagination. Employee detail with
 
 Fleet vehicle list with search, filters, pagination, summary cards, defect/maintenance counts. Vehicle detail with 4-tab interface (documents, defects, maintenance, odometer history). Cross-fleet defect tracking with severity sorting and open/resolved filtering. Maintenance history with cost summary and upcoming services tracking. CSV parser upgraded from naive split(',') to papaparse.
 
+## Completed
+
+- [x] Phase 5 — Transport requests and route calculation
+
+Transport request list with search/filters/pagination, status badges, summary cards, proper error boundaries. Request detail with activities, passengers/drivers, routes with distance display. New request 5-step wizard: basic info → activities → passengers & drivers → route → review.
+
 ## In progress
 
-- [ ] Phase 5 — Transport request workflow and route calculation
+- [ ] Phase 6 — Vehicle allocation, trips and inspections
 
 ## Known Gaps (Phase 3–4)
 

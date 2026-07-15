@@ -1,4 +1,4 @@
-import { getDb } from '@/db';
+import { getDb, isDbConnected } from '@/db';
 import { vehicles, vehicleCategories, vehicleDocuments, vehicleDefects, maintenanceEvents, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { offices } from '@/db/schema/people';
 import { eq, desc } from 'drizzle-orm';
@@ -17,7 +17,9 @@ import {
   XCircle,
   Building2,
   CalendarClock,
+  Database,
 } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
 import Link from 'next/link';
 import { TabsShell } from './tabs-shell';
 
@@ -117,7 +119,46 @@ async function fetchVehicleDetail(id: string) {
 
 export default async function VehicleDetailPage({ params }: PageProps) {
   const { id } = await params;
-  const data = await fetchVehicleDetail(id);
+
+  if (!isDbConnected()) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Fleet', href: '/dashboard/fleet' },
+          { label: 'Vehicle Detail' },
+        ]} />
+        <PageHeader title="Vehicle Detail" description="Vehicle information could not be loaded" />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Database Not Configured"
+          description="Set the DATABASE_URL environment variable and run migrations."
+        />
+      </div>
+    );
+  }
+
+  let data: Awaited<ReturnType<typeof fetchVehicleDetail>>;
+  try {
+    data = await fetchVehicleDetail(id);
+  } catch (error) {
+    console.error('Vehicle detail query failed:', error);
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Fleet', href: '/dashboard/fleet' },
+          { label: 'Vehicle Detail' },
+        ]} />
+        <PageHeader title="Vehicle Detail" description="Vehicle information could not be loaded" />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Unable to Load Vehicle"
+          description="The database query failed. Please run migrations and seed first."
+        />
+      </div>
+    );
+  }
   const { vehicle } = data;
 
   return (

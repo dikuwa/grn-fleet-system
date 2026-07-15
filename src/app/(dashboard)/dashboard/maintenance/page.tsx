@@ -1,4 +1,4 @@
-import { getDb } from '@/db';
+import { getDb, isDbConnected } from '@/db';
 import { maintenanceEvents, vehicles } from '@/db/schema/fleet';
 import { eq, desc, and, sql, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Database } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import {
@@ -105,7 +106,44 @@ const SERVICE_TYPE_LABELS: Record<string, string> = {
 
 export default async function MaintenancePage({ searchParams }: PageProps) {
   const sp = await searchParams;
-  const result = await fetchMaintenance(sp);
+
+  if (!isDbConnected()) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Maintenance' },
+        ]} />
+        <PageHeader title="Maintenance" description="Vehicle service and repair history across the fleet" />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Database Not Configured"
+          description="Set the DATABASE_URL environment variable and run migrations."
+        />
+      </div>
+    );
+  }
+
+  let result: Awaited<ReturnType<typeof fetchMaintenance>>;
+  try {
+    result = await fetchMaintenance(sp);
+  } catch (error) {
+    console.error('Maintenance query failed:', error);
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Maintenance' },
+        ]} />
+        <PageHeader title="Maintenance" description="Vehicle service and repair history across the fleet" />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Unable to Load Maintenance Data"
+          description="The database query failed. Please run migrations and seed first."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
