@@ -86,13 +86,25 @@ export async function POST(request: NextRequest) {
 
     // If payment method is personal_reimbursement, auto-create reimbursement
     if (paymentMethod === 'personal_reimbursement' && transaction) {
-      // Resolve claimant employee from employee number
+      // Resolve claimant employee ID — priority:
+      // 1. Provided employeeNumber → look up by employee number
+      // 2. Session user ID → look up by employees.userId
+      // 3. Fall back to recordedByUserId (auth user UUID — may not match employee table)
       let claimantEmployeeId = recordedByUserId;
+
       if (employeeNumber) {
         const [emp] = await db
           .select({ id: employees.id })
           .from(employees)
           .where(eq(employees.employeeNumber, employeeNumber))
+          .limit(1);
+        if (emp) claimantEmployeeId = emp.id;
+      } else if (session?.user?.id) {
+        // Look up employee linked to this auth user
+        const [emp] = await db
+          .select({ id: employees.id })
+          .from(employees)
+          .where(eq(employees.userId, session.user.id))
           .limit(1);
         if (emp) claimantEmployeeId = emp.id;
       }
