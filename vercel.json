@@ -1,0 +1,10 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "pnpm build",
+  "installCommand": "pnpm install",
+  "outputDirectory": ".next",
+  "regions": ["fra1"],
+  "github": {
+    "silent": true
+  }
+}

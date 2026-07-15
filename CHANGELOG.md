@@ -121,3 +121,35 @@
 
 - `pnpm lint` — passes (0 errors, 0 warnings)
 - `pnpm build` — passes (0 errors)
+
+## 2026-07-15 — Phase 13: Database setup and Vercel deployment
+
+### Added
+
+- **Neon Postgres database** — Drizzle migrations executed successfully, seed data populated (Kavango East tenant, employees, vehicles, roles, permissions, workflows)
+- **Vercel deployment** — Project deployed to https://grn-fleet-system.vercel.app
+- **`.env.example`** — Comprehensive env template covering all required and optional vars
+- **`vercel.json`** — Build/install commands, region config for Next.js framework
+- **Vercel env vars** — Production + Preview env vars configured (DATABASE_URL, DATABASE_DIRECT_URL, BETTER_AUTH_SECRET, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_APP_NAME)
+
+### Fixed
+
+- **`next.config.js`** — Moved `reactCompiler: false` from `experimental` to top level (Next.js 16)
+
+### Changed
+
+- **Reports page** — Now fetches from `/api/reports` on mount, shows Live/Sample data indicator badge
+- **Audit Log page** — Fetches from `/api/audit`, maps API events to timeline with graceful fallback
+- **Notifications page** — Fetches from `/api/notifications`; Mark All Read calls PATCH API
+
+### Database
+
+- Migration ran: 30+ tables created (tenants, auth, fleet, people, trips, requests, documents, notifications, audit, workflows)
+- Seed completed: Kavango East tenant, 10 employees, 5 vehicles, 9 roles with permissions, 2 workflow definitions
+
+### Commands verified
+
+- `pnpm lint` — passes (0 errors, 0 warnings)
+- `pnpm typecheck` — passes (0 errors)
+- `pnpm build` — passes (0 errors)
+- Vercel deployment — successful, app live at https://grn-fleet-system.vercel.app

@@ -115,11 +115,22 @@
 - [x] `GET /api/notifications` + `PATCH` — Notification listing, mark-read, preferences
 - [x] Tabs UI component (Radix-based)
 
+### Phase 13 — Deployment & Database
+- [x] Neon Postgres database connected, migrated, and seeded
+- [x] `next.config.js` reactCompiler warning fixed (moved out of experimental)
+- [x] `.env.example` created with all documented environment variables
+- [x] Reports, Audit, Notifications pages wired to API with mock data fallback
+- [x] Vercel deployment live at https://grn-fleet-system.vercel.app
+- [x] Production env vars configured (DATABASE_URL, BETTER_AUTH_SECRET, etc.)
+- [x] `vercel.json` created with build/region config
+
 ## Up Next
 
-- [ ] Phase 13 — Deployment preparation, final polish
-- [ ] Fix remaining known gaps
-- [ ] Database connection for live data
+- [ ] Auth session wiring — replace hardcoded `userId: 'system'` with real session
+- [ ] Email notification integration (Resend)
+- [ ] PWA offline draft storage (Dexie/IndexedDB)
+- [ ] Document generation lifecycle wiring
+- [ ] Testing execution (unit, integration, E2E)
 
 ## Known Gaps
 
@@ -133,10 +144,8 @@
 - No tenant isolation on queries (requires auth session)
 - JSON Schema document validation not yet integrated
 - No real SMS provider integration (adapter placeholder only)
-- Testing not yet executed (need DB credentials)
+- Unit tests not yet executed
 
 ## Blockers
 
-- Database seed requires `DATABASE_URL` and `DATABASE_DIRECT_URL` (Neon Postgres credentials)
-- Form submissions and DB pages require connected database
 - No user authentication — all requests use `userId: 'system'`
