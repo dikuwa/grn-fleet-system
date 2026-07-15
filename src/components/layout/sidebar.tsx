@@ -9,10 +9,12 @@ import {
   FileText,
   ClipboardCheck,
   Truck,
+  Gauge,
   Fuel,
   Wrench,
   Users,
   Building2,
+  CarFront,
   FileBarChart,
   Bell,
   Settings,
@@ -45,9 +47,10 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: 'Trips & Driver Logs',
+    label: 'Allocations & Trips',
     items: [
-      { label: 'Trips', href: '/dashboard/trips', icon: Truck },
+      { label: 'Allocations', href: '/dashboard/allocations', icon: Truck },
+      { label: 'Trips', href: '/dashboard/trips', icon: Gauge },
       { label: 'Daily Logs', href: '/dashboard/logs', icon: ClipboardCheck },
       { label: 'Fuel Records', href: '/dashboard/fuel', icon: Fuel },
     ],
@@ -55,8 +58,9 @@ const navGroups: NavGroup[] = [
   {
     label: 'Fleet & Maintenance',
     items: [
-      { label: 'Fleet', href: '/dashboard/fleet', icon: Truck },
+      { label: 'Fleet', href: '/dashboard/fleet', icon: CarFront },
       { label: 'Maintenance', href: '/dashboard/maintenance', icon: Wrench },
+      { label: 'Inspections', href: '/dashboard/inspections', icon: ClipboardCheck },
     ],
   },
   {

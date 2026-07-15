@@ -1,5 +1,63 @@
 # Changelog
 
+## 2026-07-14 — Phase 7: Allocations, inspections and gap fixes
+
+### Added
+
+**Vehicle Allocations List (Phase 7)**
+- DB-backed server component with search, state filters (provisional/confirmed/cancelled/released), pagination
+- Summary cards (active, provisional, confirmed)
+- Requester info via employees join through transportRequests
+- Proper error boundary: `isDbConnected()` check + try/catch fallback
+
+**Vehicle Allocation Detail (Phase 7)**
+- Summary card with vehicle info, request info, allocation period
+- Timeline (created → trip started → authority prepared)
+- Vehicle details panel (status, odometer, open defects)
+- Transport request panel (reference, scope, requester)
+- Defects warning banner when open defects exist
+- Related trip link when a trip exists
+
+**New Allocation Form (Phase 7)**
+- Client component with request reference, vehicle GRN, driver, dates, notes
+- Submit handler stub (placeholder for real DB insert)
+
+**Inspections List (Phase 8)**
+- DB-backed server component with type tabs (All / Departure / Return)
+- Status filter, pagination, proper error boundaries
+- Pass/fail badges and status indicators
+
+**Departure Inspection Checklist (Phase 8)**
+- 25-item pre-trip checklist across 6 categories (Exterior, Tyres, Lights, Interior, Documents, Safety)
+- Per-item pass/fail/N/A toggle buttons
+- Critical item detection with visual warning
+- Odometer reading and fuel level input
+
+**Return Inspection Checklist (Phase 8)**
+- 13-item post-trip checklist across 5 categories (Exterior, Tyres, Interior, Equipment, Documents)
+- Fail items auto-expand with defect description, severity, and blocking toggle
+- Missing description validation gate
+- Critical fail detection with warning banner
+
+### Fixed
+- Sidebar: added Allocations under "Allocations & Trips" group; added Inspections under "Fleet & Maintenance" group; reorganized navigation; added Gauge and CarFront icons
+- Import wizard: Download Template button now functional (downloads seed CSV template)
+- Lint warnings fixed: unused imports (StatusBadge, XCircle, inspectionTemplates, employees), unused state (setIsPassing), AlertTriangle title → aria-label
+- TypeScript errors: AlertTriangle does not accept `title` prop — replaced with `aria-label`
+
+### Known Gaps (Phase 7–8)
+- Tenant isolation not yet enforced on queries (requires auth session)
+- New allocation form submit stubbed — needs real DB insert
+- Inspection forms submit stubbed — needs real DB insert with template items
+- No vehicle recommendation scoring yet on allocation page
+- No inspection template management UI
+
+### Commands verified
+
+- `pnpm typecheck` — passes (0 errors)
+- `pnpm lint` — passes (0 errors, 0 warnings)
+- `pnpm build` — passes
+
 ## 2026-07-14 — Phase 6: Vehicle allocation, trips, inspections and known gap fixes
 
 ### Added

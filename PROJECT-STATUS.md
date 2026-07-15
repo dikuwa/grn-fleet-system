@@ -61,27 +61,26 @@ Transport request list with search/filters/pagination, status badges, summary ca
 
 ## Completed
 
-- [x] Phase 6 — Vehicle allocation, trips, inspections and gap fixes
+- [x] Phase 7 — Allocations, inspections and gap fixes
 
-DB-backed trip list with search/filters/pagination, summary cards, status badges, proper error boundaries. Trip detail with statistics, timeline, log entries table, fuel transactions table. CSV import API route (POST /api/import) with DB insert, duplicate detection, and structured error reporting. Import wizard now calls live API route. Vehicle detail tab data uses proper $inferSelect types.
+DB-backed allocation list with search/state filters/pagination, summary cards, proper error boundaries. Allocation detail with vehicle/request info, timeline, defects warning, related trip link. New allocation form stub. Inspections list with type tabs (departure/return), status filter, pagination, error boundaries. Departure checklist (25 items, 6 categories, pass/fail/NA, critical detection). Return checklist (13 items, defect description/severity/blocking, missing-description gate). Sidebar reorganized with Allocations + Inspections links. Download Template button now functional. All lint clean.
 
 ## Up Next
 
-- [ ] Phase 7 — Vehicle allocation page
-- [ ] Phase 8 — Departure/return inspection forms
 - [ ] Phase 9 — Fuel management and reimbursement
 - [ ] Phase 10 — Approval workflow engine
 - [ ] Phase 11 — Notifications and document sharing
 - [ ] Phase 12 — Reporting and analytics
 - [ ] Phase 13 — Deployment preparation
 
-## Known Gaps (Phase 6)
+## Known Gaps (Phase 7–8)
 
 - Tenant isolation not yet enforced on queries (requires auth session)
-- No vehicle allocation standalone page — allocation done via trips
-- No departure/return inspection forms — linked from trip detail
+- New allocation form submit stubbed — needs real DB insert
+- Inspection forms submit stubbed — needs real DB insert with template items
+- No vehicle recommendation scoring on allocation page
+- No inspection template management UI
 - CSV import API uses dummy tenantId until auth is wired
-- Download Template button is non-functional
 
 ## Blockers
 
@@ -89,4 +88,4 @@ None. Credentials may be added during implementation through placeholders and se
 
 ## Next action
 
-Proceed to Phase 7 — Vehicle allocation, detailed trip management, and inspection workflows.
+Proceed to Phase 9 — Fuel management and reimbursement.

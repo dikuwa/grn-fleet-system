@@ -185,9 +185,11 @@ export default function StaffImportPage() {
             Back to Directory
           </Link>
         </Button>
-        <Button variant="tertiary" size="sm">
-          <Download className="h-4 w-4" />
-          Download Template
+        <Button variant="tertiary" size="sm" asChild>
+          <a href="/staff-import-template.csv" download>
+            <Download className="h-4 w-4" />
+            Download Template
+          </a>
         </Button>
       </PageHeader>
 
