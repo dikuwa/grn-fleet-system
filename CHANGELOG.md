@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026-07-14 — Phase 6: Vehicle allocation, trips, inspections and known gap fixes
+
+### Added
+
+**Trip List Page**
+- DB-backed server component with search, status filters, pagination
+- Summary cards (total, active, completed, cancelled)
+- Status badges using STATUS_VARIANTS
+- Requester info via employees join on transportRequests
+- Proper error boundary: `isDbConnected()` check + try/catch fallback
+- Pagination with URL search params
+
+**Trip Detail Page**
+- Trip summary card with full details (GRN, request reference, vehicle, requester, purpose, dates)
+- Trip statistics section (total km, fuel litres, fuel cost)
+- Timeline component with lucide icons for each phase (requested, allocated, departed, returned, closed)
+- Log Entries table with driver, dates, origin/destination, distance, remarks
+- Fuel Transactions table with date, litres, cost, station, receipt status
+- Inspections card linked from vehicle detail
+- Proper error boundary: `isDbConnected()` check + try/catch fallback
+
+**CSV Import API Route**
+- `POST /api/import` endpoint accepts JSON payload with rows and columns
+- Creates importBatches and importRows records in database
+- Handles duplicate employee detection by employee number
+- Updates existing employees when duplicates found
+- Returns structured response with batchId, insertCount, updateCount, errorCount
+- Proper error handling with rollback awareness
+
+**Import Wizard — Live DB Integration**
+- Commit handler now calls real API route instead of simulated timeout
+- Loading spinner during API call
+- Error handling returns to preview step for retry
+- Success navigation to import history page
+
+**Vehicle Detail Page — Strong Types**
+- Replaced loose `Record<string, unknown>` with proper `$inferSelect` types
+- DefectRecord, MaintenanceRecord, DocumentRecord, OdometerRecord interfaces
+- Direct property access on query results
+
+### Fixed
+- Phase 4 vehicle detail page: missing `EmptyState` and `Database` imports
+- Vehicle detail tab data: `Record<string, unknown>` → proper `$inferSelect` types
+- Import wizard: commit handler now calls real DB-backed API route
+- Trip list: removed non-existent `sortOrder` column reference causing runtime DB errors
+- Trip detail: removed dead `allocations` and `closures` queries that were fetched but never rendered
+- Trip list: fixed requester label (was incorrectly labeled "Driver")
+- All unused imports cleaned from Phase 6 files (lint compliance)
+
+### Known Gaps (Phase 6)
+- Tenant isolation not yet enforced on queries (requires auth session)
+- No vehicle allocation page yet (allocation done via trips)
+- No departure/return inspection forms — linked from trip detail
+- CSV import API uses dummy tenantId until auth is wired
+
+### Commands verified
+
+- `pnpm typecheck` — passes (0 errors)
+- `pnpm lint` — passes (0 errors, 0 warnings)
+- `pnpm test` — passes (7 tests)
+- `pnpm build` — passes
+
 ## 2026-07-14 — Phase 5: Transport requests and route calculation
 
 ### Added

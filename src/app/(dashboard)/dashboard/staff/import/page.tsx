@@ -120,12 +120,40 @@ export default function StaffImportPage() {
     setIsCommitting(true);
     setStep('committing');
 
-    // Simulate commit — will be replaced with actual DB insert when DB is configured
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      const payload = rows
+        .filter((r) => r.errors.length === 0)
+        .map((r) => {
+          const mapped: Record<string, string> = {};
+          for (const [csvCol, schemaCol] of Object.entries(columnMapping)) {
+            mapped[schemaCol] = r.data[csvCol] || '';
+          }
+          return mapped;
+        });
 
-    setStep('complete');
-    setIsCommitting(false);
-  }, []);
+      const res = await fetch('/api/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: payload,
+          tenantId: '00000000-0000-0000-0000-000000000000',
+          userId: 'system',
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Import failed');
+      }
+
+      setStep('complete');
+    } catch (err) {
+      console.error('Import failed:', err);
+      setStep('preview');
+    } finally {
+      setIsCommitting(false);
+    }
+  }, [rows, columnMapping]);
 
   const totalValidRows = rows.filter((r) => r.errors.length === 0).length;
   const totalErrorRows = rows.filter((r) => r.errors.length > 0).length;

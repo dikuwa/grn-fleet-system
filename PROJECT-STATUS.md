@@ -59,17 +59,29 @@ Fleet vehicle list with search, filters, pagination, summary cards, defect/maint
 
 Transport request list with search/filters/pagination, status badges, summary cards, proper error boundaries. Request detail with activities, passengers/drivers, routes with distance display. New request 5-step wizard: basic info → activities → passengers & drivers → route → review.
 
-## In progress
+## Completed
 
-- [ ] Phase 6 — Vehicle allocation, trips and inspections
+- [x] Phase 6 — Vehicle allocation, trips, inspections and gap fixes
 
-## Known Gaps (Phase 3–4)
+DB-backed trip list with search/filters/pagination, summary cards, status badges, proper error boundaries. Trip detail with statistics, timeline, log entries table, fuel transactions table. CSV import API route (POST /api/import) with DB insert, duplicate detection, and structured error reporting. Import wizard now calls live API route. Vehicle detail tab data uses proper $inferSelect types.
 
-- Import commit handler is a placeholder — needs DB insert logic
-- Tenant isolation not yet enforced on queries
+## Up Next
+
+- [ ] Phase 7 — Vehicle allocation page
+- [ ] Phase 8 — Departure/return inspection forms
+- [ ] Phase 9 — Fuel management and reimbursement
+- [ ] Phase 10 — Approval workflow engine
+- [ ] Phase 11 — Notifications and document sharing
+- [ ] Phase 12 — Reporting and analytics
+- [ ] Phase 13 — Deployment preparation
+
+## Known Gaps (Phase 6)
+
+- Tenant isolation not yet enforced on queries (requires auth session)
+- No vehicle allocation standalone page — allocation done via trips
+- No departure/return inspection forms — linked from trip detail
+- CSV import API uses dummy tenantId until auth is wired
 - Download Template button is non-functional
-- Phase 4 pages missing try/catch error boundaries (unlike Phase 3)
-- Vehicle detail tab data uses loose types — needs proper result interfaces
 
 ## Blockers
 
@@ -77,4 +89,4 @@ None. Credentials may be added during implementation through placeholders and se
 
 ## Next action
 
-Proceed to Phase 5 — Transport request workflow, route calculation, and approval management.
+Proceed to Phase 7 — Vehicle allocation, detailed trip management, and inspection workflows.

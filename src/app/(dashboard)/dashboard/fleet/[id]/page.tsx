@@ -112,9 +112,14 @@ async function fetchVehicleDetail(id: string) {
       .limit(20),
   ]);
 
-  const openDefects = defects.filter((d: { resolvedAt: Date | null }) => !d.resolvedAt);
+  type DocumentRecord = typeof vehicleDocuments.$inferSelect;
+  type DefectRecord = typeof vehicleDefects.$inferSelect;
+  type MaintenanceRecord = typeof maintenanceEvents.$inferSelect;
+  type OdometerRecord = typeof vehicleOdometerEvents.$inferSelect;
 
-  return { vehicle, documents, defects, maintenance, odometerEvents, openDefects };
+  const openDefects = defects.filter((d: DefectRecord) => !d.resolvedAt);
+
+  return { vehicle, documents: documents as DocumentRecord[], defects: defects as DefectRecord[], maintenance: maintenance as MaintenanceRecord[], odometerEvents: odometerEvents as OdometerRecord[], openDefects };
 }
 
 export default async function VehicleDetailPage({ params }: PageProps) {
@@ -300,23 +305,18 @@ export default async function VehicleDetailPage({ params }: PageProps) {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {data.defects.map((defect: Record<string, unknown>) => {
-                  const isOpen = defect.resolvedAt === null || defect.resolvedAt === undefined;
-                  const blocking = defect.isBlocking === true;
-                  const severity = (defect.severity as string) || '';
-                  const createdAt = (defect.createdAt as string) || (defect.createdAt as Date)?.toISOString() || '';
-                  const description = (defect.description as string) || '';
-                  const resolutionNotes = (defect.resolutionNotes as string) || '';
+                {data.defects.map((defect) => {
+                  const isOpen = !defect.resolvedAt;
                   return (
                     <div
-                      key={defect.id as string}
-                      className={`px-5 py-3 ${isOpen && blocking ? 'bg-status-error-bg/20' : ''} ${!isOpen ? 'opacity-60' : ''}`}
+                      key={defect.id}
+                      className={`px-5 py-3 ${isOpen && defect.isBlocking ? 'bg-status-error-bg/20' : ''} ${!isOpen ? 'opacity-60' : ''}`}
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <p className="text-sm font-medium text-ink-950">
-                              {description}
+                              {defect.description}
                             </p>
                             <StatusBadge
                               status={isOpen ? 'error' : 'success'}
@@ -326,26 +326,26 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
                             <Badge
                               variant={
-                                severity === 'critical'
+                                defect.severity === 'critical'
                                   ? 'emergency'
-                                  : severity === 'major'
+                                  : defect.severity === 'major'
                                     ? 'error'
-                                    : severity === 'minor'
+                                    : defect.severity === 'minor'
                                       ? 'pending'
                                       : 'info'
                               }
                               size="sm"
                             >
-                              {SEVERITY_LABELS[severity] || severity}
+                              {SEVERITY_LABELS[defect.severity] || defect.severity}
                             </Badge>
-                            <span>Reported {createdAt ? formatDate(createdAt) : ''}</span>
-                            {blocking && (
+                            <span>Reported {defect.createdAt ? formatDate(defect.createdAt) : ''}</span>
+                            {defect.isBlocking && (
                               <span className="font-medium text-status-error-text">Blocking</span>
                             )}
                           </div>
-                          {resolutionNotes && (
+                          {defect.resolutionNotes && (
                             <p className="mt-1 text-xs text-ink-500">
-                              Resolution: {resolutionNotes}
+                              Resolution: {defect.resolutionNotes}
                             </p>
                           )}
                         </div>
@@ -377,46 +377,40 @@ export default async function VehicleDetailPage({ params }: PageProps) {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {data.maintenance.map((event: Record<string, unknown>) => {
-                  const description = (event.description as string) || '';
-                  const serviceDate = (event.serviceDate as string) || '';
-                  const serviceType = (event.serviceType as string) || '';
-                  const vendorName = (event.vendorName as string) || '';
-                  const nextServiceDate = (event.nextServiceDate as string) || '';
-                  const serviceOdometer = event.serviceOdometer as number | null;
+                {data.maintenance.map((event) => {
                   return (
-                    <div key={event.id as string} className="px-5 py-3">
+                    <div key={event.id} className="px-5 py-3">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-ink-950">
-                            {description}
+                            {event.description}
                           </p>
                           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
                             <span className="flex items-center gap-1">
                               <CalendarClock className="h-3.5 w-3.5" />
-                              {serviceDate ? formatDate(serviceDate) : ''}
+                              {event.serviceDate ? formatDate(event.serviceDate) : ''}
                             </span>
-                            {serviceOdometer != null && (
+                            {event.serviceOdometer != null && (
                               <span className="flex items-center gap-1">
                                 <Gauge className="h-3.5 w-3.5" />
-                                {Number(serviceOdometer).toLocaleString()} km
+                                {Number(event.serviceOdometer).toLocaleString()} km
                               </span>
                             )}
                             <Badge variant="info" size="sm">
-                              {serviceType.replace(/_/g, ' ')}
+                              {event.serviceType.replace(/_/g, ' ')}
                             </Badge>
                           </div>
-                          {vendorName && (
+                          {event.vendorName && (
                             <p className="mt-1 text-xs text-ink-500">
-                              Vendor: {vendorName}
+                              Vendor: {event.vendorName}
                             </p>
                           )}
                         </div>
-                        {nextServiceDate && (
+                        {event.nextServiceDate && (
                           <div className="shrink-0 text-right">
                             <p className="text-xs text-ink-500">Next service</p>
                             <p className="text-sm font-medium text-ink-950">
-                              {formatDate(nextServiceDate)}
+                              {formatDate(event.nextServiceDate)}
                             </p>
                           </div>
                         )}
@@ -451,26 +445,22 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {data.odometerEvents.map((event: Record<string, unknown>) => {
-                      const createdAt = (event.createdAt as string) || '';
-                      const odometerValue = Number(event.odometerValue) || 0;
-                      const source = (event.source as string) || '';
-                      const notes = (event.notes as string) || '';
+                    {data.odometerEvents.map((event) => {
                       return (
-                        <tr key={event.id as string} className="hover:bg-canvas/50">
+                        <tr key={event.id} className="hover:bg-canvas/50">
                           <td className="px-3 py-2 text-xs text-ink-500">
-                            {createdAt ? formatDate(createdAt) : ''}
+                            {event.createdAt ? formatDate(event.createdAt) : ''}
                           </td>
                           <td className="px-3 py-2 text-right text-sm tabular-nums font-medium text-ink-950">
-                            {odometerValue.toLocaleString()} km
+                            {event.odometerValue.toLocaleString()} km
                           </td>
                           <td className="px-3 py-2">
                             <Badge variant="info" size="sm">
-                              {source.replace(/_/g, ' ')}
+                              {event.source.replace(/_/g, ' ')}
                             </Badge>
                           </td>
                           <td className="px-3 py-2 text-xs text-ink-500">
-                            {notes || '—'}
+                            {event.notes || '—'}
                           </td>
                         </tr>
                       );
