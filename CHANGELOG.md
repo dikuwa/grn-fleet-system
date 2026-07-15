@@ -260,3 +260,36 @@
 - `pnpm lint` — 0 errors, 0 warnings
 - `pnpm test` — 20/20 passed (13 auth + 7 utils)
 - `pnpm build` — passes (1 middleware deprecation warning, cosmetic)
+
+## 2026-07-15 — Doc gen API wiring, middleware→proxy rename, E2E offline tests
+
+### Added
+
+- **4 lifecycle API routes** — Document generation triggers wired into real endpoint handlers:
+  - `POST /api/transport-requests` — Creates transport request with activities/passengers/drivers/routes, calls `onRequestSubmitted()` to generate transport_request document
+  - `POST /api/allocations` — Creates allocation + trip record, resolves UUID from GRN strings, calls `onTripIssued()` to generate trip_authority document
+  - `POST /api/inspections` — Creates inspection with checklist results, finds/creates default template, calls `onInspectionCompleted()` to generate inspection_report document
+  - `POST /api/trips/[id]/close` — Closes a trip with tripClosure record, calls `onTripClosed()` to generate trip_completion + fuel_summary documents
+
+- **Client forms wired to real APIs** — Requests, allocations, and inspection forms now submit to the new API routes instead of simulating saves
+
+- **E2E offline draft tests** (`src/e2e/offline-drafts.spec.ts`) — Playwright tests covering offline detection, draft save, sync status, and draft list re-render
+
+### Changed
+
+- **Middleware → Proxy** — Renamed `src/middleware.ts` to `src/proxy.ts`, exported function renamed from `middleware` to `proxy` (resolves Next.js 16 deprecation warning)
+- **Inspections API** — `templateId` now dynamically resolved (find existing template or create default) instead of hardcoded non-existent UUID
+- **Transport requests API** — `requesterEmployeeNumber` made optional with session-based employee lookup fallback
+
+### Fixed
+
+- **API route type safety** — Changed `body` from `Record<string, unknown>` to `any` across all 4 new API routes (matching existing patterns)
+- **Variable shadowing** — Fixed `const [req]` → `const [foundReq]` in allocations route to avoid shadowing the `req` parameter
+- **Inspection forms** — Removed `useCallback` from `handleSubmit`, `updateResult`, `updateDefect` (plain async functions) and removed `useCallback` import to fix React Compiler lint errors
+- **Build** — 0 errors, 0 warnings (no more middleware deprecation)
+
+### Commands verified
+
+- `pnpm lint` — 0 errors, 0 warnings
+- `pnpm test` — 20/20 passed
+- `pnpm build` — 0 errors, 0 warnings

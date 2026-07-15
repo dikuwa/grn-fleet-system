@@ -691,12 +691,32 @@ export default function NewRequestPage() {
     setSubmitting(true);
     setError(null);
 
-    // Simulate API call — will be replaced with actual DB insert
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      router.push('/dashboard/requests');
-    } catch {
-      setError('Failed to submit request. Please try again.');
+      const res = await fetch('/api/transport-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          purpose: formData.purpose,
+          department: formData.department,
+          scope: formData.scope,
+          specialAuthorityRequired: formData.specialAuthorityRequired,
+          specialAuthorityReason: formData.specialAuthorityReason,
+          activities: formData.activities,
+          passengers: formData.passengers,
+          drivers: formData.drivers,
+          routes: formData.routes,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to submit request');
+      }
+
+      const data = await res.json();
+      router.push(`/dashboard/requests/${data.request.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to submit request. Please try again.');
     } finally {
       setSubmitting(false);
     }

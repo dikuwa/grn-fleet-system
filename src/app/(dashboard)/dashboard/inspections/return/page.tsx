@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -57,19 +57,19 @@ export default function ReturnInspectionPage() {
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const updateResult = useCallback((id: string, result: 'pass' | 'fail' | 'na') => {
+  const updateResult = (id: string, result: 'pass' | 'fail' | 'na') => {
     setChecklist((prev) =>
       prev.map((item) =>
         item.id === id ? { ...item, result, defectDescription: result === 'fail' ? item.defectDescription || 'Defect found' : '', isBlocking: result === 'fail' && item.isCritical ? true : item.isBlocking } : item,
       ),
     );
-  }, []);
+  };
 
-  const updateDefect = useCallback((id: string, field: 'defectDescription' | 'defectSeverity' | 'isBlocking', value: string | boolean) => {
+  const updateDefect = (id: string, field: 'defectDescription' | 'defectSeverity' | 'isBlocking', value: string | boolean) => {
     setChecklist((prev) =>
       prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)),
     );
-  }, []);
+  };
 
   const grouped = checklist.reduce(
     (acc, item) => {
@@ -84,16 +84,40 @@ export default function ReturnInspectionPage() {
   const failsNeedingDescription = checklist.filter((i) => i.result === 'fail' && !i.defectDescription.trim());
   const canComplete = odometer.length > 0 && criticalFails === 0 && failsNeedingDescription.length === 0;
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      setIsSubmitting(true);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      setIsSubmitting(false);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const res = await fetch('/api/inspections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'return',
+          odometerReading: Number(odometer),
+          fuelLevel,
+          vehicleId: '',
+          checklist: checklist.map((item) => ({
+            label: item.label,
+            result: item.result,
+            isCritical: item.isCritical,
+            defectDescription: item.defectDescription,
+            defectSeverity: item.defectSeverity,
+            isBlocking: item.isBlocking,
+          })),
+          notes,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to complete inspection');
+      }
       router.push('/dashboard/inspections');
-    },
-    [router],
-  );
+    } catch (err) {
+      console.error('Inspection failed:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">

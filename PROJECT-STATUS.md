@@ -126,6 +126,10 @@
 
 ## Completed — Latest Round
 
+- [x] **Doc gen wired to API routes** — 4 lifecycle routes (transport-requests, allocations, inspections, trips/[id]/close) each call `onRequestSubmitted`/`onTripIssued`/`onInspectionCompleted`/`onTripClosed` after successful DB writes
+- [x] **Middleware→Proxy rename** — `src/middleware.ts` → `src/proxy.ts`, function renamed from `middleware` to `proxy` (Next.js 16 convention, resolves deprecation warning)
+- [x] **Client forms wired to real APIs** — Requests, allocations, and inspection forms now post to new API endpoints instead of simulating
+- [x] **E2E offline draft tests** — `src/e2e/offline-drafts.spec.ts` Playwright tests
 - [x] **Offline draft auto-sync** — `syncPendingDrafts()` engine + `OfflineSyncHandler` component (triggers on `online` event + 60s poll, wired into dashboard shell)
 - [x] **Auth integration tests** — `src/test/auth.integration.test.ts` (sign-in, session, middleware, tenant resolution; runs via `pnpm test:integration`)
 - [x] **Document generation service** — `src/lib/document-generator.ts` with 5 snapshot builders + lifecycle triggers (transport request, trip authority, inspection report, fuel summary, trip completion)
@@ -134,21 +138,20 @@
 
 ## Up Next
 
-- [ ] Wire document generation triggers into actual trip/request lifecycle API routes
-- [ ] Resolve Next.js 16 middleware deprecation warning (middleware → proxy convention)
 - [ ] Run integration tests against live DB + server
-- [ ] Test offline draft sync with real API endpoints
+- [ ] Fuel form `employeeNumber` — wire real session user lookup
+- [ ] Service worker production-only registration — enable in dev for debugging
+- [ ] SMS provider integration (adapter done, no real provider configured)
+- [ ] JSON Schema document validation
 
 ## Known Gaps
 
 - Client-side tenantId still hardcoded in fetch bodies (server-side session overrides these)
 - Fuel form `employeeNumber` is empty string — personal reimbursement claimant lookup won't work
-- Document generation not wired to trip/request lifecycle API routes yet (service layer done)
 - Service worker only registers in production mode
 - No tenant isolation on queries (requires auth session)
 - JSON Schema document validation not yet integrated
 - No real SMS provider integration (adapter placeholder only)
-- Middleware deprecation warning (middleware → proxy convention) not yet resolved
 - Integration tests require live DB + server; not part of CI
 
 ## Blockers

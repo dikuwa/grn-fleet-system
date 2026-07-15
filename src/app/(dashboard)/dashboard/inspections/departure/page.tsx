@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -69,9 +69,9 @@ export default function DepartureInspectionPage() {
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const updateResult = useCallback((id: string, result: 'pass' | 'fail' | 'na') => {
+  const updateResult = (id: string, result: 'pass' | 'fail' | 'na') => {
     setChecklist((prev) => prev.map((item) => (item.id === id ? { ...item, result } : item)));
-  }, []);
+  };
 
   const grouped = checklist.reduce(
     (acc, item) => {
@@ -85,16 +85,37 @@ export default function DepartureInspectionPage() {
   const criticalFails = checklist.filter((i) => i.isCritical && i.result === 'fail').length;
   const canComplete = odometer.length > 0 && criticalFails === 0;
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      setIsSubmitting(true);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      setIsSubmitting(false);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const res = await fetch('/api/inspections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'departure',
+          odometerReading: Number(odometer),
+          fuelLevel,
+          vehicleId: '',
+          checklist: checklist.map((item) => ({
+            label: item.label,
+            result: item.result,
+            isCritical: item.isCritical,
+          })),
+          notes,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to complete inspection');
+      }
       router.push('/dashboard/inspections');
-    },
-    [router],
-  );
+    } catch (err) {
+      console.error('Inspection failed:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">

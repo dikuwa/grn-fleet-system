@@ -37,11 +37,30 @@ export default function NewAllocationPage() {
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    // Simulate API call — replace with real DB insert
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setIsSubmitting(false);
-    router.push('/dashboard/allocations');
-  }, [router]);
+    try {
+      const res = await fetch('/api/allocations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestReference: formData.requestReference,
+          vehicleGrn: formData.vehicleGrn,
+          startDate: formData.startDate,
+          endDate: formData.endDate,
+          notes: formData.notes,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to create allocation');
+      }
+      const data = await res.json();
+      router.push(`/dashboard/allocations/${data.allocation.id}`);
+    } catch (err) {
+      console.error('Allocation failed:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [formData, router]);
 
   return (
     <div className="space-y-6">
