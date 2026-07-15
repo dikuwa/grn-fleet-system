@@ -6,85 +6,79 @@
 - **Implementation execution:** CONTINUOUS AUTO-BUILD
 - **VibeKit/JB:** A — full foundation with documented exceptions
 - **Discovery approval:** Approved 2026-07-14
-- **Current phase:** Phase 0 — Repository and verified foundation (COMPLETE)
+- **Current phase:** Phase 11 — Documents, PWA and API routes (COMPLETE)
 - **Deployment:** Not deployed
+- **Database:** Schema in sync, seed ready, needs credentials
 
 ## Completed
 
-- [x] Raw idea reviewed
-- [x] Visual references reviewed
-- [x] Programme activity, logsheet, trip authority and fuel receipt analysed
-- [x] Staff-import source reviewed and inconsistency risk recorded
-- [x] Approval workflows confirmed
-- [x] Tenancy, notifications, inspections, fuel, sharing, security and retention decisions confirmed
-- [x] Documentation package generated
-- [x] Git repository initialised
-- [x] Next.js 16.2.10 project scaffolded with TypeScript strict mode
-- [x] All core dependencies installed (pnpm 10.12.4)
-- [x] Prettier, ESLint, Vitest and Playwright configured
-- [x] Drizzle ORM configured with Neon PostgreSQL
-- [x] Environment validation (.env.example) created
-- [x] CI configuration (GitHub Actions) created
-- [x] Onest font, design tokens and global styles configured
-- [x] Landing page with features, how-it-works and pilot sections
-- [x] Base layout with providers (QueryClient, Toast)
-- [x] Utility functions (cn, formatNumber, formatCurrency, formatDate, etc.)
-- [x] Application constants and status definitions
-- [x] Radix UI Toast component
-- [x] Type-check, lint, tests and production build all pass
-- [x] Architecture.md updated with implemented versions
-- [x] Lockfile generated and committed
+### Phase 0 — Foundation
+- [x] Git repository, pnpm, Next.js 16, TypeScript strict mode
+- [x] Prettier, ESLint, Vitest, Playwright, Drizzle ORM
+- [x] Environment validation, CI config, design tokens, landing page
 
-## Completed
+### Phase 1 — Design System
+- [x] Onest font, design tokens, global styles
+- [x] Base layout, providers, utility functions, constants
+- [x] UI components (Card, Button, Input, Badge, Dialog, Toast, etc.)
 
-- [x] Phase 2 — Database schema, authentication, tenancy and RBAC
+### Phase 2 — Database Schema, Auth, RBAC
+- [x] 30+ Drizzle tables across 11 schema files
+- [x] Better Auth, permission codes, 9 role definitions
+- [x] Tenant resolver, seed data for Kavango East
 
-All 30+ Drizzle ORM tables defined across 11 schema files. Better Auth configured with password-only flow, no public sign-up. Permission constants (30+ codes) and 9 role definitions matching permission matrix. Tenant resolver, scoped query helper, RLS context utilities. Full seed data for Kavango East tenant.
+### Phase 3 — Staff & Offices
+- [x] Staff directory, employee detail, office tree
+- [x] CSV import wizard (upload → mapping → preview → commit)
 
-## Completed
+### Phase 4 — Fleet & Defects
+- [x] Fleet list/detail, defect tracking, maintenance history
+- [x] CSV parser upgraded to papaparse
 
-- [x] Phase 3 — Staff directory, offices, departments and CSV import
+### Phase 5 — Transport Requests
+- [x] Request list/detail, 5-step new-request wizard
 
-DB-backed staff directory with search, filters, pagination. Employee detail with profile, licences, documents. Hierarchical office tree view. CSV import wizard (upload → column mapping → preview → commit). Import history with batch listing.
+### Phase 6 — Trips & Allocations
+- [x] DB-backed trip list/detail, CSV import API route
 
-## Completed
+### Phase 7–8 — Allocations & Inspections
+- [x] Allocation list/detail/new, inspection list/departure/return
 
-- [x] Phase 4 — Fleet, defects, maintenance and CSV parser fix
+### Phase 9 — Fuel Management
+- [x] Fuel list/detail/new, reimbursements list
 
-Fleet vehicle list with search, filters, pagination, summary cards, defect/maintenance counts. Vehicle detail with 4-tab interface (documents, defects, maintenance, odometer history). Cross-fleet defect tracking with severity sorting and open/resolved filtering. Maintenance history with cost summary and upcoming services tracking. CSV parser upgraded from naive split(',') to papaparse.
+### Phase 10 — Approval Workflow
+- [x] Approvals list/detail, action form with approve/return/reject
 
-## Completed
-
-- [x] Phase 5 — Transport requests and route calculation
-
-Transport request list with search/filters/pagination, status badges, summary cards, proper error boundaries. Request detail with activities, passengers/drivers, routes with distance display. New request 5-step wizard: basic info → activities → passengers & drivers → route → review.
-
-## Completed
-
-- [x] Phase 7 — Allocations, inspections and gap fixes
-- [x] Phase 9 — Fuel management and reimbursement
-- [x] Phase 10 — Approval workflow engine
-
-DB-backed fuel list with search/payment-method/anomaly filters, summary cards, proper error boundaries. Fuel transaction detail with unit price, anomaly status, reimbursement card, receipts. New fuel entry form. Reimbursements list with state filters. Workflow approvals list with status/scope badges, step info. Approval detail with full timeline showing step completion, action history, emergency override banner. Approval action form with approve/return/reject options and comment field. All lint clean (0 warnings).
+### Phase 11 — Documents, PWA & API Routes
+- [x] `POST /api/fuel` — Fuel transaction + auto-reimbursement
+- [x] `POST /api/reimbursements` — Reimbursement claim creation
+- [x] `POST /api/approvals/[id]/action` — Workflow action engine
+- [x] Documents list + detail pages (DB-backed, filters, summary cards)
+- [x] PWA manifest, service worker, offline caching
+- [x] Critical bug fixes (approval step query, fuel vehicle lookup, SW JS syntax, manifest icon type)
 
 ## Up Next
 
-- [ ] Phase 11 — Notifications and document sharing
-- [ ] Phase 12 — Reporting and analytics
-- [ ] Phase 13 — Deployment preparation
+- [ ] Phase 12 — Reporting, analytics, audit integrity
+- [ ] Phase 13 — Deployment preparation, final polish
 
-## Known Gaps (Phase 7–8)
+## Known Gaps
 
-- All form submissions are stubbed — need real DB insert
-- Tenant isolation not yet enforced on queries (requires auth session)
-- No vehicle recommendation scoring on allocation page
-- No inspection template management UI
-- CSV import API uses dummy tenantId until auth is wired
+- All form submissions use hardcoded `userId: 'system'` and `tenantId` — requires auth session wiring
+- Fuel form `employeeNumber` is hardcoded empty — personal reimbursement claimant lookup won't work
+- Document generation not wired to trip/request lifecycle events
+- Share link creation/revocation UI exists but no real token hashing or verification page
+- PWA offline draft storage (Dexie/IndexedDB) not implemented
+- Service worker only registers in production mode
+- No email/in-app notification on workflow actions
+- No tenant isolation on queries (requires auth session)
+- JSON Schema document validation not yet integrated
+- No real SMS provider integration (adapter placeholder only)
+- Testing not yet executed (need DB credentials)
 
 ## Blockers
 
-None. Credentials may be added during implementation through placeholders and setup instructions.
-
-## Next action
-
-Proceed to Phase 11 — Notifications and document sharing.
+- Database seed requires `DATABASE_URL` and `DATABASE_DIRECT_URL` (Neon Postgres credentials)
+- Form submissions and DB pages require connected database
+- No user authentication — all requests use `userId: 'system'`

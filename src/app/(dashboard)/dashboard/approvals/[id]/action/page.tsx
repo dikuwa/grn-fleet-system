@@ -17,11 +17,26 @@ export default function ApprovalActionPage() {
 
   const handleAction = useCallback(async (actionType: string) => {
     setIsSubmitting(true);
-    // Simulate API call — will be replaced with real workflow engine
-    console.log(`Action: ${actionType}, Comment: ${comment}`);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setIsSubmitting(false);
-    router.push(`/dashboard/approvals/${params.id}`);
+    try {
+      const res = await fetch(`/api/approvals/${params.id}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actionType,
+          comment: comment || null,
+          userId: 'system',
+          isActing: false,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Action failed');
+      }
+      router.push(`/dashboard/approvals/${params.id}`);
+    } catch (err) {
+      console.error('Approval action failed:', err);
+      setIsSubmitting(false);
+    }
   }, [params.id, router, comment]);
 
   return (

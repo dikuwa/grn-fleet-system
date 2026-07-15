@@ -1,66 +1,55 @@
 # Changelog
 
-## 2026-07-14 — Phase 9: Fuel management and Phase 10: Approval workflow
+## 2026-07-15 — Phase 11: Documents, PWA, API routes and gap fixes
 
 ### Added
 
-**Phase 9 — Fuel Management**
+**API Routes (real DB-backed)**
 
-**Fuel Records List**
-- DB-backed server component with search (GRN, station, reference), payment method and anomaly state filters, pagination
-- Summary cards (transactions, total volume, total cost, flagged count)
-- Payment method badges (Fuel Card, Cash, Personal Reimbursement)
-- Anomaly state indicator (flagged entries highlighted with error styling)
-- Proper error boundary: `isDbConnected()` check + try/catch fallback
+- `POST /api/fuel` — Creates fuel transaction with vehicle GRN→UUID resolution, auto-creates reimbursement for personal payment method, employee number lookup for claimant
+- `POST /api/reimbursements` — Creates reimbursement claim linked to fuel transaction, employee lookup by employee number
+- `POST /api/approvals/[id]/action` — Records workflow action (approve/reject/return), advances/cancels workflow instance, validates current step and status, properly filters by currentStepOrder
 
-**Fuel Transaction Detail**
-- Full transaction summary with vehicle info, payment method, anomaly badge, verification status
-- Transaction details panel (fuel type, litres, amount, unit price calculation, fill type, odometer)
-- Anomaly status panel with notes display and verification indicator
-- Reimbursement card (amount, state, paid date, notes) when linked to a personal expense claim
-- Receipts section with file names and verification badges
+**Phase 11 — Documents**
 
-**New Fuel Entry Form**
-- Client component with vehicle, trip, station, fuel type, litres, amount, odometer, payment method, fill type inputs
-- Payment method and fill type selectors
-- Receipt reference and notes fields
+**Documents List Page**
+- DB-backed server component with search (document type), type dropdown (transport_request, trip_authority, etc.), status filter (draft/issued/superseded), pagination
+- Summary cards (total, issued, drafts, superseded counts)
+- Document rows with type icon, version, status badge, creation date
+- Proper error boundary: `isDbConnected()` check + try/catch fallback (eslint-disabled for this server component pattern)
 
-**Reimbursements List**
-- DB-backed server component with state filters (pending/approved/paid/rejected), pagination
-- Summary cards (total claims, pending count, total amount)
-- Claimant name, vehicle GRN, date display
+**Document Detail Page**
+- Status card with icon/color based on status (draft/issued/superseded)
+- A4-format document preview with tenant header, snapshot data rendering
+- Document metadata panel (type, version, template, status, redaction profile, hash, creator, timestamp)
+- Secure sharing section with active share links display (expiry date, view count, revoke action)
+- Version history card for superseded documents
 
-**Phase 10 — Approval Workflow**
+**PWA (Progressive Web App)**
 
-**Approvals List**
-- DB-backed server component with status filters, pagination
-- Summary cards (total workflows, active/awaiting action, completed counts)
-- Workflow instance rows with request reference, status badge, scope badge, step info, requester name
-- Proper error boundary: `isDbConnected()` check + try/catch fallback
-
-**Approval Detail**
-- Full workflow summary card with status badge, scope badge, step progression
-- Workflow timeline showing all steps with completion status
-- Each step shows: icon (checkmark/arrow/pending dot), label, description, action result badge
-- Action history table with all recorded decisions
-- Emergency override banner when applicable
-- "Take Action" button when workflow is active
-
-**Approval Action Form**
-- Client component with 3 action options: Approve (success style), Return for Changes (pending style), Reject (error style)
-- Comment textarea for recording decision notes
-- Loading spinner during submission processing
+- `public/manifest.json` — Full manifest with app name, icons (SVG), shortcuts (Dashboard, Requests, Trips, Fuel), standalone display, brand colors
+- `public/sw.js` — Service worker with network-first strategy for API/data, cache-first for static assets (Next.js chunks, icons, manifest), offline fallback responses, stale-while-revalidate for navigations
+- `src/components/layout/service-worker-registration.tsx` — Client component registering SW in production
+- Root layout update — `manifest`, `appleWebApp`, `mobile-web-app-capable` metadata; `<link rel="manifest">`, PWA meta tags, ServiceWorkerRegistration
 
 ### Fixed
-- Unused imports cleaned across all Phase 9–10 files (reimbursements, trips, employees, CreditCard, AlertTriangle, workflowActions, StatusBadge)
-- Unescaped entities in JSX fixed (`react/no-unescaped-entities`)
 
-### Known Gaps (Phase 9–10)
-- All form submissions are stubbed — need real DB insert
-- Fuel receipt image upload not implemented
-- Workflow engine not wired to actually advance request statuses
-- No tenant isolation on queries (requires auth session)
-- No email/in-app notification on workflow actions
+- **Bug: `/api/approvals/[id]/action`** — Current step query now correctly filters by `currentStepOrder` using `and()` instead of just ordering by `stepOrder` and getting the first result
+- **Bug: `/api/fuel`** — Now accepts `vehicleGrn` (GRN number string) with vehicle UUID lookup; `claimantEmployeeId` in reimbursement auto-creation uses proper employee number lookup; dynamic `import()` replaced with static import
+- **Bug: Form sending UUID without lookup** — Fuel new entry form sends `vehicleGrn` (string) not raw UUID
+- **Bug: `sw.js` TypeScript annotations** — Rewritten as plain JavaScript (no `/// <reference>`, no `ExtendableEvent`/`FetchEvent` type annotations, `var`/`function` syntax)
+- **Bug: `manifest.json` icon type mismatch** — Changed from `.png` with `image/png` to `.svg` with `image/svg+xml`
+- **Lint cleanup** — Unused imports removed from documents page (`CardHeader`, `CardTitle`, `XCircle`, `Plus`, `asc`); false positive `react-hooks/error-boundaries` disabled for server component pattern
+- **Sidebar** — Documents icon changed to `FileSpreadsheet` with proper import
+
+### Known Gaps
+
+- Fuel/approvals form submissions send hardcoded `userId: 'system'` and `tenantId: '000000000001'` — needs real auth session
+- Fuel form `employeeNumber` is empty string — personal reimbursement auto-creation won't find a real employee
+- Document generation (snapshot creation) is not yet wired to any trip/request lifecycle events
+- Share link creation/revocation UI exists but no real token hashing or verification page
+- PWA offline draft storage (Dexie/IndexedDB) not yet implemented
+- Service worker only registers in production mode
 
 ### Commands verified
 

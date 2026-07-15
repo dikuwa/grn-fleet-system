@@ -34,10 +34,36 @@ export default function NewFuelEntryPage() {
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setIsSubmitting(false);
-    router.push('/dashboard/fuel');
-  }, [router]);
+    try {
+      const res = await fetch('/api/fuel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vehicleGrn: formData.vehicleGrn,
+          tripId: null,
+          transactionAt: formData.transactionDate,
+          stationName: formData.stationName,
+          fuelType: formData.fuelType,
+          litres: formData.litres,
+          amount: formData.amount,
+          odometerReading: formData.odometerReading,
+          paymentMethod: formData.paymentMethod,
+          fillType: formData.fillType,
+          recordedByUserId: 'system',
+          employeeNumber: '',
+          tenantId: '00000000-0000-0000-0000-000000000001',
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to record transaction');
+      }
+      router.push('/dashboard/fuel');
+    } catch (err) {
+      console.error('Fuel entry failed:', err);
+      setIsSubmitting(false);
+    }
+  }, [router, formData]);
 
   return (
     <div className="space-y-6">

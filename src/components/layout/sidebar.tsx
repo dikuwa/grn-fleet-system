@@ -16,6 +16,7 @@ import {
   Users,
   Building2,
   CarFront,
+  FileSpreadsheet,
   FileBarChart,
   Bell,
   Settings,
@@ -75,7 +76,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'Documents & Reports',
     items: [
-      { label: 'Documents', href: '/dashboard/documents', icon: FileBarChart },
+      { label: 'Documents', href: '/dashboard/documents', icon: FileSpreadsheet },
       { label: 'Reports', href: '/dashboard/reports', icon: FileBarChart },
     ],
   },
