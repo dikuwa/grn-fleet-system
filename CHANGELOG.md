@@ -233,3 +233,30 @@
 - `pnpm lint` — 0 errors, 0 warnings
 - `pnpm test` — 20/20 passed (13 auth + 7 utils)
 - `pnpm build` — passes (TypeScript compilation succeeds; env validation warnings only)
+
+## 2026-07-15 — Auto-sync offline drafts, auth integration tests, document generator, production secrets
+
+### Added
+
+- **Offline draft auto-sync engine** (`src/lib/offline-sync.ts`) — `syncPendingDrafts()` iterates all pending Dexie drafts, maps each draft type to the correct API endpoint, transforms form data to API payload, submits via fetch, marks synced/failed on result; `fd()` helper for type-safe access to `formData` fields
+- **Sync handler component** (`src/components/ui/offline-sync-handler.tsx`) — Listens for `online` events to trigger sync, polls every 60s, shows toast/summary on sync results
+- **Auth integration tests** (`src/test/auth.integration.test.ts`) — Tests for sign-in flow, session retrieval, middleware redirect, and tenant resolution (runs via `pnpm test:integration`)
+- **Document generation service** (`src/lib/document-generator.ts`) — Builder pattern with snapshot builders for transport requests, trip authorities, inspection reports, fuel summaries, and trip completions; auto-versioning with supersede support; lifecycle trigger helpers (`onRequestSubmitted`, `onTripClosed`, `onTripIssued`, `onInspectionCompleted`)
+- **Document integration tests** (`src/test/documents.integration.test.ts`) — Tests for snapshot structure and status transitions
+- **Production auth secrets** — Generated 32+ char `BETTER_AUTH_SECRET`, `SHARE_TOKEN_PEPPER`, `DOCUMENT_HASH_SECRET`, and `AUDIT_CHAIN_SECRET` via `openssl rand`; set in `.env.local`
+
+### Fixed
+
+- **`src/lib/document-generator.ts`** — Fixed `employees.name` → `sql\`concat_ws(...)\` for first/middle/last name (employees has no `name` column); fixed `vehicles.grn` → `vehicles.grnNumber` and `vehicles.registration` → `vehicles.registrationNumber` across all 3 snapshot builders; moved `inArray` dynamic import to static import; made `DocumentPayload.snapshotData` optional (generated internally by builders)
+- **`vitest.config.ts`** — Added `exclude: ['src/**/*.integration.test.{ts,tsx}', 'node_modules']` to prevent integration tests from being picked up by the main test runner
+- **`watch` hook cleaned up** — Proper cleanup of online/offline event listeners in OfflineSyncHandler
+
+### Changed
+
+- **Dashboard shell** — Wired `OfflineSyncHandler` for background draft sync
+
+### Commands verified
+
+- `pnpm lint` — 0 errors, 0 warnings
+- `pnpm test` — 20/20 passed (13 auth + 7 utils)
+- `pnpm build` — passes (1 middleware deprecation warning, cosmetic)

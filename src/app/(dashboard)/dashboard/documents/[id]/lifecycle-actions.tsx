@@ -15,8 +15,6 @@ export function DocumentLifecycleActions({ documentId, currentStatus }: Props) {
 
   const handleAction = useCallback(async (act: 'issue' | 'supersede') => {
     setAction(act);
-    setError(null);
-    setSuccess(null);
 
     try {
       const res = await fetch(`/api/documents/${documentId}/action`, {
@@ -37,7 +35,8 @@ export function DocumentLifecycleActions({ documentId, currentStatus }: Props) {
       // Reload to show updated status
       setTimeout(() => window.location.reload(), 1000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Action failed');
+      setToast({ type: 'error', message: err instanceof Error ? err.message : 'Action failed' });
+      setTimeout(() => setToast(null), 4000);
     } finally {
       setAction(null);
     }

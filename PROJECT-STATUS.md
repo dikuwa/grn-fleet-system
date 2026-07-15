@@ -124,26 +124,33 @@
 - [x] Production env vars configured (DATABASE_URL, BETTER_AUTH_SECRET, etc.)
 - [x] `vercel.json` created with build/region config
 
+## Completed — Latest Round
+
+- [x] **Offline draft auto-sync** — `syncPendingDrafts()` engine + `OfflineSyncHandler` component (triggers on `online` event + 60s poll, wired into dashboard shell)
+- [x] **Auth integration tests** — `src/test/auth.integration.test.ts` (sign-in, session, middleware, tenant resolution; runs via `pnpm test:integration`)
+- [x] **Document generation service** — `src/lib/document-generator.ts` with 5 snapshot builders + lifecycle triggers (transport request, trip authority, inspection report, fuel summary, trip completion)
+- [x] **Document integration tests** — `src/test/documents.integration.test.ts` (snapshot structure, status transitions)
+- [x] **Production auth secrets** — 32+ char BETTER_AUTH_SECRET, SHARE_TOKEN_PEPPER, DOCUMENT_HASH_SECRET, AUDIT_CHAIN_SECRET
+
 ## Up Next
 
-- [ ] Offline draft auto-sync (auto-submit drafts when connectivity resumes)
-- [ ] True auth integration tests against live API routes
-- [ ] Document generation wired to trip/request lifecycle events
+- [ ] Wire document generation triggers into actual trip/request lifecycle API routes
 - [ ] Resolve Next.js 16 middleware deprecation warning (middleware → proxy convention)
-- [ ] Production-grade BETTER_AUTH_SECRET (currently min length relaxed for dev)
+- [ ] Run integration tests against live DB + server
+- [ ] Test offline draft sync with real API endpoints
 
 ## Known Gaps
 
-- Offline draft auto-sync not implemented (manual "Save Draft" + re-submit only)
-- Auth tests are unit tests with mocks, not integration tests against live API
 - Client-side tenantId still hardcoded in fetch bodies (server-side session overrides these)
 - Fuel form `employeeNumber` is empty string — personal reimbursement claimant lookup won't work
-- Document generation not wired to trip/request lifecycle events
+- Document generation not wired to trip/request lifecycle API routes yet (service layer done)
 - Service worker only registers in production mode
 - No tenant isolation on queries (requires auth session)
 - JSON Schema document validation not yet integrated
 - No real SMS provider integration (adapter placeholder only)
+- Middleware deprecation warning (middleware → proxy convention) not yet resolved
+- Integration tests require live DB + server; not part of CI
 
 ## Blockers
 
-- None — auth wiring, offline support, email notifications, share links, and document lifecycle are all implemented
+- None
