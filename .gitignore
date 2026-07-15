@@ -46,3 +46,6 @@
 .vscode
 *.swp
 *.swo
+
+# Sentry Config File
+.env.sentry-build-plugin

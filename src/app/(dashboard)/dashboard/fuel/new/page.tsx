@@ -107,7 +107,6 @@ export default function NewFuelEntryPage() {
           paymentMethod: formData.paymentMethod,
           fillType: formData.fillType,
           recordedByUserId: session?.user?.id || 'system',
-          employeeNumber: '',
           tenantId: '00000000-0000-0000-0000-000000000001',
         }),
       });
