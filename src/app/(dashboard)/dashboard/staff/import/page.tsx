@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
+import { useSession } from '@/lib/auth-client';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -40,6 +41,7 @@ const STAFF_TEMPLATE_COLUMNS = [
 ] as const;
 
 export default function StaffImportPage() {
+  const { data: session } = useSession();
   const [step, setStep] = useState<Step>('upload');
   const [fileName, setFileName] = useState<string>('');
   const [rows, setRows] = useState<ImportRow[]>([]);
@@ -137,7 +139,7 @@ export default function StaffImportPage() {
         body: JSON.stringify({
           rows: payload,
           tenantId: '00000000-0000-0000-0000-000000000000',
-          userId: 'system',
+          userId: session?.user?.id || 'system',
         }),
       });
 
@@ -149,11 +151,12 @@ export default function StaffImportPage() {
       setStep('complete');
     } catch (err) {
       console.error('Import failed:', err);
+      console.error('Import failed:', err);
       setStep('preview');
     } finally {
       setIsCommitting(false);
     }
-  }, [rows, columnMapping]);
+  }, [rows, columnMapping, session]);
 
   const totalValidRows = rows.filter((r) => r.errors.length === 0).length;
   const totalErrorRows = rows.filter((r) => r.errors.length > 0).length;

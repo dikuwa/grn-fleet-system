@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { workflowInstances, workflowSteps, workflowActions } from '@/db/schema/workflows';
 import { eq, and } from 'drizzle-orm';
+import { getServerSessionFromRequest } from '@/lib/session';
 
 export async function POST(
   request: NextRequest,
@@ -11,7 +12,12 @@ export async function POST(
     const { id } = await params;
     const db = getDb();
     const body = await request.json();
-    const { actionType, comment, userId, isActing } = body;
+
+    // Get authenticated user session (fall back to body values for dev)
+    const session = await getServerSessionFromRequest(request);
+    const userId = session?.user?.id || body.userId || 'system';
+
+    const { actionType, comment, isActing } = body;
 
     if (!actionType || !userId) {
       return NextResponse.json(

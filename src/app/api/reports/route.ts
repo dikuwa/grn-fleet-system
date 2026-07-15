@@ -1,17 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions, reimbursements } from '@/db/schema/trips';
-import { vehicles } from '@/db/schema/fleet';
-import { trips } from '@/db/schema/trips';
+import { fuelTransactions, reimbursements, trips } from '@/db/schema/trips';
+import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
-import { maintenanceEvents } from '@/db/schema/fleet';
 import { sql, eq, and, gte, count } from 'drizzle-orm';
+import { getServerSessionFromRequest } from '@/lib/session';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const reportType = searchParams.get('type') || 'fuel';
-    const tenantId = searchParams.get('tenantId') || '00000000-0000-0000-0000-000000000001';
+
+    // Get tenant from session (fall back to query param for dev)
+    const session = await getServerSessionFromRequest(request);
+    const tenantId = session?.tenantId || searchParams.get('tenantId') || '00000000-0000-0000-0000-000000000001';
+
     const period = searchParams.get('period') || '30d';
 
     // Calculate date range

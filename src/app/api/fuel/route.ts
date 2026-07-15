@@ -4,11 +4,24 @@ import { fuelTransactions, reimbursements } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { eq } from 'drizzle-orm';
+import { getServerSessionFromRequest } from '@/lib/session';
 
 export async function POST(request: NextRequest) {
   try {
     const db = getDb();
     const body = await request.json();
+
+    // Get authenticated user session (fall back to body values for dev)
+    const session = await getServerSessionFromRequest(request);
+    const recordedByUserId = session?.user?.id || body.recordedByUserId || 'system';
+    const tenantId = session?.tenantId || body.tenantId;
+
+    if (!tenantId) {
+      return NextResponse.json(
+        { error: 'Missing tenantId. Ensure you are logged in or provide a tenantId.' },
+        { status: 400 },
+      );
+    }
 
     const {
       vehicleGrn,
@@ -23,9 +36,7 @@ export async function POST(request: NextRequest) {
       referenceNumber,
       paymentMethod,
       fillType,
-      recordedByUserId,
       employeeNumber,
-      tenantId,
     } = body;
 
     if (!fuelType || !litres || !amount || !paymentMethod || !recordedByUserId || !tenantId) {

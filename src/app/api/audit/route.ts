@@ -2,11 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, desc, count, sql } from 'drizzle-orm';
+import { getServerSessionFromRequest } from '@/lib/session';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const tenantId = searchParams.get('tenantId') || '00000000-0000-0000-0000-000000000001';
+
+    // Get tenant from session (fall back to query param for dev)
+    const session = await getServerSessionFromRequest(request);
+    const tenantId = session?.tenantId || searchParams.get('tenantId') || '00000000-0000-0000-0000-000000000001';
+
     const eventType = searchParams.get('eventType');
     const search = searchParams.get('search');
     const limit = parseInt(searchParams.get('limit') || '50', 10);

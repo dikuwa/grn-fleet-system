@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { notifications, notificationPreferences } from '@/db/schema/notifications';
 import { eq, and, desc, count } from 'drizzle-orm';
+import { getServerSessionFromRequest } from '@/lib/session';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId') || 'system';
-    const tenantId = searchParams.get('tenantId') || '00000000-0000-0000-0000-000000000001';
+
+    // Get session (fall back to query params for dev)
+    const session = await getServerSessionFromRequest(request);
+    const userId = session?.user?.id || searchParams.get('userId') || 'system';
+    const tenantId = session?.tenantId || searchParams.get('tenantId') || '00000000-0000-0000-0000-000000000001';
+
     const type = searchParams.get('type');
     const unreadOnly = searchParams.get('unreadOnly') === 'true';
     const limit = parseInt(searchParams.get('limit') || '50', 10);
@@ -67,7 +72,13 @@ export async function PATCH(request: NextRequest) {
   try {
     const db = getDb();
     const body = await request.json();
-    const { notificationId, userId, tenantId, action } = body;
+
+    // Get session (fall back to body values for dev)
+    const session = await getServerSessionFromRequest(request);
+    const userId = session?.user?.id || body.userId || 'system';
+    const tenantId = session?.tenantId || body.tenantId;
+
+    const { notificationId, action } = body;
 
     if (action === 'mark_read') {
       if (notificationId) {
@@ -103,7 +114,7 @@ export async function PATCH(request: NextRequest) {
         })
         .where(
           and(
-            eq(notificationPreferences.userId, userId || 'system'),
+            eq(notificationPreferences.userId, userId),
             eq(notificationPreferences.tenantId, tenantId),
           ),
         );

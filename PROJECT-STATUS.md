@@ -126,15 +126,17 @@
 
 ## Up Next
 
-- [ ] Auth session wiring — replace hardcoded `userId: 'system'` with real session
 - [ ] Email notification integration (Resend)
 - [ ] PWA offline draft storage (Dexie/IndexedDB)
 - [ ] Document generation lifecycle wiring
-- [ ] Testing execution (unit, integration, E2E)
+- [ ] Share link token hashing and verification page
+- [ ] Add integration tests for auth flow
+- [ ] Migrate middleware to proxy convention (Next.js 16 deprecation)
 
 ## Known Gaps
 
-- All form submissions use hardcoded `userId: 'system'` and `tenantId` — requires auth session wiring
+- Client-side tenantId still hardcoded in fetch bodies (server-side session overrides these)
+- Fuel form `employeeNumber` is empty string — personal reimbursement claimant lookup won't work
 - Fuel form `employeeNumber` is hardcoded empty — personal reimbursement claimant lookup won't work
 - Document generation not wired to trip/request lifecycle events
 - Share link creation/revocation UI exists but no real token hashing or verification page

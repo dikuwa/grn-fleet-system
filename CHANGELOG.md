@@ -153,3 +153,48 @@
 - `pnpm typecheck` — passes (0 errors)
 - `pnpm build` — passes (0 errors)
 - Vercel deployment — successful, app live at https://grn-fleet-system.vercel.app
+
+## 2026-07-15 — Auth session wiring (Better Auth + hardcoded value cleanup)
+
+### Added
+
+- **Better Auth API route** (`src/app/api/auth/[...all]/route.ts`) — Full REST handler via `toNextJsHandler(auth.handler)` supporting sign-in, sign-out, session retrieval, all Better Auth endpoints
+- **Client-side auth client** (`src/lib/auth-client.ts`) — Uses `better-auth/react` with `createAuthClient()`, exports `useSession`, `signIn`, `signOut` hooks
+- **Middleware** (`src/middleware.ts`) — Route protection: public routes pass through, API routes validate auth internally, dashboard routes redirect to `/login` when no session cookie
+- **Server session helpers** (`src/lib/session.ts`) — `getServerSession()` for server components / route handlers, `getServerSessionFromRequest()` for API routes; both resolve the user's primary tenant from `tenantMemberships` table
+- **Login page** — Now calls `signIn.email()` properly, wrapped in `<Suspense>` for `useSearchParams()` in Next.js 16, shows inline error messages
+
+### Changed
+
+- **6 API routes updated** — All now call `getServerSessionFromRequest()` at the top:
+  - `POST /api/fuel` — userId + tenantId from session
+  - `POST /api/import` — userId + tenantId from session
+  - `POST /api/approvals/[id]/action` — userId from session
+  - `GET /api/reports` — tenantId from session
+  - `GET /api/audit` — tenantId from session
+  - `GET/PATCH /api/notifications` — userId + tenantId from session
+  - All fall back to body/query params or hardcoded values when no session exists for development
+- **4 client pages updated** — Use `useSession()` hook for authenticated userId:
+  - Fuel new entry page
+  - Approval action page
+  - Staff import page
+  - Notifications page (also fixed lint warnings, added proper dependency arrays)
+
+### Fixed
+
+- **Notifications page** — Fixed duplicate `fetch` line, unused `eslint-disable` directive, and missing `useEffect`/`useCallback` dependencies
+- **`session.ts`** — Fixed `image` type to accept `undefined`
+
+### Known Gaps (still open)
+
+- PWA offline draft storage (Dexie/IndexedDB) not implemented
+- Email notification integration (Resend) not configured
+- Share link token hashing not implemented
+- Document lifecycle wiring not wired
+- Tenant ID still hardcoded on client pages (server-side overrides via session)
+
+### Commands verified
+
+- `pnpm lint` — 0 errors, 0 warnings
+- `pnpm test` — 7/7 passed
+- `pnpm build` — 0 errors

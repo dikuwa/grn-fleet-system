@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
+import { useSession } from '@/lib/auth-client';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -86,6 +87,7 @@ const entityIcons: Record<string, React.ReactNode> = {
 };
 
 export default function NotificationsPage() {
+  const { data: session } = useSession();
   const [selectedType, setSelectedType] = useState<NotificationType>('all');
   const [filterMode, setFilterMode] = useState<NotificationFilter>('all');
   const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
@@ -93,11 +95,12 @@ export default function NotificationsPage() {
 
   // Attempt to fetch live notifications on mount
   useEffect(() => {
-    fetch('/api/notifications?limit=50')
+    const uid = session?.user?.id || 'system';
+    fetch(`/api/notifications?userId=${uid}&limit=50`)
       .then((res) => res.ok ? res.json() : null)
       .then((json) => {
-        if (!json?.success) return;
-        const apiNotifs = (json.data?.notifications || []).map((n: Record<string, string | boolean>) => ({
+        if (!json?.success || !json?.data) return;
+        const apiNotifs = (json.data.notifications || []).map((n: Record<string, string | boolean>) => ({
           id: n.id as string,
           type: (n.type as Notification['type']) || 'awareness',
           title: n.title as string || 'Notification',
@@ -114,7 +117,7 @@ export default function NotificationsPage() {
         }
       })
       .catch(() => { /* Keep mock data */ });
-  }, []);
+  }, [session?.user?.id]);
 
   const filtered = notifications.filter((n) => {
     const typeMatch = selectedType === 'all' || n.type === selectedType;
@@ -128,17 +131,18 @@ export default function NotificationsPage() {
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   const markAllRead = useCallback(async () => {
+    const userId = session?.user?.id || 'system';
     try {
       await fetch('/api/notifications', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mark_read', userId: 'system', tenantId: '00000000-0000-0000-0000-000000000001' }),
+        body: JSON.stringify({ action: 'mark_read', userId }),
       });
     } catch {
       console.log('Mark all read - offline');
     }
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-  }, []);
+  }, [session?.user?.id]);
 
   return (
     <div className="space-y-6">

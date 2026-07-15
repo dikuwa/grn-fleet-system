@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from '@/lib/auth-client';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ import Link from 'next/link';
 
 export default function NewFuelEntryPage() {
   const router = useRouter();
+  const { data: session } = useSession();
   const [formData, setFormData] = useState({
     vehicleGrn: '',
     tripRef: '',
@@ -49,7 +51,7 @@ export default function NewFuelEntryPage() {
           odometerReading: formData.odometerReading,
           paymentMethod: formData.paymentMethod,
           fillType: formData.fillType,
-          recordedByUserId: 'system',
+          recordedByUserId: session?.user?.id || 'system',
           employeeNumber: '',
           tenantId: '00000000-0000-0000-0000-000000000001',
         }),
@@ -63,7 +65,7 @@ export default function NewFuelEntryPage() {
       console.error('Fuel entry failed:', err);
       setIsSubmitting(false);
     }
-  }, [router, formData]);
+  }, [router, formData, session]);
 
   return (
     <div className="space-y-6">

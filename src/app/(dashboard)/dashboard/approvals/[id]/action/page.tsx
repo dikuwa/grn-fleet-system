@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { useSession } from '@/lib/auth-client';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ import Link from 'next/link';
 export default function ApprovalActionPage() {
   const params = useParams();
   const router = useRouter();
+  const { data: session } = useSession();
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -24,7 +26,7 @@ export default function ApprovalActionPage() {
         body: JSON.stringify({
           actionType,
           comment: comment || null,
-          userId: 'system',
+          userId: session?.user?.id || 'system',
           isActing: false,
         }),
       });
@@ -37,7 +39,7 @@ export default function ApprovalActionPage() {
       console.error('Approval action failed:', err);
       setIsSubmitting(false);
     }
-  }, [params.id, router, comment]);
+  }, [params.id, router, comment, session]);
 
   return (
     <div className="space-y-6">
