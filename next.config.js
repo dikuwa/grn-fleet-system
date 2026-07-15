@@ -8,9 +8,7 @@ const nextConfig = {
       },
     ],
   },
-  experimental: {
-    reactCompiler: false,
-  },
+  reactCompiler: false,
   headers: async () => [
     {
       source: '/sw.js',

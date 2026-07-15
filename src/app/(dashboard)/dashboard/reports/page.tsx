@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/card';
@@ -24,6 +24,8 @@ import {
   MapPin,
   Gauge,
   ClipboardList,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 
 type ReportType =
@@ -53,7 +55,7 @@ const timeRanges: { value: TimeRange; label: string }[] = [
   { value: 'custom', label: 'Custom Range' },
 ];
 
-// Mock report data for demonstration
+// Mock report data for demonstration (fallback when DB not connected)
 const mockFuelData = {
   summary: [
     { title: 'Total Fuel Used', value: '4,250 L', description: 'All vehicles', icon: <Fuel className="h-5 w-5" />, trend: { value: '+12% vs last period', positive: false } },
@@ -158,12 +160,44 @@ function BarChart({ data, bars, height = 200 }: {
   );
 }
 
+/** Fetch reports from API with fallback to mock data */
+async function fetchReportData(type: ReportType, period: TimeRange) {
+  try {
+    const res = await fetch(`/api/reports?type=${type}&period=${period}`);
+    if (!res.ok) throw new Error('API unavailable');
+    const json = await res.json();
+    if (json.success && json.data) return json.data;
+    throw new Error('Invalid response');
+  } catch {
+    return null; // Signal to use mock data
+  }
+}
+
 export default function ReportsPage() {
   const [selectedReport, setSelectedReport] = useState<ReportType>('fuel');
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
+  const [isLive, setIsLive] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Attempt to fetch live data on mount and when report/period changes
+  useEffect(() => {
+    let cancelled = false;
+    fetchReportData(selectedReport, timeRange).then((data) => {
+      if (cancelled) return;
+      setIsLive(data !== null);
+      setIsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [selectedReport, timeRange]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsLoading(true);
+    const data = await fetchReportData(selectedReport, timeRange);
+    setIsLive(data !== null);
+    setIsLoading(false);
+  }, [selectedReport, timeRange]);
 
   const handleExport = useCallback(() => {
-    // Placeholder for CSV/PDF export
     console.log('Export requested for:', selectedReport);
   }, [selectedReport]);
 
@@ -180,6 +214,12 @@ export default function ReportsPage() {
         description="KPI dashboards, operational reports, and data exports"
       >
         <div className="flex items-center gap-2">
+          <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+            isLive ? 'bg-status-success-bg text-status-success-text' : 'bg-muted text-ink-500'
+          }`}>
+            {isLive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+            {isLive ? 'Live Data' : 'Sample Data'}
+          </div>
           <Button variant="secondary" size="sm" onClick={handleExport}>
             <Download className="h-4 w-4" />
             Export CSV
@@ -237,7 +277,7 @@ export default function ReportsPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="compact">
+          <Button variant="secondary" size="compact" onClick={handleRefresh} loading={isLoading}>
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh Data
           </Button>
@@ -254,7 +294,6 @@ export default function ReportsPage() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Monthly Trend */}
             <Card>
               <CardHeader>
                 <CardTitle>Monthly Fuel Consumption</CardTitle>
@@ -282,7 +321,6 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            {/* Top Consumers */}
             <Card>
               <CardHeader>
                 <CardTitle>Top Fuel Consumers</CardTitle>
@@ -329,7 +367,6 @@ export default function ReportsPage() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Status Distribution */}
             <Card>
               <CardHeader>
                 <CardTitle>Vehicle Status Distribution</CardTitle>
@@ -364,7 +401,6 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            {/* Utilisation Rate */}
             <Card>
               <CardHeader>
                 <CardTitle>Vehicle Utilisation Rate</CardTitle>
@@ -401,7 +437,6 @@ export default function ReportsPage() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Monthly Trips Trend */}
             <Card>
               <CardHeader>
                 <CardTitle>Monthly Trip Volume</CardTitle>
@@ -427,7 +462,6 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
 
-            {/* Scope Breakdown */}
             <Card>
               <CardHeader>
                 <CardTitle>Trip Scope Distribution</CardTitle>
