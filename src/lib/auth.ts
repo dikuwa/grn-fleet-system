@@ -16,7 +16,7 @@ export const auth = betterAuth({
       })
     : undefined,
 
-  baseURL: env.BETTER_AUTH_URL || 'http://localhost:3000',
+  baseURL: (env.BETTER_AUTH_URL || 'http://localhost:3000').trim(),
   basePath: '/api/auth',
 
   secret: env.BETTER_AUTH_SECRET || 'dev-secret-change-in-production-min-32-chars!!',
