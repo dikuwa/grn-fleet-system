@@ -223,7 +223,6 @@ export const tripLogEntries = pgTable('trip_log_entries', {
 export const fuelTransactions = pgTable('fuel_transactions', {
   id: uuid('id').primaryKey().defaultRandom(),
   tripId: uuid('trip_id')
-    .notNull()
     .references(() => trips.id, { onDelete: 'cascade' }),
   vehicleId: uuid('vehicle_id')
     .notNull()

@@ -5,6 +5,7 @@ import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { getServerSessionFromRequest } from '@/lib/session';
 import { onTripIssued } from '@/lib/document-generator';
+import { DEFAULT_TENANT_ID } from '@/lib/constants';
 import { eq } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     const db = getDb();
     const session = await getServerSessionFromRequest(req);
     const userId = session?.user.id || body.userId || 'system';
-    const tenantId = session?.tenantId || body.tenantId || '00000000-0000-0000-0000-000000000001';
+    const tenantId = session?.tenantId || body.tenantId || DEFAULT_TENANT_ID;
 
     // Look up request by reference if not a UUID
     if (!resolvedRequestId && requestReference) {

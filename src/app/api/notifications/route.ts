@@ -4,6 +4,8 @@ import { notifications, notificationPreferences, notificationDeliveries } from '
 import { eq, and, desc, count } from 'drizzle-orm';
 import { getServerSessionFromRequest } from '@/lib/session';
 import { sendNotificationEmail } from '@/lib/email';
+import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
+import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,7 +17,7 @@ export async function GET(request: NextRequest) {
     const tenantId =
       session?.tenantId ||
       searchParams.get('tenantId') ||
-      '00000000-0000-0000-0000-000000000001';
+      DEFAULT_TENANT_ID;
 
     const type = searchParams.get('type');
     const unreadOnly = searchParams.get('unreadOnly') === 'true';
@@ -123,7 +125,7 @@ export async function POST(request: NextRequest) {
       })
       .returning();
 
-    // 2. Check delivery preferences and send email if configured
+    // 2. Check delivery preferences and send email + SMS if configured
     const [prefs] = await db
       .select()
       .from(notificationPreferences)
@@ -139,10 +141,12 @@ export async function POST(request: NextRequest) {
       prefs?.emailNotifications !== false && // default true
       recipientEmail;
 
-    let deliveryRecord: typeof notificationDeliveries.$inferSelect | null = null;
+    const isHighPriority = priority === 'high' || priority === 'emergency';
 
+    const deliveryRecords: Array<typeof notificationDeliveries.$inferSelect> = [];
+
+    // Email delivery
     if (shouldSendEmail) {
-      // Send email via Resend
       const emailResult = await sendNotificationEmail({
         to: recipientEmail,
         type,
@@ -153,8 +157,7 @@ export async function POST(request: NextRequest) {
         tenantName,
       });
 
-      // Record delivery attempt
-      [deliveryRecord] = await db
+      const [record] = await db
         .insert(notificationDeliveries)
         .values({
           notificationId: notification.id,
@@ -165,15 +168,15 @@ export async function POST(request: NextRequest) {
           providerId: emailResult.id || null,
         })
         .returning();
+      deliveryRecords.push(record);
     } else {
-      // Record skipped delivery
-      [deliveryRecord] = await db
+      const [record] = await db
         .insert(notificationDeliveries)
         .values({
           notificationId: notification.id,
-          channel: prefs?.emailNotifications === false ? 'email' : 'in_app',
+          channel: 'email',
           attempt: 1,
-          status: prefs?.emailNotifications === false ? 'skipped' : 'pending',
+          status: 'skipped',
           errorSummary: prefs?.emailNotifications === false
             ? 'Email notifications disabled by user preference'
             : recipientEmail
@@ -181,13 +184,54 @@ export async function POST(request: NextRequest) {
               : 'No email address available',
         })
         .returning();
+      deliveryRecords.push(record);
+    }
+
+    // SMS delivery — only for high-priority notifications or if explicitly configured
+    const recipientPhone = body.recipientPhone;
+    const smsEnabled = isSmsEnabled();
+    const shouldSendSms = smsEnabled && (isHighPriority || body.forceSms) && recipientPhone;
+
+    if (shouldSendSms) {
+      const smsResult = await sendNotificationSms(
+        recipientPhone,
+        title,
+        notificationBody || title,
+        tenantName,
+      );
+
+      const [record] = await db
+        .insert(notificationDeliveries)
+        .values({
+          notificationId: notification.id,
+          channel: 'sms',
+          attempt: 1,
+          status: smsResult.success ? 'sent' : 'failed',
+          errorSummary: smsResult.error || null,
+          providerId: smsResult.id || null,
+        })
+        .returning();
+      deliveryRecords.push(record);
+    } else if (smsEnabled && !recipientPhone) {
+      // Record skipped — no phone number
+      const [record] = await db
+        .insert(notificationDeliveries)
+        .values({
+          notificationId: notification.id,
+          channel: 'sms',
+          attempt: 1,
+          status: 'skipped',
+          errorSummary: 'No phone number available for SMS delivery',
+        })
+        .returning();
+      deliveryRecords.push(record);
     }
 
     return NextResponse.json({
       success: true,
       data: {
         notification,
-        delivery: deliveryRecord,
+        deliveries: deliveryRecords,
       },
     });
   } catch (error) {

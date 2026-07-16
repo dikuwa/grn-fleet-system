@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 import { useSession } from '@/lib/auth-client';
+import { DEFAULT_TENANT_ID } from '@/lib/constants';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -138,7 +139,7 @@ export default function StaffImportPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rows: payload,
-          tenantId: '00000000-0000-0000-0000-000000000000',
+          tenantId: DEFAULT_TENANT_ID,
           userId: session?.user?.id || 'system',
         }),
       });
@@ -150,7 +151,6 @@ export default function StaffImportPage() {
 
       setStep('complete');
     } catch (err) {
-      console.error('Import failed:', err);
       console.error('Import failed:', err);
       setStep('preview');
     } finally {

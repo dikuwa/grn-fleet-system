@@ -47,6 +47,16 @@ const envSchema = z.object({
   DOCUMENT_HASH_SECRET: z.string().optional(),
   AUDIT_CHAIN_SECRET: z.string().optional(),
 
+  // SMS Provider (Twilio)
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_PHONE_NUMBER: z.string().optional(),
+
+  // SMS Provider (Vonage)
+  VONAGE_API_KEY: z.string().optional(),
+  VONAGE_API_SECRET: z.string().optional(),
+  VONAGE_FROM_NUMBER: z.string().optional(),
+
   // Feature Flags
   NEXT_PUBLIC_ENABLE_OFFLINE_DRAFTS: z.string().optional().default('true'),
   ENABLE_EXTERNAL_SHARING: z.string().optional().default('false'),

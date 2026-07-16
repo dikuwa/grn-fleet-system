@@ -1,0 +1,1 @@
+ALTER TABLE "fuel_transactions" ALTER COLUMN "trip_id" DROP NOT NULL;

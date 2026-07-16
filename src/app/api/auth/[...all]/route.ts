@@ -1,4 +1,286 @@
-import { auth } from '@/lib/auth';
-import { toNextJsHandler } from 'better-auth/next-js';
+/**
+ * Auth API Route Handler
+ *
+ * Handles sign-in, session, and sign-out using Drizzle directly.
+ * Compatible with the `better-auth/react` client library.
+ *
+ * The Better Auth v1.6.x client sends requests to:
+ *   - POST /api/auth/sign-in/email  → sign-in (not /sign-in)
+ *   - GET  /api/auth/get-session    → session info (not /session)
+ *   - POST /api/auth/sign-out       → sign-out
+ *
+ * This handler matches those paths AND the shorter fallback paths.
+ */
+import { NextRequest, NextResponse } from 'next/server';
+import { getDb } from '@/db';
+import { user, account, session } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
+import bcrypt from 'bcryptjs';
 
-export const { GET, POST, PATCH, PUT, DELETE } = toNextJsHandler(auth.handler);
+function getPathname(request: NextRequest): string {
+  return new URL(request.url).pathname;
+}
+
+function parseCookies(cookieHeader: string | null): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  for (const pair of cookieHeader.split(';')) {
+    const [key, ...rest] = pair.trim().split('=');
+    if (key) cookies[key.trim()] = rest.join('=').trim();
+  }
+  return cookies;
+}
+
+function errorResponse(message: string, status = 400) {
+  return NextResponse.json({ error: message }, { status });
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/sign-in/email  (Better Auth client sends to /sign-in/email)
+// ---------------------------------------------------------------------------
+async function handleSignIn(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { email, password } = body;
+
+    if (!email || !password) {
+      return errorResponse('Email and password are required');
+    }
+
+    const db = getDb();
+
+    // Find user by email
+    const [userRecord] = await db
+      .select()
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
+
+    if (!userRecord) {
+      return NextResponse.json(
+        { error: 'Invalid email or password' },
+        { status: 401 },
+      );
+    }
+
+    // Find account with password hash (Better Auth uses 'email' providerId)
+    const [accountRecord] = await db
+      .select()
+      .from(account)
+      .where(and(
+        eq(account.userId, userRecord.id),
+        eq(account.providerId, 'email'),
+      ))
+      .limit(1);
+
+    if (!accountRecord?.password) {
+      return NextResponse.json(
+        { error: 'No password set for this account' },
+        { status: 401 },
+      );
+    }
+
+    // Verify password
+    const isValid = await bcrypt.compare(password, accountRecord.password);
+    if (!isValid) {
+      return NextResponse.json(
+        { error: 'Invalid email or password' },
+        { status: 401 },
+      );
+    }
+
+    // Create session — Better Auth uses the session token as the primary
+    // identifier. The `id` column in Better Auth's schema IS the token,
+    // but our schema has separate `id` and `token`. We store the token
+    // in BOTH fields for compatibility.
+    const { v4: uuid } = await import('uuid');
+    const token = uuid();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+    await db.insert(session).values({
+      id: token,    // Better Auth convention: session.id = session token
+      token,
+      userId: userRecord.id,
+      expiresAt,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // Better Auth's client expects this response format from sign-in:
+    // { redirect, token, url, user }
+    const response = NextResponse.json({
+      redirect: false,
+      token,
+      url: null,
+      user: {
+        id: userRecord.id,
+        email: userRecord.email,
+        emailVerified: userRecord.emailVerified,
+        name: userRecord.name,
+        image: userRecord.image,
+        createdAt: userRecord.createdAt,
+        updatedAt: userRecord.updatedAt,
+      },
+    });
+
+    // Set the session cookie (Better Auth uses signed cookies, but
+    // the client only checks for the existence of the cookie)
+    response.cookies.set('better-auth.session_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      expires: expiresAt,
+    });
+
+    return response;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[Auth] Sign-in error:', message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/auth/get-session  (Better Auth client sends to /get-session)
+// ---------------------------------------------------------------------------
+async function handleSession(request: NextRequest) {
+  try {
+    const db = getDb();
+    const cookies = parseCookies(request.headers.get('cookie'));
+    const token = cookies['better-auth.session_token'];
+
+    if (!token) {
+      return NextResponse.json({ session: null, user: null });
+    }
+
+    // Find session by token
+    const [sessionRecord] = await db
+      .select()
+      .from(session)
+      .where(eq(session.token, token))
+      .limit(1);
+
+    if (!sessionRecord || new Date(sessionRecord.expiresAt) < new Date()) {
+      return NextResponse.json({ session: null, user: null });
+    }
+
+    // Find user
+    const [userRecord] = await db
+      .select()
+      .from(user)
+      .where(eq(user.id, sessionRecord.userId))
+      .limit(1);
+
+    if (!userRecord) {
+      return NextResponse.json({ session: null, user: null });
+    }
+
+    // Better Auth client expects: { session: { id, expiresAt, userId, ... }, user: { ... } }
+    // Note: session.id is the token in Better Auth's convention
+    return NextResponse.json({
+      user: {
+        id: userRecord.id,
+        email: userRecord.email,
+        emailVerified: userRecord.emailVerified,
+        name: userRecord.name,
+        image: userRecord.image,
+        createdAt: userRecord.createdAt,
+        updatedAt: userRecord.updatedAt,
+      },
+      session: {
+        id: sessionRecord.token,  // Better Auth expects id = token
+        token: sessionRecord.token,
+        userId: sessionRecord.userId,
+        expiresAt: sessionRecord.expiresAt,
+        createdAt: sessionRecord.createdAt,
+        updatedAt: sessionRecord.updatedAt,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[Auth] Session error:', message);
+    return NextResponse.json({ session: null, user: null });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/sign-out
+// ---------------------------------------------------------------------------
+async function handleSignOut(request: NextRequest) {
+  try {
+    const db = getDb();
+    const cookies = parseCookies(request.headers.get('cookie'));
+    const token = cookies['better-auth.session_token'];
+
+    if (token) {
+      await db.delete(session).where(eq(session.token, token));
+    }
+
+    const response = NextResponse.json({ success: true });
+    response.cookies.set('better-auth.session_token', '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 0,
+    });
+
+    return response;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[Auth] Sign-out error:', message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Router — matches Better Auth v1.6.x client paths
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalise a path so trailing slashes are stripped and the `/email`
+ * suffix is collapsed for sign-in so both /sign-in and /sign-in/email
+ * are treated the same.
+ */
+function normalise(path: string): string {
+  let p = path.replace(/\/$/, '');
+  if (p.endsWith('/sign-in/email') || p.endsWith('/sign-in')) {
+    p = '/api/auth/sign-in';
+  }
+  return p;
+}
+
+function route(request: NextRequest): Promise<NextResponse> {
+  const rawPath = getPathname(request);
+  const path = normalise(rawPath);
+  const method = request.method;
+
+  // Sign-in: Better Auth client sends POST /api/auth/sign-in/email
+  if (method === 'POST' && path === '/api/auth/sign-in') {
+    return handleSignIn(request);
+  }
+
+  // Session: Better Auth client sends GET /api/auth/get-session
+  if (
+    method === 'GET' &&
+    (path === '/api/auth/session' ||
+     path === '/api/auth/get-session' ||
+     path === '/api/auth/user')
+  ) {
+    return handleSession(request);
+  }
+
+  // Sign-out: Better Auth client sends POST /api/auth/sign-out
+  if (method === 'POST' && path === '/api/auth/sign-out') {
+    return handleSignOut(request);
+  }
+
+  return Promise.resolve(errorResponse(`Not found: ${method} ${rawPath}`, 404));
+}
+
+export const GET = route;
+export const POST = route;
+export const PATCH = route;
+export const PUT = route;
+export const DELETE = route;

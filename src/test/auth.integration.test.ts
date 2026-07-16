@@ -53,7 +53,7 @@ describe('Auth API — Session', () => {
     // Without cookies, the session endpoint should return no session
     const data = await res.json();
     // Depending on Better Auth config, it may return 200 with null session
-    expect(data.session).toBeUndefined();
+    expect(data.session).toBeNull();
   });
 
   it('rejects sign-in with wrong password', async () => {

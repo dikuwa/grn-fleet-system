@@ -12,6 +12,7 @@
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { trips, fuelTransactions, reimbursements, vehicleInspections, tripClosures } from '@/db/schema/trips';
+import { validateDocumentSnapshot, hasSchema } from '@/lib/document-validation';
 import { transportRequests, requestActivities, requestDrivers } from '@/db/schema/requests';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
@@ -292,6 +293,15 @@ export async function generateDocument(
   if (!snapshotData) {
     console.warn(`[DocGen] No data found for ${entityType}: ${entityId}`);
     return null;
+  }
+
+  // Validate snapshot against document type schema
+  if (hasSchema(documentType)) {
+    const validation = validateDocumentSnapshot(documentType, snapshotData);
+    if (!validation.valid) {
+      console.warn(`[DocGen] Snapshot validation failed for ${documentType}:${entityId}`, validation.errors);
+      // Non-blocking — store the document with a warning, but log the issue
+    }
   }
 
   const db = getDb();

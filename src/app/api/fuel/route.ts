@@ -89,8 +89,7 @@ export async function POST(request: NextRequest) {
       // Resolve claimant employee ID — priority:
       // 1. Provided employeeNumber → look up by employee number
       // 2. Session user ID → look up by employees.userId
-      // 3. Fall back to recordedByUserId (auth user UUID — may not match employee table)
-      let claimantEmployeeId = recordedByUserId;
+      let claimantEmployeeId: string | null = null;
 
       if (employeeNumber) {
         const [emp] = await db
@@ -100,7 +99,6 @@ export async function POST(request: NextRequest) {
           .limit(1);
         if (emp) claimantEmployeeId = emp.id;
       } else if (session?.user?.id) {
-        // Look up employee linked to this auth user
         const [emp] = await db
           .select({ id: employees.id })
           .from(employees)
@@ -109,9 +107,20 @@ export async function POST(request: NextRequest) {
         if (emp) claimantEmployeeId = emp.id;
       }
 
+      if (!claimantEmployeeId) {
+        return NextResponse.json(
+          {
+            error: 'Could not resolve employee for reimbursement. Provide employeeNumber in the request body, or ensure your auth account is linked to an employee record.',
+            transactionCreated: true,
+            transactionId: transaction.id,
+          },
+          { status: 400 },
+        );
+      }
+
       await db.insert(reimbursements).values({
         transactionId: transaction.id,
-        claimantEmployeeId: claimantEmployeeId as string,
+        claimantEmployeeId,
         amount: amount.toString(),
         state: 'pending',
       });

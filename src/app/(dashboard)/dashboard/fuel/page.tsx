@@ -130,6 +130,12 @@ export default async function FuelPage({ searchParams }: PageProps) {
         </Button>
       </PageHeader>
 
+      {sp.warning === 'reimbursement_pending' && (
+        <div className="flex items-center gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+          Fuel transaction saved but reimbursement could not be auto-created. Please link your employee account or contact finance to manually process the reimbursement.
+        </div>
+      )}
+
       {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-4">
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{result.totalCount}</p><p className="text-xs text-ink-500">Transactions</p></CardContent></Card>

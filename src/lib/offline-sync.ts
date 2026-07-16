@@ -10,6 +10,7 @@
 
 import { listDrafts, markDraftSynced, markDraftFailed, removeSyncedDrafts } from '@/lib/offline-drafts';
 import type { OfflineDraft } from '@/lib/offline-drafts';
+import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -50,8 +51,8 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
           paymentMethod: fd(d.formData, 'paymentMethod', 'fuel_card'),
           fillType: fd(d.formData, 'fillType', 'full'),
           recordedByUserId: d.userId || 'system',
-          employeeNumber: '',
-          tenantId: d.tenantId || '00000000-0000-0000-0000-000000000001',
+          employeeNumber: fd(d.formData, 'employeeNumber', '') || undefined,
+          tenantId: d.tenantId || DEFAULT_TENANT_ID,
         }),
       };
 

@@ -3,6 +3,7 @@ import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, desc, count, sql } from 'drizzle-orm';
 import { getServerSessionFromRequest } from '@/lib/session';
+import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
 
     // Get tenant from session (fall back to query param for dev)
     const session = await getServerSessionFromRequest(request);
-    const tenantId = session?.tenantId || searchParams.get('tenantId') || '00000000-0000-0000-0000-000000000001';
+    const tenantId = session?.tenantId || searchParams.get('tenantId') || DEFAULT_TENANT_ID;
 
     const eventType = searchParams.get('eventType');
     const search = searchParams.get('search');

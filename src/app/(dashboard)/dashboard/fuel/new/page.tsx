@@ -7,9 +7,10 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
-import { ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, Save, WifiOff, User } from 'lucide-react';
 import Link from 'next/link';
 import { saveDraft, deleteDraft } from '@/lib/offline-drafts';
+import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
 export default function NewFuelEntryPage() {
   const router = useRouter();
@@ -27,6 +28,7 @@ export default function NewFuelEntryPage() {
     paymentMethod: 'fuel_card',
     fillType: 'full',
     notes: '',
+    employeeNumber: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
@@ -57,8 +59,8 @@ export default function NewFuelEntryPage() {
         draftType: 'fuel',
         formData: formData as unknown as Record<string, unknown>,
         userId: session?.user?.id || null,
-        tenantId: '00000000-0000-0000-0000-000000000001',
-        syncStatus: isOnline ? 'pending' : 'pending',
+        tenantId: DEFAULT_TENANT_ID,
+        syncStatus: 'pending',
       });
       setDraftId(draft.id);
       setDraftSaved(true);
@@ -78,9 +80,9 @@ export default function NewFuelEntryPage() {
         await saveDraft({
           id: draftId || undefined,
           draftType: 'fuel',
-          formData: formData as unknown as Record<string, unknown>,
+          formData: { ...formData, employeeNumber: formData.employeeNumber } as unknown as Record<string, unknown>,
           userId: session?.user?.id || null,
-          tenantId: '00000000-0000-0000-0000-000000000001',
+          tenantId: DEFAULT_TENANT_ID,
           syncStatus: 'pending',
         });
         router.push('/dashboard/fuel');
@@ -106,13 +108,22 @@ export default function NewFuelEntryPage() {
           odometerReading: formData.odometerReading,
           paymentMethod: formData.paymentMethod,
           fillType: formData.fillType,
+          employeeNumber: formData.paymentMethod === 'personal_reimbursement' ? formData.employeeNumber || undefined : undefined,
           recordedByUserId: session?.user?.id || 'system',
-          tenantId: '00000000-0000-0000-0000-000000000001',
+          tenantId: DEFAULT_TENANT_ID,
         }),
       });
+      const data = await res.json();
+
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to record transaction');
+        // Partial success — transaction was created but reimbursement setup failed
+        if (data.transactionCreated) {
+          // Transaction saved, redirect with warning about reimbursement
+          if (draftId) await deleteDraft(draftId);
+          router.push('/dashboard/fuel?warning=reimbursement_pending');
+          return;
+        }
+        throw new Error(data.error || 'Failed to record transaction');
       }
       // Clean up draft if it exists
       if (draftId) await deleteDraft(draftId);
@@ -167,6 +178,9 @@ export default function NewFuelEntryPage() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5"><Label required>Fill Type</Label><select value={formData.fillType} onChange={(e) => updateForm({ fillType: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"><option value="full">Full Tank</option><option value="partial">Partial Fill</option></select></div>
+              {formData.paymentMethod === 'personal_reimbursement' && (
+                <div className="space-y-1.5"><Label required>Employee Number</Label><Input placeholder="Your employee number for reimbursement" value={formData.employeeNumber} onChange={(e) => updateForm({ employeeNumber: e.target.value })} required={formData.paymentMethod === 'personal_reimbursement'} /></div>
+              )}
             </div>
             <div className="space-y-1.5"><Label>Notes</Label><Textarea placeholder="Any additional notes..." value={formData.notes} onChange={(e) => updateForm({ notes: e.target.value })} /></div>
           </CardContent>

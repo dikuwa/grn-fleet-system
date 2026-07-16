@@ -5,6 +5,7 @@ import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { sql, eq, and, gte, count } from 'drizzle-orm';
 import { getServerSessionFromRequest } from '@/lib/session';
+import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest) {
 
     // Get tenant from session (fall back to query param for dev)
     const session = await getServerSessionFromRequest(request);
-    const tenantId = session?.tenantId || searchParams.get('tenantId') || '00000000-0000-0000-0000-000000000001';
+    const tenantId = session?.tenantId || searchParams.get('tenantId') || DEFAULT_TENANT_ID;
 
     const period = searchParams.get('period') || '30d';
 

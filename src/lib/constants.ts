@@ -1,3 +1,6 @@
+/** Default tenant ID used in seed data — fallback when no session is available */
+export const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+
 export const APP_NAME = 'GovFleet Namibia';
 export const APP_SHORT_NAME = 'GovFleet';
 export const APP_DESCRIPTION = 'Namibia Government Fleet Management System';

@@ -15,6 +15,7 @@ import { getDb } from '@/db';
 import {
   tenants,
   tenantBranding,
+  tenantMemberships,
   roles,
   permissions,
   rolePermissions,
@@ -25,9 +26,12 @@ import {
   vehicles,
   workflowDefinitions,
   workflowSteps,
+  user,
+  account,
 } from '@/db/schema';
 import { Permissions, RoleDefinitions } from '@/lib/permissions';
 import { eq } from 'drizzle-orm';
+import bcrypt from 'bcryptjs';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -254,15 +258,52 @@ async function seed() {
     { definitionId: nationalDef.id, stepOrder: 5, actionType: 'acknowledge', requiredPermission: Permissions.DRIVER_LOG_CREATE, label: 'Driver Acknowledgement', allowsEmergencyOverride: false },
   ]);
 
+  // 12. Create login accounts
+  console.log('Creating login accounts...');
+  const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'changeme';
+  const adminUserId = 'user-seed-admin-001';
+
+  // Hash the password for Better Auth's account table
+  const passwordHash = await bcrypt.hash(adminPassword, 10);
+
+  // Insert Better Auth user record
+  await db.insert(user).values({
+    id: adminUserId,
+    email: adminEmail,
+    emailVerified: true,
+    name: 'Kandjimi Amupanda',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }).onConflictDoNothing();
+
+  // Insert Better Auth account record with password hash
+  await db.insert(account).values({
+    id: 'acc-seed-admin-001',
+    accountId: adminEmail,
+    providerId: 'email',
+    userId: adminUserId,
+    password: passwordHash,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }).onConflictDoNothing();
+
+  // Create tenant membership linking admin to Kavango East
+  await db.insert(tenantMemberships).values({
+    tenantId: TENANT_ID as any,
+    userId: adminUserId,
+    status: 'active',
+  }).onConflictDoNothing();
+
   console.log('✅ Seed complete!');
   console.log('   Tenant: Kavango East Regional Council');
-  console.log('   Employees: 10 created (no login accounts)');
+  console.log('   Employees: 10 created');
+  console.log('   Login accounts: 1 admin created');
+  console.log(`     Email:    ${adminEmail}`);
+  console.log(`     Password: ${adminPassword}`);
   console.log('   Vehicles: 5 (3 available, 1 in maintenance, 1 at constituency)');
   console.log('   Roles: 9 default roles with permissions');
   console.log('   Workflows: Regional and National');
-  console.log('');
-  console.log('⚠️  No login accounts were created automatically.');
-  console.log('   Use the admin interface to activate user accounts.');
 }
 
 seed()

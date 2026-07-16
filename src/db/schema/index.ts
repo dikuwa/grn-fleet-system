@@ -1,5 +1,6 @@
 export * from './tenants';
 export * from './auth';
+export * from './better-auth';
 export * from './people';
 export * from './fleet';
 export * from './requests';
@@ -7,5 +8,4 @@ export * from './workflows';
 export * from './trips';
 export * from './documents';
 export * from './notifications';
-
 export * from './audit';

@@ -8,6 +8,7 @@ on:
 
 env:
   NODE_VERSION: '22'
+  NEXT_PUBLIC_APP_NAME: GovFleet Namibia
 
 jobs:
   quality:
@@ -26,6 +27,85 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [quality]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: govfleet
+          POSTGRES_PASSWORD: govfleet-test
+          POSTGRES_DB: govfleet_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://govfleet:govfleet-test@localhost:5432/govfleet_test
+      BETTER_AUTH_URL: http://localhost:3000
+      BETTER_AUTH_SECRET: test-secret-thirty-two-characters-long!!
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      SEED_ADMIN_EMAIL: admin@kavangoeast.gov.na
+      SEED_ADMIN_PASSWORD: changeme
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run migrations
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Seed database
+        run: pnpm db:seed
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Seed admin user
+        run: npx tsx src/seed/seed-users.ts
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          SEED_ADMIN_EMAIL: ${{ env.SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ env.SEED_ADMIN_PASSWORD }}
+
+      - name: Start dev server
+        run: |
+          pnpm dev &>/tmp/dev-server.log &
+          for i in $(seq 1 60); do
+            curl -s -o /dev/null http://localhost:3000 && break
+            sleep 1
+          done
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          BETTER_AUTH_URL: ${{ env.BETTER_AUTH_URL }}
+          BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
+          NEXT_PUBLIC_APP_URL: ${{ env.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_NAME: ${{ env.NEXT_PUBLIC_APP_NAME }}
+
+      - name: Run integration tests
+        run: pnpm test:integration
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          BETTER_AUTH_URL: ${{ env.BETTER_AUTH_URL }}
+          BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
+          NEXT_PUBLIC_APP_URL: ${{ env.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_NAME: ${{ env.NEXT_PUBLIC_APP_NAME }}
+          SEED_ADMIN_EMAIL: ${{ env.SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ env.SEED_ADMIN_PASSWORD }}
+
+      - name: Stop dev server
+        run: kill $(lsof -ti :3000) 2>/dev/null || true
 
   # e2e:
   #   name: E2E Tests

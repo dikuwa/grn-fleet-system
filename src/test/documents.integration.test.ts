@@ -57,7 +57,7 @@ describe('Document Status Lifecycle', () => {
   }
 
   it('superseded documents cannot be issued', () => {
-    const status = 'superseded';
+    const status: string = 'superseded';
     const allowed = status === 'draft' ? ['issued'] : status === 'issued' ? ['superseded'] : [];
     expect(allowed).toHaveLength(0);
   });

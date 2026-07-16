@@ -3,6 +3,7 @@ import { getDb } from '@/db';
 import { trips, tripClosures, fuelTransactions } from '@/db/schema/trips';
 import { getServerSessionFromRequest } from '@/lib/session';
 import { onTripClosed } from '@/lib/document-generator';
+import { DEFAULT_TENANT_ID } from '@/lib/constants';
 import { eq } from 'drizzle-orm';
 
 export async function POST(
@@ -18,7 +19,7 @@ export async function POST(
     const db = getDb();
     const session = await getServerSessionFromRequest(req);
     const userId = session?.user.id || body.userId || 'system';
-    const tenantId = session?.tenantId || body.tenantId || '00000000-0000-0000-0000-000000000001';
+    const tenantId = session?.tenantId || body.tenantId || DEFAULT_TENANT_ID;
 
     // Find the trip
     const [trip] = await db

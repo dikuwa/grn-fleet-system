@@ -41,6 +41,7 @@ export function OfflineIndicator() {
 
   return (
     <div
+      data-testid="offline-indicator"
       className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur-sm transition-all ${
         isOnline
           ? 'bg-amber-100 text-amber-800'
