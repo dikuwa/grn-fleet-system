@@ -4,13 +4,19 @@
  * Provides two helper functions to resolve the current user's session and
  * their associated tenant membership.  Both share the same tenant-resolution
  * logic via the private `resolveUserTenant` helper.
+ *
+ * NOTE: These helpers read the session cookie directly from the request
+ * headers and look up the session in the database via Drizzle, rather than
+ * calling Better Auth's auth.api.getSession() which expects signed cookies.
+ * Our custom auth handler sets unsigned cookies, so we need to parse them
+ * manually here.
  */
 
-import { auth } from '@/lib/auth';
 import { headers } from 'next/headers';
 import { getDb } from '@/db';
-import { tenantMemberships, tenants } from '@/db/schema';
+import { user as userTable, session, tenantMemberships, tenants } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
+import { parseCookies } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,6 +38,45 @@ export type SessionInfo = {
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Find a valid session by reading the better-auth.session_token cookie
+ * and looking it up in the database. Returns { user, session, token }
+ * or null.
+ */
+async function findSessionFromCookie(
+  cookieHeader: string | null,
+): Promise<{
+  user: typeof userTable.$inferSelect;
+  session: typeof session.$inferSelect;
+  token: string;
+} | null> {
+  const cookies = parseCookies(cookieHeader);
+  const token = cookies['better-auth.session_token'];
+  if (!token) return null;
+
+  const db = getDb();
+
+  const [sessionRecord] = await db
+    .select()
+    .from(session)
+    .where(eq(session.token, token))
+    .limit(1);
+
+  if (!sessionRecord || new Date(sessionRecord.expiresAt) < new Date()) {
+    return null;
+  }
+
+  const [userRecord] = await db
+    .select()
+    .from(userTable)
+    .where(eq(userTable.id, sessionRecord.userId))
+    .limit(1);
+
+  if (!userRecord) return null;
+
+  return { user: userRecord, session: sessionRecord, token };
+}
 
 /**
  * Resolve the active tenant membership for a given user ID.
@@ -67,15 +112,15 @@ async function resolveUserTenant(
 }
 
 function buildSessionInfo(
-  session: NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>,
+  sessionData: { user: { id: string; email: string; name: string | null; image: string | null } },
   tenant: { tenantId: string; tenantSlug: string },
 ): SessionInfo {
   return {
     user: {
-      id: session.user.id,
-      email: session.user.email,
-      name: session.user.name,
-      image: session.user.image,
+      id: sessionData.user.id,
+      email: sessionData.user.email,
+      name: sessionData.user.name,
+      image: sessionData.user.image,
     },
     tenantId: tenant.tenantId,
     tenantSlug: tenant.tenantSlug,
@@ -95,15 +140,15 @@ function buildSessionInfo(
  */
 export async function getServerSession(): Promise<SessionInfo> {
   try {
-    const session = await auth.api.getSession({
-      headers: await headers(),
-    });
-    if (!session?.user) return null;
+    const h = await headers();
+    const cookieHeader = h.get('cookie');
+    const result = await findSessionFromCookie(cookieHeader);
+    if (!result) return null;
 
-    const tenant = await resolveUserTenant(session.user.id);
+    const tenant = await resolveUserTenant(result.user.id);
     if (!tenant) return null;
 
-    return buildSessionInfo(session, tenant);
+    return buildSessionInfo(result, tenant);
   } catch {
     return null;
   }
@@ -117,15 +162,14 @@ export async function getServerSessionFromRequest(
   request: Request,
 ): Promise<SessionInfo> {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-    if (!session?.user) return null;
+    const cookieHeader = request.headers.get('cookie');
+    const result = await findSessionFromCookie(cookieHeader);
+    if (!result) return null;
 
-    const tenant = await resolveUserTenant(session.user.id);
+    const tenant = await resolveUserTenant(result.user.id);
     if (!tenant) return null;
 
-    return buildSessionInfo(session, tenant);
+    return buildSessionInfo(result, tenant);
   } catch {
     return null;
   }

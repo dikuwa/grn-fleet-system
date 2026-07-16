@@ -88,3 +88,17 @@ export function delay(ms: number): Promise<void> {
 export function pluralize(count: number, singular: string, plural?: string): string {
   return count === 1 ? singular : plural ?? `${singular}s`;
 }
+
+/**
+ * Parse a Cookie header string into a key-value map.
+ * Handles multiple cookies separated by semicolons.
+ */
+export function parseCookies(cookieHeader: string | null): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  for (const pair of cookieHeader.split(';')) {
+    const [key, ...rest] = pair.trim().split('=');
+    if (key) cookies[key.trim()] = rest.join('=').trim();
+  }
+  return cookies;
+}

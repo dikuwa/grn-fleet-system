@@ -16,19 +16,10 @@ import { getDb } from '@/db';
 import { user, account, session } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
+import { parseCookies } from '@/lib/utils';
 
 function getPathname(request: NextRequest): string {
   return new URL(request.url).pathname;
-}
-
-function parseCookies(cookieHeader: string | null): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  if (!cookieHeader) return cookies;
-  for (const pair of cookieHeader.split(';')) {
-    const [key, ...rest] = pair.trim().split('=');
-    if (key) cookies[key.trim()] = rest.join('=').trim();
-  }
-  return cookies;
 }
 
 function errorResponse(message: string, status = 400) {
@@ -238,45 +229,36 @@ async function handleSignOut(request: NextRequest) {
 // Router — matches Better Auth v1.6.x client paths
 // ---------------------------------------------------------------------------
 
-/**
- * Normalise a path so trailing slashes are stripped and the `/email`
- * suffix is collapsed for sign-in so both /sign-in and /sign-in/email
- * are treated the same.
- */
-function normalise(path: string): string {
-  let p = path.replace(/\/$/, '');
-  if (p.endsWith('/sign-in/email') || p.endsWith('/sign-in')) {
-    p = '/api/auth/sign-in';
-  }
-  return p;
-}
-
 function route(request: NextRequest): Promise<NextResponse> {
-  const rawPath = getPathname(request);
-  const path = normalise(rawPath);
+  const pathname = getPathname(request).replace(/\/$/, '');
   const method = request.method;
 
   // Sign-in: Better Auth client sends POST /api/auth/sign-in/email
-  if (method === 'POST' && path === '/api/auth/sign-in') {
+  if (
+    method === 'POST' &&
+    (pathname === '/api/auth/sign-in' ||
+     pathname === '/api/auth/sign-in/email' ||
+     pathname === '/api/auth/sign-in/')
+  ) {
     return handleSignIn(request);
   }
 
   // Session: Better Auth client sends GET /api/auth/get-session
   if (
     method === 'GET' &&
-    (path === '/api/auth/session' ||
-     path === '/api/auth/get-session' ||
-     path === '/api/auth/user')
+    (pathname === '/api/auth/session' ||
+     pathname === '/api/auth/get-session' ||
+     pathname === '/api/auth/user')
   ) {
     return handleSession(request);
   }
 
   // Sign-out: Better Auth client sends POST /api/auth/sign-out
-  if (method === 'POST' && path === '/api/auth/sign-out') {
+  if (method === 'POST' && pathname === '/api/auth/sign-out') {
     return handleSignOut(request);
   }
 
-  return Promise.resolve(errorResponse(`Not found: ${method} ${rawPath}`, 404));
+  return Promise.resolve(errorResponse(`Not found: ${method} ${pathname}`, 404));
 }
 
 export const GET = route;
