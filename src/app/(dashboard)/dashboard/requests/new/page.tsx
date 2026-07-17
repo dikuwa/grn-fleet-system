@@ -486,6 +486,9 @@ function RouteStep({
   routes: Route[];
   onChange: (r: Route[]) => void;
 }) {
+  const [calculating, setCalculating] = useState(false);
+  const [calcError, setCalcError] = useState<string | null>(null);
+
   const addRoute = () => {
     onChange([
       ...routes,
@@ -501,16 +504,85 @@ function RouteStep({
     onChange(routes.filter((r) => r.id !== id));
   };
 
+  const handleCalculateAll = async () => {
+    const validRoutes = routes.filter((r) => r.originName.trim() && r.destinationName.trim());
+    if (validRoutes.length === 0) {
+      setCalcError('Add at least one route with origin and destination filled in.');
+      return;
+    }
+
+    setCalculating(true);
+    setCalcError(null);
+
+    try {
+      const legs = validRoutes.map((r) => ({
+        origin: r.originName,
+        destination: r.destinationName,
+      }));
+
+      const res = await fetch('/api/routes/calculate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ legs }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Route calculation failed');
+      }
+
+      const data = await res.json();
+
+      if (data.routes && Array.isArray(data.routes)) {
+        // Map the returned routes back to our form routes by matching origin/destination
+        const updates = [...routes];
+        for (const calc of data.routes) {
+          const idx = updates.findIndex(
+            (r) =>
+              r.originName.toLowerCase().trim() === (calc.originName || '').toLowerCase().trim() &&
+              r.destinationName.toLowerCase().trim() === (calc.destinationName || '').toLowerCase().trim(),
+          );
+          if (idx !== -1) {
+            updates[idx] = { ...updates[idx], estimatedKm: Math.round(calc.distanceKm || 0) };
+          }
+        }
+        onChange(updates);
+      }
+    } catch (err) {
+      setCalcError(err instanceof Error ? err.message : 'Failed to calculate routes');
+    } finally {
+      setCalculating(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-ink-500">
           Define the travel route. Distances can be calculated automatically when Maps credentials are configured.
         </p>
-        <Button variant="secondary" size="sm" onClick={addRoute}>
-          <Plus className="h-4 w-4" /> Add Route
-        </Button>
+        <div className="flex items-center gap-2">
+          {routes.filter((r) => r.originName.trim() && r.destinationName.trim()).length > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleCalculateAll}
+              disabled={calculating}
+            >
+              {calculating ? 'Calculating...' : 'Calculate Routes'}
+            </Button>
+          )}
+          <Button variant="secondary" size="sm" onClick={addRoute}>
+            <Plus className="h-4 w-4" /> Add Route
+          </Button>
+        </div>
       </div>
+
+      {calcError && (
+        <div className="rounded-[8px] border border-status-error-bg bg-status-error-bg px-4 py-2 text-xs text-status-error-text">
+          {calcError}
+        </div>
+      )}
 
       {routes.length === 0 ? (
         <div className="rounded-[8px] border border-dashed border-border p-8 text-center">

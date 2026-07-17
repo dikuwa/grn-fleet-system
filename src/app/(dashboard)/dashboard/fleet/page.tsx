@@ -74,15 +74,16 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
   if (categoryId) {
     conditions.push(eq(vehicles.categoryId, categoryId));
   }
-  if (search) {
-    conditions.push(
-      or(
-        like(vehicles.licenceNumber, `%${search}%`),
-        like(vehicles.vehicleRegisterNumber, `%${search}%`),
-        like(vehicles.make, `%${search}%`),
-        like(vehicles.model, `%${search}%`),
-      )!,
-    );
+  if (search) {      conditions.push(
+        or(
+          like(vehicles.licenceNumber, `%${search}%`),
+          like(vehicles.vehicleRegisterNumber, `%${search}%`),
+          like(vehicles.make, `%${search}%`),
+          like(vehicles.model, `%${search}%`),
+          like(vehicles.vin, `%${search}%`),
+          like(vehicles.engineNumber, `%${search}%`),
+        )!,
+      );
   }
 
   const where = and(...conditions);
@@ -99,6 +100,8 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
         colour: vehicles.colour,
         fuelType: vehicles.fuelType,
         transmission: vehicles.transmission,
+        vin: vehicles.vin,
+        engineNumber: vehicles.engineNumber,
         currentOdometer: vehicles.currentOdometer,
         status: vehicles.status,
         categoryId: vehicles.categoryId,
@@ -233,7 +236,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
                 <input
                   name="search"
                   defaultValue={result.filters.search ?? ''}
-                  placeholder="GRN number, make, model..."
+                  placeholder="Licence, VIN, make, model..."
                   className="h-10 w-full rounded-[8px] border border-border bg-surface pl-9 pr-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 />
               </div>

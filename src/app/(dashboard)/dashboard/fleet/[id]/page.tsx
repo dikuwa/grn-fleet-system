@@ -18,6 +18,11 @@ import {
   Building2,
   CalendarClock,
   Database,
+  Weight,
+  Users,
+  Hash,
+  ClipboardCheck,
+  FileWarning,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import Link from 'next/link';
@@ -62,17 +67,38 @@ async function fetchVehicleDetail(id: string) {
   const vehicle = await db
     .select({
       id: vehicles.id,
+      // Section A — Vehicle identity
       licenceNumber: vehicles.licenceNumber,
       vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+      vin: vehicles.vin,
+      engineNumber: vehicles.engineNumber,
+      // Section B — Vehicle description
       make: vehicles.make,
       model: vehicles.model,
+      seriesName: vehicles.seriesName,
       manufactureYear: vehicles.manufactureYear,
+      vehicleCategory: vehicles.vehicleCategory,
+      vehicleDescription: vehicles.vehicleDescription,
+      driveType: vehicles.driveType,
       colour: vehicles.colour,
       fuelType: vehicles.fuelType,
       transmission: vehicles.transmission,
+      // Section C — Weight and capacity
+      tareKg: vehicles.tareKg,
+      grossVehicleMassKg: vehicles.grossVehicleMassKg,
+      seatedCapacity: vehicles.seatedCapacity,
+      standingCapacity: vehicles.standingCapacity,
+      // Section D — Registration and compliance
+      registeringAuthority: vehicles.registeringAuthority,
+      nationalVehicleClassification: vehicles.nationalVehicleClassification,
+      roadworthyTestDate: vehicles.roadworthyTestDate,
+      licenceExpiryDate: vehicles.licenceExpiryDate,
+      // Section E — Fleet assignment
       currentOdometer: vehicles.currentOdometer,
       status: vehicles.status,
       fuelCardNumber: vehicles.fuelCardNumber,
+      notes: vehicles.notes,
+
       categoryName: vehicleCategories.name,
       officeName: offices.name,
     })
@@ -223,13 +249,87 @@ export default async function VehicleDetailPage({ params }: PageProps) {
           </div>
 
           {/* Vehicle Details Grid */}
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <DetailItem label="Licence Number" value={vehicle.licenceNumber} />
-            <DetailItem label="Registration" value={vehicle.vehicleRegisterNumber ?? '—'} />
-            <DetailItem label="Year" value={vehicle.manufactureYear ? String(vehicle.manufactureYear) : '—'} />
-            <DetailItem label="Colour" value={vehicle.colour ?? '—'} />
-            <DetailItem label="Transmission" value={vehicle.transmission ?? '—'} />
-            <DetailItem label="Fuel Card" value={vehicle.fuelCardNumber ?? '—'} />
+          {/* Section A — Vehicle Identity */}
+          <div className="mt-6">
+            <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
+              <Hash className="h-3.5 w-3.5" />
+              Vehicle Identity
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <DetailItem label="Licence Number" value={vehicle.licenceNumber} />
+              <DetailItem label="Register Number" value={vehicle.vehicleRegisterNumber ?? '—'} />
+              <DetailItem label="VIN" value={vehicle.vin ?? '—'} />
+              <DetailItem label="Engine Number" value={vehicle.engineNumber ?? '—'} />
+            </div>
+          </div>
+
+          {/* Section B — Vehicle Description */}
+          <div className="mt-6">
+            <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
+              <Car className="h-3.5 w-3.5" />
+              Vehicle Description
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <DetailItem label="Make" value={vehicle.make} />
+              <DetailItem label="Model" value={vehicle.model} />
+              <DetailItem label="Series" value={vehicle.seriesName ?? '—'} />
+              <DetailItem label="Year" value={vehicle.manufactureYear ? String(vehicle.manufactureYear) : '—'} />
+              <DetailItem label="NaTIS Category" value={vehicle.vehicleCategory ?? '—'} />
+              <DetailItem label="Body Style" value={vehicle.vehicleDescription ?? '—'} />
+              <DetailItem label="Drive Type" value={vehicle.driveType ?? '—'} />
+              <DetailItem label="Colour" value={vehicle.colour ?? '—'} />
+              <DetailItem label="Fuel Type" value={vehicle.fuelType ?? '—'} />
+              <DetailItem label="Transmission" value={vehicle.transmission ?? '—'} />
+              <DetailItem label="Fleet Category" value={vehicle.categoryName ?? '—'} />
+            </div>
+          </div>
+
+          {/* Section C — Weight & Capacity */}
+          <div className="mt-6">
+            <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
+              <Weight className="h-3.5 w-3.5" />
+              Weight &amp; Capacity
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <DetailItem label="Tare (kg)" value={vehicle.tareKg != null ? `${vehicle.tareKg.toLocaleString()} kg` : '—'} />
+              <DetailItem label="GVM (kg)" value={vehicle.grossVehicleMassKg != null ? `${vehicle.grossVehicleMassKg.toLocaleString()} kg` : '—'} />
+              <DetailItem label="Seated Capacity" value={vehicle.seatedCapacity != null ? String(vehicle.seatedCapacity) : '—'} />
+              <DetailItem label="Standing Capacity" value={vehicle.standingCapacity != null ? String(vehicle.standingCapacity) : '—'} />
+            </div>
+          </div>
+
+          {/* Section D — Registration & Compliance */}
+          <div className="mt-6">
+            <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
+              <ClipboardCheck className="h-3.5 w-3.5" />
+              Registration &amp; Compliance
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <DetailItem label="Registering Authority" value={vehicle.registeringAuthority ?? '—'} />
+              <DetailItem label="National Classification" value={vehicle.nationalVehicleClassification ?? '—'} />
+              <DetailItem label="Roadworthy Test" value={vehicle.roadworthyTestDate ? formatDate(vehicle.roadworthyTestDate) : '—'} />
+              <DetailItem label="Licence Expiry" value={vehicle.licenceExpiryDate ? formatDate(vehicle.licenceExpiryDate) : '—'} />
+            </div>
+          </div>
+
+          {/* Section E — Fleet Assignment */}
+          <div className="mt-6">
+            <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
+              <Building2 className="h-3.5 w-3.5" />
+              Fleet Assignment
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <DetailItem label="Fuel Card" value={vehicle.fuelCardNumber ?? '—'} />
+              <DetailItem label="Office" value={vehicle.officeName ?? '—'} />
+              <DetailItem label="Status" value={VEHICLE_STATUS_LABELS[vehicle.status] ?? vehicle.status} />
+              <DetailItem label="Odometer" value={`${vehicle.currentOdometer.toLocaleString()} km`} />
+            </div>
+            {vehicle.notes && (
+              <div className="mt-3 rounded-[8px] border border-border bg-canvas p-3">
+                <p className="text-xs font-medium text-ink-500 mb-1">Notes</p>
+                <p className="text-sm text-ink-700">{vehicle.notes}</p>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
