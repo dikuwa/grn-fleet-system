@@ -8,8 +8,8 @@
 
 import React from 'react';
 import { renderToStream } from '@react-pdf/renderer';
-import { TripAuthorityDocument, type TripAuthorityData } from './trip-authority.js';
-import { InspectionReportDocument, type InspectionReportData } from './inspection-report.js';
+import { TripAuthorityDocument, type TripAuthorityData } from './trip-authority';
+import { InspectionReportDocument, type InspectionReportData } from './inspection-report';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { vehicles } from '@/db/schema/fleet';
