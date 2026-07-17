@@ -2,18 +2,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { reimbursements, fuelTransactions } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
+import { requireRequestAuth } from '@/lib/auth-helpers';
 import { eq } from 'drizzle-orm';
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+
     const db = getDb();
     const body = await request.json();
 
-    const { transactionId, amount, claimantEmployeeNumber, notes, tenantId } = body;
+    const { transactionId, amount, claimantEmployeeNumber, notes } = body;
 
-    if (!transactionId || !amount || !tenantId) {
+    if (!transactionId || !amount) {
       return NextResponse.json(
-        { error: 'Missing required fields: transactionId, amount, tenantId' },
+        { error: 'Missing required fields: transactionId, amount' },
         { status: 400 },
       );
     }

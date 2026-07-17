@@ -5,9 +5,10 @@ import { Bell, Search, User, Menu, LogOut } from 'lucide-react';
 
 interface TopbarProps {
   onMenuClick: () => void;
+  tenantName?: string;
 }
 
-export function Topbar({ onMenuClick }: TopbarProps) {
+export function Topbar({ onMenuClick, tenantName }: TopbarProps) {
   const [showProfile, setShowProfile] = useState(false);
 
   return (
@@ -59,7 +60,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
                 <div className="border-b border-border px-3 py-2.5">
                   <p className="text-sm font-medium text-ink-950">Kandjimi Amupanda</p>
                   <p className="text-xs text-ink-500">Transport Administrator</p>
-                  <p className="text-xs text-ink-500">Kavango East RC</p>
+                  <p className="text-xs text-ink-500">{tenantName || 'Loading...'}</p>
                 </div>
                 <div className="mt-1 space-y-0.5">
                   <button className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors">

@@ -3,7 +3,8 @@ import { getDb } from '@/db';
 import { importBatches, importRows } from '@/db/schema/notifications';
 import { employees, departments, offices } from '@/db/schema/people';
 import { eq, sql } from 'drizzle-orm';
-import { getServerSessionFromRequest } from '@/lib/session';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 interface ImportRowData {
   employee_number: string;
@@ -23,22 +24,18 @@ export async function POST(request: NextRequest) {
     const db = getDb();
     const body = await request.json();
 
-    // Get authenticated user session (fall back to body values for dev)
-    const session = await getServerSessionFromRequest(request);
-    const userId = session?.user?.id || body.userId || 'system';
-    const tenantId = session?.tenantId || body.tenantId;
+    // Authenticate and authorise
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const permCheck = await requirePermission(session, Permissions.STAFF_IMPORT);
+    if (permCheck instanceof NextResponse) return permCheck;
 
-    if (!tenantId) {
-      return NextResponse.json(
-        { error: 'Missing tenantId. Ensure you are logged in or provide a tenantId.' },
-        { status: 400 },
-      );
-    }
+    const userId = session.user.id;
+    const tenantId = session.tenantId;
 
     const { rows } = body as {
       rows: ImportRowData[];
-      tenantId: string;
-      userId: string;
     };
 
     if (!rows || rows.length === 0) {

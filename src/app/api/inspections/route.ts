@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicleInspections, inspectionItemResults, inspectionTemplates } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { getServerSessionFromRequest } from '@/lib/session';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { onInspectionCompleted } from '@/lib/document-generator';
-import { DEFAULT_TENANT_ID } from '@/lib/constants';
 import { eq, and } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
@@ -32,20 +32,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Odometer reading is required' }, { status: 400 });
     }
 
-    const db = getDb();
-    const session = await getServerSessionFromRequest(req);
-    const userId = session?.user.id || body.userId || 'system';
-    const tenantId = session?.tenantId || body.tenantId || DEFAULT_TENANT_ID;
+    const auth = await requireRequestAuth(req);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
 
-    // Verify the vehicle exists
+    // Require inspection permission
+    const permCheck = await requirePermission(session, Permissions.INSPECTION_PERFORM);
+    if (permCheck instanceof NextResponse) return permCheck;
+
+    const db = getDb();
+    const userId = session.user.id;
+    const tenantId = session.tenantId;
+
+    // Verify the vehicle exists and belongs to this tenant
     const [vehicle] = await db
       .select({ id: vehicles.id, status: vehicles.status })
       .from(vehicles)
-      .where(eq(vehicles.id, vehicleId))
+      .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, tenantId)))
       .limit(1);
 
     if (!vehicle) {
-      return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Vehicle not found in your tenant' }, { status: 404 });
     }
 
     const items: Array<{ result: string; isCritical?: boolean }> = checklist || [];

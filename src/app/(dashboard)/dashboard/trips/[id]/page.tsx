@@ -47,8 +47,8 @@ async function fetchTripDetail(id: string) {
       requestId: trips.requestId,
       make: vehicles.make,
       model: vehicles.model,
-      grnNumber: vehicles.grnNumber,
-      registrationNumber: vehicles.registrationNumber,
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
       currentOdometer: vehicles.currentOdometer,
       requestReference: transportRequests.reference,
       requestScope: transportRequests.scope,
@@ -143,7 +143,7 @@ export default async function TripDetailPage({ params }: PageProps) {
       ]} />
       <PageHeader
         title={`${trip.make} ${trip.model}`}
-        description={`${trip.grnNumber}${trip.registrationNumber ? ` · ${trip.registrationNumber}` : ''}`}
+        description={`${trip.licenceNumber}${trip.vehicleRegisterNumber ? ` · ${trip.vehicleRegisterNumber}` : ''}`}
       >
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/trips"><ChevronLeft className="h-4 w-4" /> Back to Trips</Link>
@@ -161,7 +161,7 @@ export default async function TripDetailPage({ params }: PageProps) {
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg font-semibold text-ink-950">{trip.make} {trip.model}</h2>
                 <StatusBadge status={variant} label={TRIP_STATUS_LABELS[trip.status] ?? trip.status} />
-                <Badge variant="info" size="sm">{trip.grnNumber}</Badge>
+                <Badge variant="info" size="sm">{trip.licenceNumber}</Badge>
               </div>
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
                 <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5" />{trip.requestReference || 'No request reference'}</span>

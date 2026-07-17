@@ -3,21 +3,20 @@ import { getDb } from '@/db';
 import { notifications, notificationPreferences, notificationDeliveries } from '@/db/schema/notifications';
 import { eq, and, desc, count } from 'drizzle-orm';
 import { getServerSessionFromRequest } from '@/lib/session';
+import { requireRequestAuth } from '@/lib/auth-helpers';
 import { sendNotificationEmail } from '@/lib/email';
 import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
-import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
-    // Get session (fall back to query params for dev)
-    const session = await getServerSessionFromRequest(request);
-    const userId = session?.user?.id || searchParams.get('userId') || 'system';
-    const tenantId =
-      session?.tenantId ||
-      searchParams.get('tenantId') ||
-      DEFAULT_TENANT_ID;
+    // Require auth — only return notifications for the authenticated user/tenant
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const userId = session.user.id;
+    const tenantId = session.tenantId;
 
     const type = searchParams.get('type');
     const unreadOnly = searchParams.get('unreadOnly') === 'true';

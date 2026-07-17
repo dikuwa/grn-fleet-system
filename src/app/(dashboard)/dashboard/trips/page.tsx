@@ -52,8 +52,8 @@ async function fetchTrips(sp: Record<string, string | undefined>) {
   if (search) {
     conditions.push(
       or(
-        like(vehicles.grnNumber, `%${search}%`),
-        like(vehicles.registrationNumber, `%${search}%`),
+        like(vehicles.licenceNumber, `%${search}%`),
+        like(vehicles.vehicleRegisterNumber, `%${search}%`),
         like(vehicles.make, `%${search}%`),
       )!,
     );
@@ -74,7 +74,7 @@ async function fetchTrips(sp: Record<string, string | undefined>) {
         vehicleId: trips.vehicleId,
         make: vehicles.make,
         model: vehicles.model,
-        grnNumber: vehicles.grnNumber,
+        licenceNumber: vehicles.licenceNumber,
         requestReference: transportRequests.reference,
         requesterFirstName: employees.firstName,
         requesterLastName: employees.lastName,
@@ -206,7 +206,7 @@ export default async function TripsPage({ searchParams }: PageProps) {
                         <StatusBadge status={variant} label={TRIP_STATUS_LABELS[trip.status] ?? trip.status} />
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
-                        <span className="tabular-nums">{trip.grnNumber}</span>
+                        <span className="tabular-nums">{trip.licenceNumber}</span>
                         {trip.requestReference && <span>{trip.requestReference}</span>}
                         {requesterName && <span>Req: {requesterName}</span>}
                         <span className="tabular-nums">{formatDate(trip.createdAt)}</span>

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { workflowInstances, workflowSteps, workflowActions } from '@/db/schema/workflows';
-import { eq, and } from 'drizzle-orm';
-import { getServerSessionFromRequest } from '@/lib/session';
+import { workflowInstances } from '@/db/schema/workflows';
+import { eq } from 'drizzle-orm';
+import { requireRequestAuth } from '@/lib/auth-helpers';
+import { WorkflowEngine, type WorkflowActionType, type WorkflowActionResult } from '@/lib/workflow-engine';
 
 export async function POST(
   request: NextRequest,
@@ -10,23 +11,33 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const db = getDb();
+
+    // Require auth
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+
     const body = await request.json();
+    const { actionType, comment } = body;
 
-    // Get authenticated user session (fall back to body values for dev)
-    const session = await getServerSessionFromRequest(request);
-    const userId = session?.user?.id || body.userId || 'system';
-
-    const { actionType, comment, isActing } = body;
-
-    if (!actionType || !userId) {
+    // actionType here is the desired result (approved, rejected, returned)
+    const validResults = ['approved', 'rejected', 'returned'];
+    if (!validResults.includes(actionType)) {
       return NextResponse.json(
-        { error: 'Missing required fields: actionType, userId' },
+        { error: `Invalid action type: ${actionType}. Valid: ${validResults.join(', ')}` },
         { status: 400 },
       );
     }
 
-    // Get the workflow instance
+    if (!comment && actionType === 'returned') {
+      return NextResponse.json(
+        { error: 'A comment is required when returning a request.' },
+        { status: 400 },
+      );
+    }
+
+    // Look up the workflow instance to get definition ID and current step
+    const db = getDb();
     const [instance] = await db
       .select()
       .from(workflowInstances)
@@ -37,92 +48,48 @@ export async function POST(
       return NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 });
     }
 
-    if (instance.status !== 'active') {
-      return NextResponse.json(
-        { error: `Workflow is already ${instance.status}. Only active workflows can receive actions.` },
-        { status: 409 },
-      );
-    }
+    // Determine the current step's expected action type via the engine.
+    // The engine's getWorkflowStatus handles both DB-defined and ad-hoc
+    // (built-in) steps through a single code path, so no duplication needed.
+    const engine = new WorkflowEngine({ db });
+    const status = await engine.getWorkflowStatus(id);
 
-    // Get the current step definition filtered by currentStepOrder
-    const [currentStep] = await db
-      .select()
-      .from(workflowSteps)
-      .where(
-        and(
-          eq(workflowSteps.definitionId, instance.definitionId),
-          eq(workflowSteps.stepOrder, instance.currentStepOrder),
-        ),
-      )
-      .limit(1);
-
-    if (!currentStep) {
+    if (!status || !status.currentStep) {
       return NextResponse.json(
-        { error: `No workflow step found at order ${instance.currentStepOrder}` },
-        { status: 500 },
-      );
-    }
-
-    // Validate action type
-    const validResults = ['approved', 'rejected', 'returned'];
-    if (!validResults.includes(actionType)) {
-      return NextResponse.json(
-        { error: `Invalid action type: ${actionType}. Valid: ${validResults.join(', ')}` },
+        { error: 'Could not determine the current workflow step. The action cannot be processed.' },
         { status: 400 },
       );
     }
 
-    // Record the action
-    const [action] = await db
-      .insert(workflowActions)
-      .values({
-        instanceId: id,
-        stepOrder: instance.currentStepOrder,
-        actionType: currentStep.actionType,
-        result: actionType,
-        comment: comment || null,
-        isActing: isActing || false,
-        actorUserId: userId,
-      })
-      .returning();
+    const stepActionType = status.currentStep.actionType;
 
-    // Update workflow instance based on action
-    if (actionType === 'approved') {
-      // Count total steps in this definition
-      const allSteps = await db
-        .select()
-        .from(workflowSteps)
-        .where(eq(workflowSteps.definitionId, instance.definitionId));
-      const totalSteps = allSteps.length;
-
-      if (instance.currentStepOrder >= totalSteps) {
-        // All steps completed
-        await db
-          .update(workflowInstances)
-          .set({ status: 'completed', currentStepOrder: instance.currentStepOrder + 1 })
-          .where(eq(workflowInstances.id, id));
-      } else {
-        // Advance to next step
-        await db
-          .update(workflowInstances)
-          .set({ currentStepOrder: instance.currentStepOrder + 1 })
-          .where(eq(workflowInstances.id, id));
-      }
-    } else if (actionType === 'rejected') {
-      await db
-        .update(workflowInstances)
-        .set({ status: 'cancelled' })
-        .where(eq(workflowInstances.id, id));
-    } else if (actionType === 'returned') {
-      await db
-        .update(workflowInstances)
-        .set({ currentStepOrder: 1 })
-        .where(eq(workflowInstances.id, id));
+    if (!stepActionType) {
+      return NextResponse.json(
+        { error: 'Could not determine the current workflow step. The action cannot be processed.' },
+        { status: 400 },
+      );
     }
+
+    // Use the same engine instance to fully process this action
+    const result = await engine.processAction(
+      {
+        instanceId: id,
+        action: stepActionType as WorkflowActionType,
+        result: actionType as WorkflowActionResult,
+        comment: typeof comment === 'string' ? comment : undefined,
+        actorUserId: session.user.id,
+      },
+      session,
+    );
+
+    if (!result.ok) return result.error;
 
     return NextResponse.json({
       success: true,
-      data: action,
+      data: {
+        message: result.message,
+        instance: result.instance,
+      },
     });
   } catch (error) {
     console.error('Approval action failed:', error);

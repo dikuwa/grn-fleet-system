@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips, tripClosures, fuelTransactions } from '@/db/schema/trips';
-import { getServerSessionFromRequest } from '@/lib/session';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
-import { DEFAULT_TENANT_ID } from '@/lib/constants';
 import { eq } from 'drizzle-orm';
 
 export async function POST(
@@ -16,10 +16,17 @@ export async function POST(
     const body: any = await req.json();
     const { decision, reviewNotes } = body;
 
+    const auth = await requireRequestAuth(req);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+
+    // Require trip close permission
+    const permCheck = await requirePermission(session, Permissions.TRIP_CLOSE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     const db = getDb();
-    const session = await getServerSessionFromRequest(req);
-    const userId = session?.user.id || body.userId || 'system';
-    const tenantId = session?.tenantId || body.tenantId || DEFAULT_TENANT_ID;
+    const userId = session.user.id;
+    const tenantId = session.tenantId;
 
     // Find the trip
     const [trip] = await db

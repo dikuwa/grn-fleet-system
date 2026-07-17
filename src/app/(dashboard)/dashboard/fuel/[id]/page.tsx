@@ -39,8 +39,8 @@ async function fetchFuelDetail(id: string) {
       tripId: fuelTransactions.tripId,
       make: vehicles.make,
       model: vehicles.model,
-      grnNumber: vehicles.grnNumber,
-      registrationNumber: vehicles.registrationNumber,
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
     })
     .from(fuelTransactions)
     .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
@@ -101,9 +101,9 @@ export default async function FuelDetailPage({ params }: PageProps) {
       <Breadcrumbs items={[
         { label: 'Dashboard', href: '/dashboard' },
         { label: 'Fuel', href: '/dashboard/fuel' },
-        { label: `${t.grnNumber} · ${formatDate(t.transactionAt)}` },
+        { label: `${t.licenceNumber} · ${formatDate(t.transactionAt)}` },
       ]} />
-      <PageHeader title={`${t.make} ${t.model}`} description={`${t.grnNumber}${t.registrationNumber ? ` · ${t.registrationNumber}` : ''} · ${formatDate(t.transactionAt)}`}>
+      <PageHeader title={`${t.make} ${t.model}`} description={`${t.licenceNumber}${t.vehicleRegisterNumber ? ` · ${t.vehicleRegisterNumber}` : ''} · ${formatDate(t.transactionAt)}`}>
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fuel"><ChevronLeft className="h-4 w-4" /> Back to Fuel</Link>
         </Button>

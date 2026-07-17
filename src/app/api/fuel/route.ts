@@ -1,140 +1,133 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions, reimbursements } from '@/db/schema/trips';
+import { fuelTransactions, reimbursements, fuelReceipts } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { eq } from 'drizzle-orm';
-import { getServerSessionFromRequest } from '@/lib/session';
+import { eq, and, desc, sql } from 'drizzle-orm';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
-export async function POST(request: NextRequest) {
+/**
+ * GET /api/fuel
+ * List fuel transactions for the authenticated tenant.
+ */
+export async function GET(request: NextRequest) {
   try {
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+
+    const { session } = auth;
+    const { searchParams } = new URL(request.url);
+    const limit = parseInt(searchParams.get('limit') || '50', 10);
+    const offset = parseInt(searchParams.get('offset') || '0', 10);
+
     const db = getDb();
-    const body = await request.json();
 
-    // Get authenticated user session (fall back to body values for dev)
-    const session = await getServerSessionFromRequest(request);
-    const recordedByUserId = session?.user?.id || body.recordedByUserId || 'system';
-    const tenantId = session?.tenantId || body.tenantId;
+    const rows = await db
+      .select({
+        id: fuelTransactions.id,
+        transactionAt: fuelTransactions.transactionAt,
+        stationName: fuelTransactions.stationName,
+        fuelType: fuelTransactions.fuelType,
+        litres: fuelTransactions.litres,
+        amount: fuelTransactions.amount,
+        paymentMethod: fuelTransactions.paymentMethod,
+        anomalyState: fuelTransactions.anomalyState,
+        isVerified: fuelTransactions.isVerified,
+        vehicleId: fuelTransactions.vehicleId,
+        make: vehicles.make,
+        model: vehicles.model,
+        licenceNumber: vehicles.licenceNumber,
+      })
+      .from(fuelTransactions)
+      .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+      .where(
+        and(
+          eq(vehicles.tenantId, session.tenantId),
+        ),
+      )
+      .orderBy(desc(fuelTransactions.transactionAt))
+      .limit(limit)
+      .offset(offset);
 
-    if (!tenantId) {
+    const [totalResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(fuelTransactions)
+      .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+      .where(eq(vehicles.tenantId, session.tenantId));
+
+    return NextResponse.json({
+      success: true,
+      data: { transactions: rows, total: Number(totalResult?.count ?? 0) },
+    });
+  } catch (error) {
+    console.error('[fuel] GET failed:', error);
+    return NextResponse.json({ error: 'Failed to fetch fuel transactions' }, { status: 500 });
+  }
+}
+
+/**
+ * POST /api/fuel
+ * Create a fuel transaction.
+ * Requires fuel:manage or driver:fuel-create permission.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const auth = await requireRequestAuth(req);
+    if (!auth.ok) return auth.error;
+
+    const { session } = auth;
+
+    // Check permission — either fuel manager or driver recording fuel
+    const permCheck = await requirePermission(session, Permissions.FUEL_MANAGE);
+    if (permCheck instanceof NextResponse) {
+      const driverPerm = await requirePermission(session, Permissions.DRIVER_FUEL_CREATE);
+      if (driverPerm instanceof NextResponse) return driverPerm;
+    }
+
+    const body = await req.json();
+    const { vehicleId, transactionAt, stationName, fuelType, litres, amount, paymentMethod, odometerReading, referenceNumber, fillType } = body;
+
+    if (!fuelType || !litres || !amount || !paymentMethod) {
       return NextResponse.json(
-        { error: 'Missing tenantId. Ensure you are logged in or provide a tenantId.' },
+        { error: 'Missing required fields: fuelType, litres, amount, paymentMethod' },
         { status: 400 },
       );
     }
 
-    const {
-      vehicleGrn,
-      vehicleId,
-      tripId,
-      transactionAt,
-      stationName,
-      fuelType,
-      litres,
-      amount,
-      odometerReading,
-      referenceNumber,
-      paymentMethod,
-      fillType,
-      employeeNumber,
-    } = body;
+    const db = getDb();
 
-    if (!fuelType || !litres || !amount || !paymentMethod || !recordedByUserId || !tenantId) {
-      return NextResponse.json(
-        { error: 'Missing required fields: fuelType, litres, amount, paymentMethod, recordedByUserId, tenantId' },
-        { status: 400 },
-      );
-    }
+    // Verify the vehicle belongs to this tenant
+    const [vehicle] = await db
+      .select({ id: vehicles.id })
+      .from(vehicles)
+      .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, session.tenantId)))
+      .limit(1);
 
-    // Resolve vehicle ID from GRN number or UUID
-    let resolvedVehicleId = vehicleId;
-    if (!resolvedVehicleId && vehicleGrn) {
-      const [v] = await db
-        .select({ id: vehicles.id })
-        .from(vehicles)
-        .where(eq(vehicles.grnNumber, vehicleGrn))
-        .limit(1);
-      if (v) resolvedVehicleId = v.id;
-    }
-
-    if (!resolvedVehicleId) {
-      return NextResponse.json(
-        { error: 'Vehicle not found. Provide a valid vehicleId UUID or vehicleGrn number.' },
-        { status: 404 },
-      );
+    if (!vehicle && vehicleId) {
+      return NextResponse.json({ error: 'Vehicle not found in your tenant' }, { status: 404 });
     }
 
     const [transaction] = await db
       .insert(fuelTransactions)
       .values({
-        tripId: tripId || null,
-        vehicleId: resolvedVehicleId,
+        vehicleId: vehicleId || null,
         transactionAt: transactionAt ? new Date(transactionAt) : new Date(),
         stationName: stationName || null,
         fuelType,
-        litres: litres.toString(),
-        amount: amount.toString(),
-        odometerReading: odometerReading ? parseInt(odometerReading, 10) : null,
+        litres: String(litres),
+        amount: String(amount),
+        odometerReading: odometerReading ? Number(odometerReading) : null,
         referenceNumber: referenceNumber || null,
         paymentMethod,
         fillType: fillType || 'full',
-        recordedByUserId,
-        anomalyState: 'none',
-        isVerified: false,
+        recordedByUserId: session.user.id,
       })
       .returning();
 
-    // If payment method is personal_reimbursement, auto-create reimbursement
-    if (paymentMethod === 'personal_reimbursement' && transaction) {
-      // Resolve claimant employee ID — priority:
-      // 1. Provided employeeNumber → look up by employee number
-      // 2. Session user ID → look up by employees.userId
-      let claimantEmployeeId: string | null = null;
-
-      if (employeeNumber) {
-        const [emp] = await db
-          .select({ id: employees.id })
-          .from(employees)
-          .where(eq(employees.employeeNumber, employeeNumber))
-          .limit(1);
-        if (emp) claimantEmployeeId = emp.id;
-      } else if (session?.user?.id) {
-        const [emp] = await db
-          .select({ id: employees.id })
-          .from(employees)
-          .where(eq(employees.userId, session.user.id))
-          .limit(1);
-        if (emp) claimantEmployeeId = emp.id;
-      }
-
-      if (!claimantEmployeeId) {
-        return NextResponse.json(
-          {
-            error: 'Could not resolve employee for reimbursement. Provide employeeNumber in the request body, or ensure your auth account is linked to an employee record.',
-            transactionCreated: true,
-            transactionId: transaction.id,
-          },
-          { status: 400 },
-        );
-      }
-
-      await db.insert(reimbursements).values({
-        transactionId: transaction.id,
-        claimantEmployeeId,
-        amount: amount.toString(),
-        state: 'pending',
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      data: transaction,
-    });
+    return NextResponse.json({ success: true, data: transaction });
   } catch (error) {
-    console.error('Fuel transaction creation failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to create fuel transaction: ' + String(error) },
-      { status: 500 },
-    );
+    console.error('[fuel] POST failed:', error);
+    return NextResponse.json({ error: 'Failed to create fuel transaction' }, { status: 500 });
   }
 }

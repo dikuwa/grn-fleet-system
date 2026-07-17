@@ -4,17 +4,19 @@ import { fuelTransactions, reimbursements, trips } from '@/db/schema/trips';
 import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { sql, eq, and, gte, count } from 'drizzle-orm';
-import { getServerSessionFromRequest } from '@/lib/session';
-import { DEFAULT_TENANT_ID } from '@/lib/constants';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const reportType = searchParams.get('type') || 'fuel';
 
-    // Get tenant from session (fall back to query param for dev)
-    const session = await getServerSessionFromRequest(request);
-    const tenantId = session?.tenantId || searchParams.get('tenantId') || DEFAULT_TENANT_ID;
+    // Require auth — reports are tenant-scoped
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const tenantId = session.tenantId;
 
     const period = searchParams.get('period') || '30d';
 
@@ -63,7 +65,7 @@ export async function GET(request: NextRequest) {
         const topConsumers = await db
           .select({
             vehicleId: fuelTransactions.vehicleId,
-            grnNumber: vehicles.grnNumber,
+            licenceNumber: vehicles.licenceNumber,
             litres: sql`COALESCE(SUM(${fuelTransactions.litres}), 0)`.as('total_litres'),
             amount: sql`COALESCE(SUM(${fuelTransactions.amount}), 0)`.as('total_amount'),
           })
@@ -75,7 +77,7 @@ export async function GET(request: NextRequest) {
               gte(fuelTransactions.createdAt, startDate),
             ),
           )
-          .groupBy(fuelTransactions.vehicleId, vehicles.grnNumber)
+          .groupBy(fuelTransactions.vehicleId, vehicles.licenceNumber)
           .orderBy(sql`total_litres DESC`)
           .limit(10);
 

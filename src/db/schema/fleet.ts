@@ -33,25 +33,53 @@ export const vehicles = pgTable('vehicles', {
     .references(() => tenants.id, { onDelete: 'cascade' }),
   categoryId: uuid('category_id').references(() => vehicleCategories.id),
   officeId: uuid('office_id').references(() => offices.id),
-  grnNumber: text('grn_number').notNull(), // Government Registration Number
-  registrationNumber: text('registration_number'),
+  
+  // SECTION A — Vehicle identity
+  licenceNumber: text('licence_number').notNull(), // Physical plate number
+  vehicleRegisterNumber: text('vehicle_register_number'), // NaTIS Register number
+  vin: text('vin'),
+  engineNumber: text('engine_number'),
+
+  // SECTION B — Vehicle description
   make: text('make').notNull(),
   model: text('model').notNull(),
-  year: integer('year'),
+  seriesName: text('series_name'),
+  manufactureYear: integer('manufacture_year'),
+  vehicleCategory: text('vehicle_category'), // e.g. Light passenger motor vehicle
+  vehicleDescription: text('vehicle_description'), // e.g. Sedan, Hatchback
+  driveType: text('drive_type'), // e.g. Self-propelled
   colour: text('colour'),
-  bodyType: text('body_type'),
   fuelType: text('fuel_type').notNull().default('petrol'),
   transmission: text('transmission').notNull().default('manual'),
-  engineCapacity: text('engine_capacity'),
-  currentOdometer: integer('current_odometer').notNull().default(0),
+
+  // SECTION C — Weight and capacity
+  tareKg: integer('tare_kg'),
+  grossVehicleMassKg: integer('gross_vehicle_mass_kg'),
+  seatedCapacity: integer('seated_capacity'),
+  standingCapacity: integer('standing_capacity'),
+
+  // SECTION D — Registration and compliance
+  registeringAuthority: text('registering_authority'),
+  nationalVehicleClassification: text('national_vehicle_classification'),
+  roadworthyTestDate: date('roadworthy_test_date'),
+  licenceExpiryDate: date('licence_expiry_date'),
+
+  // SECTION E — Fleet assignment
   status: text('status').notNull().default('available'), // available, provisional, allocated, issued, maintenance, out_of_service, written_off
+  currentOdometer: integer('current_odometer').notNull().default(0),
   fuelCardNumber: text('fuel_card_number'),
   fuelCardPin: text('fuel_card_pin'),
+  assignedRegionId: uuid('assigned_region_id'), // Regional council specific
+  assignedOfficeId: uuid('assigned_office_id'), // References offices.id
+  
   notes: text('notes'),
   version: integer('version').notNull().default(1),
   isActive: boolean('is_active').notNull().default(true),
+  
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdBy: text('created_by'),
+  updatedBy: text('updated_by'),
 });
 
 /**

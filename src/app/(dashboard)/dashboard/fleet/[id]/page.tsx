@@ -62,16 +62,14 @@ async function fetchVehicleDetail(id: string) {
   const vehicle = await db
     .select({
       id: vehicles.id,
-      grnNumber: vehicles.grnNumber,
-      registrationNumber: vehicles.registrationNumber,
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
       make: vehicles.make,
       model: vehicles.model,
-      year: vehicles.year,
+      manufactureYear: vehicles.manufactureYear,
       colour: vehicles.colour,
       fuelType: vehicles.fuelType,
       transmission: vehicles.transmission,
-      engineCapacity: vehicles.engineCapacity,
-      bodyType: vehicles.bodyType,
       currentOdometer: vehicles.currentOdometer,
       status: vehicles.status,
       fuelCardNumber: vehicles.fuelCardNumber,
@@ -177,7 +175,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
       />
       <PageHeader
         title={`${vehicle.make} ${vehicle.model}`}
-        description={`${vehicle.grnNumber}${vehicle.registrationNumber ? ` · ${vehicle.registrationNumber}` : ''}`}
+        description={`${vehicle.licenceNumber}${vehicle.vehicleRegisterNumber ? ` · ${vehicle.vehicleRegisterNumber}` : ''}`}
       >
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fleet">
@@ -226,13 +224,11 @@ export default async function VehicleDetailPage({ params }: PageProps) {
 
           {/* Vehicle Details Grid */}
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <DetailItem label="GRN Number" value={vehicle.grnNumber} />
-            <DetailItem label="Registration" value={vehicle.registrationNumber ?? '—'} />
-            <DetailItem label="Year" value={vehicle.year ? String(vehicle.year) : '—'} />
+            <DetailItem label="Licence Number" value={vehicle.licenceNumber} />
+            <DetailItem label="Registration" value={vehicle.vehicleRegisterNumber ?? '—'} />
+            <DetailItem label="Year" value={vehicle.manufactureYear ? String(vehicle.manufactureYear) : '—'} />
             <DetailItem label="Colour" value={vehicle.colour ?? '—'} />
             <DetailItem label="Transmission" value={vehicle.transmission ?? '—'} />
-            <DetailItem label="Engine" value={vehicle.engineCapacity ?? '—'} />
-            <DetailItem label="Body Type" value={vehicle.bodyType ?? '—'} />
             <DetailItem label="Fuel Card" value={vehicle.fuelCardNumber ?? '—'} />
           </div>
         </CardContent>

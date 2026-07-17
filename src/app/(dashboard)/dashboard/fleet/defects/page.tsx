@@ -70,7 +70,7 @@ async function fetchDefects(sp: Record<string, string | undefined>) {
         resolvedAt: vehicleDefects.resolvedAt,
         resolutionNotes: vehicleDefects.resolutionNotes,
         vehicleId: vehicleDefects.vehicleId,
-        vehicleGrn: vehicles.grnNumber,
+        vehicleGrn: vehicles.licenceNumber,
         vehicleMake: vehicles.make,
         vehicleModel: vehicles.model,
       })

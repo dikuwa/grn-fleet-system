@@ -2,16 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, desc, count, sql } from 'drizzle-orm';
-import { getServerSessionFromRequest } from '@/lib/session';
-import { DEFAULT_TENANT_ID } from '@/lib/constants';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
-    // Get tenant from session (fall back to query param for dev)
-    const session = await getServerSessionFromRequest(request);
-    const tenantId = session?.tenantId || searchParams.get('tenantId') || DEFAULT_TENANT_ID;
+    // Require auth — audit data is tenant-scoped
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const tenantId = session.tenantId;
 
     const eventType = searchParams.get('eventType');
     const search = searchParams.get('search');

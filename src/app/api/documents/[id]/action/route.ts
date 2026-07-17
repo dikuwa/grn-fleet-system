@@ -2,17 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { eq } from 'drizzle-orm';
-import { getServerSessionFromRequest } from '@/lib/session';
+import { requireRequestAuth } from '@/lib/auth-helpers';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getServerSessionFromRequest(request);
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
 
     const { id } = await params;
     const body = await request.json();

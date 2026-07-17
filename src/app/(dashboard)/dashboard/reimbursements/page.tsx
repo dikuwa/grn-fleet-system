@@ -50,7 +50,7 @@ async function fetchReimbursements(sp: Record<string, string | undefined>) {
         createdAt: reimbursements.createdAt,
         claimantFirstName: employees.firstName,
         claimantLastName: employees.lastName,
-        grnNumber: vehicles.grnNumber,
+        licenceNumber: vehicles.licenceNumber,
       })
       .from(reimbursements)
       .leftJoin(employees, eq(reimbursements.claimantEmployeeId, employees.id))
@@ -155,7 +155,7 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
                       <Badge variant={REIMBURSEMENT_STATE_VARIANTS[r.state] ?? 'pending'} size="sm">{REIMBURSEMENT_STATE_LABELS[r.state] ?? r.state}</Badge>
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
-                      {r.grnNumber && <span className="tabular-nums">{r.grnNumber}</span>}
+                      {r.licenceNumber && <span className="tabular-nums">{r.licenceNumber}</span>}
                       <span>{formatDate(r.createdAt)}</span>
                     </div>
                   </div>

@@ -36,7 +36,7 @@ async function fetchFuelEntries(sp: Record<string, string | undefined>) {
   if (search) {
     conditions.push(
       or(
-        like(vehicles.grnNumber, `%${search}%`),
+        like(vehicles.licenceNumber, `%${search}%`),
         like(vehicles.make, `%${search}%`),
         like(fuelTransactions.stationName, `%${search}%`),
         like(fuelTransactions.referenceNumber, `%${search}%`),
@@ -61,7 +61,7 @@ async function fetchFuelEntries(sp: Record<string, string | undefined>) {
         vehicleId: fuelTransactions.vehicleId,
         make: vehicles.make,
         model: vehicles.model,
-        grnNumber: vehicles.grnNumber,
+        licenceNumber: vehicles.licenceNumber,
         tripId: fuelTransactions.tripId,
       })
       .from(fuelTransactions)
@@ -198,7 +198,7 @@ export default async function FuelPage({ searchParams }: PageProps) {
                       {entry.anomalyState !== 'none' && <Badge variant="error" size="sm">{entry.anomalyState}</Badge>}
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
-                      <span className="tabular-nums">{entry.grnNumber}</span>
+                      <span className="tabular-nums">{entry.licenceNumber}</span>
                       <span>{entry.stationName || 'Unknown station'}</span>
                       <span>{formatDate(entry.transactionAt)}</span>
                     </div>

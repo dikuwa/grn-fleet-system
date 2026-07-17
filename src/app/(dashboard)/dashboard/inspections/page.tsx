@@ -54,7 +54,7 @@ async function fetchInspections(sp: Record<string, string | undefined>) {
         vehicleId: vehicleInspections.vehicleId,
         make: vehicles.make,
         model: vehicles.model,
-        grnNumber: vehicles.grnNumber,
+        licenceNumber: vehicles.licenceNumber,
       })
       .from(vehicleInspections)
       .leftJoin(vehicles, eq(vehicleInspections.vehicleId, vehicles.id))
@@ -187,7 +187,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
                       <span>{insp.make} {insp.model}</span>
-                      <span className="tabular-nums">{insp.grnNumber}</span>
+                      <span className="tabular-nums">{insp.licenceNumber}</span>
                       {insp.odometerReading && <span>{insp.odometerReading.toLocaleString()} km</span>}
                       <span className="tabular-nums">{formatDate(insp.createdAt)}</span>
                     </div>

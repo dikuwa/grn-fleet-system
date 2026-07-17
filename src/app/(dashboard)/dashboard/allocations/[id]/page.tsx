@@ -42,8 +42,8 @@ async function fetchAllocationDetail(id: string) {
       requestId: vehicleAllocations.requestId,
       make: vehicles.make,
       model: vehicles.model,
-      grnNumber: vehicles.grnNumber,
-      registrationNumber: vehicles.registrationNumber,
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
       currentOdometer: vehicles.currentOdometer,
       vehicleStatus: vehicles.status,
       requestReference: transportRequests.reference,
@@ -131,7 +131,7 @@ export default async function AllocationDetailPage({ params }: PageProps) {
       ]} />
       <PageHeader
         title={`${allocation.make} ${allocation.model}`}
-        description={`${allocation.grnNumber}${allocation.registrationNumber ? ` · ${allocation.registrationNumber}` : ''} · ${formatDate(allocation.startAt)} – ${formatDate(allocation.endAt)}`}
+        description={`${allocation.licenceNumber}${allocation.vehicleRegisterNumber ? ` · ${allocation.vehicleRegisterNumber}` : ''} · ${formatDate(allocation.startAt)} – ${formatDate(allocation.endAt)}`}
       >
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/allocations"><ChevronLeft className="h-4 w-4" /> Back to Allocations</Link>
@@ -149,7 +149,7 @@ export default async function AllocationDetailPage({ params }: PageProps) {
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg font-semibold text-ink-950">{allocation.make} {allocation.model}</h2>
                 <Badge variant={stateVariant} size="sm">{ALLOCATION_STATE_LABELS[allocation.state]}</Badge>
-                <Badge variant="info" size="sm">{allocation.grnNumber}</Badge>
+                <Badge variant="info" size="sm">{allocation.licenceNumber}</Badge>
               </div>
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
                 {allocation.requestReference && <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5" />{allocation.requestReference}</span>}

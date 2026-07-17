@@ -77,8 +77,8 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
   if (search) {
     conditions.push(
       or(
-        like(vehicles.grnNumber, `%${search}%`),
-        like(vehicles.registrationNumber, `%${search}%`),
+        like(vehicles.licenceNumber, `%${search}%`),
+        like(vehicles.vehicleRegisterNumber, `%${search}%`),
         like(vehicles.make, `%${search}%`),
         like(vehicles.model, `%${search}%`),
       )!,
@@ -91,11 +91,11 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
     db
       .select({
         id: vehicles.id,
-        grnNumber: vehicles.grnNumber,
-        registrationNumber: vehicles.registrationNumber,
+        licenceNumber: vehicles.licenceNumber,
+        vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
         make: vehicles.make,
         model: vehicles.model,
-        year: vehicles.year,
+        manufactureYear: vehicles.manufactureYear,
         colour: vehicles.colour,
         fuelType: vehicles.fuelType,
         transmission: vehicles.transmission,
@@ -109,7 +109,7 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
       .leftJoin(vehicleCategories, eq(vehicles.categoryId, vehicleCategories.id))
       .leftJoin(offices, eq(vehicles.officeId, offices.id))
       .where(where)
-      .orderBy(vehicles.grnNumber)
+      .orderBy(vehicles.licenceNumber)
       .limit(limit)
       .offset(offset),
     db
@@ -354,14 +354,14 @@ export default async function FleetPage({ searchParams }: PageProps) {
                         <p className="text-sm font-[650] text-ink-950">
                           {vehicle.make} {vehicle.model}
                         </p>
-                        {vehicle.year && (
-                          <span className="text-xs text-ink-500">({vehicle.year})</span>
+                        {vehicle.manufactureYear && (
+                          <span className="text-xs text-ink-500">({vehicle.manufactureYear})</span>
                         )}
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
-                        <span className="tabular-nums">{vehicle.grnNumber}</span>
-                        {vehicle.registrationNumber && (
-                          <span>{vehicle.registrationNumber}</span>
+                        <span className="tabular-nums">{vehicle.licenceNumber}</span>
+                        {vehicle.vehicleRegisterNumber && (
+                          <span>{vehicle.vehicleRegisterNumber}</span>
                         )}
                         {vehicle.colour && <span>{vehicle.colour}</span>}
                         {vehicle.categoryName && <span>{vehicle.categoryName}</span>}

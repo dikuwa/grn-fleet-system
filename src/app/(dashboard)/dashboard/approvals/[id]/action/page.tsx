@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { useSession } from '@/lib/auth-client';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,12 +12,13 @@ import Link from 'next/link';
 export default function ApprovalActionPage() {
   const params = useParams();
   const router = useRouter();
-  const { data: session } = useSession();
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
   const handleAction = useCallback(async (actionType: string) => {
     setIsSubmitting(true);
+    setError('');
     try {
       const res = await fetch(`/api/approvals/${params.id}/action`, {
         method: 'POST',
@@ -26,20 +26,22 @@ export default function ApprovalActionPage() {
         body: JSON.stringify({
           actionType,
           comment: comment || null,
-          userId: session?.user?.id || 'system',
-          isActing: false,
         }),
       });
+
+      const data = await res.json();
+
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Action failed');
+        throw new Error(data.error || 'Action failed');
       }
+
       router.push(`/dashboard/approvals/${params.id}`);
+      router.refresh();
     } catch (err) {
-      console.error('Approval action failed:', err);
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
       setIsSubmitting(false);
     }
-  }, [params.id, router, comment, session]);
+  }, [params.id, router, comment]);
 
   return (
     <div className="space-y-6">
@@ -112,6 +114,12 @@ export default function ApprovalActionPage() {
               </div>
             </button>
           </div>
+
+          {error && (
+            <div className="rounded-[8px] border border-status-error-bg bg-status-error-bg/20 px-4 py-3">
+              <p className="text-sm font-medium text-status-error-text">{error}</p>
+            </div>
+          )}
 
           {isSubmitting && (
             <div className="flex items-center gap-2 rounded-[8px] bg-status-info-bg px-4 py-3">

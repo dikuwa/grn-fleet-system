@@ -54,7 +54,7 @@ async function fetchMaintenance(sp: Record<string, string | undefined>) {
         nextServiceOdometer: maintenanceEvents.nextServiceOdometer,
         createdAt: maintenanceEvents.createdAt,
         vehicleId: maintenanceEvents.vehicleId,
-        vehicleGrn: vehicles.grnNumber,
+        vehicleGrn: vehicles.licenceNumber,
         vehicleMake: vehicles.make,
         vehicleModel: vehicles.model,
       })

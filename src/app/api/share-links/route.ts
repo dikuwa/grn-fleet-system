@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { shareLinks, generatedDocuments } from '@/db/schema/documents';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { generateShareToken } from '@/lib/share-token';
 import { getServerSessionFromRequest } from '@/lib/session';
+import { requireRequestAuth } from '@/lib/auth-helpers';
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSessionFromRequest(request);
-    const userId = session?.user?.id;
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const userId = session.user.id;
 
     const body = await request.json();
     const { documentId, expiresInHours = 168, maxViews, redactionProfile } = body;
@@ -22,18 +25,20 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
 
-    // Verify document exists
+    // Verify document exists and belongs to this tenant
     const [doc] = await db
       .select()
       .from(generatedDocuments)
-      .where(eq(generatedDocuments.id, documentId))
+      .where(
+        and(eq(generatedDocuments.id, documentId), eq(generatedDocuments.tenantId, session.tenantId))
+      )
       .limit(1);
 
     if (!doc) {
-      return NextResponse.json({ error: 'Document not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Document not found in your tenant' }, { status: 404 });
     }
 
-    const tenantId = session?.tenantId || doc.tenantId;
+    const tenantId = session.tenantId;
     const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
 
     // Generate secure token

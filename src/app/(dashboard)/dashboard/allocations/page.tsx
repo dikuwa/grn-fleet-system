@@ -48,7 +48,7 @@ async function fetchAllocations(sp: Record<string, string | undefined>) {
   if (search) {
     conditions.push(
       or(
-        like(vehicles.grnNumber, `%${search}%`),
+        like(vehicles.licenceNumber, `%${search}%`),
         like(vehicles.make, `%${search}%`),
         like(vehicles.model, `%${search}%`),
         like(transportRequests.reference, `%${search}%`),
@@ -72,7 +72,7 @@ async function fetchAllocations(sp: Record<string, string | undefined>) {
         requestId: vehicleAllocations.requestId,
         make: vehicles.make,
         model: vehicles.model,
-        grnNumber: vehicles.grnNumber,
+        licenceNumber: vehicles.licenceNumber,
         requestReference: transportRequests.reference,
         requesterFirstName: employees.firstName,
         requesterLastName: employees.lastName,
@@ -207,7 +207,7 @@ export default async function AllocationsPage({ searchParams }: PageProps) {
                         <Badge variant={stateVariant} size="sm">{ALLOCATION_STATE_LABELS[alloc.state] ?? alloc.state}</Badge>
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
-                        <span className="tabular-nums">{alloc.grnNumber}</span>
+                        <span className="tabular-nums">{alloc.licenceNumber}</span>
                         {alloc.requestReference && <span>{alloc.requestReference}</span>}
                         {requesterName && <span>Requester: {requesterName}</span>}
                         <span className="tabular-nums">{formatDate(alloc.startAt)} – {formatDate(alloc.endAt)}</span>

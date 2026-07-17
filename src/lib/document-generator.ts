@@ -114,7 +114,7 @@ async function buildTripAuthoritySnapshot(allocationId: string) {
     .limit(1);
 
   const [vehicle] = await db
-    .select({ grnNumber: vehicles.grnNumber, make: vehicles.make, model: vehicles.model, registrationNumber: vehicles.registrationNumber })
+    .select({ licenceNumber: vehicles.licenceNumber, make: vehicles.make, model: vehicles.model, vehicleRegisterNumber: vehicles.vehicleRegisterNumber })
     .from(vehicles)
     .where(eq(vehicles.id, alloc.vehicleId))
     .limit(1);
@@ -124,8 +124,8 @@ async function buildTripAuthoritySnapshot(allocationId: string) {
     requestReference: req?.reference || 'N/A',
     scope: req?.scope || 'regional',
     vehicle: {
-      grnNumber: vehicle?.grnNumber || 'N/A',
-      registrationNumber: vehicle?.registrationNumber || 'N/A',
+      licenceNumber: vehicle?.licenceNumber || 'N/A',
+      vehicleRegisterNumber: vehicle?.vehicleRegisterNumber || 'N/A',
       make: vehicle?.make || '',
       model: vehicle?.model || '',
     },
@@ -146,7 +146,7 @@ async function buildInspectionReportSnapshot(inspectionId: string) {
   if (!insp) return null;
 
   const [vehicle] = await db
-    .select({ grnNumber: vehicles.grnNumber, registrationNumber: vehicles.registrationNumber })
+    .select({ licenceNumber: vehicles.licenceNumber, vehicleRegisterNumber: vehicles.vehicleRegisterNumber })
     .from(vehicles)
     .where(eq(vehicles.id, insp.vehicleId))
     .limit(1);
@@ -155,8 +155,8 @@ async function buildInspectionReportSnapshot(inspectionId: string) {
     inspectionId: insp.id,
     type: insp.type,
     vehicle: {
-      grnNumber: vehicle?.grnNumber || 'N/A',
-      registrationNumber: vehicle?.registrationNumber || 'N/A',
+      licenceNumber: vehicle?.licenceNumber || 'N/A',
+      registrationNumber: vehicle?.vehicleRegisterNumber || 'N/A',
     },
     odometerReading: insp.odometerReading,
     fuelLevel: insp.fuelLevel,
@@ -224,7 +224,7 @@ async function buildTripCompletionSnapshot(tripId: string) {
   const fuelSummary = await buildFuelSummarySnapshot(tripId);
 
   const [vehicle] = await db
-    .select({ grnNumber: vehicles.grnNumber, registrationNumber: vehicles.registrationNumber })
+    .select({ licenceNumber: vehicles.licenceNumber, vehicleRegisterNumber: vehicles.vehicleRegisterNumber })
     .from(vehicles)
     .where(eq(vehicles.id, trip.vehicleId))
     .limit(1);
@@ -233,8 +233,8 @@ async function buildTripCompletionSnapshot(tripId: string) {
     tripId: trip.id,
     status: trip.status,
     vehicle: {
-      grnNumber: vehicle?.grnNumber || 'N/A',
-      registrationNumber: vehicle?.registrationNumber || 'N/A',
+      licenceNumber: vehicle?.licenceNumber || 'N/A',
+      registrationNumber: vehicle?.vehicleRegisterNumber || 'N/A',
     },
     issuedAt: trip.issuedAt?.toISOString(),
     startedAt: trip.startedAt?.toISOString(),
