@@ -3,13 +3,14 @@ import { vehicleAllocations, trips, tripAuthorities } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { eq } from 'drizzle-orm';
+import { generatedDocuments } from '@/db/schema/documents';
+import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Database, Truck, ChevronLeft, CalendarDays, User, FileText, Gauge, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Database, Truck, ChevronLeft, CalendarDays, User, FileText, Gauge, AlertTriangle, CheckCircle2, Download } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
@@ -62,7 +63,7 @@ async function fetchAllocationDetail(id: string) {
 
   if (!allocation) notFound();
 
-  const [relatedTrip, authority, openDefects] = await Promise.all([
+  const [relatedTrip, authority, openDefects, tripAuthorityDoc] = await Promise.all([
     db
       .select({
         id: trips.id,
@@ -86,10 +87,22 @@ async function fetchAllocationDetail(id: string) {
     db
       .select({ count: vehicleDefects.id })
       .from(vehicleDefects)
-      .where(eq(vehicleDefects.vehicleId, allocation.vehicleId)),
+      .where(eq(vehicleDefects.vehicleId, allocation.vehicleId)),    db
+      .select({ id: generatedDocuments.id, status: generatedDocuments.status })
+      .from(generatedDocuments)
+      .where(
+        and(
+          eq(generatedDocuments.entityType, 'vehicle_allocation'),
+          eq(generatedDocuments.entityId, id),
+          eq(generatedDocuments.documentType, 'trip_authority'),
+        ),
+      )
+      .orderBy(desc(generatedDocuments.createdAt))
+      .limit(1)
+      .then((r) => r[0] ?? null),
   ]);
 
-  return { allocation, relatedTrip, authority, openDefectCount: openDefects.length };
+  return { allocation, relatedTrip, authority, openDefectCount: openDefects.length, tripAuthorityDoc };
 }
 
 export default async function AllocationDetailPage({ params }: PageProps) {
@@ -119,7 +132,7 @@ export default async function AllocationDetailPage({ params }: PageProps) {
     );
   }
 
-  const { allocation, relatedTrip, authority, openDefectCount } = data;
+  const { allocation, relatedTrip, authority, openDefectCount, tripAuthorityDoc } = data;
   const stateVariant = ALLOCATION_STATE_VARIANTS[allocation.state] ?? 'info';
 
   return (
@@ -205,9 +218,20 @@ export default async function AllocationDetailPage({ params }: PageProps) {
             {authority && (
               <div className="flex items-start gap-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-status-info-bg text-status-info-text"><FileText className="h-4 w-4" /></div>
-                <div>
+                <div className="flex-1">
                   <p className="text-sm font-medium text-ink-950">Trip Authority Prepared</p>
                   <p className="text-xs text-ink-500">Ref: {authority.releaseReference || 'Pending'}</p>
+                  {tripAuthorityDoc && (
+                    <a
+                      href={`/api/documents/${tripAuthorityDoc.id}/pdf`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-1.5 rounded-[6px] bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 transition-colors"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download Trip Authority (PDF)
+                    </a>
+                  )}
                 </div>
               </div>
             )}
