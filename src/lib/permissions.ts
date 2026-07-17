@@ -69,6 +69,10 @@ export const Permissions = {
   // Reports
   REPORT_VIEW: 'report:view',
   REPORT_EXPORT: 'report:export',
+
+  // Files & uploads
+  FILE_UPLOAD: 'file:upload',
+  FILE_VIEW: 'file:view',
 } as const;
 
 export type PermissionCode = (typeof Permissions)[keyof typeof Permissions];
@@ -298,5 +302,9 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   reports: {
     label: 'Reports',
     permissions: [Permissions.REPORT_VIEW, Permissions.REPORT_EXPORT],
+  },
+  files: {
+    label: 'File Storage',
+    permissions: [Permissions.FILE_UPLOAD, Permissions.FILE_VIEW],
   },
 };

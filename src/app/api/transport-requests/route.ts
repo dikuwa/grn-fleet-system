@@ -5,6 +5,7 @@ import { employees } from '@/db/schema/people';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onRequestSubmitted } from '@/lib/document-generator';
+import { WorkflowEngine } from '@/lib/workflow-engine';
 import { eq } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
@@ -156,7 +157,26 @@ export async function POST(req: NextRequest) {
     // Trigger document generation
     const doc = await onRequestSubmitted(request.id, tenantId, userId);
 
-    return NextResponse.json({ request, document: doc, reference });
+    // Initialise the workflow engine for this request
+    const engine = new WorkflowEngine({ db });
+    const wfResult = await engine.initializeForRequest(request.id, tenantId);
+    if (wfResult.ok) {
+      // Schedule reminders using the correct workflow instance ID
+      try {
+        const { scheduleStepReminder, scheduleStepEscalation } = await import('@/lib/inngest/client');
+        await Promise.all([
+          scheduleStepReminder(wfResult.instance.id, 1, 2),
+          scheduleStepEscalation(wfResult.instance.id, 1, 4),
+        ]);
+      } catch {
+        // Inngest is optional — silently skip if not configured
+      }
+    } else {
+      console.warn('[transport-requests] Workflow initialisation failed:', wfResult.error);
+      // Non-blocking — the request is still created
+    }
+
+    return NextResponse.json({ request, document: doc, reference: request.reference });
   } catch (error) {
     console.error('[transport-requests] POST failed:', error);
     return NextResponse.json(

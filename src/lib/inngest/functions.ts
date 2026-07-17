@@ -213,8 +213,6 @@ export const approvalCompleted = inngest
 // ---------------------------------------------------------------------------
 
 /** Array of all registered Inngest functions (with nulls filtered out) */
-export const inngestFunctions = [
-  stepReminder,
-  stepEscalation,
-  approvalCompleted,
-].filter(Boolean);
+export const inngestFunctions = (
+  [stepReminder, stepEscalation, approvalCompleted] as const
+).filter((f): f is NonNullable<typeof f> => f !== null);

@@ -32,6 +32,7 @@ import type { AuthSession } from '@/lib/auth-helpers';
 import { requirePermission, forbiddenResponse } from '@/lib/auth-helpers';
 import type { PermissionCode } from '@/lib/permissions';
 import { Permissions } from '@/lib/permissions';
+import { notifications } from '@/db/schema';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -353,6 +354,9 @@ export class WorkflowEngine {
       metadata: { stepOrder: currentStep.stepOrder, actionType: action, comment },
     }, session.tenantId);
 
+    // Fire-and-forget notification + email
+    await this.sendActionNotification(instance, currentStep, result, session).catch(() => {});
+
     // Handle rejection or return — the workflow stops and the request
     // is returned to the requester for revision.
     if (result === 'rejected' || result === 'returned') {
@@ -614,6 +618,83 @@ export class WorkflowEngine {
     const scope = request?.scope ?? 'regional';
     if (scope === 'national') return NATIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[];
     return REGIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[];
+  }
+
+  // -------------------------------------------------------------------------
+  // Notifications
+  // -------------------------------------------------------------------------
+
+  /**
+   * Send an in-app notification (and email) when a workflow action completes.
+   */
+  private async sendActionNotification(
+    instance: typeof workflowInstances.$inferSelect,
+    currentStep: { label: string },
+    result: string,
+    session: AuthSession,
+  ) {
+    try {
+      // Look up the request for the requester user ID and tenant
+      const [request] = await this.db
+        .select({ requesterUserId: transportRequests.requesterUserId, tenantId: transportRequests.tenantId })
+        .from(transportRequests)
+        .where(eq(transportRequests.id, instance.requestId))
+        .limit(1);
+
+      if (!request) return;
+
+      const titleMap: Record<string, string> = {
+        approved: '✅ Request Approved',
+        rejected: '❌ Request Rejected',
+        returned: '↩️ Request Returned',
+        released: '🚗 Vehicle Released',
+        authorised: '📋 Trip Authorised',
+        acknowledged: '👤 Driver Acknowledged',
+        overridden: '⚠️ Emergency Override',
+      };
+
+      const title = titleMap[result] || `Workflow: ${result}`;
+      const body = `Step "${currentStep.label}" completed with result: ${result}.`;
+
+      // Create in-app notification for the requester
+      await this.db.insert(notifications).values({
+        tenantId: request.tenantId,
+        recipientUserId: request.requesterUserId,
+        type: 'outcome',
+        title,
+        body,
+        entityType: 'workflow_instance',
+        entityId: instance.id,
+        actionUrl: `/dashboard/requests/${instance.requestId}`,
+        priority: result === 'rejected' ? 'high' : 'normal',
+      });
+
+      // Try to send email (fire-and-forget)
+      try {
+        const { sendNotificationEmail } = await import('@/lib/email');
+        const { employees } = await import('@/db/schema/people');
+        const [emp] = await this.db
+          .select({ email: employees.email, firstName: employees.firstName })
+          .from(employees)
+          .where(eq(employees.userId, request.requesterUserId))
+          .limit(1);
+
+        if (emp?.email) {
+          await sendNotificationEmail({
+            to: emp.email,
+            type: result === 'rejected' ? 'emergency' : 'notification',
+            title,
+            body,
+            recipientName: emp.firstName || 'Staff Member',
+            actionUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/dashboard/requests/${instance.requestId}`,
+          });
+        }
+      } catch {
+        // Email is optional — silently skip on failure
+      }
+    } catch (err) {
+      console.error('[Workflow] Notification failed:', err);
+    }
   }
 
   /**
