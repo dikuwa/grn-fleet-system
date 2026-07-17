@@ -86,6 +86,7 @@ const navGroups: NavGroup[] = [
       { label: 'Notifications', href: '/dashboard/notifications', icon: Bell },
       { label: 'Audit Log', href: '/dashboard/audit', icon: FileText },
       { label: 'Settings', href: '/dashboard/settings', icon: Settings },
+      { label: 'User Management', href: '/dashboard/admin/users', icon: Users },
     ],
   },
 ];

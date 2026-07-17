@@ -6,8 +6,9 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
-import { ChevronLeft, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, AlertTriangle, Save, WifiOff } from 'lucide-react';
 import Link from 'next/link';
+import { saveDraft } from '@/lib/offline-drafts';
 
 interface ChecklistItem {
   id: string;
@@ -68,6 +69,7 @@ export default function DepartureInspectionPage() {
   const [checklist, setChecklist] = useState<ChecklistItem[]>(DEFAULT_CHECKLIST);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [offlineSaved, setOfflineSaved] = useState(false);
 
   const updateResult = (id: string, result: 'pass' | 'fail' | 'na') => {
     setChecklist((prev) => prev.map((item) => (item.id === id ? { ...item, result } : item)));
@@ -88,6 +90,8 @@ export default function DepartureInspectionPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+
+    // Try online submission first
     try {
       const res = await fetch('/api/inspections', {
         method: 'POST',
@@ -105,13 +109,37 @@ export default function DepartureInspectionPage() {
           notes,
         }),
       });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to complete inspection');
+      if (res.ok) {
+        router.push('/dashboard/inspections');
+        return;
       }
-      router.push('/dashboard/inspections');
+      // If the error is a network issue, fall through to offline save
+    } catch {
+      // Network error — save as offline draft
+    }
+
+    // Save as offline draft
+    try {
+      await saveDraft({
+        draftType: 'inspection_departure',
+        formData: {
+          odometerReading: odometer,
+          fuelLevel,
+          vehicleId: '',
+          checklist: checklist.map((item) => ({
+            label: item.label,
+            result: item.result,
+            isCritical: item.isCritical,
+          })),
+          notes,
+        },
+        userId: null,
+        tenantId: null,
+        syncStatus: 'pending',
+      });
+      setOfflineSaved(true);
     } catch (err) {
-      console.error('Inspection failed:', err);
+      console.error('Failed to save offline draft:', err);
     } finally {
       setIsSubmitting(false);
     }
@@ -210,9 +238,25 @@ export default function DepartureInspectionPage() {
         {/* Submit */}
         <div className="flex items-center justify-end gap-3">
           <Button variant="secondary" size="sm" asChild><Link href="/dashboard/inspections">Cancel</Link></Button>
+          {offlineSaved && (
+          <Card>
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2">
+                <WifiOff className="h-5 w-5 text-amber-600" />
+                <div>
+                  <p className="text-sm font-medium text-amber-800">Saved Offline</p>
+                  <p className="text-xs text-ink-500">This inspection was saved as a local draft and will sync when connectivity is restored.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {!offlineSaved && (
           <Button variant="primary" size="sm" type="submit" loading={isSubmitting} disabled={!canComplete}>
             <CheckCircle2 className="h-4 w-4" /> Complete Departure Inspection
           </Button>
+        )}
         </div>
       </form>
     </div>

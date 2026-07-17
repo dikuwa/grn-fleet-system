@@ -63,10 +63,20 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
 
     case 'inspection_departure':
     case 'inspection_return':
-      // NOTE: /api/inspections/departure and /api/inspections/return
-      // POST endpoints do not exist yet. When they're created, this
-      // mapper will submit the draft.
-      return null;
+      return {
+        url: '/api/inspections',
+        method: 'POST',
+        transform: (d) => ({
+          vehicleId: fd(d.formData, 'vehicleId', ''),
+          tripId: fd<string | null>(d.formData, 'tripRef', null),
+          type: d.draftType === 'inspection_departure' ? 'departure' : 'return',
+          odometerReading: Number(fd(d.formData, 'odometerReading', '0')),
+          fuelLevel: fd(d.formData, 'fuelLevel', 'full'),
+          checklist: fd<Array<Record<string, unknown>>>(d.formData, 'checklist', []),
+          notes: fd<string | null>(d.formData, 'notes', null),
+          tenantId: d.tenantId || DEFAULT_TENANT_ID,
+        }),
+      };
 
     default:
       return null;
