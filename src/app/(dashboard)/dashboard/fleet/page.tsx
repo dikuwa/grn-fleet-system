@@ -65,6 +65,7 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
   const search = sp.search?.trim();
   const status = sp.status?.trim();
   const categoryId = sp.category_id?.trim();
+  const officeId = sp.office_id?.trim();
 
   const conditions: SQL[] = [eq(vehicles.isActive, true)];
 
@@ -73,6 +74,9 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
   }
   if (categoryId) {
     conditions.push(eq(vehicles.categoryId, categoryId));
+  }
+  if (officeId) {
+    conditions.push(eq(vehicles.officeId, officeId));
   }
   if (search) {      conditions.push(
         or(
@@ -88,7 +92,7 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
 
   const where = and(...conditions);
 
-  const [rows, totalResult, categories] = await Promise.all([
+  const [rows, totalResult, categories, allOffices] = await Promise.all([
     db
       .select({
         id: vehicles.id,
@@ -124,6 +128,11 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
       .from(vehicleCategories)
       .where(eq(vehicleCategories.isActive, true))
       .orderBy(vehicleCategories.name),
+    db
+      .select({ id: offices.id, name: offices.name })
+      .from(offices)
+      .where(eq(offices.isActive, true))
+      .orderBy(offices.name),
   ]);
 
   const totalCount = Number(totalResult[0]?.count ?? 0);
@@ -162,9 +171,10 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
     totalPages,
     page,
     categories,
+    allOffices,
     defectMap,
     maintenanceMap,
-    filters: { search, status, categoryId },
+    filters: { search, status, categoryId, officeId },
   };
 }
 
@@ -271,6 +281,23 @@ export default async function FleetPage({ searchParams }: PageProps) {
                 {result.categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>
                     {cat.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="w-[180px]">
+              <label className="block text-xs font-medium text-ink-500 mb-1">
+                Office
+              </label>
+              <select
+                name="office_id"
+                defaultValue={result.filters.officeId ?? ''}
+                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+              >
+                <option value="">All Offices</option>
+                {result.allOffices.map((off) => (
+                  <option key={off.id} value={off.id}>
+                    {off.name}
                   </option>
                 ))}
               </select>
