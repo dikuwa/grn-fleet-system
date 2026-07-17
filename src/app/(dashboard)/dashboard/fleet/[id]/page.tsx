@@ -1,7 +1,9 @@
 import { getDb, isDbConnected } from '@/db';
 import { vehicles, vehicleCategories, vehicleDocuments, vehicleDefects, maintenanceEvents, vehicleOdometerEvents } from '@/db/schema/fleet';
+import { vehicleAllocations } from '@/db/schema/trips';
+import { generatedDocuments } from '@/db/schema/documents';
 import { offices } from '@/db/schema/people';
-import { eq, desc } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -23,6 +25,7 @@ import {
   Hash,
   ClipboardCheck,
   FileWarning,
+  FileText,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import Link from 'next/link';
@@ -112,12 +115,25 @@ async function fetchVehicleDetail(id: string) {
     notFound();
   }
 
-  const [documents, defects, maintenance, odometerEvents] = await Promise.all([
+  const [documents, tripAuthorityDocs, defects, maintenance, odometerEvents] = await Promise.all([
     db
       .select()
       .from(vehicleDocuments)
       .where(eq(vehicleDocuments.vehicleId, id))
       .orderBy(desc(vehicleDocuments.createdAt)),
+    db
+      .select({ id: generatedDocuments.id })
+      .from(generatedDocuments)
+      .innerJoin(vehicleAllocations, eq(generatedDocuments.entityId, vehicleAllocations.id))
+      .where(
+        and(
+          eq(generatedDocuments.documentType, 'trip_authority'),
+          eq(generatedDocuments.entityType, 'vehicle_allocation'),
+          eq(vehicleAllocations.vehicleId, id),
+        ),
+      )
+      .orderBy(desc(generatedDocuments.createdAt))
+      .limit(5),
     db
       .select()
       .from(vehicleDefects)
@@ -140,10 +156,11 @@ async function fetchVehicleDetail(id: string) {
   type DefectRecord = typeof vehicleDefects.$inferSelect;
   type MaintenanceRecord = typeof maintenanceEvents.$inferSelect;
   type OdometerRecord = typeof vehicleOdometerEvents.$inferSelect;
+  type GeneratedDoc = { id: string };
 
   const openDefects = defects.filter((d: DefectRecord) => !d.resolvedAt);
 
-  return { vehicle, documents: documents as DocumentRecord[], defects: defects as DefectRecord[], maintenance: maintenance as MaintenanceRecord[], odometerEvents: odometerEvents as OdometerRecord[], openDefects };
+  return { vehicle, documents: documents as DocumentRecord[], defects: defects as DefectRecord[], maintenance: maintenance as MaintenanceRecord[], odometerEvents: odometerEvents as OdometerRecord[], openDefects, tripAuthorityDocs: tripAuthorityDocs as GeneratedDoc[] };
 }
 
 export default async function VehicleDetailPage({ params }: PageProps) {
@@ -339,10 +356,30 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         {/* Documents Tab */}
         <Card>
           <CardHeader>
-            <CardTitle>Documents ({data.documents.length})</CardTitle>
+            <CardTitle>Documents ({data.documents.length + data.tripAuthorityDocs.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {data.documents.length === 0 ? (
+            {/* Trip Authority PDFs */}
+            {data.tripAuthorityDocs.length > 0 && (
+              <div className="px-5 pb-3 pt-3 border-b border-border">
+                <p className="text-xs font-medium text-ink-500 mb-2">Trip Authority Documents</p>
+                <div className="space-y-2">
+                  {data.tripAuthorityDocs.map((doc) => (
+                    <a
+                      key={doc.id}
+                      href={`/api/documents/${doc.id}/pdf`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-[6px] bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 transition-colors"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      Download Trip Authority (PDF)
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+            {data.documents.length === 0 && data.tripAuthorityDocs.length === 0 ? (
               <div className="px-5 pb-4">
                 <p className="text-sm text-ink-500">No documents recorded for this vehicle.</p>
               </div>

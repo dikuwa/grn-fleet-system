@@ -12,6 +12,11 @@ import Link from 'next/link';
 // Types
 // ---------------------------------------------------------------------------
 
+interface ReferenceOption {
+  id: string;
+  name: string;
+}
+
 interface VehicleFormData {
   licenceNumber: string;
   vehicleRegisterNumber: string;
@@ -35,6 +40,8 @@ interface VehicleFormData {
   nationalVehicleClassification: string;
   roadworthyTestDate: string;
   licenceExpiryDate: string;
+  categoryId: string;
+  officeId: string;
   status: string;
   currentOdometer: number | '';
   fuelCardNumber: string;
@@ -72,6 +79,8 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [categories, setCategories] = useState<ReferenceOption[]>([]);
+  const [officeOptions, setOfficeOptions] = useState<ReferenceOption[]>([]);
 
   const vehicleId = React.use(params).id;
 
@@ -105,6 +114,8 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
           nationalVehicleClassification: v.nationalVehicleClassification || '',
           roadworthyTestDate: v.roadworthyTestDate || '',
           licenceExpiryDate: v.licenceExpiryDate || '',
+          categoryId: v.categoryId || '',
+          officeId: v.officeId || '',
           status: v.status || 'available',
           currentOdometer: v.currentOdometer ?? 0,
           fuelCardNumber: v.fuelCardNumber || '',
@@ -118,6 +129,22 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
     };
     load();
   }, [vehicleId]);
+
+  useEffect(() => {
+    const loadRefs = async () => {
+      try {
+        const res = await fetch('/api/reference');
+        if (res.ok) {
+          const data = await res.json();
+          setCategories(data.categories ?? []);
+          setOfficeOptions(data.offices ?? []);
+        }
+      } catch {
+        // silently fail
+      }
+    };
+    loadRefs();
+  }, []);
 
   const update = (patch: Partial<VehicleFormData>) => {
     setForm((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -135,6 +162,8 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          categoryId: form.categoryId || null,
+          officeId: form.officeId || null,
           manufactureYear: form.manufactureYear || undefined,
           tareKg: form.tareKg || undefined,
           grossVehicleMassKg: form.grossVehicleMassKg || undefined,
@@ -295,6 +324,22 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
           <CardContent className="pt-4">
             <h3 className="mb-4 text-sm font-semibold text-ink-950">Fleet Assignment</h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Fleet Category">
+                <select value={form.categoryId} onChange={(e) => update({ categoryId: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                  <option value="">Select category…</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Assigned Office">
+                <select value={form.officeId} onChange={(e) => update({ officeId: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                  <option value="">Select office…</option>
+                  {officeOptions.map((off) => (
+                    <option key={off.id} value={off.id}>{off.name}</option>
+                  ))}
+                </select>
+              </Field>
               <Field label="Status">
                 <select value={form.status} onChange={(e) => update({ status: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
                   <option value="available">Available</option>

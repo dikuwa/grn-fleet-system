@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,6 +11,11 @@ import Link from 'next/link';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+interface ReferenceOption {
+  id: string;
+  name: string;
+}
 
 interface VehicleFormData {
   // Section A — Identity
@@ -44,6 +49,8 @@ interface VehicleFormData {
   licenceExpiryDate: string;
 
   // Section E — Fleet assignment
+  categoryId: string;
+  officeId: string;
   status: string;
   currentOdometer: number | '';
   fuelCardNumber: string;
@@ -73,6 +80,8 @@ const EMPTY_FORM: VehicleFormData = {
   nationalVehicleClassification: '',
   roadworthyTestDate: '',
   licenceExpiryDate: '',
+  categoryId: '',
+  officeId: '',
   status: 'available',
   currentOdometer: 0,
   fuelCardNumber: '',
@@ -114,6 +123,24 @@ export default function NewVehiclePage() {
   const [form, setForm] = useState<VehicleFormData>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [categories, setCategories] = useState<ReferenceOption[]>([]);
+  const [officeOptions, setOfficeOptions] = useState<ReferenceOption[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/reference');
+        if (res.ok) {
+          const data = await res.json();
+          setCategories(data.categories ?? []);
+          setOfficeOptions(data.offices ?? []);
+        }
+      } catch {
+        // silently fail — dropdowns just won't have options
+      }
+    };
+    load();
+  }, []);
 
   const update = (patch: Partial<VehicleFormData>) => {
     setForm((prev) => ({ ...prev, ...patch }));
@@ -134,6 +161,8 @@ export default function NewVehiclePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          categoryId: form.categoryId || null,
+          officeId: form.officeId || null,
           manufactureYear: form.manufactureYear || undefined,
           tareKg: form.tareKg || undefined,
           grossVehicleMassKg: form.grossVehicleMassKg || undefined,
@@ -429,6 +458,30 @@ export default function NewVehiclePage() {
           <CardContent className="pt-4">
             <h3 className="mb-4 text-sm font-semibold text-ink-950">Fleet Assignment</h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Fleet Category">
+                <select
+                  value={form.categoryId}
+                  onChange={(e) => update({ categoryId: e.target.value })}
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                >
+                  <option value="">Select category…</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Assigned Office">
+                <select
+                  value={form.officeId}
+                  onChange={(e) => update({ officeId: e.target.value })}
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                >
+                  <option value="">Select office…</option>
+                  {officeOptions.map((off) => (
+                    <option key={off.id} value={off.id}>{off.name}</option>
+                  ))}
+                </select>
+              </Field>
               <Field label="Initial Status">
                 <select
                   value={form.status}
