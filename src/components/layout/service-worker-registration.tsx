@@ -22,7 +22,7 @@ export function ServiceWorkerRegistration() {
         scope: '/',
         updateViaCache: 'none',
       })
-      .then((reg) => {
+      .then(async (reg) => {
         console.log('[SW] Registered:', reg.scope);
 
         // Check for SW updates periodically (every hour)

@@ -15,7 +15,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { tenants, tenantBranding, tenantMemberships, roles, rolePermissions, roleAssignments, offices, departments } from '@/db/schema/tenants';
+import { tenants, tenantBranding, tenantMemberships, roles, rolePermissions, roleAssignments } from '@/db/schema/tenants';
+import { offices, departments } from '@/db/schema/people';
 import { user, account } from '@/db/schema/better-auth';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions, RoleDefinitions } from '@/lib/permissions';
