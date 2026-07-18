@@ -17,6 +17,7 @@ import { user, account, session } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { parseCookies } from '@/lib/utils';
+import { rateLimit } from '@/lib/rate-limit';
 
 function getPathname(request: NextRequest): string {
   return new URL(request.url).pathname;
@@ -31,8 +32,22 @@ function errorResponse(message: string, status = 400) {
 // ---------------------------------------------------------------------------
 async function handleSignIn(request: NextRequest) {
   try {
+    // Rate limit: 5 sign-in attempts per IP per 60 seconds
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
     const body = await request.json();
     const { email, password } = body;
+
+    if (email) {
+      const rl = await rateLimit(`login:${ip}:${email}`, 5, 60);
+      if (!rl.success) {
+        const res = NextResponse.json(
+          { error: 'Too many sign-in attempts. Please try again later.' },
+          { status: 429 },
+        );
+        Object.entries(rl.headers).forEach(([key, value]) => res.headers.set(key, value));
+        return res;
+      }
+    }
 
     if (!email || !password) {
       return errorResponse('Email and password are required');
@@ -137,6 +152,14 @@ async function handleSignIn(request: NextRequest) {
 // ---------------------------------------------------------------------------
 async function handleSession(request: NextRequest) {
   try {
+    // Rate limit: 30 session checks per IP per 60 seconds
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const rl = await rateLimit(`session:${ip}`, 30, 60);
+    if (!rl.success) {
+      console.warn('[Auth] Rate limit exceeded for session checks', { ip });
+      return NextResponse.json({ session: null, user: null });
+    }
+
     const db = getDb();
     const cookies = parseCookies(request.headers.get('cookie'));
     const token = cookies['better-auth.session_token'];

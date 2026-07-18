@@ -5,6 +5,7 @@ import { Sidebar, MobileSidebar } from '@/components/layout/sidebar';
 import { Topbar } from '@/components/layout/topbar';
 import { OfflineIndicator } from '@/components/ui/offline-status';
 import { OfflineSyncHandler } from '@/components/ui/offline-sync-handler';
+import { InstallPwaBanner } from '@/components/ui/install-pwa-banner';
 import { cn } from '@/lib/utils';
 
 interface DashboardShellProps {
@@ -44,6 +45,7 @@ export function DashboardShell({ children, tenantName }: DashboardShellProps) {
         </main>
         <OfflineIndicator />
         <OfflineSyncHandler />
+        <InstallPwaBanner />
       </div>
     </div>
   );

@@ -57,9 +57,42 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
       };
 
     case 'request':
-      // NOTE: /api/transport-requests POST endpoint does not exist yet.
-      // When it's created, this mapper will submit the draft.
-      return null;
+      return {
+        url: '/api/trip-logs',
+        method: 'POST',
+        transform: (d) => ({
+          tripId: fd(d.formData, 'tripId', ''),
+          logDate: fd(d.formData, 'logDate', new Date().toISOString().slice(0, 10)),
+          odometerOut: Number(fd(d.formData, 'odometerOut', '0')) || null,
+          odometerIn: Number(fd(d.formData, 'odometerIn', '0')) || null,
+          departureTime: fd<string | null>(d.formData, 'departureTime', null),
+          arrivalTime: fd<string | null>(d.formData, 'arrivalTime', null),
+          origin: fd<string | null>(d.formData, 'origin', null),
+          destination: fd<string | null>(d.formData, 'destination', null),
+          distanceKm: Number(fd(d.formData, 'distanceKm', '0')) || null,
+          remarks: fd<string | null>(d.formData, 'remarks', null),
+          clientSyncId: d.id,
+        }),
+      };
+
+    case 'trip_log':
+      return {
+        url: '/api/trip-logs',
+        method: 'POST',
+        transform: (d) => ({
+          tripId: fd(d.formData, 'tripId', ''),
+          logDate: fd(d.formData, 'logDate', new Date().toISOString().slice(0, 10)),
+          odometerOut: Number(fd(d.formData, 'odometerOut', '0')) || null,
+          odometerIn: Number(fd(d.formData, 'odometerIn', '0')) || null,
+          departureTime: fd<string | null>(d.formData, 'departureTime', null),
+          arrivalTime: fd<string | null>(d.formData, 'arrivalTime', null),
+          origin: fd<string | null>(d.formData, 'origin', null),
+          destination: fd<string | null>(d.formData, 'destination', null),
+          distanceKm: Number(fd(d.formData, 'distanceKm', '0')) || null,
+          remarks: fd<string | null>(d.formData, 'remarks', null),
+          clientSyncId: d.id,
+        }),
+      };
 
     case 'inspection_departure':
     case 'inspection_return':

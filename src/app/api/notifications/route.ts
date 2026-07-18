@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { notifications, notificationPreferences, notificationDeliveries } from '@/db/schema/notifications';
 import { eq, and, desc, count } from 'drizzle-orm';
-import { getServerSessionFromRequest } from '@/lib/session';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { sendNotificationEmail } from '@/lib/email';
 import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
@@ -244,14 +243,15 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    // Require auth — only allow updating your own notifications
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const userId = session.user.id;
+    const tenantId = session.tenantId;
+
     const db = getDb();
     const body = await request.json();
-
-    // Get session (fall back to body values for dev)
-    const session = await getServerSessionFromRequest(request);
-    const userId = session?.user?.id || body.userId || 'system';
-    const tenantId = session?.tenantId || body.tenantId;
-
     const { notificationId, action } = body;
 
     if (action === 'mark_read') {

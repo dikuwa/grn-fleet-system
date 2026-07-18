@@ -3,31 +3,45 @@
 import { useEffect } from 'react';
 
 /**
- * Registers the service worker for offline support.
- * Only registers in production to avoid stale caches during development.
+ * Registers the service worker for offline support and background sync.
+ *
+ * Improvements over the previous version:
+ * - No aggressive unregister-first on every load (caused SW churn)
+ * - Uses updateViaCache: 'none' for instant SW updates
+ * - Registers a 'sync' event handler for background sync
+ * - Only runs in production
  */
 export function ServiceWorkerRegistration() {
   useEffect(() => {
-    // Only register in production to prevent stale caches during dev
     if (process.env.NODE_ENV !== 'production') return;
 
-    if ('serviceWorker' in navigator) {
-      // Unregister any existing SW first to ensure clean state
-      navigator.serviceWorker.getRegistrations().then((regs) => {
-        for (const reg of regs) {
-          reg.unregister();
-        }
-      });
+    if (!('serviceWorker' in navigator)) return;
 
-      navigator.serviceWorker
-        .register('/sw.js')
-        .then((reg) => {
-          console.log('Service Worker registered:', reg.scope);
-        })
-        .catch((err) => {
-          console.error('Service Worker registration failed:', err);
-        });
-    }
+    navigator.serviceWorker
+      .register('/sw.js', {
+        scope: '/',
+        updateViaCache: 'none',
+      })
+      .then((reg) => {
+        console.log('[SW] Registered:', reg.scope);
+
+        // Check for SW updates periodically (every hour)
+        setInterval(() => {
+          reg.update().catch(() => {});
+        }, 60 * 60 * 1000);
+
+        // Register background sync for offline drafts
+        if ('sync' in reg) {
+          try {
+            await reg.sync.register('sync-offline-drafts');
+          } catch {
+            // Background Sync not supported — fall back to periodic sync
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('[SW] Registration failed:', err);
+      });
   }, []);
 
   return null;

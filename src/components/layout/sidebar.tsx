@@ -21,6 +21,7 @@ import {
   Bell,
   Settings,
   ChevronLeft,
+  Globe,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -87,6 +88,8 @@ const navGroups: NavGroup[] = [
       { label: 'Audit Log', href: '/dashboard/audit', icon: FileText },
       { label: 'Settings', href: '/dashboard/settings', icon: Settings },
       { label: 'User Management', href: '/dashboard/admin/users', icon: Users },
+      { label: 'Tenants', href: '/dashboard/platform/tenants', icon: Globe },
+      { label: 'Onboard Tenant', href: '/dashboard/platform/onboard', icon: LayoutDashboard },
     ],
   },
 ];

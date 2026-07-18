@@ -4,7 +4,8 @@ import { fuelTransactions, reimbursements, trips } from '@/db/schema/trips';
 import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { sql, eq, and, gte, count } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,6 +16,11 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    // Require REPORT_VIEW permission
+    const permCheck = await requirePermission(session, Permissions.REPORT_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     const tenantId = session.tenantId;
 
     const period = searchParams.get('period') || '30d';

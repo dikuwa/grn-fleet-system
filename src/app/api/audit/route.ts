@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, desc, count, sql } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,6 +13,11 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    // Require AUDIT_READ permission
+    const permCheck = await requirePermission(session, Permissions.AUDIT_READ);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     const tenantId = session.tenantId;
 
     const eventType = searchParams.get('eventType');

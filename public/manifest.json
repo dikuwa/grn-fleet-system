@@ -49,6 +49,18 @@
       "short_name": "Fuel",
       "url": "/dashboard/fuel",
       "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Daily Logs",
+      "short_name": "Logs",
+      "url": "/dashboard/logs",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Inspections",
+      "short_name": "Inspections",
+      "url": "/dashboard/inspections",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
     }
   ]
 }
