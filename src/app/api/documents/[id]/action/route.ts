@@ -11,7 +11,6 @@ export async function POST(
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
-    const { session } = auth;
 
     const { id } = await params;
     const body = await request.json();

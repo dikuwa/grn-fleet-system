@@ -1,16 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import {
-  Users, Search, Plus, ChevronLeft, ChevronRight, Mail, Shield, Loader2,
+  Users, Search, Plus, ChevronRight, Mail, Loader2,
 } from 'lucide-react';
 
 interface TenantUser {
@@ -25,13 +26,8 @@ interface TenantUser {
 
 export default function AdminUsersPage() {
   const router = useRouter();
-  const [users, setUsers] = useState<TenantUser[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   // Create user dialog
   const [showCreate, setShowCreate] = useState(false);
@@ -41,11 +37,9 @@ export default function AdminUsersPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const fetchUsers = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['admin-users', searchQuery, page],
+    queryFn: async () => {
       const params = new URLSearchParams();
       if (searchQuery) params.set('q', searchQuery);
       params.set('page', String(page));
@@ -55,20 +49,13 @@ export default function AdminUsersPage() {
       const json = await res.json();
 
       if (!res.ok) throw new Error(json.error || 'Failed to load users');
+      return json.data;
+    },
+  });
 
-      setUsers(json.data.users);
-      setTotal(json.data.total);
-      setTotalPages(json.data.totalPages);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load users');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [searchQuery, page]);
-
-  useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+  const users: TenantUser[] = data?.users ?? [];
+  const total: number = data?.total ?? 0;
+  const totalPages: number = data?.totalPages ?? 1;
 
   const handleCreate = async () => {
     if (!newEmail.trim() || !newPassword.trim()) return;
@@ -94,7 +81,7 @@ export default function AdminUsersPage() {
       setNewEmail('');
       setNewName('');
       setNewPassword('');
-      fetchUsers();
+      refetch();
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create user');
     } finally {
@@ -185,8 +172,8 @@ export default function AdminUsersPage() {
       {error && (
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-status-error-text">{error}</p>
-            <Button variant="secondary" size="sm" onClick={fetchUsers} className="mt-2">Retry</Button>
+            <p className="text-sm text-status-error-text">{error instanceof Error ? error.message : 'Failed to load users'}</p>
+            <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2">Retry</Button>
           </CardContent>
         </Card>
       )}

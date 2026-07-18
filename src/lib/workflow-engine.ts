@@ -355,7 +355,9 @@ export class WorkflowEngine {
     }, session.tenantId);
 
     // Fire-and-forget notification + email
-    await this.sendActionNotification(instance, currentStep, result, session).catch(() => {});
+    await this.sendActionNotification(instance, currentStep, result, session).catch(() => {
+      // Notification is best-effort
+    });
 
     // Handle rejection or return — the workflow stops and the request
     // is returned to the requester for revision.
@@ -631,7 +633,7 @@ export class WorkflowEngine {
     instance: typeof workflowInstances.$inferSelect,
     currentStep: { label: string },
     result: string,
-    session: AuthSession,
+    _session: AuthSession, // eslint-disable-line @typescript-eslint/no-unused-vars
   ) {
     try {
       // Look up the request for the requester user ID and tenant

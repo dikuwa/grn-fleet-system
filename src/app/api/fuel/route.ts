@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions, reimbursements, fuelReceipts } from '@/db/schema/trips';
+import { fuelTransactions } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { employees } from '@/db/schema/people';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';

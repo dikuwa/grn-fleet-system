@@ -7,7 +7,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
-import { ChevronLeft, CheckCircle2, Save, WifiOff, User } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
 import Link from 'next/link';
 import { saveDraft, deleteDraft } from '@/lib/offline-drafts';
 import { DEFAULT_TENANT_ID } from '@/lib/constants';
@@ -68,7 +68,7 @@ export default function NewFuelEntryPage() {
     } catch (err) {
       console.error('Failed to save draft:', err);
     }
-  }, [formData, session, draftId, isOnline]);
+  }, [formData, session, draftId]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();

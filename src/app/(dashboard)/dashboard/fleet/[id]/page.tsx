@@ -21,10 +21,8 @@ import {
   CalendarClock,
   Database,
   Weight,
-  Users,
   Hash,
   ClipboardCheck,
-  FileWarning,
   FileText,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';

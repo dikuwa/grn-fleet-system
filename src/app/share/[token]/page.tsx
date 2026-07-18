@@ -13,7 +13,7 @@
  */
 
 import { notFound } from 'next/navigation';
-import { resolveSharedDocument, verifyShareToken } from '@/lib/share-token';
+import { verifyShareToken } from '@/lib/share-token';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { tenants } from '@/db/schema/tenants';

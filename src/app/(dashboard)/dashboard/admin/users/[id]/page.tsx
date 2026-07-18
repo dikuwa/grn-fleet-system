@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { use } from 'react';
+import { useState, use } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -44,34 +43,25 @@ interface PageProps {
 
 export default function AdminUserDetailPage({ params }: PageProps) {
   const { id } = use(params);
-  const router = useRouter();
-  const [userData, setUserData] = useState<UserDetail | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [selectedRoleId, setSelectedRoleId] = useState('');
 
-  const fetchUser = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
+  const { data: userData, isLoading, error, refetch } = useQuery({
+    queryKey: ['admin-user', id],
+    queryFn: async () => {
       const res = await fetch(`/api/admin/users/${id}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to load user');
-      setUserData(json.data);
-      setEditName(json.data.name || '');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load user');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [id]);
+      return json.data as UserDetail;
+    },
+  });
 
-  useEffect(() => {
-    fetchUser();
-  }, [fetchUser]);
+  // Sync editName from loaded data
+  if (userData && !editName && userData.name) {
+    setEditName(userData.name);
+  }
 
   const handleUpdateName = async () => {
     if (!editName.trim()) return;
@@ -107,7 +97,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update status');
-      setUserData((prev) => prev ? { ...prev, tenantStatus: newStatus } : null);
+      await refetch();
       setSaveMessage(`User ${newStatus === 'active' ? 'activated' : 'suspended'} successfully`);
       setTimeout(() => setSaveMessage(null), 3000);
     } catch (err) {
@@ -129,7 +119,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to add role');
       setSelectedRoleId('');
-      fetchUser();
+      refetch();
     } catch (err) {
       setSaveMessage(err instanceof Error ? err.message : 'Failed to add role');
     } finally {
@@ -147,7 +137,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to remove role');
-      fetchUser();
+      refetch();
     } catch (err) {
       setSaveMessage(err instanceof Error ? err.message : 'Failed to remove role');
     } finally {
@@ -168,8 +158,8 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'User Management', href: '/dashboard/admin/users' }, { label: 'User' }]} />
         <PageHeader title="User Detail" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title={error} />
-        <Button variant="secondary" size="sm" onClick={fetchUser}>Retry</Button>
+        <EmptyState icon={<Database className="h-6 w-6" />} title={error instanceof Error ? error.message : 'Failed to load user'} />
+        <Button variant="secondary" size="sm" onClick={() => refetch()}>Retry</Button>
       </div>
     );
   }

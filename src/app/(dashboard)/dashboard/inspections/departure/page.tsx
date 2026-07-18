@@ -6,7 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
-import { ChevronLeft, CheckCircle2, AlertTriangle, Save, WifiOff } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff } from 'lucide-react';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
 

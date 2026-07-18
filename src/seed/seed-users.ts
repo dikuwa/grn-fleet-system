@@ -30,7 +30,7 @@ async function seedUsers() {
   const [tenant] = await db
     .select({ id: tenants.id })
     .from(tenants)
-    .where(eq(tenants.id, TENANT_ID as any))
+    .where(eq(tenants.id, TENANT_ID))
     .limit(1);
 
   if (!tenant) {
@@ -91,7 +91,7 @@ async function seedUsers() {
 
   // Create tenant membership (check first)
   await db.insert(tenantMemberships).values({
-    tenantId: TENANT_ID as any,
+    tenantId: TENANT_ID,
     userId: userRecord.id,
     status: 'active',
   }).onConflictDoNothing();

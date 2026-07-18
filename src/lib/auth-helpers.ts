@@ -7,7 +7,7 @@
  */
 
 import { getDb } from '@/db';
-import { tenantMemberships, roleAssignments, rolePermissions, roles } from '@/db/schema';
+import { tenantMemberships, roleAssignments, rolePermissions } from '@/db/schema';
 import { getServerSession, getServerSessionFromRequest } from '@/lib/session';
 import type { PermissionCode } from '@/lib/permissions';
 import { eq, and, inArray } from 'drizzle-orm';

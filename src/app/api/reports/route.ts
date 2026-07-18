@@ -4,8 +4,7 @@ import { fuelTransactions, reimbursements, trips } from '@/db/schema/trips';
 import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { sql, eq, and, gte, count } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import { requireRequestAuth } from '@/lib/auth-helpers';
 
 export async function GET(request: NextRequest) {
   try {

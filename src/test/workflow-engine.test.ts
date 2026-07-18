@@ -8,35 +8,37 @@
  * Run with: `pnpm test`
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { WorkflowEngine } from '@/lib/workflow-engine';
+import { describe, it, expect, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Mock helpers
+// Mock types
 // ---------------------------------------------------------------------------
 
-function createMockDb() {
-  const mockStore: Record<string, any[]> = {};
-  const mockFn = () => {
-    const fn: any = (...args: any[]) => fn;
-    fn.mockReturnThis = () => fn;
-    fn.mockResolvedValue = (v: any) => { fn._resolved = v; return fn; };
-    fn.mockResolvedValueOnce = (v: any) => { fn._onceValues = [...(fn._onceValues || []), v]; return fn; };
-    return fn;
-  };
+interface MockDb {
+  select: ReturnType<typeof vi.fn>;
+  from: ReturnType<typeof vi.fn>;
+  where: ReturnType<typeof vi.fn>;
+  limit: ReturnType<typeof vi.fn>;
+  orderBy: ReturnType<typeof vi.fn>;
+  values: ReturnType<typeof vi.fn>;
+  returning: ReturnType<typeof vi.fn>;
+  insert: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
+  set: ReturnType<typeof vi.fn>;
+}
 
+function createMockDb(): MockDb {
   return {
-    select: mockFn(),
-    from: mockFn(),
-    where: mockFn(),
-    limit: mockFn(),
-    orderBy: mockFn(),
-    values: mockFn(),
-    returning: mockFn(),
-    insert: mockFn(),
-    update: mockFn(),
-    set: mockFn(),
-    _mockStore: mockStore,
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    orderBy: vi.fn().mockReturnThis(),
+    values: vi.fn().mockReturnThis(),
+    returning: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    set: vi.fn().mockReturnThis(),
   };
 }
 
@@ -50,17 +52,6 @@ const MOCK_SESSION = {
   tenantSlug: 'test-tenant',
 };
 
-const MOCK_ACTIVE_INSTANCE = {
-  id: 'wf-instance-1',
-  requestId: 'request-1',
-  definitionId: '00000000-0000-0000-0000-000000000000', // ADHOC_DEFINITION_ID
-  definitionVersion: 1,
-  currentStepOrder: 1,
-  status: 'active' as const,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-};
-
 const MOCK_WORKFLOW_INSTANCE_SELECT = {
   id: 'wf-instance-1',
   requestId: 'request-1',
@@ -71,6 +62,14 @@ const MOCK_WORKFLOW_INSTANCE_SELECT = {
   createdAt: new Date(),
   updatedAt: new Date(),
 };
+
+// ---------------------------------------------------------------------------
+// Helper: create a mocked WorkflowEngine constructor argument
+// ---------------------------------------------------------------------------
+
+// Helper type for mock DB passed to WorkflowEngine
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type WorkflowEngineDb = any;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -97,20 +96,10 @@ describe('WorkflowEngine — Module exports and API surface', () => {
 describe('WorkflowEngine — Initialisation', () => {
   it('returns error result when request is not found', async () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
-    const mockDb = {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue([]), // returns empty = request not found
-      values: vi.fn(),
-      returning: vi.fn(),
-      update: vi.fn().mockReturnThis(),
-      set: vi.fn(),
-      insert: vi.fn(),
-    };
+    const mockDb = createMockDb();
+    mockDb.limit = vi.fn().mockResolvedValue([]); // returns empty = request not found
 
-    const engine = new WorkflowEngine({ db: mockDb as any });
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     const result = await engine.initializeForRequest('nonexistent', 'tenant-1');
 
     expect(result.ok).toBe(false);
@@ -121,24 +110,14 @@ describe('WorkflowEngine — Initialisation', () => {
 
   it('creates an active workflow instance for an existing request', async () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
+    const mockDb = createMockDb();
+    mockDb.limit = vi.fn()
+      .mockResolvedValueOnce([{ id: 'request-1', scope: 'regional' }]) // request found
+      .mockResolvedValueOnce([]) // no matching definition
+      .mockResolvedValueOnce([MOCK_WORKFLOW_INSTANCE_SELECT]); // inserted instance
+    mockDb.returning = vi.fn().mockResolvedValue([MOCK_WORKFLOW_INSTANCE_SELECT]);
 
-    const mockDb = {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn()
-        .mockResolvedValueOnce([{ id: 'request-1', scope: 'regional' }]) // request found
-        .mockResolvedValueOnce([]) // no matching definition
-        .mockResolvedValueOnce([MOCK_WORKFLOW_INSTANCE_SELECT]), // inserted instance
-      insert: vi.fn().mockReturnThis(),
-      values: vi.fn().mockReturnThis(),
-      returning: vi.fn().mockResolvedValue([MOCK_WORKFLOW_INSTANCE_SELECT]),
-      update: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    };
-
-    const engine = new WorkflowEngine({ db: mockDb as any });
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     const result = await engine.initializeForRequest('request-1', 'tenant-1');
 
     expect(result.ok).toBe(true);
@@ -151,36 +130,24 @@ describe('WorkflowEngine — Initialisation', () => {
 
 describe('WorkflowEngine — Action processing', () => {
   function createMockDbForProcessAction(
-    instanceOverrides: Record<string, any> = {},
-    scope: string = 'regional',
-  ) {
+    instanceOverrides: Record<string, unknown> = {},
+    scope = 'regional',
+  ): MockDb {
     const instance = { ...MOCK_WORKFLOW_INSTANCE_SELECT, ...instanceOverrides };
-    return {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn()
-        .mockResolvedValueOnce([instance]) // instance lookup
-        .mockResolvedValueOnce([{ scope }]) // request scope for built-in steps
-        .mockResolvedValueOnce([instance]), // updated instance after action
-      insert: vi.fn().mockReturnThis(),
-      values: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    };
+    const mockDb = createMockDb();
+    mockDb.limit = vi.fn()
+      .mockResolvedValueOnce([instance]) // instance lookup
+      .mockResolvedValueOnce([{ scope }]) // request scope for built-in steps
+      .mockResolvedValueOnce([instance]); // updated instance after action
+    return mockDb;
   }
 
   it('returns error for non-existent instance', async () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
-    const mockDb = {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue([]), // instance not found
-    };
+    const mockDb = createMockDb();
+    mockDb.limit = vi.fn().mockResolvedValue([]); // instance not found
 
-    const engine = new WorkflowEngine({ db: mockDb as any });
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     const result = await engine.processAction(
       { instanceId: 'nonexistent', action: 'supervisor_approve', result: 'approved', actorUserId: 'user-1' },
       MOCK_SESSION,
@@ -194,14 +161,10 @@ describe('WorkflowEngine — Action processing', () => {
 
   it('returns error when workflow is not active', async () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
-    const mockDb = {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue([{ ...MOCK_WORKFLOW_INSTANCE_SELECT, status: 'completed' }]),
-    };
+    const mockDb = createMockDb();
+    mockDb.limit = vi.fn().mockResolvedValue([{ ...MOCK_WORKFLOW_INSTANCE_SELECT, status: 'completed' }]);
 
-    const engine = new WorkflowEngine({ db: mockDb as any });
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     const result = await engine.processAction(
       { instanceId: 'wf-instance-1', action: 'supervisor_approve', result: 'approved', actorUserId: 'user-1' },
       MOCK_SESSION,
@@ -217,7 +180,7 @@ describe('WorkflowEngine — Action processing', () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
     const mockDb = createMockDbForProcessAction();
 
-    const engine = new WorkflowEngine({ db: mockDb as any });
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     // Current step is step 1 which expects 'supervisor_approve', but we pass 'release'
     const result = await engine.processAction(
       { instanceId: 'wf-instance-1', action: 'release', result: 'approved', actorUserId: 'user-1' },
@@ -232,29 +195,7 @@ describe('WorkflowEngine — Action processing', () => {
 });
 
 describe('WorkflowEngine — Emergency override', () => {
-  function createMockDbForOverride(instanceOverrides: Record<string, any> = {}) {
-    const instance = { ...MOCK_WORKFLOW_INSTANCE_SELECT, ...instanceOverrides };
-    return {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn()
-        .mockResolvedValueOnce([instance]) // instance lookup (after permission check)
-        .mockResolvedValueOnce([{ scope: 'regional' }]) // request scope
-        .mockResolvedValueOnce([instance]), // updated instance
-      insert: vi.fn().mockReturnThis(),
-      values: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    };
-  }
-
-  it('requires a non-empty reason', async () => {
-    const { WorkflowEngine } = await import('@/lib/workflow-engine');
-    const mockDb = createMockDbForOverride();
-
-    const engine = new WorkflowEngine({ db: mockDb as any });
+  it('requires a non-empty reason', () => {
 
     // Note: the engine checks permission first, which would fail in test
     // because there's no real permission lookup. That's expected — this tests
@@ -291,14 +232,10 @@ describe('WorkflowEngine — Emergency override', () => {
 describe('WorkflowEngine — Status display', () => {
   it('returns null for non-existent instance', async () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
-    const mockDb = {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue([]), // instance not found
-    };
+    const mockDb = createMockDb();
+    mockDb.limit = vi.fn().mockResolvedValue([]); // instance not found
 
-    const engine = new WorkflowEngine({ db: mockDb as any });
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     const status = await engine.getWorkflowStatus('nonexistent');
 
     expect(status).toBeNull();

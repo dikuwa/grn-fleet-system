@@ -12,9 +12,8 @@
 
 import { inngest, Events } from './client';
 import { getDb } from '@/db';
-import { workflowInstances, workflowSteps, workflowActions } from '@/db/schema/workflows';
+import { workflowInstances, workflowActions } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
-import { employees } from '@/db/schema/people';
 import { notifications } from '@/db/schema/notifications';
 import { eq, and } from 'drizzle-orm';
 

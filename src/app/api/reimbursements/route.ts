@@ -9,7 +9,6 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
-    const { session } = auth;
 
     const db = getDb();
     const body = await request.json();

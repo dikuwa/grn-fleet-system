@@ -100,7 +100,7 @@ export async function generateTripAuthorityPdf(
     totalKm,
   };
 
-  const element = React.createElement(TripAuthorityDocument as React.ComponentType<any>, { data }) as React.ReactElement;
+  const element = React.createElement(TripAuthorityDocument as React.ComponentType<{ data: TripAuthorityData }>, { data }) as React.ReactElement;
   return renderPdfToBuffer(element);
 }
 
@@ -158,7 +158,7 @@ export async function generateInspectionReportPdf(
     items: [],
   };
 
-  const element = React.createElement(InspectionReportDocument as React.ComponentType<any>, { data }) as React.ReactElement;
+  const element = React.createElement(InspectionReportDocument as React.ComponentType<{ data: InspectionReportData }>, { data }) as React.ReactElement;
   return renderPdfToBuffer(element);
 }
 
@@ -208,7 +208,7 @@ export async function generateDocumentPdf(
 // ---------------------------------------------------------------------------
 
 async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Array> {
-  const stream = await renderToStream(element as any);
+  const stream = await renderToStream(element as unknown as React.ReactElement<Record<string, unknown>>);
   const chunks: Uint8Array[] = [];
   for await (const chunk of stream) {
     chunks.push(new Uint8Array(chunk as unknown as ArrayBuffer));
