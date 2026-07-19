@@ -91,7 +91,7 @@ export async function PATCH(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session as any, Permissions.TENANT_MANAGE as any);
+    const permCheck = await requirePermission(session as never, Permissions.TENANT_MANAGE as never);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
@@ -155,7 +155,7 @@ export async function PATCH(
       } else {
         await db
           .insert(tenantBranding)
-          .values({ tenantId: id, ...brandingUpdate } as any);
+          .values({ tenantId: id, ...brandingUpdate } as never);
       }
     }
 

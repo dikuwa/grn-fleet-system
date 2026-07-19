@@ -10,13 +10,14 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database, FileText, Search, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE, STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
-async function fetchRequests(sp: Record<string, string | undefined>) {
+async function fetchRequests(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -25,7 +26,7 @@ async function fetchRequests(sp: Record<string, string | undefined>) {
   const status = sp.status?.trim();
   const scope = sp.scope?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(transportRequests.tenantId, tenantId)];
 
   if (status) {
     conditions.push(eq(transportRequests.status, status));
@@ -119,6 +120,18 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
 export default async function RequestsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
 
+  const session = await getServerSession();
+
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} />
+        <PageHeader title="Transport Requests" description="Create and manage transport requests" />
+        <EmptyState icon={<FileText className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view transport requests." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -135,7 +148,7 @@ export default async function RequestsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchRequests>>;
   try {
-    result = await fetchRequests(sp);
+    result = await fetchRequests(sp, session.tenantId);
   } catch (error) {
     console.error('Requests query failed:', error);
     return (

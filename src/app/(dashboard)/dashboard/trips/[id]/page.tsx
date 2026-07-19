@@ -3,7 +3,7 @@ import { trips, tripLogEntries, fuelTransactions, vehicleInspections } from '@/d
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { eq, desc } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -11,10 +11,12 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Database } from 'lucide-react';
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import { notFound } from 'next/navigation';
 import {
   Truck, ChevronLeft, User, CalendarDays, Clock, Gauge, CheckCircle2, XCircle, AlertTriangle, FileText,
 } from 'lucide-react';
+import { TripActions } from '../components/TripActions';
 import Link from 'next/link';
 
 interface PageProps {
@@ -31,7 +33,7 @@ const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'err
   return_inspection: 'pending', closure_review: 'pending', closed: 'success',
 };
 
-async function fetchTripDetail(id: string) {
+async function fetchTripDetail(id: string, tenantId: string) {
   const db = getDb();
 
   const trip = await db
@@ -60,7 +62,7 @@ async function fetchTripDetail(id: string) {
     .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
     .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
     .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
-    .where(eq(trips.id, id))
+    .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId)))
     .then((r) => r[0] ?? null);
 
   if (!trip) notFound();
@@ -107,6 +109,17 @@ async function fetchTripDetail(id: string) {
 export default async function TripDetailPage({ params }: PageProps) {
   const { id } = await params;
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips', href: '/dashboard/trips' }, { label: 'Trip Detail' }]} />
+        <PageHeader title="Trip Detail" description="Trip could not be loaded" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view trip details." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -119,7 +132,7 @@ export default async function TripDetailPage({ params }: PageProps) {
 
   let data: Awaited<ReturnType<typeof fetchTripDetail>>;
   try {
-    data = await fetchTripDetail(id);
+    data = await fetchTripDetail(id, session.tenantId);
   } catch (error) {
     console.error('Trip detail query failed:', error);
     return (
@@ -145,9 +158,12 @@ export default async function TripDetailPage({ params }: PageProps) {
         title={`${trip.make} ${trip.model}`}
         description={`${trip.licenceNumber}${trip.vehicleRegisterNumber ? ` · ${trip.vehicleRegisterNumber}` : ''}`}
       >
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/trips"><ChevronLeft className="h-4 w-4" /> Back to Trips</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <TripActions tripId={trip.id} status={trip.status} tenantId={session.tenantId} />
+          <Button variant="secondary" size="sm" asChild>
+            <Link href="/dashboard/trips"><ChevronLeft className="h-4 w-4" /> Back to Trips</Link>
+          </Button>
+        </div>
       </PageHeader>
 
       {/* Trip Summary */}

@@ -20,5 +20,5 @@ export default async function DashboardLayout({
     redirect('/login?redirect=/dashboard&error=tenant');
   }
 
-  return <DashboardShell tenantName={session.tenantSlug}>{children}</DashboardShell>;
+  return <DashboardShell tenantName={session.tenantSlug} userId={session.user.id}>{children}</DashboardShell>;
 }

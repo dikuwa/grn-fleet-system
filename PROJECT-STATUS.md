@@ -86,11 +86,66 @@
 - [x] **CI pipeline** — `.github/workflows/ci.yml` with quality checks + integration test job (Postgres service, migrations, seed, server, tests)
 - [x] **TypeScript** — Clean compile (0 errors)
 
+## Comprehensive Module Audit (2026-07-19)
+
+A full codebase audit was performed against `project-description.md`. See `IMPLEMENTATION-ROADMAP.md` for the complete module-by-module breakdown.
+
+### Phase 1 Security Fix — Complete (2026-07-19)
+
+**All 15 server component pages now enforce tenant isolation + auth checks:**
+
+| Page | Auth Check | Tenant Isolation |
+|------|-----------|-----------------|
+| Dashboard | ✅ | ✅ |
+| Requests list | ✅ | ✅ `transportRequests.tenantId` |
+| Request detail | ✅ | ✅ `transportRequests.tenantId` |
+| Fleet | ✅ | ✅ `vehicles.tenantId` |
+| Staff | ✅ | ✅ `employees.tenantId` |
+| Approvals | ✅ | ✅ via `transportRequests.tenantId` join |
+| Trips list | ✅ | ✅ `trips.tenantId` |
+| Trip detail | ✅ | ✅ `trips.tenantId` |
+| Fuel | ✅ | ✅ via `vehicles.tenantId` join |
+| Inspections | ✅ | ✅ `vehicleInspections.tenantId` |
+| Allocations list | ✅ | ✅ via `vehicles.tenantId` join |
+| Allocation detail | ✅ | ✅ via `trips.tenantId` + vehicle join |
+
+### Trip Workflow — Complete
+
+| Transition | API Endpoint | Status |
+|-----------|-------------|--------|
+| Pending → In Progress | `POST /api/trips/[id]/start` | ✅ |
+| In Progress → Return Inspection | `POST /api/trips/[id]/return` | ✅ |
+| Return Inspection → Closed | `POST /api/trips/[id]/close` | ✅ (existed) |
+
+Trip detail page now has `TripActions` component with Start/Mark Returned/Return Inspection buttons.
+
+### Vehicle Recommendation in Allocation UI
+
+New allocation page now calls the `VehicleRecommender` engine and displays scored results with:
+- Score (0-100)
+- Reasons badges (green) — e.g. "No open defects", "Suitable terrain"
+- Concern badges (red) — e.g. "High mileage", "Open defect"
+- Selectable vehicle cards with click-to-select
+
+### Notifications Indicator
+
+Topbar now:
+- Fetches unread notification count on mount
+- Polls every 30 seconds for new notifications
+- Shows live count badge (or 99+ overflow)
+- Links to /dashboard/notifications
+
+### Approval Action API
+
+Verified end-to-end: `POST /api/approvals/[id]/action` delegates to `WorkflowEngine.processAction()` with proper permission checks, separation of duty, and audit logging.
+
 ## Known Gaps
 
-- No tenant isolation on queries (requires auth session)
-- SMS won't send until Twilio credentials are set (service activated with dummy keys)
-- Integration tests not wired into E2E job (Playwright tests commented out in CI until secrets set)
+- SMS won't send until Twilio credentials are set
+- Email templates need content
+- Background jobs (Inngest) need scheduling
+- Driver mobile dedicated view not yet built
+- Reports data aggregation needs tuning
 
 ## Blockers
 

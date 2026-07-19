@@ -12,8 +12,10 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Truck, ChevronLeft, CalendarDays, User, FileText, Gauge, AlertTriangle, CheckCircle2, Download } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { AllocationActions } from './AllocationActions';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -26,7 +28,7 @@ const ALLOCATION_STATE_VARIANTS: Record<string, 'success' | 'pending' | 'info' |
   provisional: 'pending', confirmed: 'info', cancelled: 'cancelled', released: 'success',
 };
 
-async function fetchAllocationDetail(id: string) {
+async function fetchAllocationDetail(id: string, tenantId: string) {
   const db = getDb();
 
   const allocation = await db
@@ -72,7 +74,7 @@ async function fetchAllocationDetail(id: string) {
         returnedAt: trips.returnedAt,
       })
       .from(trips)
-      .where(eq(trips.allocationId, id))
+      .where(and(eq(trips.allocationId, id), eq(trips.tenantId, tenantId)))
       .then((r) => r[0] ?? null),
     db
       .select({
@@ -108,6 +110,17 @@ async function fetchAllocationDetail(id: string) {
 export default async function AllocationDetailPage({ params }: PageProps) {
   const { id } = await params;
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Allocations', href: '/dashboard/allocations' }, { label: 'Allocation Detail' }]} />
+        <PageHeader title="Allocation Detail" description="Allocation could not be loaded" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view allocation details." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -120,7 +133,7 @@ export default async function AllocationDetailPage({ params }: PageProps) {
 
   let data: Awaited<ReturnType<typeof fetchAllocationDetail>>;
   try {
-    data = await fetchAllocationDetail(id);
+    data = await fetchAllocationDetail(id, session.tenantId);
   } catch (error) {
     console.error('Allocation detail query failed:', error);
     return (
@@ -146,9 +159,17 @@ export default async function AllocationDetailPage({ params }: PageProps) {
         title={`${allocation.make} ${allocation.model}`}
         description={`${allocation.licenceNumber}${allocation.vehicleRegisterNumber ? ` · ${allocation.vehicleRegisterNumber}` : ''} · ${formatDate(allocation.startAt)} – ${formatDate(allocation.endAt)}`}
       >
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/allocations"><ChevronLeft className="h-4 w-4" /> Back to Allocations</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <AllocationActions
+            allocationId={id}
+            requestId={allocation.requestId}
+            vehicleId={allocation.vehicleId}
+            hasTrip={!!relatedTrip}
+          />
+          <Button variant="secondary" size="sm" asChild>
+            <Link href="/dashboard/allocations"><ChevronLeft className="h-4 w-4" /> Back</Link>
+          </Button>
+        </div>
       </PageHeader>
 
       {/* Summary Card */}

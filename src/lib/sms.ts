@@ -78,7 +78,6 @@ async function getVonageClient(): Promise<VonageClient | null> {
   if (!env.VONAGE_API_KEY || !env.VONAGE_API_SECRET) return null;
 
   try {
-    // @ts-expect-error — @vonage/server-sdk package is only installed when provider is configured
     const { Vonage } = await import('@vonage/server-sdk');
     vonageClient = new Vonage({
       apiKey: env.VONAGE_API_KEY,

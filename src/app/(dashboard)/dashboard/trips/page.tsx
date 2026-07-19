@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Truck, Search, ChevronRight, ChevronLeft } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
 
 interface PageProps {
@@ -36,7 +37,7 @@ const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'err
   closed: 'success',
 };
 
-async function fetchTrips(sp: Record<string, string | undefined>) {
+async function fetchTrips(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -44,7 +45,7 @@ async function fetchTrips(sp: Record<string, string | undefined>) {
   const search = sp.search?.trim();
   const status = sp.status?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(trips.tenantId, tenantId)];
 
   if (status) {
     conditions.push(eq(trips.status, status));
@@ -117,6 +118,17 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
 export default async function TripsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips' }]} />
+        <PageHeader title="Trips" description="Manage operational trips and vehicle assignments" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view trips." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -129,7 +141,7 @@ export default async function TripsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchTrips>>;
   try {
-    result = await fetchTrips(sp);
+    result = await fetchTrips(sp, session.tenantId);
   } catch (error) {
     console.error('Trips query failed:', error);
     return (

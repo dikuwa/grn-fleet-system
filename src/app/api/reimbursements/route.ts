@@ -2,13 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { reimbursements, fuelTransactions } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
-import { requireRequestAuth } from '@/lib/auth-helpers';
-import { eq } from 'drizzle-orm';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
+import { vehicles } from '@/db/schema/fleet';
+import { eq, and } from 'drizzle-orm';
 
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
+    const { session } = auth;
+
+    // Require fuel manage permission (reimbursements are fuel-related)
+    const permCheck = await requirePermission(session, Permissions.FUEL_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
     const body = await request.json();
@@ -22,15 +29,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify transaction exists
+    // Verify transaction exists and belongs to this tenant
     const [transaction] = await db
-      .select()
+      .select({ id: fuelTransactions.id, vehicleId: fuelTransactions.vehicleId, recordedByUserId: fuelTransactions.recordedByUserId })
       .from(fuelTransactions)
-      .where(eq(fuelTransactions.id, transactionId))
+      .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+      .where(and(eq(fuelTransactions.id, transactionId), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
 
     if (!transaction) {
-      return NextResponse.json({ error: 'Fuel transaction not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Fuel transaction not found in your organisation' }, { status: 404 });
     }
 
     // Resolve claimant

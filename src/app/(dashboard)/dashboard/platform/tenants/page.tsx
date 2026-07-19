@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import {
-  Building2, Search, Plus, ChevronRight, Loader2, Globe, Users, Clock,
+  Building2, Search, Plus, ChevronRight, Users, Clock,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 

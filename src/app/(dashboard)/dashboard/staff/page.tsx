@@ -8,6 +8,7 @@ import { eq, ilike, or, and, asc, count } from 'drizzle-orm';
 import { StatusBadge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
+import { getServerSession } from '@/lib/session';
 
 interface SearchParams {
   q?: string;
@@ -36,7 +37,7 @@ interface StaffQueryResult {
   allDepartments: Array<{ id: string; name: string }>;
 }
 
-async function fetchStaffData(params: SearchParams): Promise<StaffQueryResult> {
+async function fetchStaffData(params: SearchParams, tenantId: string): Promise<StaffQueryResult> {
   const dbo = getDb();
   const query = params.q?.trim() || '';
   const officeFilter = params.office || '';
@@ -45,7 +46,7 @@ async function fetchStaffData(params: SearchParams): Promise<StaffQueryResult> {
   const currentPage = Math.max(1, parseInt(params.page || '1', 10) || 1);
   const offset = (currentPage - 1) * DEFAULT_PAGE_SIZE;
 
-  const conditions: ReturnType<typeof and>[] = [];
+  const conditions: ReturnType<typeof and>[] = [eq(employees.tenantId, tenantId)];
 
   if (query) {
     conditions.push(
@@ -106,6 +107,19 @@ export default async function StaffDirectoryPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Staff Directory' }]} />
+        <PageHeader title="Staff Directory" description="Manage employee records, driver profiles, and licence documents">
+          <Button variant="primary" size="sm"><Plus className="h-4 w-4" />Add Employee</Button>
+        </PageHeader>
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view staff records." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -125,7 +139,7 @@ export default async function StaffDirectoryPage({
   const sp = await searchParams;
   let data: StaffQueryResult;
   try {
-    data = await fetchStaffData(sp);
+    data = await fetchStaffData(sp, session.tenantId);
   } catch (error) {
     console.error('Staff directory query failed:', error);
     return (

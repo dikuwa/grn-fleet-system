@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database, ClipboardCheck, Search, ChevronRight, ChevronLeft, CheckCircle2, XCircle } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
 
 interface PageProps {
@@ -21,14 +22,14 @@ const WORKFLOW_STATUS_LABELS: Record<string, string> = {
   active: 'Active', completed: 'Completed', cancelled: 'Cancelled', overridden: 'Overridden',
 };
 
-async function fetchApprovals(sp: Record<string, string | undefined>) {
+async function fetchApprovals(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
   const status = sp.status?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(transportRequests.tenantId, tenantId)];
 
   if (status) {
     conditions.push(eq(workflowInstances.status, status));
@@ -86,6 +87,17 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
 export default async function ApprovalsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Approvals' }]} />
+        <PageHeader title="Approvals" description="Review and manage workflow approvals" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view approvals." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -98,7 +110,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchApprovals>>;
   try {
-    result = await fetchApprovals(sp);
+    result = await fetchApprovals(sp, session.tenantId);
   } catch (error) {
     console.error('Approvals query failed:', error);
     return (

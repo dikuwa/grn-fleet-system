@@ -8,7 +8,7 @@ import {
   requestAttachments,
 } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, desc } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -17,6 +17,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database } from 'lucide-react';
 import { STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constants';
 import { formatDate, formatDateTime } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import { notFound } from 'next/navigation';
 import {
   FileText,
@@ -37,7 +38,7 @@ interface PageProps {
 
 const SCOPES = { regional: 'Regional', national: 'National' } as const;
 
-async function fetchRequestDetail(id: string) {
+async function fetchRequestDetail(id: string, tenantId: string) {
   const db = getDb();
 
   const request = await db
@@ -63,7 +64,7 @@ async function fetchRequestDetail(id: string) {
     })
     .from(transportRequests)
     .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
-    .where(eq(transportRequests.id, id))
+    .where(and(eq(transportRequests.id, id), eq(transportRequests.tenantId, tenantId)))
     .then((r) => r[0] ?? null);
 
   if (!request) notFound();
@@ -121,6 +122,17 @@ async function fetchRequestDetail(id: string) {
 export default async function RequestDetailPage({ params }: PageProps) {
   const { id } = await params;
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests', href: '/dashboard/requests' }, { label: 'Request Detail' }]} />
+        <PageHeader title="Request Detail" description="Authentication required" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view request details." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -137,7 +149,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
 
   let data: Awaited<ReturnType<typeof fetchRequestDetail>>;
   try {
-    data = await fetchRequestDetail(id);
+    data = await fetchRequestDetail(id, session.tenantId);
   } catch (error) {
     console.error('Request detail query failed:', error);
     return (

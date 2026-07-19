@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicleInspections, inspectionItemResults, inspectionTemplates } from '@/db/schema/trips';
-import { vehicles } from '@/db/schema/fleet';
+import { trips, vehicleInspections, inspectionItemResults, inspectionTemplates } from '@/db/schema/trips';
+import { vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onInspectionCompleted } from '@/lib/document-generator';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
   try {
@@ -53,6 +53,30 @@ export async function POST(req: NextRequest) {
 
     if (!vehicle) {
       return NextResponse.json({ error: 'Vehicle not found in your tenant' }, { status: 404 });
+    }
+
+    // Block departure if vehicle has unresolved critical/blocking defects
+    if (type === 'departure') {
+      const [blockingDefect] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(vehicleDefects)
+        .where(
+          and(
+            eq(vehicleDefects.vehicleId, vehicleId),
+            isNull(vehicleDefects.resolvedAt),
+            eq(vehicleDefects.isBlocking, true),
+          ),
+        );
+
+      if (blockingDefect && Number(blockingDefect.count) > 0) {
+        return NextResponse.json(
+          {
+            error: 'Departure inspection blocked: This vehicle has unresolved critical or blocking defects. Resolve all defects before departure.',
+            blockingDefects: Number(blockingDefect.count),
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const items: Array<{ result: string; isCritical?: boolean }> = checklist || [];
@@ -130,10 +154,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Advance trip status based on inspection type (only if inspection passed)
+    let updatedTrip = null;
+    if (tripId && overallPass) {
+      const tripStatusUpdate: Record<string, { status: string; timestamp: string }> = {
+        departure: { status: 'in_progress', timestamp: 'startedAt' },
+        return: { status: 'closure_review', timestamp: 'returnedAt' },
+      };
+
+      const update = tripStatusUpdate[type];
+      if (update) {
+        const updateData: Record<string, unknown> = {
+          status: update.status,
+          updatedAt: new Date(),
+        };
+        if (update.timestamp === 'startedAt') updateData.startedAt = new Date();
+        if (update.timestamp === 'returnedAt') updateData.returnedAt = new Date();
+
+        [updatedTrip] = await db
+          .update(trips)
+          .set(updateData)
+          .where(eq(trips.id, tripId))
+          .returning();
+      }
+    }
+
     // Trigger document generation
     const doc = await onInspectionCompleted(inspection.id, tenantId, userId);
 
-    return NextResponse.json({ inspection, document: doc, overallPass, status });
+    return NextResponse.json({ inspection, trip: updatedTrip, document: doc, overallPass, status });
   } catch (error) {
     console.error('[inspections] POST failed:', error);
     return NextResponse.json(

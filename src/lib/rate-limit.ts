@@ -85,9 +85,7 @@ export async function rateLimit(
   if (hasRedis) {
     // Upstash/Redis-backed rate limiter
     try {
-      const url = `${env.UPSTASH_REDIS_REST_URL!.replace(/\/$/, '')}/lpush`;
       const now = Math.floor(Date.now() / 1000);
-      const windowStart = now - windowSeconds;
 
       // Use a simple sliding window via sorted sets via EVAL script
       const script = `

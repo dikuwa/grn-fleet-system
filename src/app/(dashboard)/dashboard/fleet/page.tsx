@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Database } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
+import { getServerSession } from '@/lib/session';
 import {
   Truck,
   Search,
@@ -57,7 +58,7 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
   return qs ? `${base}?${qs}` : base;
 }
 
-async function fetchFleetData(sp: Record<string, string | undefined>) {
+async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -67,7 +68,7 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
   const categoryId = sp.category_id?.trim();
   const officeId = sp.office_id?.trim();
 
-  const conditions: SQL[] = [eq(vehicles.isActive, true)];
+  const conditions: SQL[] = [eq(vehicles.isActive, true), eq(vehicles.tenantId, tenantId)];
 
   if (status) {
     conditions.push(eq(vehicles.status, status));
@@ -181,6 +182,17 @@ async function fetchFleetData(sp: Record<string, string | undefined>) {
 export default async function FleetPage({ searchParams }: PageProps) {
   const sp = await searchParams;
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fleet' }]} />
+        <PageHeader title="Fleet" description="Manage vehicles, view status, defects and maintenance" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view fleet data." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -197,7 +209,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchFleetData>>;
   try {
-    result = await fetchFleetData(sp);
+    result = await fetchFleetData(sp, session.tenantId);
   } catch (error) {
     console.error('Fleet query failed:', error);
     return (

@@ -5,13 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input, Label, Textarea } from '@/components/ui/input';
+import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { EmptyState } from '@/components/ui/empty-state';
+
 import { saveDraft, listDrafts, deleteDraft, countUnsyncedDrafts } from '@/lib/offline-drafts';
 import {
-  ClipboardList, Save, WifiOff, Loader2, CheckCircle2, Clock, MapPin,
-  Gauge, ChevronRight, Plus, X, Sun, Moon, Fuel,
+  ClipboardList, Save, WifiOff, CheckCircle2, Clock, MapPin,
+  Gauge, X,
 } from 'lucide-react';
 
 interface Trip {
@@ -51,7 +51,9 @@ const emptyForm: LogFormData = {
 };
 
 export default function DailyLogsPage() {
-  const [isOnline, setIsOnline] = useState(true);
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  );
   const [draftId, setDraftId] = useState<string | null>(null);
   const [formData, setFormData] = useState<LogFormData>(emptyForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -59,9 +61,8 @@ export default function DailyLogsPage() {
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [showDrafts, setShowDrafts] = useState(false);
 
-  // Online status
+  // Online status — initialize from navigator.onLine via lazy state, then listen for changes
   useEffect(() => {
-    setIsOnline(navigator.onLine);
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
@@ -112,10 +113,7 @@ export default function DailyLogsPage() {
     setTimeout(() => setSubmitMessage(null), 3000);
   }, [formData, draftId]);
 
-  // Load drafts
-  const loadDrafts = useCallback(async () => {
-    return listDrafts({ draftType: 'request' });
-  }, []);
+
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -523,16 +521,13 @@ function DraftListSection({
   onToggle: () => void;
   onLoadDraft: (draft: { id: string; formData: Record<string, unknown> }) => void;
 }) {
-  const [drafts, setDrafts] = useState<Array<{ id: string; formData: Record<string, unknown>; updatedAt: string }>>([]);
-  const [loading, setLoading] = useState(false);
+  const [drafts, setDrafts] = useState<
+    Array<{ id: string; formData: Record<string, unknown>; updatedAt: string }>
+  >([]);
 
   useEffect(() => {
-    if (show) {
-      setLoading(true);
-      listDrafts({ draftType: 'request' })
-        .then(setDrafts)
-        .finally(() => setLoading(false));
-    }
+    if (!show) return;
+    listDrafts({ draftType: 'request' }).then(setDrafts);
   }, [show]);
 
   if (!show) {
@@ -552,11 +547,7 @@ function DraftListSection({
         <CardTitle>Saved Drafts</CardTitle>
       </CardHeader>
       <CardContent>
-        {loading ? (
-          <div className="flex justify-center py-4">
-            <Loader2 className="h-5 w-5 animate-spin text-ink-400" />
-          </div>
-        ) : drafts.length === 0 ? (
+        {drafts.length === 0 ? (
           <p className="text-sm text-ink-500 text-center py-4">No saved drafts</p>
         ) : (
           <div className="space-y-2">
@@ -570,7 +561,11 @@ function DraftListSection({
                     {String(draft.formData?.origin || '')} → {String(draft.formData?.destination || '')}
                   </p>
                   <p className="text-xs text-ink-500">
-                    {new Date(draft.updatedAt).toLocaleDateString()} at {new Date(draft.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(draft.updatedAt).toLocaleDateString()} at{' '}
+                    {new Date(draft.updatedAt).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
                   </p>
                 </div>
                 <button

@@ -21,7 +21,12 @@ interface BeforeInstallPromptEvent extends Event {
  */
 export function InstallPwaBanner() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(() => {
+    if (typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches) {
+      return true;
+    }
+    return false;
+  });
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -36,13 +41,6 @@ export function InstallPwaBanner() {
     return () => {
       window.removeEventListener('beforeinstallprompt', handler);
     };
-  }, []);
-
-  // Check if already installed
-  useEffect(() => {
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-      setDismissed(true);
-    }
   }, []);
 
   const handleInstall = async () => {

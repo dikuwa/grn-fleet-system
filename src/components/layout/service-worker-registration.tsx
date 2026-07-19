@@ -31,9 +31,10 @@ export function ServiceWorkerRegistration() {
         }, 60 * 60 * 1000);
 
         // Register background sync for offline drafts
-        if ('sync' in reg) {
+        const swReg = reg as unknown as { sync?: { register: (tag: string) => Promise<void> } };
+        if (swReg.sync) {
           try {
-            await reg.sync.register('sync-offline-drafts');
+            await swReg.sync.register('sync-offline-drafts');
           } catch {
             // Background Sync not supported — fall back to periodic sync
           }

@@ -211,7 +211,181 @@ export const approvalCompleted = inngest
 // Register all functions
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Expiry Alert Cron: Vehicle Licence
+// ---------------------------------------------------------------------------
+
+export const vehicleLicenceExpiryAlert = inngest
+  ? inngest.createFunction(
+      { id: 'vehicle-licence-expiry-alert', retries: 2 },
+      { cron: '0 8 * * *' }, // Daily at 08:00
+      async ({ step }) => {
+        return step.run('Check vehicle licence expiry', async () => {
+          const db = getDb();
+          const { vehicles } = await import('@/db/schema/fleet');
+          const { lte } = await import('drizzle-orm');
+
+          const thirtyDays = new Date();
+          thirtyDays.setDate(thirtyDays.getDate() + 30);
+
+          const expiringSoon = await db
+            .select({
+              vehicleId: vehicles.id,
+              licenceNumber: vehicles.licenceNumber,
+              licenceExpiryDate: vehicles.licenceExpiryDate,
+              tenantId: vehicles.tenantId,
+            })
+            .from(vehicles)
+            .where(
+              lte(vehicles.licenceExpiryDate, thirtyDays.toISOString().split('T')[0]),
+            );
+
+          let notificationCount = 0;
+          for (const v of expiringSoon) {
+            const daysLeft = v.licenceExpiryDate
+              ? Math.ceil((new Date(v.licenceExpiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+              : 0;
+
+            await db
+              .insert(notifications)
+              .values({
+                tenantId: v.tenantId,
+                recipientUserId: '00000000-0000-0000-0000-000000000000',
+                type: 'reminder',
+                title: '🚛 Vehicle Licence Expiring',
+                body: `${v.licenceNumber} licence expires${daysLeft > 0 ? ` in ${daysLeft} day(s)` : ' today'}.`,
+                entityType: 'vehicle',
+                entityId: v.vehicleId,
+                actionUrl: `/dashboard/fleet/${v.vehicleId}`,
+                priority: daysLeft <= 7 ? 'high' : 'normal',
+              });
+            notificationCount++;
+          }
+
+          return { sent: notificationCount > 0, count: notificationCount };
+        });
+      },
+    )
+  : null;
+
+// ---------------------------------------------------------------------------
+// Expiry Alert Cron: Driver Licence
+// ---------------------------------------------------------------------------
+
+export const driverLicenceExpiryAlert = inngest
+  ? inngest.createFunction(
+      { id: 'driver-licence-expiry-alert', retries: 2 },
+      { cron: '0 8 * * *' }, // Daily at 08:00
+      async ({ step }) => {
+        return step.run('Check driver licence expiry', async () => {
+          const db = getDb();
+          const { driverProfiles, driverLicences } = await import('@/db/schema/people');
+          const { employees } = await import('@/db/schema/people');
+          const { lte } = await import('drizzle-orm');
+
+          const thirtyDays = new Date();
+          thirtyDays.setDate(thirtyDays.getDate() + 30);
+
+          const expiringLicences = await db
+            .select({
+              licenceId: driverLicences.id,
+              licenceNumber: driverLicences.licenceNumber,
+              licenceClass: driverLicences.licenceClass,
+              expiryDate: driverLicences.expiryDate,
+              driverProfileId: driverLicences.driverProfileId,
+              employeeId: driverProfiles.employeeId,
+              firstName: employees.firstName,
+              lastName: employees.lastName,
+              tenantId: employees.tenantId,
+            })
+            .from(driverLicences)
+            .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
+            .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
+            .where(
+              lte(driverLicences.expiryDate, thirtyDays.toISOString().split('T')[0]),
+            );
+
+          for (const l of expiringLicences) {
+            const daysLeft = Math.ceil((new Date(l.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+
+            await db.insert(notifications).values({
+              tenantId: l.tenantId,
+              recipientUserId: '00000000-0000-0000-0000-000000000000',
+              type: 'reminder',
+              title: '🚗 Driver Licence Expiring',
+              body: `${l.firstName} ${l.lastName} — ${l.licenceClass} licence expires${daysLeft > 0 ? ` in ${daysLeft} day(s)` : ' today'}.`,
+              entityType: 'driver_licence',
+              entityId: l.licenceId,
+              priority: daysLeft <= 7 ? 'high' : 'normal',
+            });
+          }
+
+          return { sent: expiringLicences.length > 0, count: expiringLicences.length };
+        });
+      },
+    )
+  : null;
+
+// ---------------------------------------------------------------------------
+// Maintenance Reminder Cron
+// ---------------------------------------------------------------------------
+
+export const maintenanceReminder = inngest
+  ? inngest.createFunction(
+      { id: 'maintenance-reminder', retries: 2 },
+      { cron: '0 8 * * 1' }, // Weekly on Monday at 08:00
+      async ({ step }) => {
+        return step.run('Check upcoming maintenance', async () => {
+          const db = getDb();
+          const { maintenanceEvents, vehicles } = await import('@/db/schema/fleet');
+          const { lte } = await import('drizzle-orm');
+
+          const fourteenDays = new Date();
+          fourteenDays.setDate(fourteenDays.getDate() + 14);
+
+          const upcomingMaintenance = await db
+            .select({
+              eventId: maintenanceEvents.id,
+              description: maintenanceEvents.description,
+              serviceDate: maintenanceEvents.serviceDate,
+              vehicleId: maintenanceEvents.vehicleId,
+              licenceNumber: vehicles.licenceNumber,
+              tenantId: vehicles.tenantId,
+            })
+            .from(maintenanceEvents)
+            .innerJoin(vehicles, eq(maintenanceEvents.vehicleId, vehicles.id))
+            .where(
+              and(
+                lte(maintenanceEvents.nextServiceDate, fourteenDays.toISOString().split('T')[0]),
+                eq(maintenanceEvents.serviceType, 'scheduled'),
+              ),
+            );
+
+          for (const m of upcomingMaintenance) {
+            await db.insert(notifications).values({
+              tenantId: m.tenantId,
+              recipientUserId: '00000000-0000-0000-0000-000000000000',
+              type: 'reminder',
+              title: '🔧 Scheduled Maintenance Due',
+              body: `${m.licenceNumber} — ${m.description} due on ${m.serviceDate || 'soon'}.`,
+              entityType: 'maintenance_event',
+              entityId: m.eventId,
+              actionUrl: `/dashboard/fleet/${m.vehicleId}`,
+              priority: 'normal',
+            });
+          }
+
+          return { sent: upcomingMaintenance.length > 0, count: upcomingMaintenance.length };
+        });
+      },
+    )
+  : null;
+
+// ---------------------------------------------------------------------------
+// Register all functions
+// ---------------------------------------------------------------------------
+
 /** Array of all registered Inngest functions (with nulls filtered out) */
 export const inngestFunctions = (
-  [stepReminder, stepEscalation, approvalCompleted] as const
+  [stepReminder, stepEscalation, approvalCompleted, vehicleLicenceExpiryAlert, driverLicenceExpiryAlert, maintenanceReminder] as const
 ).filter((f): f is NonNullable<typeof f> => f !== null);

@@ -147,13 +147,13 @@ export async function POST(request: NextRequest) {
     if (body.branding?.contactPhone) brandingValues.contactPhone = body.branding.contactPhone;
     if (body.branding?.address) brandingValues.address = body.branding.address;
 
-    await db.insert(tenantBranding).values(brandingValues as any);
+    await db.insert(tenantBranding).values(brandingValues as unknown as typeof tenantBranding.$inferInsert);
 
     // -----------------------------------------------------------------------
     // Step 3: Create offices
     // -----------------------------------------------------------------------
 
-    const createdOffices: Array<{ id: string; code: string; name: string }> = [];
+    const createdOffices: Array<{ id: string; code: string | null; name: string }> = [];
     if (body.offices && body.offices.length > 0) {
       // First pass: create all offices without parent
       for (const office of body.offices) {
@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
             name: office.name,
             code: office.code,
             type: office.type,
-            address: office.address || null,
+            address: office.address || undefined,
           })
           .returning();
         createdOffices.push({ id: created.id, code: created.code, name: created.name });

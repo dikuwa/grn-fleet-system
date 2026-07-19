@@ -10,7 +10,7 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
   Building2, ChevronLeft, ChevronRight, CheckCircle2, Loader2,
-  Plus, X, Shield, Users, Mail, Globe, Palette, MapPin, Hash,
+  Plus, X, Shield, Users, Mail, Palette, MapPin, Hash,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------

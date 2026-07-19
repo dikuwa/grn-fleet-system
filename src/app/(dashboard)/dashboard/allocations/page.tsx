@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Truck, Search, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
 
 interface PageProps {
@@ -32,7 +33,7 @@ const ALLOCATION_STATE_VARIANTS: Record<string, 'success' | 'pending' | 'info' |
   released: 'success',
 };
 
-async function fetchAllocations(sp: Record<string, string | undefined>) {
+async function fetchAllocations(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -40,7 +41,7 @@ async function fetchAllocations(sp: Record<string, string | undefined>) {
   const search = sp.search?.trim();
   const state = sp.state?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
 
   if (state) {
     conditions.push(eq(vehicleAllocations.state, state));
@@ -115,6 +116,17 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
 export default async function AllocationsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Allocations' }]} />
+        <PageHeader title="Vehicle Allocations" description="Manage vehicle assignments to transport requests" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view allocations." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -127,7 +139,7 @@ export default async function AllocationsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchAllocations>>;
   try {
-    result = await fetchAllocations(sp);
+    result = await fetchAllocations(sp, session.tenantId);
   } catch (error) {
     console.error('Allocations query failed:', error);
     return (

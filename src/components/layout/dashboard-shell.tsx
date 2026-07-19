@@ -11,9 +11,10 @@ import { cn } from '@/lib/utils';
 interface DashboardShellProps {
   children: React.ReactNode;
   tenantName?: string;
+  userId?: string;
 }
 
-export function DashboardShell({ children, tenantName }: DashboardShellProps) {
+export function DashboardShell({ children, tenantName, userId }: DashboardShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -38,7 +39,7 @@ export function DashboardShell({ children, tenantName }: DashboardShellProps) {
           sidebarCollapsed ? 'ml-[72px]' : 'ml-[248px]',
         )}
       >
-        <Topbar onMenuClick={() => setMobileMenuOpen(true)} tenantName={tenantName} />
+        <Topbar onMenuClick={() => setMobileMenuOpen(true)} tenantName={tenantName} userId={userId} />
 
         <main className="mx-auto max-w-[1440px] px-4 py-6 md:px-6 lg:px-8">
           {children}

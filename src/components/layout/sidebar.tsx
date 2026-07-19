@@ -71,6 +71,7 @@ const navGroups: NavGroup[] = [
     label: 'People & Offices',
     items: [
       { label: 'Staff Directory', href: '/dashboard/staff', icon: Users },
+      { label: 'Drivers', href: '/dashboard/drivers', icon: CarFront },
       { label: 'Offices', href: '/dashboard/offices', icon: Building2 },
     ],
   },

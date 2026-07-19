@@ -115,7 +115,7 @@ describe('Platform Tenants API — GET /api/platform/tenants', () => {
     vi.clearAllMocks();
     // Dynamic import so mocks are in place
     const mod = await import('@/app/api/platform/tenants/route');
-    route = mod as { GET: (req: Request) => Promise<Response> };
+    route = mod as unknown as { GET: (req: Request) => Promise<Response> };
   });
 
   it('returns 401 when not authenticated', async () => {
@@ -202,7 +202,7 @@ describe('Platform Tenants API — POST /api/platform/tenants', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const mod = await import('@/app/api/platform/tenants/route');
-    route = mod as { POST: (req: Request) => Promise<Response> };
+    route = mod as unknown as { POST: (req: Request) => Promise<Response> };
   });
 
   it('returns 401 when not authenticated', async () => {
@@ -327,7 +327,7 @@ describe('Platform Tenants API — GET /api/platform/tenants/[id]', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const mod = await import('@/app/api/platform/tenants/[id]/route');
-    route = mod as { GET: (req: Request, ctx: { params: Promise<{ id: string }> }) => Promise<Response> };
+    route = mod as unknown as { GET: (req: Request, ctx: { params: Promise<{ id: string }> }) => Promise<Response> };
   });
 
   it('returns 404 for non-existent tenant', async () => {
@@ -384,7 +384,7 @@ describe('Platform Tenants API — PATCH /api/platform/tenants/[id]', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const mod = await import('@/app/api/platform/tenants/[id]/route');
-    route = mod as { PATCH: (req: Request, ctx: { params: Promise<{ id: string }> }) => Promise<Response> };
+    route = mod as unknown as { PATCH: (req: Request, ctx: { params: Promise<{ id: string }> }) => Promise<Response> };
   });
 
   it('updates tenant general fields', async () => {
@@ -458,7 +458,7 @@ describe('Trip Logs API — GET /api/trip-logs', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const mod = await import('@/app/api/trip-logs/route');
-    route = mod as { GET: (req: Request) => Promise<Response> };
+    route = mod as unknown as { GET: (req: Request) => Promise<Response> };
   });
 
   it('returns 401 when not authenticated', async () => {
@@ -499,7 +499,7 @@ describe('Trip Logs API — POST /api/trip-logs', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const mod = await import('@/app/api/trip-logs/route');
-    route = mod as { POST: (req: Request) => Promise<Response> };
+    route = mod as unknown as { POST: (req: Request) => Promise<Response> };
   });
 
   it('returns 403 without DRIVER_LOG_CREATE or TRIP_MANAGE', async () => {

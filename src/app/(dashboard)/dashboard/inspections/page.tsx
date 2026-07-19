@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Search, ChevronRight, ChevronLeft, ClipboardCheck } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
 
 interface PageProps {
@@ -22,7 +23,7 @@ const INSPECTION_TYPE_LABELS: Record<string, string> = {
   return: 'Return',
 };
 
-async function fetchInspections(sp: Record<string, string | undefined>) {
+async function fetchInspections(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -30,7 +31,7 @@ async function fetchInspections(sp: Record<string, string | undefined>) {
   const type = sp.type?.trim();
   const status = sp.status?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(vehicleInspections.tenantId, tenantId)];
 
   if (type) {
     conditions.push(eq(vehicleInspections.type, type));
@@ -87,6 +88,17 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const activeTab = sp.type || '';
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
+        <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view inspections." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -99,7 +111,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchInspections>>;
   try {
-    result = await fetchInspections(sp);
+    result = await fetchInspections(sp, session.tenantId);
   } catch (error) {
     console.error('Inspections query failed:', error);
     return (

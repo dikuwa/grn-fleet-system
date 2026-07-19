@@ -71,6 +71,22 @@ const MOCK_WORKFLOW_INSTANCE_SELECT = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type WorkflowEngineDb = any;
 
+// Mock `getDb` so `new WorkflowEngine()` without args doesn't throw
+vi.mock('@/db', () => ({
+  getDb: () => ({
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    orderBy: vi.fn().mockReturnThis(),
+    values: vi.fn().mockReturnThis(),
+    returning: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    set: vi.fn().mockReturnThis(),
+  }),
+}));
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

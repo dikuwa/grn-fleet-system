@@ -10,13 +10,14 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Fuel, Search, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate, formatCurrency } from '@/lib/utils';
+import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
-async function fetchFuelEntries(sp: Record<string, string | undefined>) {
+async function fetchFuelEntries(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -25,7 +26,7 @@ async function fetchFuelEntries(sp: Record<string, string | undefined>) {
   const paymentMethod = sp.payment_method?.trim();
   const anomalyState = sp.anomaly_state?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
 
   if (paymentMethod) {
     conditions.push(eq(fuelTransactions.paymentMethod, paymentMethod));
@@ -97,6 +98,17 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
 export default async function FuelPage({ searchParams }: PageProps) {
   const sp = await searchParams;
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fuel' }]} />
+        <PageHeader title="Fuel Records" description="Track fuel transactions and monitor consumption" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view fuel records." />
+      </div>
+    );
+  }
+
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
@@ -109,7 +121,7 @@ export default async function FuelPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchFuelEntries>>;
   try {
-    result = await fetchFuelEntries(sp);
+    result = await fetchFuelEntries(sp, session.tenantId);
   } catch (error) {
     console.error('Fuel query failed:', error);
     return (

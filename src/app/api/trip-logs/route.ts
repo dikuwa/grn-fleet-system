@@ -35,6 +35,9 @@ export async function GET(request: NextRequest) {
       conditions.push(eq(tripLogEntries.tripId, tripId));
     }
 
+    // Tenant isolation via trips join
+    conditions.push(eq(trips.tenantId, session.tenantId));
+
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     const rows = await db

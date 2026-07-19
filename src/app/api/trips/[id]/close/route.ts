@@ -4,7 +4,7 @@ import { trips, tripClosures, fuelTransactions } from '@/db/schema/trips';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 export async function POST(
   req: NextRequest,
@@ -28,11 +28,11 @@ export async function POST(
     const userId = session.user.id;
     const tenantId = session.tenantId;
 
-    // Find the trip
+    // Find the trip — with tenant isolation
     const [trip] = await db
       .select()
       .from(trips)
-      .where(eq(trips.id, id))
+      .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId)))
       .limit(1);
 
     if (!trip) {
@@ -41,6 +41,14 @@ export async function POST(
 
     if (trip.status === 'closed') {
       return NextResponse.json({ error: 'Trip is already closed' }, { status: 409 });
+    }
+
+    // Only return_inspection or closure_review trips can be closed
+    if (trip.status !== 'return_inspection' && trip.status !== 'closure_review') {
+      return NextResponse.json(
+        { error: `Trip status "${trip.status}" must be "return_inspection" or "closure_review" before closing.` },
+        { status: 409 },
+      );
     }
 
     // Calculate totals from fuel transactions
