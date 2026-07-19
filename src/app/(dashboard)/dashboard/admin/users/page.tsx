@@ -9,9 +9,9 @@ import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  Users, Search, Plus, ChevronRight, Mail, Loader2,
+  Users, Search, Plus, ChevronRight, Mail, Loader2, Send, CheckCircle2, XCircle,
 } from 'lucide-react';
 
 interface TenantUser {
@@ -24,18 +24,24 @@ interface TenantUser {
   roles: Array<{ id: string; roleName: string; isActing: boolean }>;
 }
 
+interface RoleOption {
+  id: string;
+  name: string;
+}
+
 export default function AdminUsersPage() {
   const router = useRouter();
   const [page, setPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Create user dialog
-  const [showCreate, setShowCreate] = useState(false);
-  const [newEmail, setNewEmail] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  // Invite dialog
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [inviteRoleId, setInviteRoleId] = useState('');
+  const [roles, setRoles] = useState<RoleOption[]>([]);
+  const [inviteResult, setInviteResult] = useState<{ success: boolean; emailSent: boolean; message: string } | null>(null);
+  const [isInviting, setIsInviting] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-users', searchQuery, page],
@@ -57,35 +63,65 @@ export default function AdminUsersPage() {
   const total: number = data?.total ?? 0;
   const totalPages: number = data?.totalPages ?? 1;
 
-  const handleCreate = async () => {
-    if (!newEmail.trim() || !newPassword.trim()) return;
+  const openInviteDialog = async () => {
+    setInviteResult(null);
+    setInviteEmail('');
+    setInviteName('');
+    setInviteRoleId('');
+    setShowInvite(true);
 
-    setIsCreating(true);
-    setCreateError(null);
+    // Fetch available roles
+    try {
+      const res = await fetch('/api/admin/roles');
+      if (res.ok) {
+        const json = await res.json();
+        const roleList = json.data?.roles || json.roles || [];
+        setRoles(Array.isArray(roleList) ? roleList : []);
+      }
+    } catch { /* silent */ }
+  };
+
+  const handleInvite = async () => {
+    if (!inviteEmail.trim()) return;
+
+    setIsInviting(true);
+    setInviteResult(null);
 
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await fetch('/api/users/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: newEmail.trim(),
-          name: newName.trim() || undefined,
-          password: newPassword,
+          email: inviteEmail.trim(),
+          name: inviteName.trim() || undefined,
+          roleId: inviteRoleId || undefined,
+          sendInvite: true,
         }),
       });
 
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to create user');
+      if (!res.ok) throw new Error(json.error || 'Failed to invite user');
 
-      setShowCreate(false);
-      setNewEmail('');
-      setNewName('');
-      setNewPassword('');
+      setInviteResult({
+        success: true,
+        emailSent: json.emailSent,
+        message: json.emailSent
+          ? `Invitation sent to ${inviteEmail.trim()}.`
+          : `User created. RESEND_API_KEY not configured — provide password to user manually.`,
+      });
+
+      setInviteEmail('');
+      setInviteName('');
+      setInviteRoleId('');
       refetch();
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : 'Failed to create user');
+      setInviteResult({
+        success: false,
+        emailSent: false,
+        message: err instanceof Error ? err.message : 'Failed to invite user',
+      });
     } finally {
-      setIsCreating(false);
+      setIsInviting(false);
     }
   };
 
@@ -100,62 +136,75 @@ export default function AdminUsersPage() {
         title="User Management"
         description={`${total} user${total !== 1 ? 's' : ''} in your organisation`}
       >
-        <Dialog open={showCreate} onOpenChange={setShowCreate}>
-          <DialogTrigger asChild>
-            <Button variant="primary" size="sm">
-              <Plus className="h-4 w-4" /> Add User
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Create New User</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label required>Email Address</Label>
-                <Input
-                  type="email"
-                  placeholder="user@organisation.gov.na"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Full Name</Label>
-                <Input
-                  placeholder="e.g. John Doe"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label required>Temporary Password</Label>
-                <Input
-                  type="password"
-                  placeholder="Min 6 characters"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
-              </div>
-              {createError && (
-                <p className="text-xs text-status-error-text">{createError}</p>
-              )}
-              <div className="flex justify-end gap-2">
-                <Button variant="secondary" size="sm" onClick={() => setShowCreate(false)}>Cancel</Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleCreate}
-                  loading={isCreating}
-                  disabled={!newEmail.trim() || !newPassword.trim()}
-                >
-                  Create User
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <Button variant="primary" size="sm" onClick={openInviteDialog}>
+          <Send className="h-4 w-4" /> Invite User
+        </Button>
       </PageHeader>
+
+      {/* Invite Dialog */}
+      <Dialog open={showInvite} onOpenChange={setShowInvite}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Invite New User</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label required>Email Address</Label>
+              <Input
+                type="email"
+                placeholder="user@organisation.gov.na"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Full Name</Label>
+              <Input
+                placeholder="e.g. John Doe"
+                value={inviteName}
+                onChange={(e) => setInviteName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Role</Label>
+              <select
+                value={inviteRoleId}
+                onChange={(e) => setInviteRoleId(e.target.value)}
+                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+              >
+                <option value="">No role</option>
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {inviteResult && (
+              <div className={`flex items-start gap-2 rounded-[8px] border p-3 text-sm ${
+                inviteResult.success
+                  ? 'border-green-200 bg-green-50 text-green-800'
+                  : 'border-red-200 bg-red-50 text-red-800'
+              }`}>
+                {inviteResult.success ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" /> : <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+                <span>{inviteResult.message}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setShowInvite(false)}>Close</Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleInvite}
+                loading={isInviting}
+                disabled={!inviteEmail.trim() || isInviting}
+              >
+                <Send className="h-4 w-4" /> Send Invitation
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Search */}
       <div className="relative max-w-sm">
@@ -190,7 +239,7 @@ export default function AdminUsersPage() {
         <EmptyState
           icon={<Users className="h-6 w-6" />}
           title="No users found"
-          description={searchQuery ? 'Try a different search term.' : 'Add your first user to get started.'}
+          description={searchQuery ? 'Try a different search term.' : 'Invite your first user to get started.'}
         />
       )}
 

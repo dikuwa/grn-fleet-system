@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, vehicleInspections, inspectionItemResults, inspectionTemplates } from '@/db/schema/trips';
+import { trips, vehicleInspections, inspectionItemResults, inspectionTemplates, tripClosures } from '@/db/schema/trips';
 import { vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -157,9 +157,13 @@ export async function POST(req: NextRequest) {
     // Advance trip status based on inspection type (only if inspection passed)
     let updatedTrip = null;
     if (tripId && overallPass) {
+      // Auto-close: if ALL items pass (no fails at all), skip closure_review
+      const anyFails = items.some((item) => item.result === 'fail');
+      const useAutoClose = type === 'return' && !anyFails;
+
       const tripStatusUpdate: Record<string, { status: string; timestamp: string }> = {
         departure: { status: 'in_progress', timestamp: 'startedAt' },
-        return: { status: 'closure_review', timestamp: 'returnedAt' },
+        return: { status: useAutoClose ? 'closed' : 'closure_review', timestamp: 'returnedAt' },
       };
 
       const update = tripStatusUpdate[type];
@@ -170,12 +174,28 @@ export async function POST(req: NextRequest) {
         };
         if (update.timestamp === 'startedAt') updateData.startedAt = new Date();
         if (update.timestamp === 'returnedAt') updateData.returnedAt = new Date();
+        if (useAutoClose) updateData.closedAt = new Date();
 
         [updatedTrip] = await db
           .update(trips)
           .set(updateData)
           .where(eq(trips.id, tripId))
           .returning();
+      }
+
+      // If auto-closing, also create a trip closure record
+      if (useAutoClose) {
+        await db.insert(tripClosures).values({
+          tripId,
+          closedByUserId: userId,
+          decision: 'closed',
+        }).onConflictDoNothing();
+
+        // Trigger document generation for trip closure
+        try {
+          const { onTripClosed } = await import('@/lib/document-generator');
+          await onTripClosed(tripId, tenantId, userId);
+        } catch { /* silent — doc gen is best-effort */ }
       }
     }
 

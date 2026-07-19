@@ -29,6 +29,7 @@ import {
   Receipt,
   User,
   CalendarClock,
+  Clock,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -62,6 +63,7 @@ const navGroups: NavGroup[] = [
       { label: 'Allocations', href: '/dashboard/allocations', icon: Truck },
       { label: 'Trips', href: '/dashboard/trips', icon: Gauge },
       { label: 'Active Trips', href: '/dashboard/trips/active', icon: Gauge },
+      { label: 'Closure Review', href: '/dashboard/trips/closure-review', icon: Clock },
       { label: 'Daily Logs', href: '/dashboard/logs', icon: ClipboardCheck },
       { label: 'Fuel Records', href: '/dashboard/fuel', icon: Fuel },
       { label: 'Reimbursements', href: '/dashboard/reimbursements', icon: ClipboardList },

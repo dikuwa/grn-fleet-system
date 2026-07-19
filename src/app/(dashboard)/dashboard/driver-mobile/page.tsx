@@ -23,6 +23,7 @@ interface AssignedTrip {
   purpose: string;
   startAt: string;
   endAt: string;
+  vehicleId?: string;
   hasDepartureInspection: boolean;
   hasReturnInspection: boolean;
   routeSummary?: string;
@@ -228,11 +229,42 @@ export default function DriverMobileDashboardPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0 ml-2">
-                    {!trip.hasDepartureInspection && trip.status === 'issued' && (
-                      <span className="flex h-6 items-center rounded-full bg-amber-50 px-2 text-[10px] font-medium text-amber-700">
-                        Inspect
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {trip.status === 'pending' && (
+                        <Link
+                          href={`/dashboard/inspections/departure?tripId=${trip.id}&vehicleId=${trip.vehicleId || ''}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex h-7 items-center rounded-full bg-brand-50 px-2.5 text-[11px] font-medium text-brand-700 hover:bg-brand-100 transition-colors"
+                        >
+                          Start Trip
+                        </Link>
+                      )}
+                      {trip.status === 'in_progress' && (
+                        <Link
+                          href={`/dashboard/inspections/return?tripId=${trip.id}&vehicleId=${trip.vehicleId || ''}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex h-7 items-center rounded-full bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+                        >
+                          Return
+                        </Link>
+                      )}
+                      {!trip.hasDepartureInspection && trip.status === 'issued' && (
+                        <Link
+                          href={`/dashboard/inspections/departure?tripId=${trip.id}&vehicleId=${trip.vehicleId || ''}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex h-7 items-center rounded-full bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+                        >
+                          Inspect
+                        </Link>
+                      )}
+                      <Link
+                        href={`/dashboard/fuel/new`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex h-7 items-center rounded-full bg-blue-50 px-2.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+                      >
+                        Fuel
+                      </Link>
+                    </div>
                     <ChevronRight className="h-4 w-4 text-ink-300" />
                   </div>
                 </Link>

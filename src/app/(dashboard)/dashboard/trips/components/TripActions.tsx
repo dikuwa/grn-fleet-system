@@ -75,13 +75,37 @@ export function TripActions({ tripId, status, tenantId }: TripActionsProps) {
     );
   }
 
-  if (status === 'return_inspection' || status === 'closure_review') {
+  if (status === 'return_inspection') {
     return (
-      <Button variant="secondary" size="sm" asChild>
-        <Link href={`/dashboard/inspections/return`}>
-          <CheckSquare className="h-4 w-4" /> Complete Return Inspection
-        </Link>
-      </Button>
+      <div className="flex gap-2">
+        <Button variant="secondary" size="sm" asChild>
+          <Link href={`/dashboard/inspections/return?tripId=${tripId}`}>
+            <CheckSquare className="h-4 w-4" /> Complete Return Inspection
+          </Link>
+        </Button>
+        <Button variant="secondary" size="sm" asChild>
+          <Link href={`/dashboard/trips/closure-review`}>
+            <CheckSquare className="h-4 w-4" /> Close Trip
+          </Link>
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === 'closure_review') {
+    return (
+      <div className="flex gap-2">
+        <Button variant="primary" size="sm" asChild>
+          <Link href={`/dashboard/trips/${tripId}`}>
+            <CheckSquare className="h-4 w-4" /> Close Trip
+          </Link>
+        </Button>
+        <Button variant="secondary" size="sm" asChild>
+          <Link href={`/dashboard/inspections/return?tripId=${tripId}`}>
+            <CheckSquare className="h-4 w-4" /> Return Inspection
+          </Link>
+        </Button>
+      </div>
     );
   }
 
