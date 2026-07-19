@@ -7,14 +7,13 @@ import { StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  Database, FileSpreadsheet, Upload, Download, ChevronLeft,
+  Database, Truck, ChevronLeft, FileSpreadsheet, Upload,
   CheckCircle2, XCircle, AlertTriangle, Hash,
 } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { ImportExportButton } from './ImportExportButton';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -40,7 +39,7 @@ async function fetchBatchDetail(id: string, tenantId: string) {
   return { batch, rows };
 }
 
-export default async function ImportBatchDetailPage({ params }: PageProps) {
+export default async function VehicleImportBatchDetailPage({ params }: PageProps) {
   const { id } = await params;
 
   const session = await getServerSession();
@@ -49,8 +48,8 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[
           { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Staff Directory', href: '/dashboard/staff' },
-          { label: 'Import History', href: '/dashboard/staff/imports' },
+          { label: 'Fleet', href: '/dashboard/fleet' },
+          { label: 'Import History', href: '/dashboard/fleet/imports' },
           { label: 'Batch Detail' },
         ]} />
         <PageHeader title="Import Batch Detail" />
@@ -64,8 +63,8 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[
           { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Staff Directory', href: '/dashboard/staff' },
-          { label: 'Import History', href: '/dashboard/staff/imports' },
+          { label: 'Fleet', href: '/dashboard/fleet' },
+          { label: 'Import History', href: '/dashboard/fleet/imports' },
           { label: 'Batch Detail' },
         ]} />
         <PageHeader title="Import Batch Detail" />
@@ -78,13 +77,13 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
   try {
     data = await fetchBatchDetail(id, session.tenantId);
   } catch (error) {
-    console.error('Batch detail query failed:', error);
+    console.error('Vehicle batch detail query failed:', error);
     return (
       <div className="space-y-6">
         <Breadcrumbs items={[
           { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Staff Directory', href: '/dashboard/staff' },
-          { label: 'Import History', href: '/dashboard/staff/imports' },
+          { label: 'Fleet', href: '/dashboard/fleet' },
+          { label: 'Import History', href: '/dashboard/fleet/imports' },
           { label: 'Batch Detail' },
         ]} />
         <PageHeader title="Import Batch Detail" />
@@ -100,8 +99,8 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
     <div className="space-y-6">
       <Breadcrumbs items={[
         { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Staff Directory', href: '/dashboard/staff' },
-        { label: 'Import History', href: '/dashboard/staff/imports' },
+        { label: 'Fleet', href: '/dashboard/fleet' },
+        { label: 'Import History', href: '/dashboard/fleet/imports' },
         { label: batch.fileName },
       ]} />
       <PageHeader
@@ -109,22 +108,11 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
         description={`${batch.totalRows || 0} rows · ${batch.importType} import`}
       >
         <div className="flex items-center gap-2">
-          {rows.length > 0 && (
-            <ImportExportButton
-              batchFileName={batch.fileName}
-              rows={rows.map((r) => ({
-                rowNumber: r.rowNumber,
-                rawData: r.rawData as Record<string, unknown>,
-                isCommitted: r.isCommitted,
-                validationErrors: r.validationErrors,
-              }))}
-            />
-          )}
           <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/staff/import"><Upload className="h-4 w-4" /> New Import</Link>
+            <Link href="/dashboard/fleet/import"><Upload className="h-4 w-4" /> New Import</Link>
           </Button>
           <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/staff/imports"><ChevronLeft className="h-4 w-4" /> Back</Link>
+            <Link href="/dashboard/fleet/imports"><ChevronLeft className="h-4 w-4" /> Back</Link>
           </Button>
         </div>
       </PageHeader>
@@ -263,7 +251,7 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
                         <td className="px-4 py-3">
                           {row.commitEntityId ? (
                             <Link
-                              href={`/dashboard/staff/${row.commitEntityId}`}
+                              href={`/dashboard/fleet/${row.commitEntityId}`}
                               className="text-xs font-medium text-brand-600 hover:text-brand-700"
                             >
                               {row.commitEntityId.slice(0, 8)}

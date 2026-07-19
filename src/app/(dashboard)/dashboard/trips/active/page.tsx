@@ -3,7 +3,7 @@ import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, and, desc, ne } from 'drizzle-orm';
+import { eq, and, desc, ne, sql } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -45,8 +45,6 @@ async function fetchActiveTrips(tenantId: string) {
       requesterFirstName: employees.firstName,
       requesterLastName: employees.lastName,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
-      driverFirstName: employees.firstName,
-      driverLastName: employees.lastName,
     })
     .from(trips)
     .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
@@ -68,7 +66,7 @@ async function fetchActiveTrips(tenantId: string) {
   const returnInspCount = activeTripRows.filter((t) => t.status === 'return_inspection').length;
   const closureReviewCount = activeTripRows.filter((t) => t.status === 'closure_review').length;
 
-  // Build a driver name lookup map from active trip driver IDs
+  // Build a driver name lookup from active trip driver IDs
   const driverIds = [...new Set(activeTripRows.map((t) => t.driverEmployeeId).filter(Boolean))] as string[];
   const driverNameMap = new Map<string, string>();
   if (driverIds.length > 0) {
@@ -79,8 +77,7 @@ async function fetchActiveTrips(tenantId: string) {
         lastName: employees.lastName,
       })
       .from(employees)
-      .where(eq(employees.tenantId, tenantId))
-      .then((rows) => rows.filter((r) => driverIds.includes(r.id)));
+      .where(sql`${employees.id} IN (${sql.join(driverIds.map((id) => sql`${id}`), sql`, `)})`);
     for (const d of drivers) {
       driverNameMap.set(d.id, `${d.firstName} ${d.lastName}`);
     }
