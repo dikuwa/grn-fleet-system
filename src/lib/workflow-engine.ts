@@ -671,7 +671,7 @@ export class WorkflowEngine {
         priority: result === 'rejected' ? 'high' : 'normal',
       });
 
-      // Try to send email (fire-and-forget)
+      // Try to send email (fire-and-forget) with correct template type mapping
       try {
         const { sendNotificationEmail } = await import('@/lib/email');
         const { employees } = await import('@/db/schema/people');
@@ -681,13 +681,25 @@ export class WorkflowEngine {
           .where(eq(employees.userId, request.requesterUserId))
           .limit(1);
 
+        // Map workflow results to email template types
+        const emailTypeMap: Record<string, string> = {
+          approved: 'request_approved',
+          rejected: 'request_rejected',
+          returned: 'request_returned',
+          released: 'vehicle_released',
+          authorised: 'trip_authorised',
+          overridden: 'emergency_override',
+        };
+        const emailType = emailTypeMap[result] || 'notification';
+
         if (emp?.email) {
           await sendNotificationEmail({
             to: emp.email,
-            type: result === 'rejected' ? 'emergency' : 'notification',
+            type: emailType,
             title,
             body,
             recipientName: emp.firstName || 'Staff Member',
+            requestReference: instance.requestId,
             actionUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/dashboard/requests/${instance.requestId}`,
           });
         }

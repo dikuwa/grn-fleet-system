@@ -12,25 +12,42 @@ interface TripActionsProps {
   tenantId: string;
 }
 
-export function TripActions({ tripId, status }: TripActionsProps) {
+export function TripActions({ tripId, status, tenantId }: TripActionsProps) {
   const router = useRouter();
   const [isWorking, setIsWorking] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleAction = useCallback(async (action: string) => {
+  const handleStartTrip = useCallback(async () => {
     setIsWorking(true);
+    setError('');
     try {
-      const res = await fetch(`/api/trips/${tripId}/${action}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || `Failed to ${action} trip`);
-      }
-      router.refresh();
+      // Departure inspection is the way to start a trip.
+      // Navigate to the departure inspection page with trip and vehicle context.
+      // First fetch trip details to get the vehicleId
+      const res = await fetch(`/api/trips/${tripId}`);
+      if (!res.ok) throw new Error('Failed to load trip details');
+      const data = await res.json();
+      const vehicleId = data.trip?.vehicleId || '';
+      router.push(`/dashboard/inspections/departure?tripId=${tripId}&vehicleId=${vehicleId}`);
     } catch (err) {
-      console.error(`Trip ${action} failed:`, err);
-      alert(err instanceof Error ? err.message : `Failed to ${action} trip`);
+      setError(err instanceof Error ? err.message : 'Failed to start trip');
+    } finally {
+      setIsWorking(false);
+    }
+  }, [tripId, router]);
+
+  const handleMarkReturned = useCallback(async () => {
+    setIsWorking(true);
+    setError('');
+    try {
+      // Navigate to return inspection with trip context
+      const res = await fetch(`/api/trips/${tripId}`);
+      if (!res.ok) throw new Error('Failed to load trip details');
+      const data = await res.json();
+      const vehicleId = data.trip?.vehicleId || '';
+      router.push(`/dashboard/inspections/return?tripId=${tripId}&vehicleId=${vehicleId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark returned');
     } finally {
       setIsWorking(false);
     }
@@ -38,17 +55,23 @@ export function TripActions({ tripId, status }: TripActionsProps) {
 
   if (status === 'pending') {
     return (
-      <Button variant="primary" size="sm" loading={isWorking} onClick={() => handleAction('start')}>
-        <Play className="h-4 w-4" /> Start Trip
-      </Button>
+      <div>
+        <Button variant="primary" size="sm" loading={isWorking} onClick={handleStartTrip}>
+          <Play className="h-4 w-4" /> Start Trip
+        </Button>
+        {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
+      </div>
     );
   }
 
   if (status === 'in_progress') {
     return (
-      <Button variant="primary" size="sm" loading={isWorking} onClick={() => handleAction('return')}>
-        <RotateCcw className="h-4 w-4" /> Mark Returned
-      </Button>
+      <div>
+        <Button variant="primary" size="sm" loading={isWorking} onClick={handleMarkReturned}>
+          <RotateCcw className="h-4 w-4" /> Mark Returned
+        </Button>
+        {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
+      </div>
     );
   }
 

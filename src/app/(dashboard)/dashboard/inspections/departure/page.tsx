@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
-import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff, Truck } from 'lucide-react';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
 
@@ -64,12 +64,33 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 export default function DepartureInspectionPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tripId = searchParams.get('tripId') || '';
+  const vehicleId = searchParams.get('vehicleId') || '';
   const [odometer, setOdometer] = useState('');
   const [fuelLevel, setFuelLevel] = useState('full');
   const [checklist, setChecklist] = useState<ChecklistItem[]>(DEFAULT_CHECKLIST);
   const [notes, setNotes] = useState('');
+  const [tripInfo, setTripInfo] = useState<{ make: string; model: string; licenceNumber: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
+
+  // Fetch trip/vehicle info if tripId is provided
+  useEffect(() => {
+    if (!tripId) return;
+    fetch(`/api/trips/${tripId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.trip) {
+          setTripInfo({
+            make: data.trip.make || '',
+            model: data.trip.model || '',
+            licenceNumber: data.trip.licenceNumber || '',
+          });
+        }
+      })
+      .catch(() => {});
+  }, [tripId]);
 
   const updateResult = (id: string, result: 'pass' | 'fail' | 'na') => {
     setChecklist((prev) => prev.map((item) => (item.id === id ? { ...item, result } : item)));
@@ -100,7 +121,8 @@ export default function DepartureInspectionPage() {
           type: 'departure',
           odometerReading: Number(odometer),
           fuelLevel,
-          vehicleId: '',
+          tripId: tripId || undefined,
+          vehicleId: vehicleId || '',
           checklist: checklist.map((item) => ({
             label: item.label,
             result: item.result,
@@ -163,10 +185,24 @@ export default function DepartureInspectionPage() {
         <Card>
           <CardHeader><CardTitle>Vehicle & Trip Information</CardTitle></CardHeader>
           <CardContent className="space-y-4">
+            {tripInfo && (
+              <div className="rounded-[8px] border border-brand-100 bg-brand-50/30 p-3 mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-brand-100">
+                    <Truck className="h-5 w-5 text-brand-700" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-ink-950">{tripInfo.make} {tripInfo.model}</p>
+                    <p className="text-xs text-ink-500">{tripInfo.licenceNumber} · Trip ID: {tripId}</p>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5"><Label required>Odometer Reading (km)</Label><Input type="number" placeholder="e.g. 45200" value={odometer} onChange={(e) => setOdometer(e.target.value)} required /></div>
               <div className="space-y-1.5"><Label required>Fuel Level</Label><select value={fuelLevel} onChange={(e) => setFuelLevel(e.target.value)} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"><option value="full">Full</option><option value="three_quarters">¾</option><option value="half">½</option><option value="quarter">¼</option><option value="empty">Empty</option></select></div>
-              <div className="space-y-1.5"><Label>Trip Reference</Label><Input placeholder="Optional trip ID" /></div>
+              <input type="hidden" name="tripId" value={tripId} />
+              <input type="hidden" name="vehicleId" value={vehicleId} />
             </div>
           </CardContent>
         </Card>
