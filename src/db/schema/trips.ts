@@ -15,6 +15,8 @@ export const vehicleAllocations = pgTable('vehicle_allocations', {
   vehicleId: uuid('vehicle_id')
     .notNull()
     .references(() => vehicles.id),
+  driverEmployeeId: uuid('driver_employee_id')
+    .references(() => employees.id),
   startAt: timestamp('start_at', { withTimezone: true }).notNull(),
   endAt: timestamp('end_at', { withTimezone: true }).notNull(),
   state: text('state').notNull().default('provisional'), // provisional, confirmed, cancelled, released

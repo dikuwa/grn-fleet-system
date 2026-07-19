@@ -1,8 +1,8 @@
+'use client';
+
 import Link from 'next/link';
 import { APP_NAME } from '@/lib/constants';
 import { Mail, Phone, MapPin, ArrowLeft } from 'lucide-react';
-
-'use client';
 
 export default function ContactPage() {
   const handleSubmit = (e: React.FormEvent) => {

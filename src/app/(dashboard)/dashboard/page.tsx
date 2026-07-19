@@ -15,15 +15,17 @@ import {
   User,
   ChevronRight,
   CalendarClock,
+  IdCard,
+  ClipboardCheck,
 } from 'lucide-react';
 import { getDb, isDbConnected } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { workflowInstances } from '@/db/schema/workflows';
-import { fuelTransactions, trips } from '@/db/schema/trips';
-import { employees } from '@/db/schema/people';
+import { fuelTransactions, trips, vehicleAllocations } from '@/db/schema/trips';
+import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
 import { getServerSession } from '@/lib/session';
-import { eq, and, desc, sql, isNull, gte, ne, lte, or } from 'drizzle-orm';
+import { eq, and, desc, asc, sql, isNull, gte, ne, lte, or } from 'drizzle-orm';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import Link from 'next/link';
@@ -47,6 +49,8 @@ async function fetchDashboardData(tenantId: string) {
     pendingApprovals,
     activeTrips,
     expiryData,
+    driverLicenceExpiryData,
+    closureReviewTrips,
   ] = await Promise.all([
     // Request counts by status
     db
@@ -175,8 +179,59 @@ async function fetchDashboardData(tenantId: string) {
         ),
       )
       .orderBy(vehicles.licenceExpiryDate),
+    // Driver licence expiry data
+    db
+      .select({
+        id: driverLicences.id,
+        employeeId: employees.id,
+        employeeNumber: employees.employeeNumber,
+        firstName: employees.firstName,
+        lastName: employees.lastName,
+        licenceNumber: driverLicences.licenceNumber,
+        licenceClass: driverLicences.licenceClass,
+        expiryDate: driverLicences.expiryDate,
+        verificationStatus: driverLicences.verificationStatus,
+      })
+      .from(driverLicences)
+      .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
+      .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
+      .where(
+        and(
+          eq(employees.tenantId, tenantId),
+          eq(employees.isDriver, true),
+          eq(employees.employmentStatus, 'active'),
+          lte(driverLicences.expiryDate, thirtyDaysFromNow.toISOString().split('T')[0]),
+        ),
+      )
+      .orderBy(asc(driverLicences.expiryDate))
+      .limit(10),
+    // Closure review trips
+    db
+      .select({
+        id: trips.id,
+        createdAt: trips.createdAt,
+        returnedAt: trips.returnedAt,
+        requestReference: transportRequests.reference,
+        make: vehicles.make,
+        model: vehicles.model,
+        licenceNumber: vehicles.licenceNumber,
+        driverFirstName: employees.firstName,
+        driverLastName: employees.lastName,
+      })
+      .from(trips)
+      .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
+      .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
+      .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+      .leftJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
+      .where(
+        and(
+          eq(trips.tenantId, tenantId),
+          eq(trips.status, 'closure_review'),
+        ),
+      )
+      .orderBy(desc(trips.returnedAt))
+      .limit(10),
   ]);
-
   // Derive summary counts
   const activeRequests = requestCounts
     .filter((r) => !['draft', 'closed', 'cancelled'].includes(r.status))
@@ -199,7 +254,7 @@ async function fetchDashboardData(tenantId: string) {
   const fuelThisMonth = Number(fuelMonth[0]?.total ?? 0);
   const pendingApprovalCount = Number(pendingApprovals[0]?.count ?? 0);
 
-  // Process expiry data
+  // Process expiry data — vehicles
   const expiredVehicles = expiryData.filter((v) => {
     if (v.licenceExpiryDate && new Date(v.licenceExpiryDate) < today) return true;
     if (v.roadworthyTestDate) {
@@ -224,6 +279,12 @@ async function fetchDashboardData(tenantId: string) {
     return false;
   });
 
+  // Process driver licence expiry
+  const expiredDriverLicences = driverLicenceExpiryData.filter((l) => new Date(l.expiryDate) < today);
+  const expiringSoonDriverLicences = driverLicenceExpiryData.filter(
+    (l) => !expiredDriverLicences.find((e) => e.id === l.id),
+  );
+
   return {
     activeRequests,
     approvalPendingCount,
@@ -240,6 +301,10 @@ async function fetchDashboardData(tenantId: string) {
     expiredCount: expiredVehicles.length,
     expiringSoonCount: expiringSoonVehicles.length,
     expiryVehicles: [...expiredVehicles, ...expiringSoonVehicles].slice(0, 8),
+    driverLicenceExpiryData: [...expiredDriverLicences, ...expiringSoonDriverLicences].slice(0, 5),
+    expiredDriverLicenceCount: expiredDriverLicences.length,
+    expiringSoonDriverLicenceCount: expiringSoonDriverLicences.length,
+    closureReviewTrips,
   };
 }
 
@@ -325,8 +390,8 @@ export default async function DashboardPage() {
         />
         <StatCard
           title="Expired/Expiring"
-          value={`${data.expiredCount}/${data.expiringSoonCount}`}
-          description="Licence/Roadworthy"
+          value={`${data.expiredCount + data.expiredDriverLicenceCount}/${data.expiringSoonCount + data.expiringSoonDriverLicenceCount}`}
+          description="Licence/Roadworthy/Driver"
           icon={<CalendarClock className="h-5 w-5" />}
         />
       </div>
@@ -386,6 +451,47 @@ export default async function DashboardPage() {
                     })}
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Trip Closure Review */}
+          {data.closureReviewTrips.length > 0 && (
+            <Card className="border-purple-200 bg-purple-50/20">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ClipboardCheck className="h-5 w-5 text-purple-600" />
+                  Closure Review ({data.closureReviewTrips.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {data.closureReviewTrips.map((trip) => (
+                  <Link
+                    key={trip.id}
+                    href={`/dashboard/trips/${trip.id}`}
+                    className="flex items-center justify-between rounded-[8px] border border-purple-100 bg-white p-3 transition-colors hover:border-purple-200 hover:bg-purple-50"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-purple-50">
+                        <ClipboardCheck className="h-4 w-4 text-purple-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-ink-950">
+                          {trip.make} {trip.model} · {trip.licenceNumber}
+                        </p>
+                        <p className="text-xs text-ink-500">
+                          {trip.requestReference || 'No reference'}
+                          {trip.driverFirstName && ` · ${trip.driverFirstName} ${trip.driverLastName}`}
+                          {trip.returnedAt && ` · Returned ${formatDateTime(trip.returnedAt)}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="pending" size="sm">REVIEW</Badge>
+                      <ChevronRight className="h-4 w-4 text-ink-300" />
+                    </div>
+                  </Link>
+                ))}
               </CardContent>
             </Card>
           )}
@@ -454,46 +560,81 @@ export default async function DashboardPage() {
         {/* Right column — Fleet Summary & Expiry Alerts */}
         <div className="space-y-6">
           {/* Expiry Alerts Widget */}
-          {(data.expiredCount > 0 || data.expiringSoonCount > 0) && (
-            <Card className={data.expiredCount > 0 ? 'border-red-200 bg-red-50/30' : 'border-amber-200 bg-amber-50/30'}>
+          {(data.expiredCount > 0 || data.expiringSoonCount > 0 || data.driverLicenceExpiryData.length > 0) && (
+            <Card className={(data.expiredCount + data.expiredDriverLicenceCount) > 0 ? 'border-red-200 bg-red-50/30' : 'border-amber-200 bg-amber-50/30'}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-sm">
-                  <CalendarClock className={`h-4 w-4 ${data.expiredCount > 0 ? 'text-red-600' : 'text-amber-600'}`} />
+                  <CalendarClock className={`h-4 w-4 ${(data.expiredCount + data.expiredDriverLicenceCount) > 0 ? 'text-red-600' : 'text-amber-600'}`} />
                   Expiry Alerts
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {data.expiryVehicles.map((v) => {
-                  const licenceExpired = v.licenceExpiryDate && new Date(v.licenceExpiryDate) < today;
-                  const licenceDays = v.licenceExpiryDate
-                    ? Math.ceil((new Date(v.licenceExpiryDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-                    : null;
-                  const rwExpiry = v.roadworthyTestDate ? new Date(v.roadworthyTestDate) : null;
-                  if (rwExpiry) rwExpiry.setFullYear(rwExpiry.getFullYear() + 1);
-                  const rwExpired = rwExpiry && rwExpiry < today;
-                  const rwDays = rwExpiry
-                    ? Math.ceil((rwExpiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-                    : null;
+                {/* Vehicle section header */}
+                {data.expiryVehicles.length > 0 && (
+                  <>
+                    <p className="text-xs font-medium text-ink-400 uppercase tracking-wider">Vehicles</p>
+                    {data.expiryVehicles.map((v) => {
+                      const licenceExpired = v.licenceExpiryDate && new Date(v.licenceExpiryDate) < today;
+                      const licenceDays = v.licenceExpiryDate
+                        ? Math.ceil((new Date(v.licenceExpiryDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                        : null;
+                      const rwExpiry = v.roadworthyTestDate ? new Date(v.roadworthyTestDate) : null;
+                      if (rwExpiry) rwExpiry.setFullYear(rwExpiry.getFullYear() + 1);
+                      const rwExpired = rwExpiry && rwExpiry < today;
+                      const rwDays = rwExpiry
+                        ? Math.ceil((rwExpiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                        : null;
 
-                  return (
-                    <Link
-                      key={v.id}
-                      href={`/dashboard/fleet/${v.id}`}
-                      className="flex items-center justify-between rounded-[8px] bg-white px-3 py-2 text-sm transition-colors hover:bg-white/80"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className={`h-2 w-2 shrink-0 rounded-full ${(licenceExpired || rwExpired) ? 'bg-red-500' : 'bg-amber-500'}`} />
-                        <span className="font-medium text-ink-950 truncate">{v.licenceNumber}</span>
-                      </div>
-                      <span className="shrink-0 text-xs font-medium text-ink-500">
-                        {licenceExpired && `Licence ${Math.abs(licenceDays!)}d overdue`}
-                        {!licenceExpired && rwExpired && `Roadworthy ${Math.abs(rwDays!)}d overdue`}
-                        {!licenceExpired && !rwExpired && licenceDays != null && licenceDays <= 30 && `Licence ${licenceDays}d`}
-                        {!licenceExpired && !rwExpired && licenceDays == null && rwDays != null && rwDays <= 30 && `Roadworthy ${rwDays}d`}
-                      </span>
-                    </Link>
-                  );
-                })}
+                      return (
+                        <Link
+                          key={v.id}
+                          href={`/dashboard/fleet/${v.id}`}
+                          className="flex items-center justify-between rounded-[8px] bg-white px-3 py-2 text-sm transition-colors hover:bg-white/80"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className={`h-2 w-2 shrink-0 rounded-full ${(licenceExpired || rwExpired) ? 'bg-red-500' : 'bg-amber-500'}`} />
+                            <span className="font-medium text-ink-950 truncate">{v.licenceNumber}</span>
+                          </div>
+                          <span className="shrink-0 text-xs font-medium text-ink-500">
+                            {licenceExpired && `Lic ${Math.abs(licenceDays!)}d overdue`}
+                            {!licenceExpired && rwExpired && `RW ${Math.abs(rwDays!)}d overdue`}
+                            {!licenceExpired && !rwExpired && licenceDays != null && `Lic ${licenceDays}d`}
+                            {!licenceExpired && !rwExpired && licenceDays == null && rwDays != null && `RW ${rwDays}d`}
+                          </span>
+                        </Link>
+                      );
+                    })}
+                  </>
+                )}
+
+                {/* Driver licence section */}
+                {data.driverLicenceExpiryData.length > 0 && (
+                  <>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <IdCard className="h-3.5 w-3.5 text-ink-400" />
+                      <p className="text-xs font-medium text-ink-400 uppercase tracking-wider">Drivers</p>
+                    </div>
+                    {data.driverLicenceExpiryData.map((l) => {
+                      const expired = new Date(l.expiryDate) < today;
+                      const days = Math.ceil((new Date(l.expiryDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                      return (
+                        <div
+                          key={l.id}
+                          className="flex items-center justify-between rounded-[8px] bg-white px-3 py-2 text-sm"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className={`h-2 w-2 shrink-0 rounded-full ${expired ? 'bg-red-500' : 'bg-amber-500'}`} />
+                            <span className="font-medium text-ink-950 truncate">{l.firstName} {l.lastName}</span>
+                          </div>
+                          <span className="shrink-0 text-xs font-medium text-ink-500">
+                            {expired ? `${Math.abs(days)}d overdue` : `${days}d`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+
                 <Link
                   href="/dashboard/fleet/compliance"
                   className="mt-1 block text-center text-xs font-medium text-brand-700 hover:text-brand-800 transition-colors"

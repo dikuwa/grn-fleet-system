@@ -43,6 +43,13 @@
       "when": 1784482000000,
       "tag": "0005_great_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784489000000,
+      "tag": "0006_bold_moonstone",
+      "breakpoints": true
     }
   ]
 }

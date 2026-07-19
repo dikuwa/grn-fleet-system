@@ -6,7 +6,6 @@
  */
 
 import { env, hasEnvVar } from '@/env';
-import { renderToString } from 'react-dom/server';
 import { createElement } from 'react';
 import { RequestApprovedEmail } from '@/emails/request-approved';
 import { RequestRejectedEmail } from '@/emails/request-rejected';
@@ -62,7 +61,8 @@ function getFromAddress(): string {
 // ---------------------------------------------------------------------------
 
 /** Render a React element to an HTML string */
-function renderReactEmail(element: React.ReactElement): string {
+async function renderReactEmail(element: React.ReactElement): Promise<string> {
+  const { renderToString } = await import('react-dom/server');
   return renderToString(element);
 }
 
@@ -162,14 +162,14 @@ const templateRegistry: Record<string, TemplateEntry> = {
 };
 
 /** Render the appropriate React Email template based on notification type */
-function renderTemplate(data: NotificationEmailData): string | null {
+async function renderTemplate(data: NotificationEmailData): Promise<string | null> {
   try {
     const entry = templateRegistry[data.type];
     if (!entry) return null;
 
     const props = entry.buildProps(data);
     const element = createElement(entry.component, props);
-    return renderReactEmail(element);
+    return await renderReactEmail(element);
   } catch (err) {
     console.warn('[Email] React Email rendering failed, falling back to inline HTML:', err);
     return null;
@@ -252,7 +252,7 @@ export async function sendNotificationEmail(
   }
 
   // Try React Email template first, fall back to inline HTML
-  let html = renderTemplate(data);
+  let html = await renderTemplate(data);
   if (!html) {
     html = renderInlineHtml(data);
   }
@@ -316,7 +316,7 @@ export async function sendReactEmail(
   }
 
   try {
-    const html = renderReactEmail(element);
+    const html = await renderReactEmail(element);
     const result = await client.emails.send({
       from: `GovFleet <${getFromAddress()}>`,
       to,
