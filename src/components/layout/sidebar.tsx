@@ -60,6 +60,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: 'Allocations', href: '/dashboard/allocations', icon: Truck },
       { label: 'Trips', href: '/dashboard/trips', icon: Gauge },
+      { label: 'Active Trips', href: '/dashboard/trips/active', icon: Gauge },
       { label: 'Daily Logs', href: '/dashboard/logs', icon: ClipboardCheck },
       { label: 'Fuel Records', href: '/dashboard/fuel', icon: Fuel },
       { label: 'Reimbursements', href: '/dashboard/reimbursements', icon: ClipboardList },

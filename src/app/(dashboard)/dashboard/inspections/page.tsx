@@ -2,13 +2,13 @@ import { getDb, isDbConnected } from '@/db';
 import { vehicleInspections } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 
-import { eq, desc, and, sql, type SQL } from 'drizzle-orm';
+import { eq, desc, asc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Database, Search, ChevronRight, ChevronLeft, ClipboardCheck } from 'lucide-react';
+import { Database, Search, ChevronRight, ChevronLeft, ClipboardCheck, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
@@ -30,6 +30,7 @@ async function fetchInspections(sp: Record<string, string | undefined>, tenantId
   const offset = (page - 1) * limit;
   const type = sp.type?.trim();
   const status = sp.status?.trim();
+  const search = sp.search?.trim();
 
   const conditions: SQL[] = [eq(vehicleInspections.tenantId, tenantId)];
 
@@ -39,10 +40,19 @@ async function fetchInspections(sp: Record<string, string | undefined>, tenantId
   if (status) {
     conditions.push(eq(vehicleInspections.status, status));
   }
+  if (search) {
+    conditions.push(
+      or(
+        like(vehicles.licenceNumber, `%${search}%`),
+        like(vehicles.make, `%${search}%`),
+        like(vehicles.model, `%${search}%`),
+      )!,
+    );
+  }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, totalResult] = await Promise.all([
+  const [rows, totalResult, summary] = await Promise.all([
     db
       .select({
         id: vehicleInspections.id,
@@ -67,12 +77,35 @@ async function fetchInspections(sp: Record<string, string | undefined>, tenantId
       .select({ count: sql<number>`count(*)` })
       .from(vehicleInspections)
       .where(where),
+    // Summary stats for all inspections in this tenant (unfiltered)
+    db
+      .select({
+        type: vehicleInspections.type,
+        status: vehicleInspections.status,
+        pass: vehicleInspections.overallPass,
+        count: sql<number>`count(*)`,
+      })
+      .from(vehicleInspections)
+      .where(eq(vehicleInspections.tenantId, tenantId))
+      .groupBy(vehicleInspections.type, vehicleInspections.status, vehicleInspections.overallPass),
   ]);
 
   const totalCount = Number(totalResult[0]?.count ?? 0);
   const totalPages = Math.ceil(totalCount / limit);
 
-  return { rows, totalCount, totalPages, page, filters: { type, status } };
+  // Compute summary stats
+  const totalInspections = summary.reduce((sum, r) => sum + r.count, 0);
+  const departureCount = summary.filter((r) => r.type === 'departure').reduce((sum, r) => sum + r.count, 0);
+  const returnCount = summary.filter((r) => r.type === 'return').reduce((sum, r) => sum + r.count, 0);
+  const passCount = summary.filter((r) => r.pass === true).reduce((sum, r) => sum + r.count, 0);
+  const failCount = summary.filter((r) => r.pass === false).reduce((sum, r) => sum + r.count, 0);
+  const passRate = totalInspections > 0 ? Math.round((passCount / totalInspections) * 100) : 0;
+
+  return {
+    rows, totalCount, totalPages, page,
+    filters: { type, status, search },
+    summary: { totalInspections, departureCount, returnCount, passCount, failCount, passRate },
+  };
 }
 
 function buildPageUrl(base: string, params: Record<string, string | undefined>): string {
@@ -158,10 +191,27 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
         </CardContent>
       </Card>
 
+      {/* Summary Stats */}
+      <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{result.summary.totalInspections}</p><p className="text-xs text-ink-500">Total</p></CardContent></Card>
+        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-brand-700">{result.summary.departureCount}</p><p className="text-xs text-ink-500">Departures</p></CardContent></Card>
+        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-brand-700">{result.summary.returnCount}</p><p className="text-xs text-ink-500">Returns</p></CardContent></Card>
+        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-success-text">{result.summary.passCount}</p><p className="text-xs text-ink-500">Passed</p></CardContent></Card>
+        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-error-text">{result.summary.failCount}</p><p className="text-xs text-ink-500">Failed</p></CardContent></Card>
+        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{result.summary.passRate}%</p><p className="text-xs text-ink-500">Pass Rate</p></CardContent></Card>
+      </div>
+
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
           <form className="flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-[200px]">
+              <label className="block text-xs font-medium text-ink-500 mb-1">Search Vehicle</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+                <input name="search" defaultValue={result.filters.search ?? ''} placeholder="Licence, make, model..." className="h-10 w-full rounded-[8px] border border-border bg-surface pl-9 pr-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+              </div>
+            </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
               <select name="status" defaultValue={result.filters.status ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
@@ -183,7 +233,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
       ) : (
         <div className="space-y-3">
           {result.rows.map((insp) => (
-            <Link key={insp.id} href={`/dashboard/trips?inspection=${insp.id}`} className="block rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm">
+            <Link key={insp.id} href={`/dashboard/inspections/${insp.id}`} className="block rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-4 min-w-0">
                   <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] ${insp.overallPass === true ? 'bg-status-success-bg text-status-success-text' : insp.overallPass === false ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}>
