@@ -170,6 +170,34 @@ export default async function TripsPage({ searchParams }: PageProps) {
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-success-text">{closedCount}</p><p className="text-xs text-ink-500">Closed</p></CardContent></Card>
       </div>
 
+      {/* Quick Status Filters */}
+      <div className="flex flex-wrap gap-2">
+        {[
+          { label: 'All', value: '' },
+          { label: '🟢 Active', value: 'in_progress' },
+          { label: '🔴 Return Due', value: 'return_due' },
+          { label: '⏳ Return Inspection', value: 'return_inspection' },
+          { label: '📋 Closure Review', value: 'closure_review' },
+          { label: '✅ Closed', value: 'closed' },
+          { label: '⏸️ Pending', value: 'pending' },
+        ].map((f) => {
+          const isActive = (result.filters.status ?? '') === f.value;
+          return (
+            <Link
+              key={f.value}
+              href={buildPageUrl('/dashboard/trips', { ...sp, status: f.value, page: '1' })}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+                isActive
+                  ? 'bg-brand-600 text-white shadow-sm'
+                  : 'bg-surface text-ink-600 hover:bg-ink-50 border border-border'
+              }`}
+            >
+              {f.label}
+            </Link>
+          );
+        })}
+      </div>
+
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">

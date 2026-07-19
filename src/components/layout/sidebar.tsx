@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -117,6 +118,16 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const [activeTripCount, setActiveTripCount] = useState(0);
+
+  useEffect(() => {
+    fetch('/api/reports?type=snapshot&metric=activeTrips')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (d?.data?.activeTrips != null) setActiveTripCount(Number(d.data.activeTrips));
+      })
+      .catch(() => {/* silent */});
+  }, []);
 
   return (
     <aside
@@ -176,7 +187,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                       {!collapsed && (
                         <>
                           <span className="flex-1">{item.label}</span>
-                          {item.badge !== undefined && (
+                          {item.badge !== undefined && item.label === 'Trips' && activeTripCount > 0 && (
+                            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-medium text-white">
+                              {activeTripCount > 99 ? '99+' : activeTripCount}
+                            </span>
+                          )}
+                          {item.badge !== undefined && item.label !== 'Trips' && (
                             <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-600 px-1.5 text-[11px] font-medium text-white">
                               {item.badge}
                             </span>
