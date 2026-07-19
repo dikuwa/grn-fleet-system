@@ -16,6 +16,7 @@ import {
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
+import { ClosureReviewActions } from './ClosureReviewActions';
 
 interface ClosureTrip {
   id: string;
@@ -266,7 +267,14 @@ export default async function ClosureReviewPage() {
                       </div>
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-ink-300 shrink-0" />
+                  <div className="shrink-0 flex items-center gap-2">
+                    <ClosureReviewActions
+                      tripId={trip.id}
+                      tripStatus={trip.status}
+                      hasReturnInspection={trip.hasReturnInspection}
+                    />
+                    <ChevronRight className="h-4 w-4 text-ink-300" />
+                  </div>
                 </div>
               </Link>
             );

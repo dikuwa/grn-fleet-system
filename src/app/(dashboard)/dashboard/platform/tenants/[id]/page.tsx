@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   Building2, Loader2, ChevronLeft, Save, CheckCircle2, Database,
   Globe, Clock, Users, Palette, Mail, Phone, MapPin, Image as ImageIcon,
+  AlertTriangle, ShieldAlert, ShieldCheck,
 } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
@@ -54,6 +55,10 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
   const [activeTab, setActiveTab] = useState<'general' | 'branding'>('general');
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  // Suspend/activate confirmation
+  const [showSuspendDialog, setShowSuspendDialog] = useState(false);
+  const [isToggling, setIsToggling] = useState(false);
 
   // Editable fields
   const [editName, setEditName] = useState('');
@@ -185,9 +190,22 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
               {saveMessage}
             </span>
           )}
-          <Button variant="primary" size="sm" onClick={handleSave} loading={isSaving}>
-            <Save className="h-4 w-4" /> Save Changes
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={editStatus === 'suspended' ? 'primary' : 'destructive'}
+              size="sm"
+              onClick={() => setShowSuspendDialog(true)}
+            >
+              {editStatus === 'suspended' ? (
+                <><ShieldCheck className="h-4 w-4" /> Activate</>
+              ) : (
+                <><ShieldAlert className="h-4 w-4" /> Suspend</>
+              )}
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleSave} loading={isSaving}>
+              <Save className="h-4 w-4" /> Save Changes
+            </Button>
+          </div>
         </div>
       </PageHeader>
 
@@ -312,6 +330,71 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Suspend/Activate Confirmation Dialog */}
+      {showSuspendDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowSuspendDialog(false)}>
+          <div className="mx-4 w-full max-w-md rounded-[12px] border border-border bg-surface p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-4">
+              <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${
+                editStatus === 'suspended' ? 'bg-green-50' : 'bg-red-50'
+              }`}>
+                {editStatus === 'suspended' ? (
+                  <ShieldCheck className="h-6 w-6 text-green-600" />
+                ) : (
+                  <AlertTriangle className="h-6 w-6 text-red-600" />
+                )}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-ink-950">
+                  {editStatus === 'suspended' ? 'Activate Tenant' : 'Suspend Tenant'}
+                </h3>
+                <p className="mt-1 text-sm text-ink-500">
+                  {editStatus === 'suspended'
+                    ? `Reactivate ${tenant?.name}? Users will regain access to the system.`
+                    : `Are you sure you want to suspend ${tenant?.name}? All users associated with this tenant will lose access until it is reactivated.`}
+                </p>
+                {editStatus !== 'suspended' && (
+                  <div className="mt-3 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <strong>Warning:</strong> This will immediately block all user sessions for this tenant.
+                  </div>
+                )}
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => setShowSuspendDialog(false)}>Cancel</Button>
+                  <Button
+                    variant={editStatus === 'suspended' ? 'primary' : 'destructive'}
+                    size="sm"
+                    loading={isToggling}
+                    onClick={async () => {
+                      setIsToggling(true);
+                      try {
+                        const newStatus = editStatus === 'suspended' ? 'active' : 'suspended';
+                        const res = await fetch(`/api/platform/tenants/${id}`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ status: newStatus }),
+                        });
+                        if (!res.ok) throw new Error('Failed to update status');
+                        setEditStatus(newStatus);
+                        setSaveMessage(`Tenant ${newStatus === 'active' ? 'activated' : 'suspended'} successfully`);
+                        setTimeout(() => setSaveMessage(null), 3000);
+                        refetch();
+                      } catch (err) {
+                        setSaveMessage(err instanceof Error ? err.message : 'Failed to update status');
+                      } finally {
+                        setIsToggling(false);
+                        setShowSuspendDialog(false);
+                      }
+                    }}
+                  >
+                    {editStatus === 'suspended' ? 'Activate Now' : 'Suspend Now'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Branding & Contact */}

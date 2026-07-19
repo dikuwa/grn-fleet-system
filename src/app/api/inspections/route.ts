@@ -143,15 +143,41 @@ export async function POST(req: NextRequest) {
       .returning();
 
     // Insert checklist results if provided
+    const insertedItemIds: string[] = [];
     if (checklist?.length > 0) {
-      await db.insert(inspectionItemResults).values(
-        checklist.map((item: { templateItemId?: string; label?: string; result: string; comment?: string }) => ({
-          inspectionId: inspection.id,
-          templateItemId: item.templateItemId || '00000000-0000-0000-0000-000000000000',
-          result: item.result === 'na' ? 'not_applicable' : item.result,
-          comment: item.comment || null,
-        })),
-      );
+      const resultsToInsert = checklist.map((item: { templateItemId?: string; label?: string; result: string; comment?: string; isCritical?: boolean }) => ({
+        inspectionId: inspection.id,
+        templateItemId: item.templateItemId || '00000000-0000-0000-0000-000000000000',
+        result: item.result === 'na' ? 'not_applicable' : item.result,
+        comment: item.comment || null,
+      }));
+
+      const inserted = await db.insert(inspectionItemResults).values(resultsToInsert).returning();
+      insertedItemIds.push(...inserted.map((r) => r.id));
+    }
+
+    // Create vehicle defects for failed inspection items
+    const failedItems = (checklist || []).filter(
+      (item: { result: string }) => item.result === 'fail',
+    );
+    if (failedItems.length > 0) {
+      const defectValues = failedItems.map((item: { templateItemId?: string; label?: string; comment?: string; isCritical?: boolean }) => ({
+        vehicleId,
+        tripId: tripId || null,
+        inspectionId: inspection.id,
+        severity: item.isCritical ? 'critical' : 'major',
+        description: item.label || `Inspection item failed: ${item.templateItemId || 'unknown'}`,
+        isBlocking: item.isCritical === true,
+        reportedByUserId: userId,
+      }));
+
+      try {
+        await db.insert(vehicleDefects).values(defectValues);
+        console.log(`[Inspections] Created ${defectValues.length} defect(s) from ${type} inspection ${inspection.id}`);
+      } catch (err) {
+        console.error('[Inspections] Failed to create defects:', err);
+        // Non-fatal — inspection already saved
+      }
     }
 
     // Advance trip status based on inspection type (only if inspection passed)
