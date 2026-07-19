@@ -171,6 +171,148 @@ export async function GET(request: NextRequest) {
     const db = getDb();
 
     // Handle export formats first
+    if (exportFormat === 'pdf') {
+      // PDF export — generate a formatted report PDF
+      const { renderToStream } = await import('@react-pdf/renderer');
+      const { ReportDocument } = await import('@/lib/pdf/report');
+      const React = await import('react');
+
+      let rows: Record<string, unknown>[] = [];
+      let columns: { key: string; label: string }[] = [];
+      let summary: { label: string; value: string }[] = [];
+      let title = 'Report';
+
+      switch (reportType) {
+        case 'fuel': {
+          const fuelData = await buildFuelRows(db, tenantId, startDate);
+          rows = fuelData;
+          columns = [
+            { key: 'vehicle', label: 'Vehicle' },
+            { key: 'date', label: 'Date' },
+            { key: 'litres', label: 'Litres' },
+            { key: 'amount', label: 'Amount (N$)' },
+            { key: 'fuelType', label: 'Fuel Type' },
+            { key: 'station', label: 'Station' },
+          ];
+          title = 'Fuel Consumption Report';
+          const totalL = fuelData.reduce((s, r) => s + Number(r.litres || 0), 0);
+          const totalA = fuelData.reduce((s, r) => s + Number(r.amount || 0), 0);
+          summary = [
+            { label: 'Total Litres', value: totalL.toFixed(1) },
+            { label: 'Total Cost', value: `N$${totalA.toFixed(2)}` },
+            { label: 'Transactions', value: String(fuelData.length) },
+          ];
+          break;
+        }
+        case 'trips': {
+          const tripData = await buildTripRows(db, tenantId, startDate);
+          rows = tripData;
+          columns = [
+            { key: 'status', label: 'Status' },
+            { key: 'vehicle', label: 'Vehicle' },
+            { key: 'started', label: 'Started' },
+            { key: 'returned', label: 'Returned' },
+          ];
+          title = 'Trip Summary Report';
+          summary = [{ label: 'Total Trips', value: String(tripData.length) }];
+          break;
+        }
+        case 'requests': {
+          const reqData = await buildRequestRows(db, tenantId, startDate);
+          rows = reqData;
+          columns = [
+            { key: 'reference', label: 'Reference' },
+            { key: 'status', label: 'Status' },
+            { key: 'purpose', label: 'Purpose' },
+            { key: 'scope', label: 'Scope' },
+          ];
+          title = 'Transport Requests Report';
+          summary = [{ label: 'Total Requests', value: String(reqData.length) }];
+          break;
+        }
+        case 'maintenance': {
+          const maintData = await buildMaintenanceRows(db, tenantId, startDate);
+          rows = maintData;
+          columns = [
+            { key: 'vehicle', label: 'Vehicle' },
+            { key: 'type', label: 'Type' },
+            { key: 'description', label: 'Description' },
+            { key: 'date', label: 'Date' },
+          ];
+          title = 'Maintenance Report';
+          summary = [{ label: 'Total Events', value: String(maintData.length) }];
+          break;
+        }
+        case 'approvals': {
+          const approvalData = await db
+            .select({
+              workflowId: workflowActions.instanceId,
+              stepOrder: workflowActions.stepOrder,
+              actionType: workflowActions.actionType,
+              result: workflowActions.result,
+              createdAt: workflowActions.createdAt,
+            })
+            .from(workflowActions)
+            .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
+            .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
+            .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowActions.createdAt, startDate)))
+            .orderBy(sql`workflow_actions.created_at DESC`);
+          rows = approvalData;
+          columns = [
+            { key: 'workflowId', label: 'Workflow' },
+            { key: 'stepOrder', label: 'Step' },
+            { key: 'actionType', label: 'Action' },
+            { key: 'result', label: 'Result' },
+          ];
+          title = 'Approval Analytics Report';
+          summary = [{ label: 'Total Actions', value: String(approvalData.length) }];
+          break;
+        }
+        default: break;
+      }
+
+      const [tenant] = await db
+        .select({ name: sql`name` })
+        .from(sql`tenants`)
+        .where(eq(sql`id`, tenantId))
+        .limit(1) as unknown as { name: string }[];
+
+      const element = React.createElement(ReportDocument as never, {
+        data: {
+          title,
+          period: period === '7d' ? 'Last 7 Days' : period === '30d' ? 'Last 30 Days' : period === '90d' ? 'Last Quarter' : 'Year to Date',
+          tenantName: tenant?.name || 'Fleet Management',
+          generatedAt: new Date().toLocaleDateString('en-NA', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }),
+          summary,
+          columns,
+          rows,
+          totalRowCount: rows.length,
+        },
+      }) as never;
+
+      const stream = await renderToStream(element as unknown as React.ReactElement<Record<string, unknown>>);
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream) {
+        chunks.push(new Uint8Array(chunk as unknown as ArrayBuffer));
+      }
+      const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+      const pdfBuffer = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        pdfBuffer.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      const filename = `${reportType}-report-${period}-${new Date().toISOString().split('T')[0]}.pdf`;
+      return new NextResponse(pdfBuffer as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+        },
+      });
+    }
+
     if (exportFormat === 'csv') {
       let rows: Record<string, unknown>[] = [];
       let columns: { key: string; label: string }[] = [];

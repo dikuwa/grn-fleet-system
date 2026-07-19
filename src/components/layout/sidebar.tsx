@@ -90,6 +90,8 @@ const navGroups: NavGroup[] = [
       { label: 'Settings', href: '/dashboard/settings', icon: Settings },
       { label: 'User Management', href: '/dashboard/admin/users', icon: Users },
       { label: 'Tenants', href: '/dashboard/platform/tenants', icon: Globe },
+      { label: 'Platform Dashboard', href: '/dashboard/platform', icon: LayoutDashboard },
+      { label: 'Driver Console', href: '/dashboard/driver-mobile', icon: Gauge },
       { label: 'Onboard Tenant', href: '/dashboard/platform/onboard', icon: LayoutDashboard },
     ],
   },
