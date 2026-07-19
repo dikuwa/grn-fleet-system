@@ -1,6 +1,6 @@
 import { getDb, isDbConnected } from '@/db';
 import { importBatches, importRows } from '@/db/schema';
-import { eq, and, desc, asc } from 'drizzle-orm';
+import { eq, and, asc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/badge';
@@ -8,15 +8,58 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
   Database, FileSpreadsheet, Upload, Download, ChevronLeft,
-  CheckCircle2, XCircle, AlertTriangle, Clock, User, Hash,
+  CheckCircle2, XCircle, AlertTriangle, Hash,
 } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { ImportExportButton } from './ImportExportButton';
 
 interface PageProps {
   params: Promise<{ id: string }>;
+}
+
+/** Generate and download a CSV file from import rows */
+function exportCsv(
+  batch: { fileName: string },
+  rows: Array<{ rowNumber: number; rawData: Record<string, unknown>; isCommitted: boolean; validationErrors: string[] | null }>,
+) {
+  // Collect all unique keys from rawData across rows
+  const allKeys = new Set<string>();
+  for (const row of rows) {
+    if (row.rawData && typeof row.rawData === 'object') {
+      Object.keys(row.rawData as Record<string, unknown>).forEach((k) => allKeys.add(k));
+    }
+  }
+  const headers = ['rowNumber', 'status', ...Array.from(allKeys), 'validationErrors'];
+
+  const csvRows = [headers.join(',')];
+  for (const row of rows) {
+    const status = row.isCommitted ? 'committed' : (row.validationErrors?.length ? 'failed' : 'pending');
+    const values = headers.map((h) => {
+      if (h === 'rowNumber') return String(row.rowNumber);
+      if (h === 'status') return status;
+      if (h === 'validationErrors') return (row.validationErrors || []).join('; ');
+      const raw = row.rawData as Record<string, unknown>;
+      const val = raw?.[h];
+      if (val == null) return '';
+      const str = String(val);
+      // Escape CSV values containing commas or quotes
+      return str.includes(',') || str.includes('"') || str.includes('\n')
+        ? `"${str.replace(/"/g, '""')}"`
+        : str;
+    });
+    csvRows.push(values.join(','));
+  }
+
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = batch.fileName.replace(/\.[^.]+$/, '') + '-export.csv';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 async function fetchBatchDetail(id: string, tenantId: string) {
@@ -95,9 +138,6 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
   if (!data) notFound();
   const { batch, rows } = data;
 
-  const isCommitted = batch.status === 'committed' || batch.status === 'partially_committed';
-  const hasErrors = batch.status === 'failed' || batch.status === 'partially_committed';
-
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[
@@ -111,6 +151,17 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
         description={`${batch.totalRows || 0} rows · ${batch.importType} import`}
       >
         <div className="flex items-center gap-2">
+          {rows.length > 0 && (
+            <ImportExportButton
+              batchFileName={batch.fileName}
+              rows={rows.map((r) => ({
+                rowNumber: r.rowNumber,
+                rawData: r.rawData as Record<string, unknown>,
+                isCommitted: r.isCommitted,
+                validationErrors: r.validationErrors,
+              }))}
+            />
+          )}
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/staff/import"><Upload className="h-4 w-4" /> New Import</Link>
           </Button>
@@ -188,14 +239,14 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
                 <span className="tab-nums text-ink-950">
                   {batch.totalRows && batch.totalRows > 0
                     ? `${Math.round(((batch.committedRows || 0) / batch.totalRows) * 100)}%`
-                    : '—'}
+                    : '\u2014'}
                 </span>
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-ink-500">Imported By</span>
-                <span className="text-ink-950">{batch.importedByUserId ? `User ${batch.importedByUserId.slice(0, 8)}` : '—'}</span>
+                <span className="text-ink-950">{batch.importedByUserId ? `User ${batch.importedByUserId.slice(0, 8)}` : '\u2014'}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-ink-500">Created</span>
@@ -260,7 +311,7 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
                               {row.commitEntityId.slice(0, 8)}
                             </Link>
                           ) : (
-                            <span className="text-xs text-ink-400">—</span>
+                            <span className="text-xs text-ink-400">{'\u2014'}</span>
                           )}
                         </td>
                         <td className="px-4 py-3">
@@ -274,7 +325,7 @@ export default async function ImportBatchDetailPage({ params }: PageProps) {
                               ))}
                             </div>
                           ) : (
-                            <span className="text-xs text-ink-400">—</span>
+                            <span className="text-xs text-ink-400">{'\u2014'}</span>
                           )}
                         </td>
                       </tr>

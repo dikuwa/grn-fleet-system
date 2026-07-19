@@ -232,8 +232,6 @@ export const vehicleLicenceExpiryAlert = inngest
             .select({
               vehicleId: vehicles.id,
               licenceNumber: vehicles.licenceNumber,
-              make: vehicles.make,
-              model: vehicles.model,
               licenceExpiryDate: vehicles.licenceExpiryDate,
               tenantId: vehicles.tenantId,
             })
@@ -328,20 +326,38 @@ export const driverLicenceExpiryAlert = inngest
               priority: daysLeft <= 7 ? 'high' : 'normal',
             });
 
-            // Send email notification if the employee has an email address
+            // Check notification preferences before sending email
             if (l.email && sendEmail) {
-              await sendEmail({
-                to: l.email,
-                type: 'reminder',
-                title: isExpired
-                  ? '⚠️ Your Driver Licence Has Expired'
-                  : `⚠️ Your Driver Licence Expires in ${daysLeft} Days`,
-                body: isExpired
-                  ? `Your ${l.licenceClass} driver licence (${l.licenceNumber}) expired on ${l.expiryDate}. Please renew it immediately to remain authorised to drive.`
-                  : `Your ${l.licenceClass} driver licence (${l.licenceNumber}) will expire on ${l.expiryDate} (${daysLeft} days). Please arrange renewal before the expiry date.`,
-                actionUrl: `/dashboard/drivers/${l.employeeId}`,
-                recipientName: `${l.firstName} ${l.lastName}`,
-              });
+              const { notificationPreferences } = await import('@/db/schema/notifications');
+              const { eq } = await import('drizzle-orm');
+              const [prefs] = await db
+                .select({ emailNotifications: notificationPreferences.emailNotifications })
+                .from(notificationPreferences)
+                .where(
+                  and(
+                    eq(notificationPreferences.tenantId, l.tenantId),
+                    eq(notificationPreferences.userId, l.email),
+                  ),
+                )
+                .limit(1);
+
+              // Send if preferences allow it or no preferences set (default to true)
+              const shouldSend = prefs === undefined || prefs.emailNotifications !== false;
+
+              if (shouldSend) {
+                await sendEmail({
+                  to: l.email,
+                  type: 'reminder',
+                  title: isExpired
+                    ? '⚠️ Your Driver Licence Has Expired'
+                    : `⚠️ Your Driver Licence Expires in ${daysLeft} Days`,
+                  body: isExpired
+                    ? `Your ${l.licenceClass} driver licence (${l.licenceNumber}) expired on ${l.expiryDate}. Please renew it immediately to remain authorised to drive.`
+                    : `Your ${l.licenceClass} driver licence (${l.licenceNumber}) will expire on ${l.expiryDate} (${daysLeft} days). Please arrange renewal before the expiry date.`,
+                  actionUrl: `/dashboard/drivers/${l.employeeId}`,
+                  recipientName: `${l.firstName} ${l.lastName}`,
+                });
+              }
             }
           }
 

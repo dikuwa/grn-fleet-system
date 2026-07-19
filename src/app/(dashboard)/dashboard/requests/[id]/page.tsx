@@ -31,6 +31,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import Link from 'next/link';
+import { CancelRequestButton } from './CancelRequestButton';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -182,6 +183,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
         title={request.reference}
         description={request.purpose || 'Transport request'}
       >
+        <CancelRequestButton requestId={id} currentStatus={request.status} />
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/requests">
             <ChevronLeft className="h-4 w-4" /> Back to Requests
