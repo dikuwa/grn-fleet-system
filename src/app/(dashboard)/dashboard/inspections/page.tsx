@@ -161,10 +161,10 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
       <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections">
         <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/inspections/departure"><ClipboardCheck className="h-4 w-4" /> New Departure Inspection</Link>
+          <Link href="/dashboard/inspections/new?type=departure"><ClipboardCheck className="h-4 w-4" /> Departure Inspection</Link>
         </Button>
         <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/inspections/return"><ClipboardCheck className="h-4 w-4" /> New Return Inspection</Link>
+          <Link href="/dashboard/inspections/new?type=return"><ClipboardCheck className="h-4 w-4" /> Return Inspection</Link>
         </Button>
       </PageHeader>
 

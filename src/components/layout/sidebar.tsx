@@ -31,6 +31,7 @@ import {
   CalendarClock,
   Clock,
   Mail,
+  Layers,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -90,6 +91,7 @@ const navGroups: NavGroup[] = [
       { label: 'Staff Directory', href: '/dashboard/staff', icon: Users },
       { label: 'Drivers', href: '/dashboard/drivers', icon: CarFront },
       { label: 'Offices', href: '/dashboard/offices', icon: Building2 },
+      { label: 'Departments', href: '/dashboard/departments', icon: Layers },
     ],
   },
   {
