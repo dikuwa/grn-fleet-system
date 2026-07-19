@@ -9,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Database, Truck, Search, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Database, Truck, Search, ChevronRight, ChevronLeft, Download } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
@@ -196,7 +196,14 @@ export default async function TripsPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips' }]} />
-      <PageHeader title="Trips" description="Manage operational trips and vehicle assignments" />
+      <PageHeader title="Trips" description="Manage operational trips and vehicle assignments">
+        <Button variant="tertiary" size="sm" asChild>
+          <a href="/api/reports?type=trips&export=csv&period=90d">
+            <Download className="h-4 w-4" />
+            Export CSV
+          </a>
+        </Button>
+      </PageHeader>
 
       {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-4">

@@ -18,6 +18,7 @@ import {
   Gauge,
   CalendarClock,
   DollarSign,
+  Download,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -157,11 +158,23 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
         title="Maintenance"
         description="Vehicle service and repair history across the fleet"
       >
+        <Button variant="primary" size="sm" asChild>
+          <Link href="/dashboard/maintenance/new">
+            <Wrench className="h-4 w-4" />
+            Schedule Maintenance
+          </Link>
+        </Button>
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fleet">
             <Car className="h-4 w-4" />
             View Fleet
           </Link>
+        </Button>
+        <Button variant="tertiary" size="sm" asChild>
+          <a href="/api/reports?type=maintenance&export=csv&period=90d">
+            <Download className="h-4 w-4" />
+            Export CSV
+          </a>
         </Button>
       </PageHeader>
 

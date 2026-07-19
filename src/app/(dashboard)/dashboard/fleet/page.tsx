@@ -20,6 +20,7 @@ import {
   Wrench,
   Gauge,
   Upload,
+  Download,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -249,6 +250,12 @@ export default async function FleetPage({ searchParams }: PageProps) {
             <Upload className="h-4 w-4" />
             Import
           </Link>
+        </Button>
+        <Button variant="tertiary" size="sm" asChild>
+          <a href="/api/reports?type=fuel&export=csv&period=90d">
+            <Download className="h-4 w-4" />
+            Export CSV
+          </a>
         </Button>
       </PageHeader>
 

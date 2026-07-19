@@ -3,6 +3,7 @@ import { getDb } from '@/db';
 import { trips } from '@/db/schema/trips';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { onTripIssued } from '@/lib/document-generator';
 import { eq } from 'drizzle-orm';
 
 export async function POST(
@@ -51,6 +52,13 @@ export async function POST(
       })
       .where(eq(trips.id, id))
       .returning();
+
+    // Generate trip authority document when trip is issued
+    if (trip.allocationId) {
+      await onTripIssued(trip.allocationId, session.tenantId, session.user.id).catch((err) => {
+        console.warn('[trips/start] Document generation failed:', err);
+      });
+    }
 
     return NextResponse.json({ trip: updatedTrip });
   } catch (error) {

@@ -24,6 +24,7 @@ import {
   Hash,
   ClipboardCheck,
   FileText,
+  Wrench,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import Link from 'next/link';
@@ -218,6 +219,12 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         title={`${vehicle.make} ${vehicle.model}`}
         description={`${vehicle.licenceNumber}${vehicle.vehicleRegisterNumber ? ` · ${vehicle.vehicleRegisterNumber}` : ''}`}
       >
+        <Button variant="primary" size="sm" asChild>
+          <Link href={`/dashboard/maintenance/new?vehicleId=${id}`}>
+            <Wrench className="h-4 w-4" />
+            Schedule Maintenance
+          </Link>
+        </Button>
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fleet">
             <ChevronLeft className="h-4 w-4" />
