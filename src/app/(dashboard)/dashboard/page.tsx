@@ -1,6 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header';
 import { StatCard } from '@/components/ui/card';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import {
   FileText,
   Clock,
@@ -10,6 +11,9 @@ import {
   TrendingUp,
   Wrench,
   Database,
+  Gauge,
+  User,
+  ChevronRight,
 } from 'lucide-react';
 import { getDb, isDbConnected } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
@@ -18,9 +22,9 @@ import { workflowInstances } from '@/db/schema/workflows';
 import { fuelTransactions, trips } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
 import { getServerSession } from '@/lib/session';
-import { eq, and, desc, sql, isNull, gte } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, gte, ne } from 'drizzle-orm';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatDateTime } from '@/lib/utils';
 import Link from 'next/link';
 
 async function fetchDashboardData(tenantId: string) {
@@ -37,6 +41,7 @@ async function fetchDashboardData(tenantId: string) {
     recentReqs,
     fuelMonth,
     pendingApprovals,
+    activeTrips,
   ] = await Promise.all([
     // Request counts by status
     db
@@ -115,6 +120,34 @@ async function fetchDashboardData(tenantId: string) {
           eq(workflowInstances.status, 'active'),
         ),
       ),
+    // Active trips list (in_progress or return_due) — last 5
+    db
+      .select({
+        id: trips.id,
+        status: trips.status,
+        startedAt: trips.startedAt,
+        createdAt: trips.createdAt,
+        requestReference: transportRequests.reference,
+        requestPurpose: transportRequests.purpose,
+        make: vehicles.make,
+        model: vehicles.model,
+        licenceNumber: vehicles.licenceNumber,
+        driverFirstName: employees.firstName,
+        driverLastName: employees.lastName,
+      })
+      .from(trips)
+      .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
+      .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
+      .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+      .where(
+        and(
+          eq(trips.tenantId, tenantId),
+          ne(trips.status, 'closed'),
+          ne(trips.status, 'pending'),
+        ),
+      )
+      .orderBy(desc(trips.startedAt))
+      .limit(5),
   ]);
 
   // Derive summary counts
@@ -151,6 +184,7 @@ async function fetchDashboardData(tenantId: string) {
     fuelThisMonth,
     pendingApprovalCount,
     recentRequests: recentReqs,
+    activeTrips,
   };
 }
 
@@ -233,6 +267,55 @@ export default async function DashboardPage() {
           icon={<AlertTriangle className="h-5 w-5" />}
         />
       </div>
+
+      {/* Active Trips */}
+      {data.activeTrips.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Gauge className="h-5 w-5 text-status-info-text" />
+              Active Trips ({data.activeTrips.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {data.activeTrips.map((trip) => {
+                const driverName = trip.driverFirstName && trip.driverLastName
+                  ? `${trip.driverFirstName} ${trip.driverLastName}`
+                  : null;
+                return (
+                  <Link
+                    key={trip.id}
+                    href={`/dashboard/trips/${trip.id}`}
+                    className="flex items-center justify-between rounded-[8px] border border-border p-3 transition-colors hover:border-brand-100 hover:bg-brand-50/20"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-amber-50">
+                        <Truck className="h-5 w-5 text-amber-700" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-ink-950">{trip.make} {trip.model}</p>
+                          <Badge variant={trip.status === 'return_due' ? 'emergency' : 'info'} size="sm">
+                            {trip.status === 'return_due' ? 'RETURN DUE' : trip.status.replace(/_/g, ' ')}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-ink-500">
+                          <span>{trip.licenceNumber}</span>
+                          {trip.requestReference && <span>{trip.requestReference}</span>}
+                          {driverName && <span className="flex items-center gap-1"><User className="h-3 w-3" />{driverName}</span>}
+                          <span className="tabular-nums">{trip.startedAt ? formatDateTime(trip.startedAt) : formatDate(trip.createdAt)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-ink-300 shrink-0" />
+                  </Link>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Recent Activity & Quick Stats */}
       <div className="grid gap-6 lg:grid-cols-3">

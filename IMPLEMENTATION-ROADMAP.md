@@ -184,10 +184,17 @@ This document is the permanent execution plan for every coding session. Read it 
 27. **Sidebar updates** — Added Fleet Map, Compliance, Predictive Maint., Expenses, Driver Self-Service links. ✅
 28. **Deployed** — Commit pushed to origin/master. ✅
 
+### Session 9 ✅
+29. **Document detail tenant isolation** — Added `getServerSession()` + tenant filter to document detail page. ✅
+30. **Active trips dashboard widget** — Active trips section on main dashboard showing in_progress/return_due trips with vehicle info, driver name, status badges, links to trip detail. ✅
+31. **Native share / WhatsApp share** — `ShareActions` component using Web Share API with clipboard fallback, wired into document detail page action bar. ✅
+32. **Cross-tenant security tests** — 13 Vitest test cases covering all core entities (vehicles, requests, trips, employees, defects, fuel, audits, inspections, allocations, notifications, documents, join-chain verification, structural test). Tenant IDs resolved from database via beforeAll hook. ✅
+33. **Document detail security gap closed** — Documents page now enforces tenant isolation at the DB query level. ✅
+
 ### Next Session
-11. Full E2E test suite
-12. Cross-tenant security tests
-13. Production hardening
+- End-to-end Playwright test suite for regional trip workflow
+- Permission matrix testing
+- Production hardening: error boundaries, monitoring
 
 ---
 

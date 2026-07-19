@@ -1,6 +1,6 @@
 import { getDb, isDbConnected } from '@/db';
 import { generatedDocuments, shareLinks } from '@/db/schema/documents';
-import { eq, desc } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,21 +22,23 @@ import {
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { getServerSession } from '@/lib/session';
 import { createElement } from 'react';
 import { DocumentLifecycleActions } from './lifecycle-actions';
 import { CreateShareLinkButton } from './create-share-link';
+import { ShareActions } from './share-actions';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-async function fetchDocumentDetail(id: string) {
+async function fetchDocumentDetail(id: string, tenantId: string) {
   const db = getDb();
 
   const [doc] = await db
     .select()
     .from(generatedDocuments)
-    .where(eq(generatedDocuments.id, id))
+    .where(and(eq(generatedDocuments.id, id), eq(generatedDocuments.tenantId, tenantId)))
     .limit(1);
 
   if (!doc) notFound();
@@ -65,7 +67,17 @@ export default async function DocumentDetailPage({ params }: PageProps) {
 
   let data: Awaited<ReturnType<typeof fetchDocumentDetail>>;
   try {
-    data = await fetchDocumentDetail(id);
+    const session = await getServerSession();
+    if (!session) {
+      return (
+        <div className="space-y-6">
+          <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Documents', href: '/dashboard/documents' }, { label: 'Document' }]} />
+          <PageHeader title="Document Detail" />
+          <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" />
+        </div>
+      );
+    }
+    data = await fetchDocumentDetail(id, session.tenantId);
   } catch (error) {
     console.error('Document detail query failed:', error);
     return (
@@ -85,10 +97,16 @@ export default async function DocumentDetailPage({ params }: PageProps) {
     doc.status === 'draft' ? 'text-status-pending-text bg-status-pending-bg' :
     'text-status-cancelled-text bg-status-cancelled-bg';
 
-  // Count active shares
+  // Count active shares & build share URL
   const activeShares = shares.filter(
     (s) => !s.isRevoked && new Date(s.expiresAt) > new Date(),
   );
+
+  const shareUrl = activeShares.length > 0 && 'shareUrl' in activeShares[0]
+    ? (activeShares[0] as unknown as { shareUrl?: string }).shareUrl
+    : typeof process !== 'undefined' && process.env.NEXT_PUBLIC_APP_URL
+      ? `${process.env.NEXT_PUBLIC_APP_URL || ''}/share/${doc.id}`
+      : null;
 
   return (
     <div className="space-y-6">
@@ -108,6 +126,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
           <Download className="h-4 w-4" /> Download PDF
         </Button>
         <DocumentLifecycleActions documentId={doc.id} currentStatus={doc.status} />
+        <ShareActions shareUrl={shareUrl || undefined} documentTitle={doc.documentType} documentId={doc.id} />
         <CreateShareLinkButton documentId={doc.id} />
       </PageHeader>
 
