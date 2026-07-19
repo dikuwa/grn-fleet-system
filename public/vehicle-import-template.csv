@@ -1,0 +1,2 @@
+licence_number,vehicle_register_number,vin,engine_number,make,model,series_name,manufacture_year,colour,fuel_type,transmission,vehicle_category,vehicle_description,tare_kg,gross_vehicle_mass_kg,seated_capacity,standing_capacity,status,current_odometer,notes
+GRN-DEMO-001,N 00000 KE,17-CHAR-VIN-HERE,ENG12345,Toyota,Corolla Quest,Quest,2024,White,Petrol,Manual,Sedan,Light passenger motor vehicle,1200,1650,5,0,available,10000,Import demo vehicle

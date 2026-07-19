@@ -31,7 +31,7 @@ This document is the permanent execution plan for every coding session. Read it 
 | 1.4 | Tenant isolation | IMPLEMENTED | Every server page now filters queries by `tenantId` from `getServerSession()`. Pages: requests list/detail, fleet, staff, approvals, trips list/detail, fuel, inspections, allocations list/detail | All 15 server component pages now enforce tenant isolation | CRITICAL |
 | 1.5 | Role-based access control | IMPLEMENTED | Full permission system (`Permissions`, `RoleDefinitions`, `auth-helpers`), seed data | Not enforced on dashboard pages | HIGH |
 | 1.6 | API and server-action protection | PARTIAL | Some API routes use `requireRequestAuth` | Many routes don't filter by tenant or check permissions | HIGH |
-| 1.7 | Database constraints | IMPLEMENTED | Drizzle schema, proper foreign keys | — | MEDIUM |
+| 1.7 | Database constraints | IMPLEMENTED | Drizzle schema, proper foreign keys, schema migration 0004 aligned DB with schema | — | MEDIUM |
 | 1.8 | Secure file access | PARTIAL | R2 storage service exists | Not fully wired to upload/download flows | MEDIUM |
 | 1.9 | Audit logging | IMPLEMENTED | Audit events table, hash-chain support, WorkflowEngine logs actions | Not all mutations log audit events | MEDIUM |
 
@@ -48,8 +48,8 @@ This document is the permanent execution plan for every coding session. Read it 
 | 2.5 | Offices | IMPLEMENTED | Office tree, seed data, office filter in fleet | Need office management UI (create/edit) | HIGH |
 | 2.6 | Departments | IMPLEMENTED | Seed data, department filter in staff | Need department management UI | MEDIUM |
 | 2.7 | Users | PARTIAL | Admin user list/detail, Better Auth tables | Role assignment UI, user invitation flow, password reset | HIGH |
-| 2.8 | Roles | IMPLEMENTED | 9 default roles with permissions, role-permission mapping in seed | Need role management UI | MEDIUM |
-| 2.9 | Permissions | IMPLEMENTED | All permission codes, groups, seed | Need permission matrix UI | MEDIUM |
+| 2.8 | Roles | IMPLEMENTED | 9 default roles with permissions, role-permission mapping in seed, Role Editor UI with permission matrix | ✅ Role Editor page with create/edit dialogs and permission matrix | MEDIUM |
+| 2.9 | Permissions | IMPLEMENTED | All permission codes, groups, seed, Permission matrix in Role Editor | ✅ Full permission matrix in Role Editor with 14 permission groups | MEDIUM |
 | 2.10 | Initial tenant configuration | IMPLEMENTED | Seed creates Kavango East with full setup | Works for first tenant | HIGH |
 
 ---
@@ -196,6 +196,23 @@ This document is the permanent execution plan for every coding session. Read it 
 35. **Full regional trip workflow E2E test suite** — 10 comprehensive Playwright test cases covering the complete lifecycle: sign in → create transport request → walk through all 5 approval steps (supervisor_approve, transport_review, release, authorise, acknowledge) → find available vehicle → create allocation → create trip → departure inspection (trip → in_progress) → mark returned → return inspection (trip → closure_review) → close trip → UI smoke tests (dashboard, trips list, requests list). All API-driven with cookie-based auth. ✅
 36. **Transport requests route fix** — Added missing `and` import (was causing TS2304). ✅
 37. **Production hardening** — Security: approval action API now enforces tenant isolation + proper error codes. E2E: comprehensive workflow coverage. ✅
+
+### Session 11 ✅
+38. **Vehicle schema migration** — Applied migration `0004_flowery_robbie` adding 21 missing columns (licence_number, vehicle_register_number, vin, engine_number, series_name, manufacture_year, etc.) to align Drizzle schema with database. ✅
+39. **Cross-tenant security tests passing** — Fixed `NeonDbError: column "licence_number" does not exist` by migrating schema. All 13 cross-tenant tests pass. Total: 72/72 tests passing. ✅
+40. **Role & Permission Management UI** — Created `/dashboard/admin/roles` page with role list, role detail with permission matrix (checkbox grid by permission group), create/edit role dialogs. ✅
+41. **Role editor sidebar link** — Added "Roles & Permissions" link to sidebar Administration section. ✅
+42. **Status document updates** — Roadmap, Project Status, and Changelog updated to reflect all completed work and known gaps. ✅
+
+### Session 12 ✅
+43. **Vehicle Import Page** — `/dashboard/fleet/import` with full 4-step CSV wizard (Upload → Column Mapping → Preview → Complete). ✅
+44. **Vehicle Import API** — `POST /api/fleet/import` with upsert by licence number, batch tracking, permission gate. ✅
+45. **Email Templates** — 8 React Email components (`src/emails/`) covering all workflow notification types. ✅
+46. **Region Management** — `regions` table in fleet schema, RESTful CRUD API (`/api/regions`), management page (`/dashboard/admin/regions`). ✅
+47. **Public Website Pages** — `/contact` and `/privacy` pages linked from landing page footer. ✅
+48. **Permission Integration Tests** — 10 tests covering code completeness, group coverage, role integrity, orphan detection. ✅
+49. **Schema Cleanup** — Migration `0005_great_manta` drops legacy vehicle columns (`grn_number`, `registration_number`, `body_type`, `year`). ✅
+50. **Sidebar/Fleet updates** — Added Import Vehicles and Regions links, fleet page import button. ✅
 
 ---
 

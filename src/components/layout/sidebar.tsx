@@ -68,6 +68,7 @@ const navGroups: NavGroup[] = [
     label: 'Fleet & Maintenance',
     items: [
       { label: 'Fleet', href: '/dashboard/fleet', icon: CarFront },
+      { label: 'Import Vehicles', href: '/dashboard/fleet/import', icon: Truck },
       { label: 'Fleet Map', href: '/dashboard/fleet/map', icon: MapPin },
       { label: 'Compliance', href: '/dashboard/fleet/compliance', icon: Shield },
       { label: 'Predictive Maint.', href: '/dashboard/fleet/predictive-maintenance', icon: BrainCircuit },
@@ -98,6 +99,8 @@ const navGroups: NavGroup[] = [
       { label: 'Audit Log', href: '/dashboard/audit', icon: FileText },
       { label: 'Settings', href: '/dashboard/settings', icon: Settings },
       { label: 'User Management', href: '/dashboard/admin/users', icon: Users },
+      { label: 'Roles & Permissions', href: '/dashboard/admin/roles', icon: Shield },
+      { label: 'Regions', href: '/dashboard/admin/regions', icon: MapPin },
       { label: 'Tenants', href: '/dashboard/platform/tenants', icon: Globe },
       { label: 'Platform Dashboard', href: '/dashboard/platform', icon: LayoutDashboard },
       { label: 'Driver Console', href: '/dashboard/driver-mobile', icon: Gauge },

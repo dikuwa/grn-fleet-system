@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   Wrench,
   Gauge,
+  Upload,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -241,6 +242,12 @@ export default async function FleetPage({ searchParams }: PageProps) {
           <Link href="/dashboard/fleet/defects">
             <AlertTriangle className="h-4 w-4" />
             Defects
+          </Link>
+        </Button>
+        <Button variant="tertiary" size="sm" asChild>
+          <Link href="/dashboard/fleet/import">
+            <Upload className="h-4 w-4" />
+            Import
           </Link>
         </Button>
       </PageHeader>

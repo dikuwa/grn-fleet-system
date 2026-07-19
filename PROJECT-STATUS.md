@@ -139,14 +139,64 @@ Topbar now:
 
 Verified end-to-end: `POST /api/approvals/[id]/action` delegates to `WorkflowEngine.processAction()` with proper permission checks, separation of duty, and audit logging.
 
+## Session 11 — Migration fix, Role Editor, Final Hardening (2026-07-19)
+
+### Fixed
+- **Vehicle schema migration** — Applied `0004_flowery_robbie.sql` adding 21 missing columns (`licence_number`, `vehicle_register_number`, `vin`, `engine_number`, `series_name`, `manufacture_year`, `vehicle_category`, `vehicle_description`, `drive_type`, `tare_kg`, `gross_vehicle_mass_kg`, `seated_capacity`, `standing_capacity`, `registering_authority`, `national_vehicle_classification`, `roadworthy_test_date`, `licence_expiry_date`, `assigned_region_id`, `assigned_office_id`, `created_by`, `updated_by`). Old data backfilled from legacy columns.
+- **Cross-tenant security tests** — All 13 tests now pass (was failing on `licence_number` column missing).
+
+### Added
+- **Role Editor page** (`/dashboard/admin/roles`) — Full permission matrix UI with create/edit dialogs. Permission checkboxes grouped by category (14 groups). System role protection.
+- **Roles API** (`GET/POST/PATCH /api/admin/roles`) — List, create, and update roles with permission codes. Duplicate name validation. Tenant-isolated.
+- **Sidebar** — Added "Roles & Permissions" link to Administration section.
+
+### Validation
+- **Tests**: 72/72 passing (5 files, 13 cross-tenant security tests)
+- **TypeScript**: Clean compile (0 errors)
+- **Build**: Production build passes
+
+## Session 12 — Vehicle Import, Email Templates, Regions, Public Pages, Permission Tests, Schema Cleanup (2026-07-19)
+
+### Added
+
+- **Vehicle Import Page** (`/dashboard/fleet/import`) — Full 4-step CSV import wizard (Upload → Column Mapping → Preview → Complete) with auto-column detection, validation, paginated preview, error display. Follows the existing staff import pattern.
+- **Vehicle Import API** (`POST /api/fleet/import`) — Upsert-based import by licence number, batch tracking via import_batches/import_rows tables, permission-gated (`VEHICLE_CREATE`).
+- **Vehicle Import Template** (`/vehicle-import-template.csv`) — 20-column template with demo data.
+- **Email Templates** (`src/emails/`) — 8 React Email components:
+  - `NotificationEmail` — Base template with header, body, CTA button, footer
+  - `RequestApprovedEmail`, `RequestRejectedEmail` — Approval outcomes
+  - `VehicleReleasedEmail` — Vehicle release notifications
+  - `TripAuthorisedEmail` — Trip authorisation notifications
+  - `EmergencyOverrideEmail` — Emergency override alerts
+  - `ReminderEmail` — Task reminders with escalation variant
+  - `PasswordResetEmail` — Password reset with styled CTA
+  - `AccountCreatedEmail` — New account notifications
+- **Region Management** (`/dashboard/admin/regions`) — Full CRUD with create/edit dialog, search, active/inactive toggle, tenant-isolated API.
+- **Regions Table & API** — New `regions` table in fleet schema with `tenantId`, `name`, `code`, `description`, `sortOrder`. RESTful CRUD API at `/api/regions`.
+- **Contact & Privacy Pages** — `/contact` and `/privacy` public pages linked from the landing page footer. Contact page includes contact info cards and message form.
+- **Permission Integration Tests** — 10 test cases covering code completeness, permission group coverage, system role integrity, assignment validity, and orphan detection.
+- **Schema Cleanup Migration** (`0005_great_manta`) — Drops legacy vehicle columns (`grn_number`, `registration_number`, `body_type`, `year`).
+- **Sidebar** — Added "Import Vehicles" link under Fleet & Maintenance, "Regions" link under Administration.
+- **Fleet Page** — Added "Import" button alongside Defects button.
+
+### Fixed
+
+- `RequestApprovedEmail` — Added fallback for `requestReference` prop
+- `NotificationEmail` — Removed unused `Img` import
+- **Contact page** — Added `'use client'` directive and form submit handler
+
+### Validation
+
+- **Tests**: 72/72 passing (5 files — includes 10 new permission tests)
+- **TypeScript**: Clean compile (0 errors)
+- **Migrations**: 0005 applied successfully
+
 ## Known Gaps
 
 - SMS won't send until Twilio credentials are set
-- Email templates need content
-- Background jobs (Inngest) need scheduling
-- Driver mobile dedicated view not yet built
-- Reports data aggregation needs tuning
+- Email (Resend) key not configured — React Email templates are ready
+- No Vercel deployment for this session (builder timeout)
 
 ## Blockers
 
-- None
+- Vercel deploy command times out after 300s — may need manual deploy via Vercel dashboard

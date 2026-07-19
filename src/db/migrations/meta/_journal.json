@@ -29,6 +29,20 @@
       "when": 1784215978765,
       "tag": "0003_equal_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784479200000,
+      "tag": "0004_flowery_robbie",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784482000000,
+      "tag": "0005_great_manta",
+      "breakpoints": true
     }
   ]
 }

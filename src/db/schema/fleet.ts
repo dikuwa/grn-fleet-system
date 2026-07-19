@@ -180,7 +180,25 @@ export const vehicleOdometerEvents = pgTable('vehicle_odometer_events', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Regions (for vehicle assignment and reporting)
+ */
+export const regions = pgTable('regions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  code: text('code').notNull(),
+  description: text('description'),
+  isActive: boolean('is_active').notNull().default(true),
+  sortOrder: integer('sort_order').default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type VehicleCategory = typeof vehicleCategories.$inferSelect;
 export type Vehicle = typeof vehicles.$inferSelect;
 export type VehicleDefect = typeof vehicleDefects.$inferSelect;
 export type MaintenanceEvent = typeof maintenanceEvents.$inferSelect;
+export type Region = typeof regions.$inferSelect;

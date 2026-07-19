@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { calculateRoute, calculateMultiRoute, isRouteCalculatorConfigured } from '@/lib/route-calculator';
 import { getDb } from '@/db';
-import { requestRoutes } from '@/db/schema/requests';
-import { eq } from 'drizzle-orm';
+import { requestRoutes, transportRequests } from '@/db/schema/requests';
+import { eq, and } from 'drizzle-orm';
 
 /**
  * POST /api/routes/calculate
@@ -21,6 +21,7 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
+    const { session } = auth;
 
     // Check if route calculator is configured
     if (!isRouteCalculatorConfigured()) {
@@ -62,6 +63,17 @@ export async function POST(req: NextRequest) {
     // If a requestId was provided, save the results to the database
     if (requestId && result.routes.length > 0) {
       const db = getDb();
+
+      // Verify the transport request belongs to this tenant before modifying routes
+      const [transportReq] = await db
+        .select({ id: transportRequests.id })
+        .from(transportRequests)
+        .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, session.tenantId)))
+        .limit(1);
+
+      if (!transportReq) {
+        return NextResponse.json({ error: 'Transport request not found or access denied' }, { status: 404 });
+      }
 
       // Remove old routes for this request (so we can replace them)
       await db.delete(requestRoutes).where(eq(requestRoutes.requestId, requestId));

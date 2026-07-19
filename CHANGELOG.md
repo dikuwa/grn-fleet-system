@@ -1,5 +1,65 @@
 # Changelog
 
+## 2026-07-19 — Session 12: Vehicle Import, Email Templates, Regions, Public Pages, Permission Tests, Schema Cleanup
+
+### Added
+
+- **Vehicle Import Page** (`/dashboard/fleet/import`) — Full 4-step CSV import wizard (Upload → Column Mapping → Preview → Complete) with auto-column detection, paginated preview, error display, and commit flow. Follows the existing staff import pattern.
+- **Vehicle Import API** (`POST /api/fleet/import`) — Upsert-based import by licence number, batch tracking via import_batches/import_rows tables, permission-gated (`VEHICLE_CREATE`), proper auth with session tenant isolation.
+- **Vehicle Import Template** (`/vehicle-import-template.csv`) — 20-column CSV template with demo data.
+- **Email Templates** (`src/emails/`) — 8 React Email components using `@react-email/components`:
+  - `NotificationEmail` — Reusable base template with header, body, CTA button, footer
+  - `RequestApprovedEmail`, `RequestRejectedEmail` — Approval outcome notifications
+  - `VehicleReleasedEmail` — Vehicle release notifications
+  - `TripAuthorisedEmail` — Trip authorisation notifications
+  - `EmergencyOverrideEmail` — Emergency override alerts
+  - `ReminderEmail` — Task reminders with escalation variant
+  - `PasswordResetEmail` — Standalone styled password reset email
+  - `AccountCreatedEmail` — New account creation notification
+- **Region Management** — New `regions` table in fleet schema (`tenantId`, `name`, `code`, `description`, `sortOrder`), full RESTful CRUD API at `/api/regions` with tenant isolation and duplicate code detection, management UI page at `/dashboard/admin/regions` with create/edit dialog, search, delete confirmation, and active/inactive status.
+- **Public Website Pages** — `/contact` page with contact info cards (email, phone, office) and message form with `'use client'` submit handler. `/privacy` page with comprehensive privacy policy.
+- **Permission Integration Tests** (`src/test/permissions.integration.test.ts`) — 10 test cases: code completeness against DB, group coverage of all codes, system role existence, transport admin permissions, uniqueness, orphan assignment detection, system role marking, permission metadata, and role-permission validity.
+- **Schema Cleanup Migration** (`0005_great_manta`) — Drops legacy vehicle columns (`grn_number`, `registration_number`, `body_type`, `year`) using `IF EXISTS` for safety.
+- **Sidebar** — Added "Import Vehicles" link under Fleet & Maintenance section, "Regions" link under Administration section.
+- **Fleet Page** — Added "Import" button alongside the existing Defects button.
+
+### Fixed
+
+- `RequestApprovedEmail` — Added `|| '—'` fallback for `requestReference` prop to prevent "undefined" in email body
+- `NotificationEmail` — Removed unused `Img` import from `@react-email/components`
+- **Contact page** — Added `'use client'` directive and `handleSubmit` with `e.preventDefault()` to prevent page reload on form submit
+
+### Validation
+
+- **Tests**: 72/72 passing (5 files — includes 10 new permission tests)
+- **TypeScript**: Clean compile (0 errors)
+- **Migrations**: 0005 applied successfully (drops legacy columns)
+
+## 2026-07-19 — Session 11: Migration fix, Role Editor, Final Hardening
+
+### Added
+
+- **Role Editor page** (`/dashboard/admin/roles`) — Full permission matrix UI with 14 permission groups across all system capabilities. Create/edit dialogs with checkbox-grid permission assignment. System role protection (name/description locked for system roles).
+- **Roles API** (`GET/POST/PATCH /api/admin/roles`) — List tenant roles with permission codes and member counts. Create custom roles with permission selection. Update role name, description, and permissions. Duplicate name validation within tenant.
+- **Sidebar** — Added "Roles & Permissions" link under Administration section with Shield icon.
+
+### Fixed
+
+- **Vehicle schema migration** (`0004_flowery_robbie`) — Added 21 missing columns to the vehicles table (`licence_number`, `vehicle_register_number`, `vin`, `engine_number`, `series_name`, `manufacture_year`, `vehicle_category`, `vehicle_description`, `drive_type`, `tare_kg`, `gross_vehicle_mass_kg`, `seated_capacity`, `standing_capacity`, `registering_authority`, `national_vehicle_classification`, `roadworthy_test_date`, `licence_expiry_date`, `assigned_region_id`, `assigned_office_id`, `created_by`, `updated_by`). Backfilled data from legacy columns (`grn_number` → `licence_number`, `registration_number` → `vehicle_register_number`, `body_type` → `vehicle_description`, `year` → `manufacture_year`).
+- **Cross-tenant security tests** — Fixed `NeonDbError: column "licence_number" does not exist`. All 13 cross-tenant isolation tests now pass.
+
+### Validation
+
+- **Tests**: 72/72 passing (5 files)
+- **TypeScript**: Clean compile (0 errors)
+- **Build**: Production build passes
+
+### Known Gaps
+
+- Old vehicle columns (`grn_number`, `registration_number`, `body_type`, `year`) remain in DB but are unused
+- SMS provider (Twilio) configured as dormant — no real credentials
+- Email (Resend) key not configured — inline HTML templates are ready
+
 ## 2026-07-15 — Phase 11: Documents, PWA, API routes and gap fixes
 
 ### Added
