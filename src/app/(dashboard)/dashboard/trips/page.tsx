@@ -1,9 +1,9 @@
 import { getDb, isDbConnected } from '@/db';
-import { trips } from '@/db/schema/trips';
+import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
-import { employees } from '@/db/schema/people';
-import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
+import { employees, driverProfiles } from '@/db/schema/people';
+import { eq, desc, asc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/badge';
@@ -44,11 +44,15 @@ async function fetchTrips(sp: Record<string, string | undefined>, tenantId: stri
   const offset = (page - 1) * limit;
   const search = sp.search?.trim();
   const status = sp.status?.trim();
+  const driverId = sp.driverId?.trim();
 
   const conditions: SQL[] = [eq(trips.tenantId, tenantId)];
 
   if (status) {
     conditions.push(eq(trips.status, status));
+  }
+  if (driverId) {
+    conditions.push(eq(vehicleAllocations.driverEmployeeId, driverId));
   }
   if (search) {
     conditions.push(
@@ -61,6 +65,25 @@ async function fetchTrips(sp: Record<string, string | undefined>, tenantId: stri
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  // Fetch list of available drivers for the filter dropdown
+  const driverList = await db
+    .select({
+      id: employees.id,
+      firstName: employees.firstName,
+      lastName: employees.lastName,
+      employeeNumber: employees.employeeNumber,
+    })
+    .from(employees)
+    .innerJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
+    .where(
+      and(
+        eq(employees.tenantId, tenantId),
+        eq(employees.isDriver, true),
+        eq(employees.employmentStatus, 'active'),
+      ),
+    )
+    .orderBy(asc(employees.lastName));
 
   const [rows, totalResult] = await Promise.all([
     db
@@ -79,11 +102,13 @@ async function fetchTrips(sp: Record<string, string | undefined>, tenantId: stri
         requestReference: transportRequests.reference,
         requesterFirstName: employees.firstName,
         requesterLastName: employees.lastName,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
       })
       .from(trips)
       .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
       .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+      .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .where(where)
       .orderBy(desc(trips.createdAt))
       .limit(limit)
@@ -91,18 +116,29 @@ async function fetchTrips(sp: Record<string, string | undefined>, tenantId: stri
     db
       .select({ count: sql<number>`count(*)` })
       .from(trips)
+      .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .where(where),
   ]);
+
+  // Build a driver name lookup map from the driver list
+  const driverNameMap = new Map(driverList.map((d) => [d.id, `${d.firstName} ${d.lastName}`]));
+
+  // Enrich rows with driver name from lookup
+  const enrichedRows = rows.map((row) => ({
+    ...row,
+    driverName: row.driverEmployeeId ? (driverNameMap.get(row.driverEmployeeId) ?? null) : null,
+  }));
 
   const totalCount = Number(totalResult[0]?.count ?? 0);
   const totalPages = Math.ceil(totalCount / limit);
 
   return {
-    rows,
+    rows: enrichedRows,
     totalCount,
     totalPages,
     page,
-    filters: { search, status },
+    filters: { search, status, driverId },
+    driverList,
   };
 }
 
@@ -218,6 +254,15 @@ export default async function TripsPage({ searchParams }: PageProps) {
                 ))}
               </select>
             </div>
+            <div className="w-[220px]">
+              <label className="block text-xs font-medium text-ink-500 mb-1">Driver</label>
+              <select name="driverId" defaultValue={result.filters.driverId ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                <option value="">All Drivers</option>
+                {result.driverList.map((d) => (
+                  <option key={d.id} value={d.id}>{d.firstName} {d.lastName} ({d.employeeNumber})</option>
+                ))}
+              </select>
+            </div>
             <Button variant="primary" size="sm" type="submit"><Search className="h-4 w-4" /> Filter</Button>
           </form>
         </CardContent>
@@ -249,6 +294,7 @@ export default async function TripsPage({ searchParams }: PageProps) {
                         <span className="tabular-nums">{trip.licenceNumber}</span>
                         {trip.requestReference && <span>{trip.requestReference}</span>}
                         {requesterName && <span>Req: {requesterName}</span>}
+                        {trip.driverName && <span>Driver: {trip.driverName}</span>}
                         <span className="tabular-nums">{formatDate(trip.createdAt)}</span>
                       </div>
                     </div>
