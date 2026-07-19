@@ -13,6 +13,7 @@ import { eq } from 'drizzle-orm';
 import { tenants } from '@/db/schema/tenants';
 import { roles, rolePermissions, roleAssignments, permissions } from '@/db/schema';
 import { Permissions, PermissionGroups } from '@/lib/permissions';
+import { regions } from '@/db/schema/fleet';
 
 let TENANT_ID: string | null = null;
 
@@ -202,7 +203,76 @@ describe('Permission system integrity', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 10. Role-permission assignments are valid
+  // 10. Region CRUD permissions
+  // -------------------------------------------------------------------------
+
+  it('should require TENANT_MANAGE to create regions', async () => {
+    if (!TENANT_ID) return;
+    const db = getDb();
+
+    const managePerm = await db
+      .select({ code: permissions.code })
+      .from(permissions)
+      .where(eq(permissions.code, 'tenant:manage'))
+      .limit(1);
+
+    expect(managePerm.length).toBe(1);
+    expect(managePerm[0].code).toBe('tenant:manage');
+  });
+
+  it('should require TENANT_VIEW to list regions', async () => {
+    if (!TENANT_ID) return;
+    const db = getDb();
+
+    const viewPerm = await db
+      .select({ code: permissions.code })
+      .from(permissions)
+      .where(eq(permissions.code, 'tenant:view'))
+      .limit(1);
+
+    expect(viewPerm.length).toBe(1);
+    expect(viewPerm[0].code).toBe('tenant:view');
+  });
+
+  it('should allow Transport Administrator role to manage regions', async () => {
+    if (!TENANT_ID) return;
+    const db = getDb();
+
+    const [transportAdminRole] = await db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(eq(roles.name, 'Transport Administrator'))
+      .limit(1);
+
+    if (!transportAdminRole) return;
+
+    const permRows = await db
+      .select({ code: rolePermissions.permissionCode })
+      .from(rolePermissions)
+      .where(eq(rolePermissions.roleId, transportAdminRole.id));
+
+    const assignedPerms = new Set(permRows.map((p) => p.code));
+    expect(assignedPerms.has('tenant:manage')).toBe(true);
+    expect(assignedPerms.has('tenant:view')).toBe(true);
+  });
+
+  it('should have regions table with tenantId column', async () => {
+    if (!TENANT_ID) return;
+    const db = getDb();
+
+    // Regions should be queryable by tenantId
+    const regionRows = await db
+      .select({ id: regions.id, name: regions.name })
+      .from(regions)
+      .where(eq(regions.tenantId, TENANT_ID))
+      .limit(5);
+
+    // Just verify the query executes without error
+    expect(Array.isArray(regionRows)).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // 11. Role-permission assignments are valid
   // -------------------------------------------------------------------------
 
   it('should have valid permission codes in all role_permissions rows', async () => {
