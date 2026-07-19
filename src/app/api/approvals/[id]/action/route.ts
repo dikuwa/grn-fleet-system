@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { workflowInstances } from '@/db/schema/workflows';
+import { transportRequests } from '@/db/schema/requests';
 import { eq } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { WorkflowEngine, type WorkflowActionType, type WorkflowActionResult } from '@/lib/workflow-engine';
@@ -36,7 +37,7 @@ export async function POST(
       );
     }
 
-    // Look up the workflow instance to get definition ID and current step
+    // Look up the workflow instance with tenant isolation
     const db = getDb();
     const [instance] = await db
       .select()
@@ -46,6 +47,20 @@ export async function POST(
 
     if (!instance) {
       return NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 });
+    }
+
+    // Verify the workflow's request belongs to this user's tenant
+    const [requestOwner] = await db
+      .select({ tenantId: transportRequests.tenantId })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, instance.requestId))
+      .limit(1);
+
+    if (!requestOwner || requestOwner.tenantId !== session.tenantId) {
+      return NextResponse.json(
+        { error: 'Workflow instance not found or access denied' },
+        { status: 404 },
+      );
     }
 
     // Determine the current step's expected action type via the engine.

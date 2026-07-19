@@ -6,7 +6,7 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onRequestSubmitted } from '@/lib/document-generator';
 import { WorkflowEngine } from '@/lib/workflow-engine';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
   try {
@@ -51,10 +51,10 @@ export async function POST(req: NextRequest) {
       const [found] = await db
         .select({ id: employees.id })
         .from(employees)
-        .where(eq(employees.employeeNumber, requesterEmployeeNumber))
+        .where(and(eq(employees.employeeNumber, requesterEmployeeNumber), eq(employees.tenantId, tenantId)))
         .limit(1);
       if (!found) {
-        return NextResponse.json({ error: 'Requester employee not found' }, { status: 404 });
+        return NextResponse.json({ error: 'Requester employee not found in your organisation' }, { status: 404 });
       }
       requesterEmployeeId = found.id;
     } else {
