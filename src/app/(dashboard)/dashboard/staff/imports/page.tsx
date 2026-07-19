@@ -108,9 +108,12 @@ export default async function ImportHistoryPage() {
                       {batch.createdAt.toLocaleDateString('en-NA', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className="text-xs font-medium text-brand-600 inline-flex items-center gap-1">
+                      <Link
+                        href={`/dashboard/staff/imports/${batch.id}`}
+                        className="text-xs font-medium text-brand-600 inline-flex items-center gap-1 hover:text-brand-700 transition-colors"
+                      >
                         Details <ChevronRight className="h-3 w-3" />
-                      </span>
+                      </Link>
                     </td>
                   </tr>
                 ))}

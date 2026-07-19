@@ -1,0 +1,3 @@
+code,name,office_type,parent_code,town,region,active
+KERC-HO,Kavango East Head Office,HEAD_OFFICE,,Rundu,Kavango East,true
+KERC-MUKWE,Mukwe Constituency Office,CONSTITUENCY,KERC-HO,Mukwe,Kavango East,true

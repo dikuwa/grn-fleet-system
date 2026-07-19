@@ -1,0 +1,2 @@
+employee_number,title,first_name,middle_names,last_name,gender,job_title,job_grade,department,office,email,phone,employment_status,is_driver
+KERC-DEMO-001,Mr,Demo,,Employee,,Administrative Officer,,General Services,Head Office,demo.employee@example.test,,ACTIVE,false

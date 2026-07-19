@@ -232,6 +232,8 @@ export const vehicleLicenceExpiryAlert = inngest
             .select({
               vehicleId: vehicles.id,
               licenceNumber: vehicles.licenceNumber,
+              make: vehicles.make,
+              model: vehicles.model,
               licenceExpiryDate: vehicles.licenceExpiryDate,
               tenantId: vehicles.tenantId,
             })
@@ -286,6 +288,11 @@ export const driverLicenceExpiryAlert = inngest
           const thirtyDays = new Date();
           thirtyDays.setDate(thirtyDays.getDate() + 30);
 
+          const [emailModule] = await Promise.all([
+            import('@/lib/email'),
+          ]);
+          const sendEmail = emailModule.sendNotificationEmail;
+
           const expiringLicences = await db
             .select({
               licenceId: driverLicences.id,
@@ -296,6 +303,7 @@ export const driverLicenceExpiryAlert = inngest
               employeeId: driverProfiles.employeeId,
               firstName: employees.firstName,
               lastName: employees.lastName,
+              email: employees.email,
               tenantId: employees.tenantId,
             })
             .from(driverLicences)
@@ -307,6 +315,7 @@ export const driverLicenceExpiryAlert = inngest
 
           for (const l of expiringLicences) {
             const daysLeft = Math.ceil((new Date(l.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+            const isExpired = daysLeft <= 0;
 
             await db.insert(notifications).values({
               tenantId: l.tenantId,
@@ -318,6 +327,22 @@ export const driverLicenceExpiryAlert = inngest
               entityId: l.licenceId,
               priority: daysLeft <= 7 ? 'high' : 'normal',
             });
+
+            // Send email notification if the employee has an email address
+            if (l.email && sendEmail) {
+              await sendEmail({
+                to: l.email,
+                type: 'reminder',
+                title: isExpired
+                  ? '⚠️ Your Driver Licence Has Expired'
+                  : `⚠️ Your Driver Licence Expires in ${daysLeft} Days`,
+                body: isExpired
+                  ? `Your ${l.licenceClass} driver licence (${l.licenceNumber}) expired on ${l.expiryDate}. Please renew it immediately to remain authorised to drive.`
+                  : `Your ${l.licenceClass} driver licence (${l.licenceNumber}) will expire on ${l.expiryDate} (${daysLeft} days). Please arrange renewal before the expiry date.`,
+                actionUrl: `/dashboard/drivers/${l.employeeId}`,
+                recipientName: `${l.firstName} ${l.lastName}`,
+              });
+            }
           }
 
           return { sent: expiringLicences.length > 0, count: expiringLicences.length };
