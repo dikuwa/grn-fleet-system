@@ -28,6 +28,7 @@ import {
   BrainCircuit,
   Receipt,
   User,
+  CalendarClock,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -73,6 +74,7 @@ const navGroups: NavGroup[] = [
       { label: 'Import Vehicles', href: '/dashboard/fleet/import', icon: Truck },
       { label: 'Fleet Map', href: '/dashboard/fleet/map', icon: MapPin },
       { label: 'Compliance', href: '/dashboard/fleet/compliance', icon: Shield },
+      { label: 'Expiry Alerts', href: '/dashboard/expiry-alerts', icon: CalendarClock },
       { label: 'Predictive Maint.', href: '/dashboard/fleet/predictive-maintenance', icon: BrainCircuit },
       { label: 'Expenses', href: '/dashboard/fleet/expenses', icon: Receipt },
       { label: 'Maintenance', href: '/dashboard/maintenance', icon: Wrench },

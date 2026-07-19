@@ -3,16 +3,14 @@
  *
  * Uses Resend to send transactional fleet emails via React Email templates.
  * Falls back to inline HTML when React Email SSR is unavailable.
+ *
+ * NOTE: React Email components are dynamically imported to avoid
+ * Next.js 16 build errors with react-dom/server references in
+ * server-side contexts.
  */
 
 import { env, hasEnvVar } from '@/env';
 import { createElement } from 'react';
-import { RequestApprovedEmail } from '@/emails/request-approved';
-import { RequestRejectedEmail } from '@/emails/request-rejected';
-import { VehicleReleasedEmail } from '@/emails/vehicle-released';
-import { TripAuthorisedEmail } from '@/emails/trip-authorised';
-import { EmergencyOverrideEmail } from '@/emails/emergency-override';
-import { ReminderEmail } from '@/emails/reminder';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,105 +64,131 @@ async function renderReactEmail(element: React.ReactElement): Promise<string> {
   return renderToString(element);
 }
 
-/**
- * Template registry: maps notification types to components.
- * Add one entry per notification type.
- */
 interface TemplateEntry {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   component: React.ComponentType<any>;
   buildProps: (data: NotificationEmailData) => Record<string, unknown>;
 }
 
 const stripEmoji = (s: string) => s.replace(/^[✅❌🚗📋⚠️⏰🔴🎉]\s*/u, '');
 
-const templateRegistry: Record<string, TemplateEntry> = {
-  request_approved: {
-    component: RequestApprovedEmail,
-    buildProps: (data) => ({
-      recipientName: data.recipientName,
-      tenantName: data.tenantName,
-      requestReference: stripEmoji(data.title),
-      requestUrl: data.actionUrl,
-    }),
-  },
-  request_rejected: {
-    component: RequestRejectedEmail,
-    buildProps: (data) => ({
-      recipientName: data.recipientName,
-      tenantName: data.tenantName,
-      requestReference: stripEmoji(data.title),
-      reason: data.body,
-      requestUrl: data.actionUrl,
-    }),
-  },
-  request_returned: {
-    component: RequestRejectedEmail,
-    buildProps: (data) => ({
-      recipientName: data.recipientName,
-      tenantName: data.tenantName,
-      requestReference: stripEmoji(data.title),
-      reason: `Returned for revision: ${data.body}`,
-      requestUrl: data.actionUrl,
-    }),
-  },
-  vehicle_released: {
-    component: VehicleReleasedEmail,
-    buildProps: (data) => ({
-      recipientName: data.recipientName,
-      tenantName: data.tenantName,
-      requestReference: data.requestReference || stripEmoji(data.title),
-      requestUrl: data.actionUrl,
-    }),
-  },
-  trip_authorised: {
-    component: TripAuthorisedEmail,
-    buildProps: (data) => ({
-      recipientName: data.recipientName,
-      tenantName: data.tenantName,
-      requestReference: data.requestReference || stripEmoji(data.title),
-      requestUrl: data.actionUrl,
-    }),
-  },
-  emergency_override: {
-    component: EmergencyOverrideEmail,
-    buildProps: (data) => ({
-      recipientName: data.recipientName,
-      tenantName: data.tenantName,
-      requestReference: data.requestReference || stripEmoji(data.title),
-      reason: data.body,
-      requestUrl: data.actionUrl,
-    }),
-  },
-  reminder: {
-    component: ReminderEmail,
-    buildProps: (data) => ({
-      recipientName: data.recipientName,
-      tenantName: data.tenantName,
-      taskDescription: data.title,
-      entityType: 'Workflow',
-      entityReference: '',
-      isEscalation: false,
-      actionUrl: data.actionUrl,
-    }),
-  },
-  escalation: {
-    component: ReminderEmail,
-    buildProps: (data) => ({
-      recipientName: data.recipientName,
-      tenantName: data.tenantName,
-      taskDescription: data.title,
-      entityType: 'Workflow',
-      entityReference: '',
-      isEscalation: true,
-      actionUrl: data.actionUrl,
-    }),
-  },
-};
+/** Lazy-load the template registry on first access to avoid React Email imports at module level */
+async function getTemplateRegistry(): Promise<Record<string, TemplateEntry>> {
+  const [
+    RequestApprovedEmail,
+    RequestRejectedEmail,
+    VehicleReleasedEmail,
+    TripAuthorisedEmail,
+    EmergencyOverrideEmail,
+    ReminderEmail,
+  ] = await Promise.all([
+    import('@/emails/request-approved').then((m) => m.RequestApprovedEmail),
+    import('@/emails/request-rejected').then((m) => m.RequestRejectedEmail),
+    import('@/emails/vehicle-released').then((m) => m.VehicleReleasedEmail),
+    import('@/emails/trip-authorised').then((m) => m.TripAuthorisedEmail),
+    import('@/emails/emergency-override').then((m) => m.EmergencyOverrideEmail),
+    import('@/emails/reminder').then((m) => m.ReminderEmail),
+  ]);
+
+  return {
+    request_approved: {
+      component: RequestApprovedEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        requestReference: stripEmoji(data.title),
+        requestUrl: data.actionUrl,
+      }),
+    },
+    request_rejected: {
+      component: RequestRejectedEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        requestReference: stripEmoji(data.title),
+        reason: data.body,
+        requestUrl: data.actionUrl,
+      }),
+    },
+    request_returned: {
+      component: RequestRejectedEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        requestReference: stripEmoji(data.title),
+        reason: `Returned for revision: ${data.body}`,
+        requestUrl: data.actionUrl,
+      }),
+    },
+    vehicle_released: {
+      component: VehicleReleasedEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        requestReference: data.requestReference || stripEmoji(data.title),
+        requestUrl: data.actionUrl,
+      }),
+    },
+    trip_authorised: {
+      component: TripAuthorisedEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        requestReference: data.requestReference || stripEmoji(data.title),
+        requestUrl: data.actionUrl,
+      }),
+    },
+    emergency_override: {
+      component: EmergencyOverrideEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        requestReference: data.requestReference || stripEmoji(data.title),
+        reason: data.body,
+        requestUrl: data.actionUrl,
+      }),
+    },
+    reminder: {
+      component: ReminderEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        taskDescription: data.title,
+        entityType: 'Workflow',
+        entityReference: '',
+        isEscalation: false,
+        actionUrl: data.actionUrl,
+      }),
+    },
+    escalation: {
+      component: ReminderEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        taskDescription: data.title,
+        entityType: 'Workflow',
+        entityReference: '',
+        isEscalation: true,
+        actionUrl: data.actionUrl,
+      }),
+    },
+  };
+}
+
+/** Cache the registry after first load */
+let registryCache: Record<string, TemplateEntry> | null = null;
+
+async function getRegistry(): Promise<Record<string, TemplateEntry>> {
+  if (registryCache) return registryCache;
+  registryCache = await getTemplateRegistry();
+  return registryCache;
+}
 
 /** Render the appropriate React Email template based on notification type */
 async function renderTemplate(data: NotificationEmailData): Promise<string | null> {
   try {
-    const entry = templateRegistry[data.type];
+    const registry = await getRegistry();
+    const entry = registry[data.type];
     if (!entry) return null;
 
     const props = entry.buildProps(data);

@@ -32,15 +32,11 @@ export function AllocationActions({ allocationId, requestId, vehicleId, hasTrip 
         throw new Error(confirmData.error || 'Failed to confirm allocation');
       }
 
-      // Create the trip
-      const tripRes = await fetch('/api/trips', {
+      // Create the trip via the dedicated API with validation
+      const tripRes = await fetch('/api/trips/create-from-allocation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          allocationId,
-          requestId,
-          vehicleId,
-        }),
+        body: JSON.stringify({ allocationId }),
       });
       const tripData = await tripRes.json();
       if (!tripRes.ok) throw new Error(tripData.error || 'Failed to create trip');

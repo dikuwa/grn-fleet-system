@@ -15,6 +15,7 @@ import {
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
+import { ActiveTripDuration } from './ActiveTripDuration';
 
 const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
   pending: 'pending',
@@ -24,16 +25,6 @@ const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'err
   closure_review: 'pending',
   closed: 'success',
 };
-
-function getDuration(startedAt: Date | null, now: Date): string {
-  if (!startedAt) return '—';
-  const diffMs = now.getTime() - new Date(startedAt).getTime();
-  const hours = Math.floor(diffMs / (1000 * 60 * 60));
-  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-  if (hours > 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
 
 async function fetchActiveTrips(tenantId: string) {
   const db = getDb();
@@ -147,8 +138,6 @@ export default async function ActiveTripsPage() {
     );
   }
 
-  const now = new Date();
-
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Active Trips' }]} />
@@ -192,7 +181,6 @@ export default async function ActiveTripsPage() {
         <div className="space-y-3">
           {data.trips.map((trip) => {
             const variant = TRIP_STATUS_VARIANTS[trip.status] ?? 'info';
-            const duration = getDuration(trip.startedAt, now);
             const driverName = trip.driverName;
 
             return (
@@ -226,10 +214,8 @@ export default async function ActiveTripsPage() {
                           trip.status === 'return_inspection' ? 'Return Insp.' :
                           'Closure Review'
                         } />
-                        {trip.status === 'in_progress' && (
-                          <span className="inline-flex items-center gap-1 text-xs text-status-info-text font-medium">
-                            <Clock className="h-3 w-3" /> {duration}
-                          </span>
+                        {trip.startedAt && (
+                          <ActiveTripDuration tripId={trip.id} startedAt={trip.startedAt.toISOString()} />
                         )}
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
