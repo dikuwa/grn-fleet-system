@@ -7,6 +7,13 @@
 
 import { env, hasEnvVar } from '@/env';
 import { renderToString } from 'react-dom/server';
+import { createElement } from 'react';
+import { RequestApprovedEmail } from '@/emails/request-approved';
+import { RequestRejectedEmail } from '@/emails/request-rejected';
+import { VehicleReleasedEmail } from '@/emails/vehicle-released';
+import { TripAuthorisedEmail } from '@/emails/trip-authorised';
+import { EmergencyOverrideEmail } from '@/emails/emergency-override';
+import { ReminderEmail } from '@/emails/reminder';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,6 +27,7 @@ export interface NotificationEmailData {
   actionUrl?: string;
   recipientName: string;
   tenantName?: string;
+  requestReference?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +48,7 @@ async function getResend() {
     resendClient = new Resend(env.RESEND_API_KEY);
     return resendClient;
   } catch {
-    console.warn('Resend SDK not available');
+    console.warn('Email service: Resend SDK not available');
     return null;
   }
 }
@@ -53,85 +61,114 @@ function getFromAddress(): string {
 // React Email template rendering
 // ---------------------------------------------------------------------------
 
-/** Render a React Email component to HTML string using renderToString */
+/** Render a React element to an HTML string */
 function renderReactEmail(element: React.ReactElement): string {
   return renderToString(element);
 }
 
-/** Select and render the appropriate React Email template based on type */
-async function renderTemplate(data: NotificationEmailData): Promise<string | null> {
+/**
+ * Template registry: maps notification types to components.
+ * Add one entry per notification type.
+ */
+interface TemplateEntry {
+  component: React.ComponentType<any>;
+  buildProps: (data: NotificationEmailData) => Record<string, unknown>;
+}
+
+const stripEmoji = (s: string) => s.replace(/^[✅❌🚗📋⚠️⏰🔴🎉]\s*/u, '');
+
+const templateRegistry: Record<string, TemplateEntry> = {
+  request_approved: {
+    component: RequestApprovedEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      requestReference: stripEmoji(data.title),
+      requestUrl: data.actionUrl,
+    }),
+  },
+  request_rejected: {
+    component: RequestRejectedEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      requestReference: stripEmoji(data.title),
+      reason: data.body,
+      requestUrl: data.actionUrl,
+    }),
+  },
+  request_returned: {
+    component: RequestRejectedEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      requestReference: stripEmoji(data.title),
+      reason: `Returned for revision: ${data.body}`,
+      requestUrl: data.actionUrl,
+    }),
+  },
+  vehicle_released: {
+    component: VehicleReleasedEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      requestReference: data.requestReference || stripEmoji(data.title),
+      requestUrl: data.actionUrl,
+    }),
+  },
+  trip_authorised: {
+    component: TripAuthorisedEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      requestReference: data.requestReference || stripEmoji(data.title),
+      requestUrl: data.actionUrl,
+    }),
+  },
+  emergency_override: {
+    component: EmergencyOverrideEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      requestReference: data.requestReference || stripEmoji(data.title),
+      reason: data.body,
+      requestUrl: data.actionUrl,
+    }),
+  },
+  reminder: {
+    component: ReminderEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      taskDescription: data.title,
+      entityType: 'Workflow',
+      entityReference: '',
+      isEscalation: false,
+      actionUrl: data.actionUrl,
+    }),
+  },
+  escalation: {
+    component: ReminderEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      taskDescription: data.title,
+      entityType: 'Workflow',
+      entityReference: '',
+      isEscalation: true,
+      actionUrl: data.actionUrl,
+    }),
+  },
+};
+
+/** Render the appropriate React Email template based on notification type */
+function renderTemplate(data: NotificationEmailData): string | null {
   try {
-    const React = await import('react');
-    let element: React.ReactElement;
+    const entry = templateRegistry[data.type];
+    if (!entry) return null;
 
-    switch (data.type) {
-      case 'request_approved':
-        const { RequestApprovedEmail } = await import('@/emails/request-approved');
-        element = React.createElement(RequestApprovedEmail, {
-          recipientName: data.recipientName,
-          requestReference: data.title.replace(/.*?: /, ''),
-          requestUrl: data.actionUrl,
-          tenantName: data.tenantName,
-        });
-        break;
-      case 'request_rejected':
-      case 'request_returned':
-        const { RequestRejectedEmail } = await import('@/emails/request-rejected');
-        element = React.createElement(RequestRejectedEmail, {
-          recipientName: data.recipientName,
-          requestReference: data.title.replace(/.*?: /, ''),
-          reason: data.body,
-          requestUrl: data.actionUrl,
-          tenantName: data.tenantName,
-        });
-        break;
-      case 'vehicle_released':
-        const { VehicleReleasedEmail } = await import('@/emails/vehicle-released');
-        element = React.createElement(VehicleReleasedEmail, {
-          recipientName: data.recipientName,
-          requestReference: data.title.replace(/.*?: /, ''),
-          requestUrl: data.actionUrl,
-          tenantName: data.tenantName,
-        });
-        break;
-      case 'trip_authorised':
-        const { TripAuthorisedEmail } = await import('@/emails/trip-authorised');
-        element = React.createElement(TripAuthorisedEmail, {
-          recipientName: data.recipientName,
-          requestReference: data.title.replace(/.*?: /, ''),
-          requestUrl: data.actionUrl,
-          tenantName: data.tenantName,
-        });
-        break;
-      case 'emergency_override':
-        const { EmergencyOverrideEmail } = await import('@/emails/emergency-override');
-        element = React.createElement(EmergencyOverrideEmail, {
-          recipientName: data.recipientName,
-          requestReference: data.title.replace(/.*?: /, ''),
-          reason: data.body,
-          requestUrl: data.actionUrl,
-          tenantName: data.tenantName,
-        });
-        break;
-      case 'reminder':
-      case 'escalation':
-        const { ReminderEmail } = await import('@/emails/reminder');
-        element = React.createElement(ReminderEmail, {
-          recipientName: data.recipientName,
-          taskDescription: data.title,
-          entityType: 'Workflow',
-          entityReference: '',
-          isEscalation: data.type === 'escalation',
-          actionUrl: data.actionUrl,
-          tenantName: data.tenantName,
-        });
-        break;
-      default:
-        // Fall through to inline HTML render
-        return null;
-    }
-
-    if (!element) return null;
+    const props = entry.buildProps(data);
+    const element = createElement(entry.component, props);
     return renderReactEmail(element);
   } catch (err) {
     console.warn('[Email] React Email rendering failed, falling back to inline HTML:', err);
@@ -140,7 +177,7 @@ async function renderTemplate(data: NotificationEmailData): Promise<string | nul
 }
 
 // ---------------------------------------------------------------------------
-// Render helpers — inline HTML (fallback when React Email templates unavailable)
+// Render helpers — inline HTML (fallback when React Email templates are not suitable)
 // ---------------------------------------------------------------------------
 
 function renderInlineHtml(data: NotificationEmailData): string {
@@ -202,7 +239,6 @@ function renderInlineHtml(data: NotificationEmailData): string {
 /**
  * Send a notification email via Resend.
  * Uses React Email templates via renderToString, falls back to inline HTML.
- * Returns `{ success: false, error }` if email is not configured.
  */
 export async function sendNotificationEmail(
   data: NotificationEmailData,
@@ -216,7 +252,7 @@ export async function sendNotificationEmail(
   }
 
   // Try React Email template first, fall back to inline HTML
-  let html = await renderTemplate(data);
+  let html = renderTemplate(data);
   if (!html) {
     html = renderInlineHtml(data);
   }
@@ -238,7 +274,7 @@ export async function sendNotificationEmail(
 }
 
 /**
- * Send a simple text email (e.g. for password reset, account creation).
+ * Send a plain text email (e.g. for password reset, account creation).
  */
 export async function sendPlainEmail(
   to: string | string[],
@@ -266,8 +302,8 @@ export async function sendPlainEmail(
 }
 
 /**
- * Send a React Email template directly by rendering it to HTML.
- * Useful for emails that don't fit the standard notification pattern.
+ * Send a React Email component directly by rendering it to HTML.
+ * Useful for custom transactional emails.
  */
 export async function sendReactEmail(
   to: string | string[],
