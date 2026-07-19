@@ -22,6 +22,11 @@ import {
   Settings,
   ChevronLeft,
   Globe,
+  MapPin,
+  Shield,
+  BrainCircuit,
+  Receipt,
+  User,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -63,6 +68,10 @@ const navGroups: NavGroup[] = [
     label: 'Fleet & Maintenance',
     items: [
       { label: 'Fleet', href: '/dashboard/fleet', icon: CarFront },
+      { label: 'Fleet Map', href: '/dashboard/fleet/map', icon: MapPin },
+      { label: 'Compliance', href: '/dashboard/fleet/compliance', icon: Shield },
+      { label: 'Predictive Maint.', href: '/dashboard/fleet/predictive-maintenance', icon: BrainCircuit },
+      { label: 'Expenses', href: '/dashboard/fleet/expenses', icon: Receipt },
       { label: 'Maintenance', href: '/dashboard/maintenance', icon: Wrench },
       { label: 'Inspections', href: '/dashboard/inspections', icon: ClipboardCheck },
     ],
@@ -92,6 +101,7 @@ const navGroups: NavGroup[] = [
       { label: 'Tenants', href: '/dashboard/platform/tenants', icon: Globe },
       { label: 'Platform Dashboard', href: '/dashboard/platform', icon: LayoutDashboard },
       { label: 'Driver Console', href: '/dashboard/driver-mobile', icon: Gauge },
+      { label: 'Driver Self-Service', href: '/dashboard/driver-self-service', icon: User },
       { label: 'Onboard Tenant', href: '/dashboard/platform/onboard', icon: LayoutDashboard },
     ],
   },

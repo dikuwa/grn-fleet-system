@@ -175,13 +175,19 @@ This document is the permanent execution plan for every coding session. Read it 
    - Only transitions when `overallPass` is true (failed inspections don't advance)
 10. **Pre-existing lint fixes** — ✅ drivers + settings pages
 
+### Session 8 ✅
+22. **Vehicle Compliance Tracking** — Compliance API (`GET /api/fleet/compliance`) returns vehicles with licence/roadworthy/insurance expiry status, upcoming expiry alerts, summary stats. Compliance page shows color-coded vehicle cards, expiry timeline, search/filter. ✅
+23. **Live Fleet Map with GPS** — Fleet Map API (`GET /api/fleet/map`) returns vehicle locations by office with status markers. Interactive map page using Leaflet npm package with circle markers, popups, status filter, info sidebar. Note: live GPS is out of scope for v1 — positions are office-based static locations. ✅
+24. **OCR Expense Capture & Reporting** — Expenses API (`GET /api/fleet/expenses`) returns fuel costs, receipt coverage, anomalies, reimbursements. Expense page with receipt scan (Tesseract.js OCR), period selector, missing receipt alerts, transaction list. ✅
+25. **Driver Self-Service Portal** — `/dashboard/driver-self-service` page with profile card, licence management (view/expiry status), active trips, trip history, notifications, quick actions (inspections, logs, fuel). `/api/drivers/me` endpoint queries driver profile by session user. ✅
+26. **Predictive Maintenance AI** — Rules-based prediction engine (`src/lib/predictive-maintenance.ts`) with 4 factors: odometer interval, time interval, compliance risk, usage intensity. Weighted urgency scoring (0–100). Predictive maintenance API + dashboard page with urgency bars, factor grids, recommendations, compliance flags. ✅
+27. **Sidebar updates** — Added Fleet Map, Compliance, Predictive Maint., Expenses, Driver Self-Service links. ✅
+28. **Deployed** — Commit pushed to origin/master. ✅
+
 ### Next Session
-11. Background jobs (Inngest reminders, escalations, expiry alerts — definitions exist, need scheduling)
-12. Driver profiles and licence management
-13. Reports data aggregation
-14. Export functionality (CSV/Excel/PDF)
-15. Full E2E test suite
-16. Cross-tenant security tests
+11. Full E2E test suite
+12. Cross-tenant security tests
+13. Production hardening
 
 ---
 
