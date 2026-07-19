@@ -15,6 +15,8 @@ export default function HomePage() {
             <span className="text-sm font-semibold text-ink-950">{APP_NAME}</span>
           </div>
           <nav className="hidden items-center gap-6 md:flex">
+            <Link href="/about" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">About</Link>
+            <Link href="/services" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">Services</Link>
             <Link href="#features" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">
               Features
             </Link>
@@ -157,12 +159,10 @@ export default function HomePage() {
               &copy; {new Date().getFullYear()} {APP_NAME}. All rights reserved.
             </p>
             <div className="flex gap-6">
-              <Link href="/privacy" className="text-sm text-white/60 hover:text-white transition-colors">
-                Privacy
-              </Link>
-              <Link href="/contact" className="text-sm text-white/60 hover:text-white transition-colors">
-                Contact
-              </Link>
+              <Link href="/about" className="text-sm text-white/60 hover:text-white transition-colors">About</Link>
+              <Link href="/services" className="text-sm text-white/60 hover:text-white transition-colors">Services</Link>
+              <Link href="/privacy" className="text-sm text-white/60 hover:text-white transition-colors">Privacy</Link>
+              <Link href="/contact" className="text-sm text-white/60 hover:text-white transition-colors">Contact</Link>
             </div>
           </div>
         </div>

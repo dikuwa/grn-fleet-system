@@ -19,8 +19,14 @@ export default function ContactPage() {
             <span className="text-sm font-semibold text-ink-950">{APP_NAME}</span>
           </Link>
           <Link href="/" className="flex items-center gap-1 text-sm text-ink-500 hover:text-ink-950 transition-colors">
-            <ArrowLeft className="h-4 w-4" /> Back to Home
-          </Link>
+            <ArrowLeft className="h-4 w-4" /> Back to Home          </Link>
+          <div className="flex items-center gap-4">
+            <Link href="/about" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">About</Link>
+            <Link href="/services" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">Services</Link>
+            <Link href="/" className="flex items-center gap-1 text-sm text-ink-500 hover:text-ink-950 transition-colors">
+              <ArrowLeft className="h-4 w-4" /> Back to Home
+            </Link>
+          </div>
         </div>
       </header>
 
