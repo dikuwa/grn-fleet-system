@@ -16,8 +16,10 @@ import {
   Search,
   Car,
   CheckCircle2,
+  Eye,
 } from 'lucide-react';
 import Link from 'next/link';
+import { DefectResolveButton } from './DefectResolveButton';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -73,6 +75,8 @@ async function fetchDefects(sp: Record<string, string | undefined>) {
         vehicleGrn: vehicles.licenceNumber,
         vehicleMake: vehicles.make,
         vehicleModel: vehicles.model,
+        tripId: vehicleDefects.tripId,
+        inspectionId: vehicleDefects.inspectionId,
       })
       .from(vehicleDefects)
       .leftJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
@@ -277,65 +281,77 @@ export default async function DefectsPage({ searchParams }: PageProps) {
                     : ''
                 }`}
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${
-                          isOpen
-                            ? 'bg-status-error-bg text-status-error-text'
-                            : 'bg-status-success-bg text-status-success-text'
-                        }`}
-                      >
-                        {isOpen ? (
-                          <AlertTriangle className="h-4 w-4" />
-                        ) : (
-                          <CheckCircle2 className="h-4 w-4" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-ink-950">
-                          {defect.description}
-                        </p>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-ink-500">
-                          <span className="flex items-center gap-1">
-                            <Car className="h-3 w-3" />
-                            {defect.vehicleMake} {defect.vehicleModel} ({defect.vehicleGrn})
-                          </span>
-                          <span>&middot;</span>
-                          <span>{formatDate(defect.createdAt)}</span>
+                <div className="flex items-start justify-between gap-4">                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start gap-2">
+                        <div
+                          className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${
+                            isOpen
+                              ? 'bg-status-error-bg text-status-error-text'
+                              : 'bg-status-success-bg text-status-success-text'
+                          }`}
+                        >
+                          {isOpen ? (
+                            <AlertTriangle className="h-4 w-4" />
+                          ) : (
+                            <CheckCircle2 className="h-4 w-4" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-ink-950">
+                            {defect.description}
+                          </p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+                            <span className="flex items-center gap-1">
+                              <Car className="h-3 w-3" />
+                              {defect.vehicleMake} {defect.vehicleModel} ({defect.vehicleGrn})
+                            </span>
+                            <span>&middot;</span>
+                            <span>{formatDate(defect.createdAt)}</span>
+                            {defect.inspectionId && (
+                              <>
+                                <span>&middot;</span>
+                                <Link
+                                  href={`/dashboard/inspections/${defect.inspectionId}`}
+                                  className="flex items-center gap-1 text-brand-600 hover:text-brand-700 underline underline-offset-2"
+                                >
+                                  <Eye className="h-3 w-3" /> View Inspection
+                                </Link>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
+                      {defect.resolutionNotes && (
+                        <p className="mt-2 text-xs text-ink-500 ml-10">
+                          Resolution: {defect.resolutionNotes}
+                        </p>
+                      )}
+                    </div>                    <div className="flex shrink-0 items-start gap-2">
+                      <Badge
+                        variant={
+                          isOpen && defect.severity === 'critical'
+                            ? 'emergency'
+                            : defect.severity === 'major'
+                              ? 'error'
+                              : defect.severity === 'minor'
+                                ? 'pending'
+                                : 'info'
+                        }
+                        size="sm"
+                      >
+                        {SEVERITY_LABELS[defect.severity] ?? defect.severity}
+                      </Badge>
+                      {defect.isBlocking && (
+                        <StatusBadge status="error" label="Blocking" />
+                      )}
+                      <StatusBadge
+                        status={isOpen ? 'error' : 'success'}
+                        label={isOpen ? 'Open' : 'Resolved'}
+                      />
+                      {isOpen && (
+                        <DefectResolveButton defectId={defect.id} />
+                      )}
                     </div>
-                    {defect.resolutionNotes && (
-                      <p className="mt-2 text-xs text-ink-500 ml-10">
-                        Resolution: {defect.resolutionNotes}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-start gap-2">
-                    <Badge
-                      variant={
-                        isOpen && defect.severity === 'critical'
-                          ? 'emergency'
-                          : defect.severity === 'major'
-                            ? 'error'
-                            : defect.severity === 'minor'
-                              ? 'pending'
-                              : 'info'
-                      }
-                      size="sm"
-                    >
-                      {SEVERITY_LABELS[defect.severity] ?? defect.severity}
-                    </Badge>
-                    {defect.isBlocking && (
-                      <StatusBadge status="error" label="Blocking" />
-                    )}
-                    <StatusBadge
-                      status={isOpen ? 'error' : 'success'}
-                      label={isOpen ? 'Open' : 'Resolved'}
-                    />
-                  </div>
                 </div>
               </div>
             );

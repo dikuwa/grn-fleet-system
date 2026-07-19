@@ -11,8 +11,9 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   Building2, Loader2, ChevronLeft, Save, CheckCircle2, Database,
   Globe, Clock, Users, Palette, Mail, Phone, MapPin, Image as ImageIcon,
-  AlertTriangle, ShieldAlert, ShieldCheck,
+  AlertTriangle, ShieldAlert, ShieldCheck, Activity,
 } from 'lucide-react';
+import { TenantActivityLog } from './TenantActivityLog';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 
@@ -52,7 +53,7 @@ interface PageProps {
 
 export default function PlatformTenantDetailPage({ params }: PageProps) {
   const { id } = use(params);
-  const [activeTab, setActiveTab] = useState<'general' | 'branding'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'branding' | 'activity'>('general');
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
@@ -164,6 +165,7 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
   const tabs = [
     { value: 'general' as const, label: 'General', icon: <Building2 className="h-4 w-4" /> },
     { value: 'branding' as const, label: 'Branding & Contact', icon: <Palette className="h-4 w-4" /> },
+    { value: 'activity' as const, label: 'Activity Log', icon: <Activity className="h-4 w-4" /> },
   ];
 
   return (
@@ -395,6 +397,11 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Activity Log */}
+      {activeTab === 'activity' && (
+        <TenantActivityLog tenantId={id} />
       )}
 
       {/* Branding & Contact */}
