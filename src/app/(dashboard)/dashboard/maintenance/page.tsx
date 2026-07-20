@@ -225,7 +225,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
       {/* Filter */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4">
+          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
             <div className="w-[200px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Service Type

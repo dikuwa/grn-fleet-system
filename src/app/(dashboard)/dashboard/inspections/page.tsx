@@ -204,7 +204,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4">
+          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
             <div className="flex-1 min-w-[200px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Search Vehicle</label>
               <div className="relative">

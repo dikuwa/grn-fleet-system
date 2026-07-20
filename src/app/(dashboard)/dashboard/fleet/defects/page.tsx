@@ -222,7 +222,7 @@ export default async function DefectsPage({ searchParams }: PageProps) {
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4">
+          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Status

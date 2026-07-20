@@ -124,7 +124,7 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4">
+          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
               <select name="state" defaultValue={result.filters.state ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">

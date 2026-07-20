@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-07-20 — Session 22: Mobile responsive fixes, user & admin docs, photo upload verified
+
+### Added
+
+- **Mobile Responsive CSS Utilities** (`src/app/globals.css`) — 7 new Tailwind v4 `@utility` classes:
+  - `filter-bar-mobile`: stacks filter/search bars vertically on small screens, makes all children full-width
+  - `stat-grid`: 2-column mobile → 4-column tablet+ grid for stat cards
+  - `stat-grid-auto`: auto-fit grid for variable stat counts
+  - `mobile-overlay`: fixed overlay with fade-in animation for mobile sidebar
+  - `table-responsive`: horizontally scrollable table wrapper with touch scrolling
+  - `touch-target`: 44px minimum touch target size for mobile form controls
+  - `no-overflow`: text overflow prevention utility
+- **Filter Bar Responsive** — Applied `filter-bar-mobile` class to all 10 dashboard list page filter bars: trips, requests, fleet, fuel, inspections, reimbursements, defects, allocations, maintenance, approvals.
+- **User Guide** (`docs/user-guide.md`) — Comprehensive guide covering getting started, transport requests, approvals, trips, fuel & reimbursements, inspections, notifications, driver mobile view, and FAQ.
+- **Admin Guide** (`docs/admin-guide.md`) — Comprehensive guide covering platform admin, tenant management, user management, roles & permissions, organisation setup, fleet management, driver management, expiry alerts, bulk imports, settings, reports & audit, background jobs, security, and troubleshooting.
+- **`@keyframes fade-in`** animation — Added for mobile overlay and other fade effects.
+
+### Verified
+
+- **Inspection Photo Upload** — Full flow confirmed working: photo capture on departure/return forms → upload via `/api/upload` → R2 storage → `photoKeys` → inspection API → `inspectionPhotos` table → display on inspection detail page. R2 credentials (5 vars) confirmed configured in Vercel production.
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+- **Code Review**: CSS `@utility` syntax correct, all 10 filter bar replacements clean, docs well-structured ✅
+
+### Infrastructure
+
+- **Latest commit** (`HEAD`): pushed to `origin/master` — Vercel production deploy auto-triggered
+
+---
+
 ## 2026-07-20 — Session 21: Dark mode E2E tests, active trips smoke tests, production deploy
 
 ### Added

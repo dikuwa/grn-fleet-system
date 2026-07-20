@@ -163,3 +163,92 @@ body {
     100% { transform: rotate(0deg) scale(1); opacity: 1; }
   }
 }
+
+/* ===================================================================
+ * Mobile Responsive Utilities
+ * =================================================================== */
+
+/* Filter bars — stack vertically on very small screens */
+@utility filter-bar-mobile {
+  @media (max-width: 639px) {
+    flex-direction: column;
+    align-items: stretch;
+
+    > * {
+      width: 100%;
+    }
+
+    > *:not(:last-child) {
+      margin-bottom: 0.5rem;
+    }
+  }
+}
+
+/* Responsive stat cards: 2 cols on mobile, 4 on tablet+ */
+@utility stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+
+  @media (min-width: 640px) {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+}
+
+/* Responsive stat cards: auto-fit for variable count */
+@utility stat-grid-auto {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+
+  @media (min-width: 640px) {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+  }
+}
+
+/* Mobile sidebar drawer overlay */
+@utility mobile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.5);
+  animation: fade-in 200ms ease;
+
+  @media (min-width: 768px) {
+    display: none;
+  }
+}
+
+/* Table wrapper with sticky header support for mobile */
+@utility table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+
+  table {
+    min-width: 600px;
+  }
+}
+
+/* Larger touch targets for mobile form controls */
+@utility touch-target {
+  min-height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Prevent content overflow on small screens */
+@utility no-overflow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
