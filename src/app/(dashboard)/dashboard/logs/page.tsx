@@ -91,7 +91,7 @@ export default function DailyLogsPage() {
       const res = await fetch('/api/trips?limit=50');
       if (!res.ok) throw new Error('Failed to load trips');
       const json = await res.json();
-      return (json.rows || []) as Trip[];
+      return (json.rows || json.data || []) as Trip[];
     },
     enabled: isOnline,
   });

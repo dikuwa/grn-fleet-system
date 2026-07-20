@@ -86,7 +86,7 @@ export default function DriverSelfServicePage() {
 
       if (tripsRes.ok) {
         const tripsJson = await tripsRes.json();
-        const tripsList = tripsJson.trips || tripsJson.data?.trips || tripsJson.rows || [];
+        const tripsList = tripsJson.trips || tripsJson.data?.trips || tripsJson.rows || tripsJson.data || [];
         setTrips(Array.isArray(tripsList) ? tripsList : []);
       }
 

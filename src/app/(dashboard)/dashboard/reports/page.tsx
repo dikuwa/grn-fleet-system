@@ -196,6 +196,10 @@ export default function ReportsPage() {
             <Download className="h-4 w-4" />
             Export CSV
           </Button>
+          <Button variant="secondary" size="sm" onClick={() => window.open(`/api/reports?type=${selectedReport}&period=${timeRange}&export=excel`, '_blank')}>
+            <Download className="h-4 w-4" />
+            Export Excel
+          </Button>
           <Button variant="secondary" size="sm" onClick={() => window.open(`/api/reports?type=${selectedReport}&period=${timeRange}&export=pdf`, '_blank')}>
             <FileText className="h-4 w-4" />
             Export PDF

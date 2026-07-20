@@ -53,6 +53,14 @@ const navGroups: NavGroup[] = [
     items: [{ label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard }],
   },
   {
+    label: 'Driver',
+    items: [
+      { label: 'Driver Console', href: '/dashboard/driver-mobile', icon: Gauge },
+      { label: 'Driver Self-Service', href: '/dashboard/driver-self-service', icon: User },
+      { label: 'Daily Logs', href: '/dashboard/logs', icon: ClipboardCheck },
+    ],
+  },
+  {
     label: 'Requests & Approvals',
     items: [
       { label: 'My Requests', href: '/dashboard/requests', icon: FileText },
@@ -66,7 +74,6 @@ const navGroups: NavGroup[] = [
       { label: 'Trips', href: '/dashboard/trips', icon: Gauge, badge: 0 },
       { label: 'Active Trips', href: '/dashboard/trips/active', icon: Gauge },
       { label: 'Closure Review', href: '/dashboard/trips/closure-review', icon: Clock },
-      { label: 'Daily Logs', href: '/dashboard/logs', icon: ClipboardCheck },
       { label: 'Fuel Records', href: '/dashboard/fuel', icon: Fuel },
       { label: 'Reimbursements', href: '/dashboard/reimbursements', icon: ClipboardList },
     ],
@@ -114,8 +121,6 @@ const navGroups: NavGroup[] = [
       { label: 'Regions', href: '/dashboard/admin/regions', icon: MapPin },
       { label: 'Tenants', href: '/dashboard/platform/tenants', icon: Globe },
       { label: 'Platform Dashboard', href: '/dashboard/platform', icon: LayoutDashboard },
-      { label: 'Driver Console', href: '/dashboard/driver-mobile', icon: Gauge },
-      { label: 'Driver Self-Service', href: '/dashboard/driver-self-service', icon: User },
       { label: 'Onboard Tenant', href: '/dashboard/platform/onboard', icon: LayoutDashboard },
     ],
   },

@@ -109,7 +109,7 @@ This document is the permanent execution plan for every coding session. Read it 
 | 6.3 | Settings | IMPLEMENTED | Settings page with 4 tabs (General, Notifications, Security, Branding) | ✅ Tenant profile, branding (colors/footer/email), notification prefs | MEDIUM |
 | 6.4 | Platform administration | IMPLEMENTED | Platform dashboard with tenant stats, tenant list, onboard flow | ✅ Platform admin dashboard + tenant management | MEDIUM |
 | 6.5 | Tenant management | IMPLEMENTED | Tenant detail page with suspend/activate dialog, status badges, PATCH API | ✅ Full lifecycle | MEDIUM |
-| 6.6 | Data exports | PARTIAL | CSV/Excel export for reports (fuel, trips, requests, maintenance, approvals) | Not available for all modules | LOW |
+| 6.6 | Data exports | VERIFIED | CSV/Excel/PDF export for reports (fuel, fleet, trips, requests, maintenance, approvals), Excel export button on reports page | Fully implemented with 6 report types and 3 export formats | LOW |
 
 ---
 
@@ -178,6 +178,13 @@ This document is the permanent execution plan for every coding session. Read it 
 3. **Email templates for audit events** (`src/emails/audit-notification.tsx`) — 11 new template types: fuel_created, maintenance_created, region_created/updated/deleted, trip_started/returned/closed, allocation_created, document_issued/superseded. ✅
 4. **Notification delivery E2E test** (`src/e2e/notification-delivery.spec.ts`) — 5 test cases: fuel→notification, delivery properties, Mark All Read, type filtering, unread count. ✅
 
+### Session 26 ✅ — Trips GET Handler, Driver Sidebar Section, Driver Page Fixes, Excel Export Button
+
+1. **Trips API GET Handler** — Added with `driver_assigned` support (resolves session user → employee → driver profile → allocated trips). Returns backward-compatible `data` + `rows` arrays with mapped field names (`reference`, `vehicleLicence`, `startAt`, `endAt`). ✅
+2. **Sidebar Restructured** — New "Driver" group at the top with Driver Console, Driver Self-Service, Daily Logs. Removed duplicate entries from Allocations & Trips and Administration groups. ✅
+3. **Driver Page Fixes** — Added `json.data` fallback to driver-self-service and logs pages for robust response parsing. ✅
+4. **Excel Export Button** — Added to Reports page alongside existing CSV and PDF buttons. Backed by existing `?export=excel` API endpoint. ✅
+
 ### Status Updates
 
 | Module | Old Status | New Status |
@@ -186,7 +193,9 @@ This document is the permanent execution plan for every coding session. Read it 
 | 1.6 API protection | IMPLEMENTED | VERIFIED |
 | 1.9 Audit logging | IMPLEMENTED | VERIFIED |
 | 5.2 Email | IMPLEMENTED | VERIFIED |
+| 6.6 Data exports | PARTIAL | VERIFIED |
 | 8.4 Mobile testing | PARTIAL | VERIFIED |
+| 7.1 Driver mobile workflow | IMPLEMENTED | VERIFIED |
 
 ---
 

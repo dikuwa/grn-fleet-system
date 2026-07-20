@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-07-20 — Session 26: Trips GET handler, Driver sidebar section, Excel export button
+
+### Added
+
+- **Trips API GET handler** (`src/app/api/trips/route.ts`) — New `GET /api/trips` with `status`, `driver_assigned`, `search`, `page`, `limit` support. Resolves session user → employee → driver profile → allocated trips. Returns backward-compatible `data` + `rows` arrays with mapped `reference`, `vehicleLicence`, `startAt`, `endAt` fields.
+- **Driver sidebar section** — New dedicated nav group at the top of the sidebar with Driver Console, Driver Self-Service, and Daily Logs. These were previously buried under Administration and Allocations & Trips.
+- **Excel export button** on Reports page — Downloads `.xlsx` files via the existing `?export=excel` API endpoint, alongside CSV and PDF export buttons.
+
+### Fixed
+
+- **Driver self-service page** — Added `json.data` fallback for robust response parsing when API returns `{ data: [...] }` format.
+- **Logs page (Daily Logs)** — Added `json.data` fallback for trips dropdown trip list when API returns new format.
+
+### Changed
+
+- **Sidebar restructured** — Driver Console and Driver Self-Service removed from Administration group. Daily Logs moved from Allocations & Trips to new Driver group.
+- **Trips API response** — Now returns `{ success, data, rows, totalCount, page, totalPages }` with backward-compatible field names for all client pages.
+
+### Status Updates
+
+| Module | Old Status | New Status |
+|--------|-----------|------------|
+| 6.6 Data exports | PARTIAL | VERIFIED |
+| 7.1 Driver mobile workflow | IMPLEMENTED | VERIFIED |
+
+---
+
 ## 2026-07-20 — Session 25: RBAC permission enforcement, audit logging expansion, email templates, notification delivery E2E
 
 ### Added
