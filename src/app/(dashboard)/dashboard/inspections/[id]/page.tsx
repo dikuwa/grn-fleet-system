@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
+import { getSignedFileUrl, isStorageConfigured } from '@/lib/storage';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -113,7 +114,7 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
     );
 
   // Fetch photos
-  const photos = await db
+  const photoRecords = await db
     .select({
       id: inspectionPhotos.id,
       fileKey: inspectionPhotos.fileKey,
@@ -123,6 +124,22 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
     .from(inspectionPhotos)
     .where(eq(inspectionPhotos.inspectionId, id))
     .orderBy(inspectionPhotos.capturedAt);
+
+  // Generate signed URLs for each photo
+  const storageAvailable = isStorageConfigured();
+  const photos = await Promise.all(
+    photoRecords.map(async (photo) => {
+      let signedUrl: string | null = null;
+      if (storageAvailable) {
+        try {
+          signedUrl = await getSignedFileUrl(photo.fileKey, 3600);
+        } catch {
+          // Best-effort — show placeholder if signed URL fails
+        }
+      }
+      return { ...photo, signedUrl };
+    }),
+  );
 
   // Fetch defects created from this inspection
   const defects = await db
@@ -530,7 +547,15 @@ export default async function InspectionDetailPage({ params }: PageProps) {
               {photos.map((photo) => (
                 <div key={photo.id} className="rounded-[8px] border border-border overflow-hidden">
                   <div className="aspect-video bg-muted flex items-center justify-center">
-                    <Camera className="h-8 w-8 text-ink-300" />
+                    {photo.signedUrl ? (
+                      <img
+                        src={photo.signedUrl}
+                        alt={photo.caption || 'Inspection photo'}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <Camera className="h-8 w-8 text-ink-300" />
+                    )}
                   </div>
                   <div className="p-2">
                     <p className="text-xs text-ink-500 truncate">{photo.caption || 'No caption'}</p>

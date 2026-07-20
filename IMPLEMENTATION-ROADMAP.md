@@ -95,7 +95,7 @@ This document is the permanent execution plan for every coding session. Read it 
 | 5.3 | WhatsApp share | IMPLEMENTED | Native share via Web Share API with clipboard fallback, wired into document detail page | ✅ Works on mobile devices | LOW |
 | 5.4 | Secure share links | IMPLEMENTED | Share link API (create/revoke), HMAC-SHA256 token hashing, view tracking, create-share-link dialog on document detail | ✅ Full share link management | MEDIUM |
 | 5.5 | PDF generation | IMPLEMENTED | Document generator with builder pattern, 4 snapshot builders, lifecycle triggers on request/trip/inspection events | ✅ 6 document types generated | HIGH |
-| 5.6 | File uploads | PARTIAL | Upload API (`/api/upload`), R2 storage service, document file upload flow | Inspection photos/signatures not wired | MEDIUM |
+| 5.6 | File uploads | VERIFIED | Upload API (`/api/upload`), R2 storage service, document file upload flow, inspection photo upload wired with signed URLs on detail page | ✅ Full photo pipeline: capture → upload → inspect → signed URL display | MEDIUM |
 | 5.7 | Background jobs | IMPLEMENTED | Inngest configured, 6 functions: step reminder, escalation, approval completed, vehicle+driver licence expiry crons, maintenance reminder | ✅ All tenant-isolated, creates notifications | MEDIUM |
 
 ---
@@ -120,7 +120,7 @@ This document is the permanent execution plan for every coding session. Read it 
 | 7.1 | Driver mobile workflow | IMPLEMENTED | Driver mobile view (`/dashboard/driver-mobile`), self-service portal (`/dashboard/driver-self-service`) | ✅ Both mobile-optimized views built | MEDIUM |
 | 7.2 | Offline inspection drafts | VERIFIED | Dexie stores (fuel, transport requests, inspections), offline-sync handler, offline-status component with draft count | ✅ Auto-sync on reconnect + 60s polling | MEDIUM |
 | 7.3 | PWA support | VERIFIED | Manifest (icons, shortcuts, standalone display), service worker (network-first API + cache-first static), install banner | ✅ Full PWA | MEDIUM |
-| 7.4 | Sync and conflict handling | PARTIAL | Offline sync service with pending/synced/failed/conflict states | Conflict resolution UI not fully implemented | MEDIUM |
+| 7.4 | Sync and conflict handling | IMPLEMENTED | Offline sync service with pending/synced/failed/conflict states, conflict resolution UI at `/dashboard/offline` | ✅ Full conflict resolution UI with retry/discard/detail modal | MEDIUM |
 
 ---
 
@@ -159,11 +159,11 @@ This document is the permanent execution plan for every coding session. Read it 
 | # | Gap | Status | Blocked By |
 |---|-----|--------|------------|
 | 1 | SMS sending (Twilio) | DORMANT | Real Twilio credentials |
-| 2 | Conflict resolution UI for offline sync | PARTIAL | Only status display, no merge UI |
+| 2 | Conflict resolution UI for offline sync | IMPLEMENTED | Full page at `/dashboard/offline` with list, status filters, detail modal, retry/discard actions |
 | 3 | Mobile testing (responsive QA) | PARTIAL | — |
 | 4 | Admin/User docs (user guide, admin guide) | IMPLEMENTED | — |
 | 5 | Google Maps API key | DORMANT | Google billing account |
-| 6 | Inspection photos/signatures upload | VERIFIED | — |
+| 6 | Inspection photos/signatures upload | VERIFIED | R2 upload + inspectionPhotos table + signed URL display on detail page |
 
 ### Session 24 ✅ — E2E Audit Trail Test, Email Notifications for Audit Events, Mobile Test Expansion
 
@@ -196,6 +196,12 @@ This document is the permanent execution plan for every coding session. Read it 
 | 6.6 Data exports | PARTIAL | VERIFIED |
 | 8.4 Mobile testing | PARTIAL | VERIFIED |
 | 7.1 Driver mobile workflow | IMPLEMENTED | VERIFIED |
+
+### Session 27 ✅ — Inspection Photo Wiring, Conflict Resolution UI, Sidebar Link
+
+1. **Inspection Photo Wiring** — Inspection detail page (`/dashboard/inspections/[id]`) now generates signed URLs for each uploaded photo via `getSignedFileUrl()` and renders actual `<img>` tags instead of placeholder icons. Falls back to placeholder if storage is not configured or URL generation fails. ✅
+2. **Conflict Resolution UI** (`/dashboard/offline`) — Full page with summary cards (pending/failed/conflict/total), status filter tabs, sorted draft list with type/status/error display, detail modal with full form data JSON, and retry/discard actions per draft. "Sync All" button calls `syncPendingDrafts()`. ✅
+3. **Sidebar Link** — "Offline Drafts" added to Administration group with Database icon. ✅
 
 ---
 

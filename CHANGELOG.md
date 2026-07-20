@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-07-20 — Session 27: Inspection photo wiring (signed URLs), conflict resolution UI, sidebar link
+
+### Added
+
+- **Inspection Photo Wiring** — Inspection detail page now generates signed URLs for each uploaded photo via `getSignedFileUrl()` and renders actual `<img>` tags instead of placeholder camera icons. Falls back gracefully when storage is not configured.
+- **Conflict Resolution UI** (`/dashboard/offline`) — Dedicated page to manage offline drafts with conflict/failed/pending status:
+  - Summary cards: pending, failed, conflict, total unsynced counts
+  - Status filter tabs (All, Pending, Failed, Conflict, Synced)
+  - Sorted draft list with type label, status badge, error message, timestamps
+  - View Detail modal with full form data JSON display
+  - Retry Sync button (calls `syncPendingDrafts()` for all pending/failed)
+  - Discard action with delete confirmation
+  - "Sync All" header button
+- **Sidebar Link** — "Offline Drafts" added to Administration group with Database icon.
+
+### Changed
+
+- **Inspection detail photo section** — Now renders actual images using signed R2 URLs (1 hour expiry) rather than a placeholder camera icon. Uses `Promise.all` for parallel signed URL generation.
+
+### Fixed
+
+- **Sidebar import** — Added missing `Database` icon import.
+- **Offline page dead import** — Removed unused `countUnsyncedDrafts` import.
+
+### Status Updates
+
+| Module | Old Status | New Status |
+|--------|-----------|------------|
+| 5.6 File uploads | PARTIAL | VERIFIED |
+| 7.4 Sync & conflict handling | PARTIAL | IMPLEMENTED |
+
+---
+
 ## 2026-07-20 — Session 26: Trips GET handler, Driver sidebar section, Excel export button
 
 ### Added

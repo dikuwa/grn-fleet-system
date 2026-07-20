@@ -32,6 +32,7 @@ import {
   Clock,
   Mail,
   Layers,
+  Database,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -114,6 +115,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: 'Notifications', href: '/dashboard/notifications', icon: Bell },
       { label: 'Email History', href: '/dashboard/notifications/history', icon: Mail },
+      { label: 'Offline Drafts', href: '/dashboard/offline', icon: Database },
       { label: 'Audit Log', href: '/dashboard/audit', icon: FileText },
       { label: 'Settings', href: '/dashboard/settings', icon: Settings },
       { label: 'User Management', href: '/dashboard/admin/users', icon: Users },
