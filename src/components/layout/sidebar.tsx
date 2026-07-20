@@ -83,6 +83,7 @@ const navGroups: NavGroup[] = [
       { label: 'Expenses', href: '/dashboard/fleet/expenses', icon: Receipt },
       { label: 'Maintenance', href: '/dashboard/maintenance', icon: Wrench },
       { label: 'Inspections', href: '/dashboard/inspections', icon: ClipboardCheck },
+      { label: 'Insp. Templates', href: '/dashboard/inspections/templates', icon: ClipboardList },
     ],
   },
   {

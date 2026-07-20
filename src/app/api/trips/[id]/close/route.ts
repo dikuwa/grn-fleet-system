@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips, tripClosures, fuelTransactions } from '@/db/schema/trips';
+import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
@@ -86,6 +87,22 @@ export async function POST(
       })
       .where(eq(trips.id, id))
       .returning();
+
+    // Return vehicle to available status + log status event
+    await db
+      .update(vehicles)
+      .set({ status: 'available', updatedAt: new Date() })
+      .where(eq(vehicles.id, trip.vehicleId));
+
+    await db.insert(vehicleStatusEvents).values({
+      vehicleId: trip.vehicleId,
+      previousStatus: trip.status === 'closure_review' ? 'allocated' : 'allocated',
+      newStatus: 'available',
+      reason: `Trip closed: ${id.slice(0, 8)}...`,
+      changedByUserId: userId,
+      referenceEntityType: 'trip',
+      referenceEntityId: id,
+    });
 
     // Trigger document generation (trip completion + fuel summary)
     const docs = await onTripClosed(id, tenantId, userId);

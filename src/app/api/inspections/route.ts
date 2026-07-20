@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips, vehicleInspections, inspectionItemResults, inspectionTemplates, tripClosures } from '@/db/schema/trips';
-import { vehicles, vehicleDefects } from '@/db/schema/fleet';
+import { vehicles, vehicleDefects, vehicleStatusEvents } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onInspectionCompleted } from '@/lib/document-generator';
@@ -209,13 +209,29 @@ export async function POST(req: NextRequest) {
           .returning();
       }
 
-      // If auto-closing, also create a trip closure record
+      // If auto-closing, also create a trip closure record and return vehicle to available
       if (useAutoClose) {
         await db.insert(tripClosures).values({
           tripId,
           closedByUserId: userId,
           decision: 'closed',
         }).onConflictDoNothing();
+
+        // Return vehicle to available
+        await db
+          .update(vehicles)
+          .set({ status: 'available', updatedAt: new Date() })
+          .where(eq(vehicles.id, vehicleId));
+
+        await db.insert(vehicleStatusEvents).values({
+          vehicleId,
+          previousStatus: 'allocated',
+          newStatus: 'available',
+          reason: 'Trip auto-closed after return inspection',
+          changedByUserId: userId,
+          referenceEntityType: 'trip',
+          referenceEntityId: tripId,
+        });
 
         // Trigger document generation for trip closure
         try {

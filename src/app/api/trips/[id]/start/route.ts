@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips } from '@/db/schema/trips';
+import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
@@ -52,6 +53,22 @@ export async function POST(
       })
       .where(eq(trips.id, id))
       .returning();
+
+    // Update vehicle status to allocated + log status event
+    await db
+      .update(vehicles)
+      .set({ status: 'allocated', updatedAt: new Date() })
+      .where(eq(vehicles.id, trip.vehicleId));
+
+    await db.insert(vehicleStatusEvents).values({
+      vehicleId: trip.vehicleId,
+      previousStatus: 'available',
+      newStatus: 'allocated',
+      reason: `Trip started: ${trip.id.slice(0, 8)}...`,
+      changedByUserId: session.user.id,
+      referenceEntityType: 'trip',
+      referenceEntityId: trip.id,
+    });
 
     // Generate trip authority document when trip is issued
     if (trip.allocationId) {
