@@ -67,6 +67,30 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
+    // Update vehicle status to maintenance and log status event
+    await db
+      .update(vehicles)
+      .set({
+        status: 'maintenance',
+        updatedAt: new Date(),
+        updatedBy: session.user.id,
+      })
+      .where(eq(vehicles.id, vehicleId));
+
+    // Log vehicle status event
+    const { vehicleStatusEvents } = await import('@/db/schema/fleet');
+    await db
+      .insert(vehicleStatusEvents)
+      .values({
+        vehicleId,
+        previousStatus: vehicle.status,
+        newStatus: 'maintenance',
+        reason: `Maintenance: ${description || serviceType}`,
+        changedByUserId: session.user.id,
+        referenceEntityType: 'maintenance',
+        referenceEntityId: event.id,
+      });
+
     return NextResponse.json({ data: event }, { status: 201 });
   } catch (error) {
     console.error('[maintenance] POST failed:', error);

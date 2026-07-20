@@ -1,5 +1,5 @@
 import { getDb, isDbConnected } from '@/db';
-import { vehicles, vehicleCategories, vehicleDocuments, vehicleDefects, maintenanceEvents, vehicleOdometerEvents } from '@/db/schema/fleet';
+import { vehicles, vehicleCategories, vehicleDocuments, vehicleDefects, maintenanceEvents, vehicleOdometerEvents, vehicleStatusEvents } from '@/db/schema/fleet';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { generatedDocuments } from '@/db/schema/documents';
 import { offices } from '@/db/schema/people';
@@ -25,6 +25,8 @@ import {
   ClipboardCheck,
   FileText,
   Wrench,
+  History,
+  ArrowRight,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import Link from 'next/link';
@@ -114,7 +116,7 @@ async function fetchVehicleDetail(id: string) {
     notFound();
   }
 
-  const [documents, tripAuthorityDocs, defects, maintenance, odometerEvents] = await Promise.all([
+  const [documents, tripAuthorityDocs, defects, maintenance, odometerEvents, statusEvents] = await Promise.all([
     db
       .select()
       .from(vehicleDocuments)
@@ -149,6 +151,12 @@ async function fetchVehicleDetail(id: string) {
       .where(eq(vehicleOdometerEvents.vehicleId, id))
       .orderBy(desc(vehicleOdometerEvents.createdAt))
       .limit(20),
+    db
+      .select()
+      .from(vehicleStatusEvents)
+      .where(eq(vehicleStatusEvents.vehicleId, id))
+      .orderBy(desc(vehicleStatusEvents.createdAt))
+      .limit(30),
   ]);
 
   type DocumentRecord = typeof vehicleDocuments.$inferSelect;
@@ -157,9 +165,11 @@ async function fetchVehicleDetail(id: string) {
   type OdometerRecord = typeof vehicleOdometerEvents.$inferSelect;
   type GeneratedDoc = { id: string };
 
+  type StatusEventRecord = typeof vehicleStatusEvents.$inferSelect;
+
   const openDefects = defects.filter((d: DefectRecord) => !d.resolvedAt);
 
-  return { vehicle, documents: documents as DocumentRecord[], defects: defects as DefectRecord[], maintenance: maintenance as MaintenanceRecord[], odometerEvents: odometerEvents as OdometerRecord[], openDefects, tripAuthorityDocs: tripAuthorityDocs as GeneratedDoc[] };
+  return { vehicle, documents: documents as DocumentRecord[], defects: defects as DefectRecord[], maintenance: maintenance as MaintenanceRecord[], odometerEvents: odometerEvents as OdometerRecord[], statusEvents: statusEvents as StatusEventRecord[], openDefects, tripAuthorityDocs: tripAuthorityDocs as GeneratedDoc[] };
 }
 
 export default async function VehicleDetailPage({ params }: PageProps) {
@@ -556,6 +566,62 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Status Timeline Tab */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <History className="h-4 w-4" />
+              Status Timeline ({data.statusEvents.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {data.statusEvents.length === 0 ? (
+              <div className="px-5 pb-4">
+                <p className="text-sm text-ink-500">No status changes recorded.</p>
+              </div>
+            ) : (
+              <div className="flow-root px-5 py-3">
+                <ul className="-mb-4">
+                  {data.statusEvents.map((event, idx) => {
+                    const isLatest = idx === 0;
+                    return (
+                      <li key={event.id} className="relative pb-4">
+                        {idx < data.statusEvents.length - 1 && (
+                          <span className="absolute left-2.5 top-4 -ml-px h-full w-0.5 bg-border" aria-hidden="true" />
+                        )}
+                        <div className="relative flex items-start gap-3">
+                          <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                            isLatest ? 'bg-brand-200 text-brand-700' : 'bg-muted text-ink-400'
+                          }`}>
+                            <div className={`h-2 w-2 rounded-full ${
+                              isLatest ? 'bg-brand-600' : 'bg-ink-300'
+                            }`} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <span className="text-sm font-medium text-ink-950">
+                                {event.previousStatus?.replace(/_/g, ' ')}
+                              </span>
+                              <ArrowRight className="h-3.5 w-3.5 text-ink-400" />
+                              <span className="text-sm font-medium text-ink-950">
+                                {event.newStatus.replace(/_/g, ' ')}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-ink-500">
+                              <span className="tabular-nums">{formatDate(event.createdAt)}</span>
+                              {event.reason && <span>{event.reason}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
           </CardContent>
