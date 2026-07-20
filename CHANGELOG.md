@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-07-20 — Session 19: Photo upload E2E tests, mobile responsive improvements, PDF export verification
+
+### Added
+
+- **E2E test for photo upload workflow** (`src/e2e/photo-upload-workflow.spec.ts`) — 6 test cases covering API-level photo upload to `/api/upload` with inspection category, creating departure inspection with `photoKeys`, UI form controls for photo upload on departure/return/new inspection pages, and photo section verification on inspection detail page.
+- **Mobile responsive improvements** — Departure and return inspection pages now use `touch-manipulation` CSS class (registered in `globals.css`), larger touch targets (`min-h-[36px] sm:min-h-0`), active press feedback (`active:scale-95`), and always-visible photo delete buttons on touch devices.
+- **`touch-manipulation` CSS utility** — Added to `globals.css` to disable double-tap zoom delay on mobile form controls across all inspection forms.
+
+### Verified (already configured)
+
+- **R2 Storage Credentials** — All 5 vars (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_ENDPOINT`) confirmed present in both `.env.local` and Vercel production environment.
+- **PDF Export API** — Reports page "Export PDF" button fully functional. API at `/api/reports?export=pdf` generates formatted PDF reports for all 6 report types via `@react-pdf/renderer` with summary cards, data tables, tenant branding, and page numbers.
+
+### Fixed
+
+- **Unused imports** — Removed unused `path` and `fs` imports from `photo-upload-workflow.spec.ts`.
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+- **Code Review**: Touch-manipulation utility added to globals.css, unused E2E imports removed ✅
+
+---
+
 ## 2026-07-19 — Session 13: Inspection Detail, Templates API, Status Timeline, Vehicle Lifecycle
 
 ### Added
@@ -335,7 +360,7 @@
 
 ### Fixed
 
-- **`src/lib/document-generator.ts`** — Fixed `employees.name` → `sql\`concat_ws(...)\` for first/middle/last name (employees has no `name` column); fixed `vehicles.grn` → `vehicles.grnNumber` and `vehicles.registration` → `vehicles.registrationNumber` across all 3 snapshot builders; moved `inArray` dynamic import to static import; made `DocumentPayload.snapshotData` optional (generated internally by builders)
+- **`src/lib/document-generator.ts`** — Fixed `employees.name` → `sql\`concat_ws(...)\`` for first/middle/last name (employees has no `name` column); fixed `vehicles.grn` → `vehicles.grnNumber` and `vehicles.registration` → `vehicles.registrationNumber` across all 3 snapshot builders; moved `inArray` dynamic import to static import; made `DocumentPayload.snapshotData` optional (generated internally by builders)
 - **`vitest.config.ts`** — Added `exclude: ['src/**/*.integration.test.{ts,tsx}', 'node_modules']` to prevent integration tests from being picked up by the main test runner
 - **`watch` hook cleaned up** — Proper cleanup of online/offline event listeners in OfflineSyncHandler
 

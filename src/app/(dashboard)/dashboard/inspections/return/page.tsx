@@ -246,13 +246,13 @@ export default function ReturnInspectionPage() {
                         <span className="text-sm text-ink-700">{item.label}</span>
                         {item.isCritical && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-status-emergency-text" aria-label="Critical item" />}
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1 shrink-0 touch-manipulation">
                         {(['pass', 'fail', 'na'] as const).map((opt) => (
                           <button
                             key={opt}
                             type="button"
                             onClick={() => updateResult(item.id, opt)}
-                            className={`px-3 py-1.5 text-xs rounded-[6px] font-medium transition-colors ${
+                            className={`min-h-[36px] sm:min-h-0 px-3 py-1.5 text-xs rounded-[6px] font-medium transition-colors active:scale-95 ${
                               item.result === opt
                                 ? opt === 'pass' ? 'bg-status-success-bg text-status-success-text ring-1 ring-status-success-text'
                                 : opt === 'fail' ? 'bg-status-error-bg text-status-error-text ring-1 ring-status-error-text'
@@ -335,7 +335,7 @@ export default function ReturnInspectionPage() {
                     <button
                       type="button"
                       onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
-                      className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute top-1 right-1 rounded-full bg-black/60 p-1.5 text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity active:scale-90"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>

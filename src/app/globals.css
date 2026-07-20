@@ -93,6 +93,11 @@
     display: none;
   }
 
+  /* Touch manipulation (disable double-tap zoom on mobile) */
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+
   /* Focus ring */
   .focus-ring {
     outline: 2px solid transparent;
