@@ -35,6 +35,7 @@ export const viewport: Viewport = {
 };
 
 import { Providers } from '@/lib/providers';
+import { ThemeProvider } from '@/lib/theme-provider';
 import { ServiceWorkerRegistration } from '@/components/layout/service-worker-registration';
 
 export default function RootLayout({
@@ -43,7 +44,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={cn(onest.variable)}>
+    <html lang="en" className={cn(onest.variable)} suppressHydrationWarning>
       <head>
         <link rel="manifest" href="/manifest.json" />
         <meta name="mobile-web-app-capable" content="yes" />
@@ -53,7 +54,9 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen antialiased" style={{ fontFamily: 'var(--font-onest), sans-serif' }}>
         <ServiceWorkerRegistration />
-        <Providers>{children}</Providers>
+        <ThemeProvider>
+          <Providers>{children}</Providers>
+        </ThemeProvider>
       </body>
     </html>
   );

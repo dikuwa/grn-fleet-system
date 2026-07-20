@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-07-20 — Session 20: Dark mode, real-time trip duration, PDF export E2E tests
+
+### Added
+
+- **Dark Mode** — Full dark theme support across the entire application:
+  - `.dark` CSS class with overridden color tokens for brand, neutral, and status colors (canvas `#0a0a1a`, surface `#141428`, ink-950 `#e8e8f0`, status text colors adjusted for dark backgrounds)
+  - `@custom-variant dark (&:where(.dark, .dark *))` for Tailwind v4 class-based dark mode
+  - `.theme-icon-enter` animation class for smooth icon transitions on toggle
+  - Scoped theme transition (`body, body *, body *::before, body *::after`) for smooth 200ms theme changes
+- **ThemeProvider** (`src/lib/theme-provider.tsx`) — React context managing dark/light mode with:
+  - localStorage persistence (`govfleet-theme` key)
+  - System preference detection via `prefers-color-scheme: dark` media query
+  - Automatic system preference change listener (when no explicit stored preference)
+  - SSR-safe hydration with `suppressHydrationWarning` on `<html>`
+- **Dark Mode Toggle** — Sun/Moon icon button in the topbar with animated icon transitions
+- **Topbar** — Changed `bg-white` to `bg-surface` for theme-responsive header background
+- **PDF Export E2E Tests** (`src/e2e/pdf-export.spec.ts`) — 9 test cases covering all 6 report types (fleet, fuel, trips, maintenance, requests, approvals), PDF magic bytes validation, error handling for invalid types (400) and unauthenticated requests (401/303)
+
+### Improved
+
+- **Real-time Trip Duration** (`ActiveTripDuration.tsx`) — Now updates every 1 second instead of 60 seconds for true live feel. Enhanced format: shows seconds (`5m 23s`, `2h 15m 30s`, `1d 3h 45m`). Added `tabular-nums` for stable width. Uses `useRef` to avoid stale closure in interval. Immediate update on mount.
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+- **Code Review**: Broad transition scoping fixed (body-level only), all checks clean ✅
+
+---
+
 ## 2026-07-20 — Session 19: Photo upload E2E tests, mobile responsive improvements, PDF export verification
 
 ### Added

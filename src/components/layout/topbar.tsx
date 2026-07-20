@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Bell, Search, User, Menu, LogOut } from 'lucide-react';
+import { Bell, Search, User, Menu, LogOut, Sun, Moon } from 'lucide-react';
 import Link from 'next/link';
+import { useTheme } from '@/lib/theme-provider';
 
 interface TopbarProps {
   onMenuClick: () => void;
@@ -14,6 +15,7 @@ export function Topbar({ onMenuClick, tenantName, userId }: TopbarProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifError, setNotifError] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   // Fetch unread notification count on mount and every 30s
   useEffect(() => {
@@ -40,7 +42,7 @@ export function Topbar({ onMenuClick, tenantName, userId }: TopbarProps) {
   }, [userId]);
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-white px-4 md:px-6">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-surface px-4 md:px-6">
       {/* Mobile menu trigger */}
       <button
         onClick={onMenuClick}
@@ -59,7 +61,20 @@ export function Topbar({ onMenuClick, tenantName, userId }: TopbarProps) {
         />
       </div>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-1.5">
+        {/* Dark mode toggle */}
+        <button
+          onClick={toggleTheme}
+          className="flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-500 hover:bg-muted transition-colors"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? (
+            <Sun className="h-[18px] w-[18px] theme-icon-enter" />
+          ) : (
+            <Moon className="h-[18px] w-[18px] theme-icon-enter" key={theme} />
+          )}
+        </button>
+
         {/* Notifications */}
         <Link
           href="/dashboard/notifications"

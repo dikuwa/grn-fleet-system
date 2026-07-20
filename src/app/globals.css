@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* Class-based dark mode variant for Tailwind v4 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* Brand palette */
   --color-brand-950: #102a4c;
@@ -50,6 +53,52 @@
   --radius-input: 8px;
   --radius-card: 10px;
   --radius-dialog: 14px;
+}
+
+/*
+  Dark mode theme overrides
+  Applied via .dark class on <html> — toggled by ThemeProvider
+*/
+.dark {
+  --color-brand-950: #0a1628;
+  --color-brand-900: #0f1f3a;
+  --color-brand-800: #142b50;
+  --color-brand-700: #1a3766;
+  --color-brand-600: #20457d;
+  --color-brand-100: #1a2740;
+  --color-brand-50: #141e30;
+
+  --color-teal-700: #0d6b63;
+  --color-teal-50: #0d1f1c;
+
+  --color-ink-950: #e8e8f0;
+  --color-ink-700: #c4c4d8;
+  --color-ink-500: #8888a4;
+  --color-surface: #141428;
+  --color-canvas: #0a0a1a;
+  --color-muted: #1a1a32;
+  --color-border: #2a2a48;
+
+  --color-status-success-bg: #0a2616;
+  --color-status-success-text: #4ade80;
+  --color-status-pending-bg: #261e0a;
+  --color-status-pending-text: #facc15;
+  --color-status-info-bg: #0a1a2e;
+  --color-status-info-text: #60a5fa;
+  --color-status-error-bg: #2a0e0e;
+  --color-status-error-text: #f87171;
+  --color-status-cancelled-bg: #1a1a2e;
+  --color-status-cancelled-text: #9ca3af;
+  --color-status-emergency-bg: #2a0a18;
+  --color-status-emergency-text: #fb7185;
+}
+
+/* Smooth theme transition — scoped to body-level elements for performance */
+body,
+body *,
+body *::before,
+body *::after {
+  transition: background-color 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
 }
 
 /*
@@ -106,5 +155,14 @@
   }
   .focus-ring:focus-visible {
     outline-color: var(--color-brand-600);
+  }
+
+  /* Theme toggle icon spin */
+  .theme-icon-enter {
+    animation: theme-icon-enter 300ms ease-out;
+  }
+  @keyframes theme-icon-enter {
+    0% { transform: rotate(-90deg) scale(0.5); opacity: 0; }
+    100% { transform: rotate(0deg) scale(1); opacity: 1; }
   }
 }
