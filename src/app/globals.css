@@ -93,12 +93,9 @@
   --color-status-emergency-text: #fb7185;
 }
 
-/* Smooth theme transition — scoped to body-level elements for performance */
-body,
-body *,
-body *::before,
-body *::after {
-  transition: background-color 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+/* Smooth theme transition — scoped to body and immediate children only */
+body {
+  transition: background-color 200ms ease;
 }
 
 /*
