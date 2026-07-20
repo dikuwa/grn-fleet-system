@@ -18,6 +18,7 @@ import {
   Building2,
   CarFront,
   FileSpreadsheet,
+  BarChart3,
   FileBarChart,
   Bell,
   Settings,
@@ -109,6 +110,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: 'Documents', href: '/dashboard/documents', icon: FileSpreadsheet },
       { label: 'Reports', href: '/dashboard/reports', icon: FileBarChart },
+      { label: 'Enhanced Analytics', href: '/dashboard/reports', icon: BarChart3 },
     ],
   },
   {

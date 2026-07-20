@@ -10,6 +10,7 @@ import {
   Fuel,
   Truck,
   TrendingUp,
+  BarChart3,
   Wrench,
   DollarSign,
   Clock,
@@ -35,7 +36,8 @@ type ReportType =
   | 'trips'
   | 'maintenance'
   | 'requests'
-  | 'approvals';
+  | 'approvals'
+  | 'enhanced';
 
 type TimeRange = '7d' | '30d' | '90d' | '1y' | 'custom';
 
@@ -46,6 +48,7 @@ const reportTypes: { value: ReportType; label: string; icon: React.ReactNode; de
   { value: 'maintenance', label: 'Maintenance', icon: <Wrench className="h-4 w-4" />, description: 'Service costs, schedules, and backlog' },
   { value: 'requests', label: 'Transport Requests', icon: <FileText className="h-4 w-4" />, description: 'Request volumes, processing times, and status breakdown' },
   { value: 'approvals', label: 'Approvals', icon: <ClipboardList className="h-4 w-4" />, description: 'Approval turnaround times and workflow metrics' },
+  { value: 'enhanced', label: 'Enhanced Analytics', icon: <BarChart3 className="h-4 w-4" />, description: 'Approval detail, vehicle utilisation, fuel efficiency, late returns, rejection metrics' },
 ];
 
 const timeRanges: { value: TimeRange; label: string }[] = [
@@ -119,7 +122,10 @@ function formatLitres(n: number | string): string {
 
 /** Fetch report data from API */
 async function fetchReportData(type: ReportType, period: TimeRange) {
-  const res = await fetch(`/api/reports?type=${type}&period=${period}`);
+  const url = type === 'enhanced'
+    ? `/api/reports/enhanced?period=${period}`
+    : `/api/reports?type=${type}&period=${period}`;
+  const res = await fetch(url);
   if (!res.ok) return null;
   const json = await res.json();
   if (json.success && json.data) return json.data;
@@ -334,6 +340,11 @@ export default function ReportsPage() {
       {/* ============================== APPROVALS ============================== */}
       {!isLoading && selectedReport === 'approvals' && (
         <ReportApprovals data={reportData as Record<string, unknown> | null} />
+      )}
+
+      {/* ============================== ENHANCED ANALYTICS ============================== */}
+      {!isLoading && selectedReport === 'enhanced' && (
+        <ReportEnhanced data={reportData as Record<string, unknown> | null} />
       )}
     </div>
   );
@@ -569,6 +580,291 @@ function ReportApprovals({ data }: { data: Record<string, unknown> | null }) {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Enhanced Analytics Section
+// ---------------------------------------------------------------------------
+function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
+  const enhanced = data as Record<string, unknown> | null;
+  const approvalTurnaround = enhanced?.approvalTurnaround as
+    | { avgTotalHours: number; totalActions: number; completedWorkflows: number; stepDurations: Array<{ stepOrder: number; avgHours: number }>; monthlyTrend: Array<{ month: string; avgHours: number; actionCount: number }> }
+    | undefined;
+  const vehicleUtilisation = enhanced?.vehicleUtilisation as
+    | { totalVehicles: number; avgUtilisation: number; totalUtilisedHours: number; underUtilisedCount: number; underUtilisedVehicles: Array<{ licenceNumber: string; totalTrips: number; totalTripHours: number; utilisationPct: number }>; vehicleBreakdown: Array<{ licenceNumber: string; totalTrips: number; totalTripHours: number; utilisationPct: number }> }
+    | undefined;
+  const fuelEfficiency = enhanced?.fuelEfficiency as
+    | { fleetAvgKmPerLitre: number | null; totalLitres: number; totalDistance: number; totalFuelCost: number; perVehicle: Array<{ licenceNumber: string; totalLitres: number; kmPerLitre: number | null; avgCostPerLitre: number }> }
+    | undefined;
+  const lateReturns = enhanced?.lateReturns as
+    | { lateCount: number; totalTrips: number; lateRate: number; avgDelayHours: number; lateTrips: Array<{ vehicleLicence: string; actualHours: number; delayHours: number }>; monthlyLateTrend: Array<{ month: string; totalTrips: number; lateTrips: number }> }
+    | undefined;
+  const rejectionMetrics = enhanced?.rejectionMetrics as
+    | { totalRequests: number; rejected: number; approved: number; rejectionRate: number; approvalRate: number; rejectionReasons: Array<{ reason: string; date: string }>; monthlyTrend: Array<{ month: string; total: number; rejected: number; approved: number }> }
+    | undefined;
+
+  if (!enhanced) {
+    return (
+      <Card>
+        <CardContent>
+          <p className="py-8 text-center text-xs text-ink-400">No enhanced analytics data available. This report requires trip and approval data to be present.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* KPI Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="Avg. Approval Time"
+          value={approvalTurnaround?.avgTotalHours != null ? `${approvalTurnaround.avgTotalHours} hrs` : '—'}
+          description={`${approvalTurnaround?.completedWorkflows ?? 0} workflows`}
+          icon={<Clock className="h-5 w-5" />}
+        />
+        <StatCard
+          title="Fleet Utilisation"
+          value={vehicleUtilisation?.avgUtilisation != null ? `${vehicleUtilisation.avgUtilisation}%` : '—'}
+          description={`${vehicleUtilisation?.underUtilisedCount ?? 0} under-utilised`}
+          icon={<Truck className="h-5 w-5" />}
+          trend={{ value: (vehicleUtilisation?.avgUtilisation ?? 0) >= 50 ? 'Good utilisation' : 'Low utilisation', positive: (vehicleUtilisation?.avgUtilisation ?? 0) >= 50 }}
+        />
+        <StatCard
+          title="Fuel Efficiency"
+          value={fuelEfficiency?.fleetAvgKmPerLitre != null ? `${fuelEfficiency.fleetAvgKmPerLitre} km/L` : '—'}
+          description={`${fuelEfficiency?.totalLitres ?? 0} L consumed`}
+          icon={<Fuel className="h-5 w-5" />}
+        />
+        <StatCard
+          title="Late Return Rate"
+          value={lateReturns?.lateRate != null ? `${lateReturns.lateRate}%` : '—'}
+          description={`${lateReturns?.lateCount ?? 0} of ${lateReturns?.totalTrips ?? 0} trips late`}
+          icon={<AlertTriangle className="h-5 w-5" />}
+          trend={{ value: (lateReturns?.lateRate ?? 0) <= 10 ? 'Within tolerance' : 'High late rate', positive: (lateReturns?.lateRate ?? 0) <= 10 }}
+        />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Approval Detail */}
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="h-4 w-4" /> Approval Turnover Detail</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Avg Hours</p>
+                <p className="text-xl font-bold text-ink-950">{approvalTurnaround?.avgTotalHours ?? '—'}</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Total Actions</p>
+                <p className="text-xl font-bold text-ink-950">{approvalTurnaround?.totalActions ?? 0}</p>
+              </div>
+            </div>
+
+            {approvalTurnaround?.stepDurations && approvalTurnaround.stepDurations.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-ink-700">Durations by Step</p>
+                <div className="space-y-1.5">
+                  {approvalTurnaround.stepDurations.map((s) => (
+                    <div key={s.stepOrder} className="flex items-center justify-between text-sm">
+                      <span className="text-ink-600">Step {s.stepOrder}</span>
+                      <span className="font-medium text-ink-950">{Math.round(s.avgHours * 10) / 10} hrs</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {approvalTurnaround?.monthlyTrend && approvalTurnaround.monthlyTrend.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-ink-700">Monthly Trend</p>
+                <BarChart
+                  data={approvalTurnaround.monthlyTrend.map((m) => ({ label: m.month, hours: Math.round(m.avgHours * 10) / 10 }))}
+                  bars={[{ key: 'hours', color: '#2563eb', label: 'Avg Hours' }]}
+                  height={120}
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Vehicle Utilisation */}
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="h-4 w-4" /> Vehicle Utilisation</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Fleet Avg</p>
+                <p className="text-xl font-bold text-ink-950">{vehicleUtilisation?.avgUtilisation != null ? `${vehicleUtilisation.avgUtilisation}%` : '—'}</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Under-Utilised</p>
+                <p className="text-xl font-bold text-ink-950">{vehicleUtilisation?.underUtilisedCount ?? 0}</p>
+              </div>
+            </div>
+
+            {vehicleUtilisation?.underUtilisedVehicles && vehicleUtilisation.underUtilisedVehicles.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-ink-700">Low-Utilisation Vehicles</p>
+                <div className="space-y-1.5">
+                  {vehicleUtilisation.underUtilisedVehicles.slice(0, 5).map((v) => (
+                    <div key={v.licenceNumber} className="flex items-center justify-between text-sm">
+                      <span className="text-ink-600">{v.licenceNumber}</span>
+                      <span className="font-medium text-ink-950">{v.utilisationPct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Fuel Efficiency */}
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Fuel className="h-4 w-4" /> Fuel Efficiency</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Fleet Avg</p>
+                <p className="text-xl font-bold text-ink-950">{fuelEfficiency?.fleetAvgKmPerLitre != null ? `${fuelEfficiency.fleetAvgKmPerLitre} km/L` : '—'}</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Total Distance</p>
+                <p className="text-xl font-bold text-ink-950">{fuelEfficiency?.totalDistance != null ? `${(fuelEfficiency.totalDistance / 1000).toFixed(1)}k km` : '—'}</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Total Cost</p>
+                <p className="text-xl font-bold text-ink-950">{fuelEfficiency?.totalFuelCost != null ? formatCurrency(fuelEfficiency.totalFuelCost) : '—'}</p>
+              </div>
+            </div>
+
+            {fuelEfficiency?.perVehicle && fuelEfficiency.perVehicle.length > 0 && (
+              <BarChart
+                data={fuelEfficiency.perVehicle.slice(0, 8).map((v) => ({ label: v.licenceNumber, kmpl: v.kmPerLitre ?? 0 }))}
+                bars={[{ key: 'kmpl', color: '#16a34a', label: 'km/L' }]}
+                height={120}
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Late Returns */}
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="h-4 w-4" /> Late Returns</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Late Rate</p>
+                <p className="text-xl font-bold text-ink-950">{lateReturns?.lateRate ?? 0}%</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Late Count</p>
+                <p className="text-xl font-bold text-ink-950">{lateReturns?.lateCount ?? 0}</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Avg Delay</p>
+                <p className="text-xl font-bold text-ink-950">{lateReturns?.avgDelayHours ?? 0} hrs</p>
+              </div>
+            </div>
+
+            {lateReturns?.lateTrips && lateReturns.lateTrips.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-ink-700">Recent Late Trips</p>
+                <div className="space-y-1.5">
+                  {lateReturns.lateTrips.slice(0, 5).map((t, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm">
+                      <span className="text-ink-600">{t.vehicleLicence}</span>
+                      <span className="font-medium text-ink-950">{Math.round(t.delayHours * 10) / 10} hrs late</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Rejection Metrics */}
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><XCircle className="h-4 w-4" /> Rejection Metrics</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Rejection Rate</p>
+                <p className="text-xl font-bold text-ink-950">{rejectionMetrics?.rejectionRate ?? 0}%</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Approval Rate</p>
+                <p className="text-xl font-bold text-ink-950">{rejectionMetrics?.approvalRate ?? 0}%</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Rejected</p>
+                <p className="text-xl font-bold text-ink-950">{rejectionMetrics?.rejected ?? 0}</p>
+              </div>
+            </div>
+
+            {rejectionMetrics?.rejectionReasons && rejectionMetrics.rejectionReasons.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-ink-700">Recent Rejection Reasons</p>
+                <div className="space-y-1.5">
+                  {rejectionMetrics.rejectionReasons.slice(0, 5).map((r, i) => (
+                    <div key={i} className="flex items-start justify-between gap-2 text-sm">
+                      <span className="text-ink-600 flex-1 line-clamp-1">{r.reason}</span>
+                      <span className="shrink-0 text-[11px] text-ink-400">{r.date}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {rejectionMetrics?.monthlyTrend && rejectionMetrics.monthlyTrend.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-ink-700">Monthly Trend</p>
+                <BarChart
+                  data={rejectionMetrics.monthlyTrend.map((m) => ({ label: m.month, Total: m.total, Rejected: m.rejected, Approved: m.approved }))}
+                  bars={[
+                    { key: 'Approved', color: '#16a34a', label: 'Approved' },
+                    { key: 'Rejected', color: '#dc2626', label: 'Rejected' },
+                  ]}
+                  height={120}
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Monthly Late Trend */}
+        {lateReturns?.monthlyLateTrend && lateReturns.monthlyLateTrend.length > 0 && (
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><BarChart3 className="h-4 w-4" /> Late Return Trend (Monthly)</CardTitle></CardHeader>
+            <CardContent>
+              <BarChart
+                data={lateReturns.monthlyLateTrend.map((m) => ({ label: m.month, Total: m.totalTrips, Late: m.lateTrips }))}
+                bars={[
+                  { key: 'Total', color: '#6b7280', label: 'Total' },
+                  { key: 'Late', color: '#dc2626', label: 'Late' },
+                ]}
+                height={140}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Approval Monthly Trend */}
+        {approvalTurnaround?.monthlyTrend && approvalTurnaround.monthlyTrend.length > 0 && (
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-4 w-4" /> Approval Duration Trend</CardTitle></CardHeader>
+            <CardContent>
+              <BarChart
+                data={approvalTurnaround.monthlyTrend.map((m) => ({ label: m.month, hours: Math.round(m.avgHours * 10) / 10 }))}
+                bars={[{ key: 'hours', color: '#2563eb', label: 'Avg Hours' }]}
+                height={140}
+              />
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

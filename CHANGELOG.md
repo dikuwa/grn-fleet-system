@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-07-20 — Session 31: Enhanced Analytics — 5 deep-dive metrics, dedicated UI, sidebar link
+
+### Added
+
+- **Enhanced Analytics API** (`GET /api/reports/enhanced`) — 5 advanced operational metrics with tenant-scoped queries:
+  1. **Approval Turnaround Detail** — Avg hours per workflow, step-by-step duration breakdown, monthly trend chart, top 10 workflow breakdown
+  2. **Vehicle Utilisation %** — Fleet avg utilisation %, total utilised hours, under-utilised vehicle detection (<10% usage), per-vehicle breakdown with utilisation %
+  3. **Fuel Efficiency (km/L)** — Fleet-wide average km/L, total distance/fuel/cost, per-vehicle efficiency with distance/litres/kmPL/avg cost per litre
+  4. **Late Returns** — Late count and rate, avg delay hours, 20 most recent late trips with delay details, monthly late trend
+  5. **Rejection Metrics** — Rejection/approval rates, status breakdown (draft/submitted/approved/rejected/closed/cancelled), 50 most recent rejection reasons, monthly rejection trend
+- **Enhanced Analytics UI** (`/dashboard/reports` → Enhanced Analytics tab) — Full dashboard with:
+  - 4 KPI stat cards (Avg Approval Time, Fleet Utilisation %, Fuel Efficiency, Late Return Rate) with trend indicators
+  - 6 detail panels in a 2-column responsive grid: Approval Turnover Detail, Vehicle Utilisation, Fuel Efficiency, Late Returns, Rejection Metrics, Late Return Trend (monthly bar chart), Approval Duration Trend
+  - BarChart sub-components for monthly trends and per-vehicle efficiency
+  - Supporting all time ranges (7d/30d/90d/1y)
+- **Sidebar Link** — "Enhanced Analytics" added under Documents & Reports group with BarChart3 icon
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **Tests**: 72/72 passing
+- **Code Review**: All changes approved
+
 ## 2026-07-20 — Session 30: Programme of Activities — standalone management page, API, sidebar link
 
 ### Added
