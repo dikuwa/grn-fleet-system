@@ -6,6 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 // ---------------------------------------------------------------------------
@@ -120,6 +121,7 @@ function Field({
 
 export default function NewVehiclePage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [form, setForm] = useState<VehicleFormData>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -178,8 +180,10 @@ export default function NewVehiclePage() {
       }
 
       const data = await res.json();
+      toast({ title: 'Vehicle created', description: `${form.make} ${form.model} (${form.licenceNumber}) added to fleet`, variant: 'success' });
       router.push(`/dashboard/fleet/${data.vehicle.id}`);
     } catch (err) {
+      toast({ title: 'Failed to create vehicle', description: err instanceof Error ? err.message : 'Failed to create vehicle', variant: 'error' });
       setError(err instanceof Error ? err.message : 'Failed to create vehicle');
     } finally {
       setSubmitting(false);

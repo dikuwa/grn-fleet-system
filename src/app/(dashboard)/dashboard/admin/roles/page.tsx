@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import {
   Shield, Plus, Loader2, CheckCircle2, XCircle, Save, Pencil,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -177,6 +178,7 @@ const PERMISSION_GROUPS: PermissionGroup[] = [
 
 export default function AdminRolesPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
 
   // Edit role dialog
@@ -245,8 +247,10 @@ export default function AdminRolesPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update role');
       setEditRole(null);
+      toast({ title: 'Role updated', description: `Permissions saved for ${editName}`, variant: 'success' });
       refetch();
     } catch (err) {
+      toast({ title: 'Failed to update role', description: err instanceof Error ? err.message : 'Failed to update role', variant: 'error' });
       setSaveError(err instanceof Error ? err.message : 'Failed to update role');
     } finally {
       setIsSaving(false);
@@ -273,8 +277,10 @@ export default function AdminRolesPage() {
       setNewName('');
       setNewDescription('');
       setNewPermissions(new Set());
+      toast({ title: 'Role created', description: newName, variant: 'success' });
       refetch();
     } catch (err) {
+      toast({ title: 'Failed to create role', description: err instanceof Error ? err.message : 'Failed to create role', variant: 'error' });
       setCreateError(err instanceof Error ? err.message : 'Failed to create role');
     } finally {
       setIsCreating(false);

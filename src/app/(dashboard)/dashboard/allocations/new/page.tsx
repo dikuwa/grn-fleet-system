@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, CheckCircle2, Truck, Star, AlertTriangle } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 interface RecommendationResult {
@@ -35,6 +36,7 @@ interface RecommendationData {
 
 export default function NewAllocationPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [requestId, setRequestId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -105,8 +107,10 @@ export default function NewAllocationPage() {
         throw new Error(data.error || 'Failed to create allocation');
       }
       const data = await res.json();
+      toast({ title: 'Allocation created', description: `Vehicle assigned to request ${requestId}`, variant: 'success' });
       router.push(`/dashboard/allocations/${data.allocation.id}`);
     } catch (err) {
+      toast({ title: 'Failed to create allocation', description: err instanceof Error ? err.message : 'An unexpected error occurred', variant: 'error' });
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
     } finally {
       setIsSubmitting(false);

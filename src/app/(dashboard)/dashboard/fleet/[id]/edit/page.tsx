@@ -6,6 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ function Field({
 
 export default function EditVehiclePage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
+  const { toast } = useToast();
   const [form, setForm] = useState<VehicleFormData | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -179,7 +181,9 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
 
       router.push(`/dashboard/fleet/${vehicleId}`);
       router.refresh();
+      toast({ title: 'Vehicle updated', description: `${form.licenceNumber} saved successfully`, variant: 'success' });
     } catch (err) {
+      toast({ title: 'Failed to update vehicle', description: err instanceof Error ? err.message : 'Failed to update vehicle', variant: 'error' });
       setError(err instanceof Error ? err.message : 'Failed to update vehicle');
     } finally {
       setSubmitting(false);

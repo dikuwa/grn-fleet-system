@@ -17,6 +17,7 @@ import {
   ChevronRight,
   GripVertical,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 interface TemplateItem {
@@ -83,6 +84,7 @@ const DEFAULT_ITEMS: Record<string, { category: string; label: string; isCritica
 };
 
 export default function InspectionTemplatesPage() {
+  const { toast } = useToast();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -184,8 +186,10 @@ export default function InspectionTemplatesPage() {
       }
 
       closeForm();
+      toast({ title: editingTemplate ? 'Template updated' : 'Template created', description: formName.trim(), variant: 'success' });
       await fetchTemplates();
     } catch (err) {
+      toast({ title: 'Failed to save template', description: err instanceof Error ? err.message : 'Failed to save template', variant: 'error' });
       setError(err instanceof Error ? err.message : 'Failed to save template');
     } finally {
       setSubmitting(false);
@@ -200,8 +204,10 @@ export default function InspectionTemplatesPage() {
         body: JSON.stringify({ isActive: !tpl.isActive }),
       });
       if (!res.ok) throw new Error('Failed to update template');
+      toast({ title: `Template ${tpl.isActive ? 'deactivated' : 'activated'}`, description: tpl.name, variant: 'success' });
       await fetchTemplates();
     } catch (err) {
+      toast({ title: 'Failed to update template', description: err instanceof Error ? err.message : 'Failed to update template', variant: 'error' });
       setError(err instanceof Error ? err.message : 'Failed to update template');
     }
   }
@@ -213,8 +219,10 @@ export default function InspectionTemplatesPage() {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete template');
+      toast({ title: 'Template deleted', description: tpl.name, variant: 'success' });
       await fetchTemplates();
     } catch (err) {
+      toast({ title: 'Failed to delete template', description: err instanceof Error ? err.message : 'Failed to delete template', variant: 'error' });
       setError(err instanceof Error ? err.message : 'Failed to delete template');
     }
   }

@@ -12,6 +12,7 @@ import {
   User, Mail, Shield, CalendarDays, Loader2, ChevronLeft, CheckCircle2, XCircle,
   Plus, Trash2, Database,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 
@@ -43,9 +44,9 @@ interface PageProps {
 
 export default function AdminUserDetailPage({ params }: PageProps) {
   const { id } = use(params);
+  const { toast } = useToast();
   const [editName, setEditName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [selectedRoleId, setSelectedRoleId] = useState('');
 
   const { data: userData, isLoading, error, refetch } = useQuery({
@@ -66,7 +67,6 @@ export default function AdminUserDetailPage({ params }: PageProps) {
   const handleUpdateName = async () => {
     if (!editName.trim()) return;
     setIsSaving(true);
-    setSaveMessage(null);
     try {
       const res = await fetch(`/api/admin/users/${id}`, {
         method: 'PATCH',
@@ -75,10 +75,9 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update');
-      setSaveMessage('Name updated successfully');
-      setTimeout(() => setSaveMessage(null), 3000);
+      toast({ title: 'Name updated', description: 'User name saved successfully', variant: 'success' });
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to update');
+      toast({ title: 'Update failed', description: err instanceof Error ? err.message : 'Failed to update', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -88,7 +87,6 @@ export default function AdminUserDetailPage({ params }: PageProps) {
     if (!userData) return;
     const newStatus = userData.tenantStatus === 'active' ? 'suspended' : 'active';
     setIsSaving(true);
-    setSaveMessage(null);
     try {
       const res = await fetch(`/api/admin/users/${id}`, {
         method: 'PATCH',
@@ -98,10 +96,9 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update status');
       await refetch();
-      setSaveMessage(`User ${newStatus === 'active' ? 'activated' : 'suspended'} successfully`);
-      setTimeout(() => setSaveMessage(null), 3000);
+      toast({ title: `User ${newStatus === 'active' ? 'activated' : 'suspended'}`, description: `Status changed to ${newStatus}`, variant: 'success' });
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to update status');
+      toast({ title: 'Status update failed', description: err instanceof Error ? err.message : 'Failed to update status', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -119,9 +116,10 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to add role');
       setSelectedRoleId('');
+      toast({ title: 'Role assigned', description: 'Role added to user', variant: 'success' });
       refetch();
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to add role');
+      toast({ title: 'Failed to add role', description: err instanceof Error ? err.message : 'Failed to add role', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -137,9 +135,10 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to remove role');
+      toast({ title: 'Role removed', description: 'Assignment deleted', variant: 'success' });
       refetch();
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to remove role');
+      toast({ title: 'Failed to remove role', description: err instanceof Error ? err.message : 'Failed to remove role', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -234,11 +233,6 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                   Save
                 </Button>
               </div>
-              {saveMessage && (
-                <p className={`text-xs ${saveMessage.includes('Failed') ? 'text-status-error-text' : 'text-status-success-text'}`}>
-                  {saveMessage}
-                </p>
-              )}
             </div>
             <div className="space-y-1.5">
               <Label>Email</Label>

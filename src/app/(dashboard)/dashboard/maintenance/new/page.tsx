@@ -6,6 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Wrench, ChevronLeft, Loader2 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 interface Vehicle {
@@ -17,6 +18,7 @@ interface Vehicle {
 
 export default function NewMaintenancePage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -93,8 +95,10 @@ export default function NewMaintenancePage() {
         throw new Error(err.error || 'Failed to create maintenance event');
       }
 
+      toast({ title: 'Maintenance event created', description: `${serviceType} for ${vehicleId ? 'selected vehicle' : ''}`, variant: 'success' });
       router.push('/dashboard/maintenance');
     } catch (err) {
+      toast({ title: 'Failed to create maintenance event', description: err instanceof Error ? err.message : 'An unexpected error occurred', variant: 'error' });
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
     } finally {
       setSubmitting(false);

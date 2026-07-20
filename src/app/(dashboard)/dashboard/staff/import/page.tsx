@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Download,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 type Step = 'upload' | 'mapping' | 'preview' | 'committing' | 'complete';
@@ -43,6 +44,7 @@ const STAFF_TEMPLATE_COLUMNS = [
 
 export default function StaffImportPage() {
   const { data: session } = useSession();
+  const { toast } = useToast();
   const [step, setStep] = useState<Step>('upload');
   const [fileName, setFileName] = useState<string>('');
   const [rows, setRows] = useState<ImportRow[]>([]);
@@ -149,8 +151,10 @@ export default function StaffImportPage() {
         throw new Error(err.error || 'Import failed');
       }
 
+      toast({ title: 'Import complete', description: `${totalValidRows} staff record(s) imported successfully`, variant: 'success' });
       setStep('complete');
     } catch (err) {
+      toast({ title: 'Import failed', description: err instanceof Error ? err.message : 'An error occurred during import', variant: 'error' });
       console.error('Import failed:', err);
       setStep('preview');
     } finally {

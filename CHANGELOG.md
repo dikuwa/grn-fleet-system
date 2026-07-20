@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-07-20 — Session 33: Toast wiring across 11 dashboard mutation pages
+
+### Changed
+
+- **Toast notifications wired into 11 mutation pages** — All create/update/delete flows now show toast feedback on success/error:
+  - Maintenance new — toast on event creation/failure
+  - Fleet new — toast on vehicle creation/failure
+  - Fleet edit — toast on vehicle update/failure
+  - Allocations new — toast on allocation creation/failure
+  - Platform tenant detail — toast on save/suspend/activate success/failure
+  - Admin user detail — toast on name update, status toggle, role add/remove
+  - Admin regions — toast on create/update/delete/activate/deactivate
+  - Admin roles — toast on role create/update
+  - Settings — toast on preference save
+  - Inspection templates — toast on create/update/activate/delete
+  - Fleet import — toast on import success/failure
+  - Staff import — toast on import success/failure
+- **Removed 6 inline `saveMessage`/`setSaved` state variables** across platform/tenants/[id], admin/users/[id], admin/regions, settings — replaced with consistent `toast()` calls
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **Tests**: 72/72 passing
+- **Code Review**: All changes approved
+
 ## 2026-07-20 — Session 32: Platform Polish — useToast hook, ErrorBoundary, CSS animations, toast wiring
 
 ### Added

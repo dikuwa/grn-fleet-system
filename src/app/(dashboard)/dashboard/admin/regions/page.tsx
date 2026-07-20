@@ -11,6 +11,7 @@ import {
   MapPin, Plus, Loader2, Save, X, CheckCircle2, AlertTriangle,
   Trash2, Edit2, RefreshCw, GripVertical, XCircle,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 interface Region {
   id: string;
@@ -24,13 +25,13 @@ interface Region {
 }
 
 export default function AdminRegionsPage() {
+  const { toast } = useToast();
   const [regions, setRegions] = useState<Region[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
   // Form state
@@ -68,7 +69,6 @@ export default function AdminRegionsPage() {
     setFormCode('');
     setFormDescription('');
     setFormSortOrder('0');
-    setSaveMessage(null);
     setShowForm(true);
   };
 
@@ -78,20 +78,17 @@ export default function AdminRegionsPage() {
     setFormCode(region.code);
     setFormDescription(region.description || '');
     setFormSortOrder(String(region.sortOrder ?? 0));
-    setSaveMessage(null);
     setShowForm(true);
   };
 
   const closeForm = () => {
     setShowForm(false);
     setEditingId(null);
-    setSaveMessage(null);
   };
 
   const handleSave = async () => {
     if (!formName.trim()) return;
     setSaving(true);
-    setSaveMessage(null);
 
     try {
       const body = {
@@ -115,12 +112,11 @@ export default function AdminRegionsPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to save region');
 
-      setSaveMessage(`Region ${editingId ? 'updated' : 'created'} successfully`);
-      setTimeout(() => setSaveMessage(null), 2000);
+      toast({ title: `Region ${editingId ? 'updated' : 'created'}`, description: formName.trim(), variant: 'success' });
       closeForm();
       fetchRegions();
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to save region');
+      toast({ title: 'Failed to save region', description: err instanceof Error ? err.message : 'Failed to save region', variant: 'error' });
     } finally {
       setSaving(false);
     }
@@ -134,9 +130,10 @@ export default function AdminRegionsPage() {
       const res = await fetch(`/api/admin/regions/${id}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete region');
+      toast({ title: 'Region deleted', description: 'Region removed successfully', variant: 'success' });
       fetchRegions();
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to delete region');
+      toast({ title: 'Failed to delete region', description: err instanceof Error ? err.message : 'Failed to delete region', variant: 'error' });
     } finally {
       setDeleting(null);
     }
@@ -151,9 +148,10 @@ export default function AdminRegionsPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update region');
+      toast({ title: `Region ${region.isActive ? 'deactivated' : 'activated'}`, description: region.name, variant: 'success' });
       fetchRegions();
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to update region');
+      toast({ title: 'Failed to update region', description: err instanceof Error ? err.message : 'Failed to update region', variant: 'error' });
     }
   };
 
@@ -181,19 +179,7 @@ export default function AdminRegionsPage() {
         </div>
       </PageHeader>
 
-      {/* Save/Error Message */}
-      {saveMessage && (
-        <div className={`flex items-center gap-2 rounded-[8px] border px-4 py-3 text-sm ${
-          saveMessage.includes('Failed') || saveMessage.includes('error') || saveMessage.includes('cannot')
-            ? 'border-red-200 bg-red-50 text-red-800'
-            : 'border-green-200 bg-green-50 text-green-800'
-        }`}>
-          {saveMessage.includes('Failed') || saveMessage.includes('error') || saveMessage.includes('cannot')
-            ? <AlertTriangle className="h-4 w-4 shrink-0" />
-            : <CheckCircle2 className="h-4 w-4 shrink-0" />}
-          <span>{saveMessage}</span>
-        </div>
-      )}
+
 
       {/* Form Modal */}
       {showForm && (

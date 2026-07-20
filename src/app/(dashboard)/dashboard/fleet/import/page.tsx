@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Download,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 type Step = 'upload' | 'mapping' | 'preview' | 'committing' | 'complete';
@@ -50,6 +51,7 @@ const VEHICLE_TEMPLATE_COLUMNS = [
 ] as const;
 
 export default function VehicleImportPage() {
+  const { toast } = useToast();
   const [step, setStep] = useState<Step>('upload');
   const [fileName, setFileName] = useState<string>('');
   const [rows, setRows] = useState<ImportRow[]>([]);
@@ -151,9 +153,10 @@ export default function VehicleImportPage() {
         throw new Error(err.error || 'Import failed');
       }
 
+      toast({ title: 'Import complete', description: `${totalValidRows} vehicle(s) imported successfully`, variant: 'success' });
       setStep('complete');
     } catch (err) {
-      console.error('Import failed:', err);
+      toast({ title: 'Import failed', description: err instanceof Error ? err.message : 'An error occurred during import', variant: 'error' });
       setStep('preview');
     } finally {
       setIsCommitting(false);

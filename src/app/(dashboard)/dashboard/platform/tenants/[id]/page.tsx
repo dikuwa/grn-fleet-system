@@ -13,6 +13,7 @@ import {
   Globe, Clock, Users, Palette, Mail, Phone, MapPin, Image as ImageIcon,
   AlertTriangle, ShieldAlert, ShieldCheck, Activity,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import { TenantActivityLog } from './TenantActivityLog';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
@@ -53,9 +54,9 @@ interface PageProps {
 
 export default function PlatformTenantDetailPage({ params }: PageProps) {
   const { id } = use(params);
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'general' | 'branding' | 'activity'>('general');
   const [isSaving, setIsSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   // Suspend/activate confirmation
   const [showSuspendDialog, setShowSuspendDialog] = useState(false);
@@ -100,7 +101,6 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
   const handleSave = async () => {
     if (!tenant) return;
     setIsSaving(true);
-    setSaveMessage(null);
 
     try {
       const res = await fetch(`/api/platform/tenants/${id}`, {
@@ -124,10 +124,9 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
       if (!res.ok) throw new Error(json.error || 'Failed to update');
 
       refetch();
-      setSaveMessage('Tenant updated successfully');
-      setTimeout(() => setSaveMessage(null), 3000);
+      toast({ title: 'Tenant updated', description: 'Settings saved successfully', variant: 'success' });
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to update');
+      toast({ title: 'Update failed', description: err instanceof Error ? err.message : 'Failed to update', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -184,14 +183,6 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
             <Clock className="inline h-3 w-3 mr-1" />
             Created {formatDate(tenant.createdAt)}
           </span>
-          {saveMessage && (
-            <span className={`flex items-center gap-1 text-xs ${
-              saveMessage.includes('successfully') ? 'text-status-success-text' : 'text-status-error-text'
-            }`}>
-              <CheckCircle2 className="h-3 w-3" />
-              {saveMessage}
-            </span>
-          )}
           <div className="flex items-center gap-2">
             <Button
               variant={editStatus === 'suspended' ? 'primary' : 'destructive'}
@@ -379,11 +370,10 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
                         });
                         if (!res.ok) throw new Error('Failed to update status');
                         setEditStatus(newStatus);
-                        setSaveMessage(`Tenant ${newStatus === 'active' ? 'activated' : 'suspended'} successfully`);
-                        setTimeout(() => setSaveMessage(null), 3000);
+                        toast({ title: `Tenant ${newStatus === 'active' ? 'activated' : 'suspended'}`, description: `Status changed to ${newStatus}`, variant: 'success' });
                         refetch();
                       } catch (err) {
-                        setSaveMessage(err instanceof Error ? err.message : 'Failed to update status');
+                        toast({ title: 'Status update failed', description: err instanceof Error ? err.message : 'Failed to update status', variant: 'error' });
                       } finally {
                         setIsToggling(false);
                         setShowSuspendDialog(false);

@@ -8,11 +8,12 @@ import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Save, Bell, Shield, Mail, Smartphone, Palette, Image as ImageIcon, CheckCircle2, AlertCircle, XCircle, Key, LogOut, Eye, EyeOff } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 export default function SettingsPage() {
   const { data: session } = useSession();
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'general' | 'notifications' | 'security' | 'branding'>('general');
-  const [saved, setSaved] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -92,9 +93,9 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save');
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      toast({ title: 'Settings saved', description: 'Your preferences have been updated', variant: 'success' });
     } catch (err) {
+      toast({ title: 'Failed to save', description: err instanceof Error ? err.message : 'Failed to save settings', variant: 'error' });
       setError(err instanceof Error ? err.message : 'Failed to save settings');
     }
   }, [orgName, contactEmail, contactPhone, address, timezone, primaryColor, accentColor, documentFooter, senderName, senderEmail, emailNotifs, inAppNotifs, quietStart, quietEnd, emergencyBypass]);
@@ -118,7 +119,7 @@ export default function SettingsPage() {
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Settings' }]} />
       <PageHeader title="Settings" description="Configure application preferences and tenant settings">
         <Button variant="primary" size="sm" onClick={handleSave}>
-          {saved ? <><CheckCircle2 className="h-4 w-4" /> Saved</> : <><Save className="h-4 w-4" /> Save Changes</>}
+          <Save className="h-4 w-4" /> Save Changes
         </Button>
       </PageHeader>
 
