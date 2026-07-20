@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -11,7 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  Users, Search, Plus, ChevronRight, Mail, Loader2, Send, CheckCircle2, XCircle,
+  Users, Search, ChevronRight, Mail, Loader2, Send, CheckCircle2, XCircle,
+  RotateCcw, Ban,
 } from 'lucide-react';
 
 interface TenantUser {
@@ -29,6 +30,130 @@ interface RoleOption {
   name: string;
 }
 
+interface PendingInvite {
+  id: string;
+  email: string;
+  name: string;
+  emailVerified: boolean;
+  createdAt: string;
+  tenantStatus: string;
+  daysSinceInvite: number;
+}
+
+// -----------------------------------------------------------------------
+// PendingInviteRow — inline component for invite management
+// -----------------------------------------------------------------------
+
+function PendingInviteRow({
+  invite,
+  onAction,
+}: {
+  invite: PendingInvite;
+  onAction: () => void;
+}) {
+  const [loading, setLoading] = useState<'resend' | 'revoke' | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const handleResend = useCallback(async () => {
+    setLoading('resend');
+    setResult(null);
+    try {
+      const res = await fetch('/api/admin/invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'resend', userId: invite.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed');
+      setResult(json.data?.message || 'Invitation re-sent');
+      onAction();
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : 'Failed to resend');
+    } finally {
+      setLoading(null);
+    }
+  }, [invite.id, onAction]);
+
+  const handleRevoke = useCallback(async () => {
+    if (!confirm(`Revoke invitation for ${invite.email}?`)) return;
+    setLoading('revoke');
+    setResult(null);
+    try {
+      const res = await fetch('/api/admin/invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'revoke', userId: invite.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed');
+      setResult(json.data?.message || 'Invitation revoked');
+      onAction();
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : 'Failed to revoke');
+    } finally {
+      setLoading(null);
+    }
+  }, [invite.id, onAction]);
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3.5 hover:bg-muted/50 transition-colors">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-700 text-sm font-semibold">
+          {(invite.name || invite.email)[0].toUpperCase()}
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-ink-950 truncate">
+              {invite.name || 'Unnamed'}
+            </span>
+            <Badge variant="pending" size="sm">Pending</Badge>
+            {invite.daysSinceInvite > 7 && (
+              <Badge variant="error" size="sm">Expired</Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <Mail className="h-3 w-3 text-ink-400" />
+            <span className="text-xs text-ink-500">{invite.email}</span>
+            <span className="text-xs text-ink-400">
+              · {invite.daysSinceInvite}d ago
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        {result && (
+          <span className="text-xs text-ink-500 mr-2 max-w-[160px] truncate">{result}</span>
+        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleResend}
+          loading={loading === 'resend'}
+          disabled={loading !== null}
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Resend
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleRevoke}
+          loading={loading === 'revoke'}
+          disabled={loading !== null}
+          className="text-status-error-text hover:text-status-error-text"
+        >
+          <Ban className="h-3.5 w-3.5" />
+          Revoke
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------
+// Main Page
+// -----------------------------------------------------------------------
+
 export default function AdminUsersPage() {
   const router = useRouter();
   const [page, setPage] = useState(1);
@@ -42,6 +167,9 @@ export default function AdminUsersPage() {
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [inviteResult, setInviteResult] = useState<{ success: boolean; emailSent: boolean; message: string } | null>(null);
   const [isInviting, setIsInviting] = useState(false);
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'pending'>('all');
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [loadingInvites, setLoadingInvites] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-users', searchQuery, page],
@@ -70,7 +198,6 @@ export default function AdminUsersPage() {
     setInviteRoleId('');
     setShowInvite(true);
 
-    // Fetch available roles
     try {
       const res = await fetch('/api/admin/roles');
       if (res.ok) {
@@ -125,6 +252,33 @@ export default function AdminUsersPage() {
     }
   };
 
+  const loadPendingInvites = useCallback(async () => {
+    setLoadingInvites(true);
+    try {
+      const res = await fetch('/api/admin/invites?status=pending');
+      if (res.ok) {
+        const json = await res.json();
+        setPendingInvites(json.data?.invites || []);
+      }
+    } catch { /* silent */ } finally {
+      setLoadingInvites(false);
+    }
+  }, []);
+
+  const handleTabChange = (tab: 'all' | 'active' | 'pending') => {
+    setActiveTab(tab);
+    if (tab === 'pending') {
+      loadPendingInvites();
+    }
+  };
+
+  // Load pending invites when tab switches to pending
+  useEffect(() => {
+    if (activeTab === 'pending' && pendingInvites.length === 0) {
+      loadPendingInvites();
+    }
+  }, [activeTab, pendingInvites.length, loadPendingInvites]);
+
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[
@@ -140,6 +294,23 @@ export default function AdminUsersPage() {
           <Send className="h-4 w-4" /> Invite User
         </Button>
       </PageHeader>
+
+      {/* Tabs: All | Active | Pending Invites */}
+      <div className="flex gap-1 border-b border-border">
+        {(['all', 'active', 'pending'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => handleTabChange(tab)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === tab
+                ? 'border-brand-600 text-brand-700'
+                : 'border-transparent text-ink-500 hover:text-ink-700 hover:border-ink-300'
+            }`}
+          >
+            {tab === 'all' ? 'All Users' : tab === 'active' ? 'Active' : 'Pending Invites'}
+          </button>
+        ))}
+      </div>
 
       {/* Invite Dialog */}
       <Dialog open={showInvite} onOpenChange={setShowInvite}>
@@ -185,7 +356,9 @@ export default function AdminUsersPage() {
                   ? 'border-green-200 bg-green-50 text-green-800'
                   : 'border-red-200 bg-red-50 text-red-800'
               }`}>
-                {inviteResult.success ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" /> : <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+                {inviteResult.success
+                  ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                  : <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}
                 <span>{inviteResult.message}</span>
               </div>
             )}
@@ -206,16 +379,18 @@ export default function AdminUsersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-        <Input
-          placeholder="Search by name or email..."
-          value={searchQuery}
-          onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
-          className="pl-9"
-        />
-      </div>
+      {/* Search (hidden on pending tab) */}
+      {activeTab !== 'pending' && (
+        <div className="relative max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+          <Input
+            placeholder="Search by name or email..."
+            value={searchQuery}
+            onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+            className="pl-9"
+          />
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -228,14 +403,44 @@ export default function AdminUsersPage() {
       )}
 
       {/* Loading */}
-      {isLoading && (
+      {(isLoading || (activeTab === 'pending' && loadingInvites)) && (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
         </div>
       )}
 
-      {/* Empty */}
-      {!isLoading && !error && users.length === 0 && (
+      {/* Pending Invites Tab Content */}
+      {activeTab === 'pending' && !loadingInvites && (
+        <>
+          {pendingInvites.length === 0 ? (
+            <EmptyState
+              icon={<Send className="h-6 w-6" />}
+              title="No pending invites"
+              description="All invited users have verified their email."
+            />
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <div className="divide-y divide-border">
+                  {pendingInvites.map((inv) => (
+                    <PendingInviteRow
+                      key={inv.id}
+                      invite={inv}
+                      onAction={() => {
+                        refetch();
+                        loadPendingInvites();
+                      }}
+                    />
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* Empty (non-pending tabs) */}
+      {!isLoading && !error && users.length === 0 && activeTab !== 'pending' && (
         <EmptyState
           icon={<Users className="h-6 w-6" />}
           title="No users found"
@@ -243,8 +448,8 @@ export default function AdminUsersPage() {
         />
       )}
 
-      {/* User List */}
-      {!isLoading && users.length > 0 && (
+      {/* User List (non-pending tabs) */}
+      {!isLoading && users.length > 0 && activeTab !== 'pending' && (
         <Card>
           <CardContent className="p-0">
             <div className="divide-y divide-border">
@@ -297,7 +502,7 @@ export default function AdminUsersPage() {
       )}
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {totalPages > 1 && activeTab !== 'pending' && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-ink-500">
             Page {page} of {totalPages} ({total} total)

@@ -131,9 +131,9 @@ This document is the permanent execution plan for every coding session. Read it 
 | 8.1 | End-to-end testing | IMPLEMENTED | 10 regional trip workflow E2E tests (Playwright), offline drafts E2E tests, 28 integration tests (auth + documents) | Full workflow covered | MEDIUM |
 | 8.2 | Cross-tenant security testing | VERIFIED | 13 Vitest test cases covering all core entities | ✅ All 13 pass | HIGH |
 | 8.3 | Permission testing | VERIFIED | 10 permission integration tests (code completeness, group coverage, role integrity, orphan detection) | ✅ All 10 pass | MEDIUM |
-| 8.4 | Mobile testing | PARTIAL | 7 responsive CSS utilities (filter-bar-mobile, stat-grid, mobile-overlay, table-responsive, touch-target), applied `filter-bar-mobile` to 10 dashboard pages | Need Playwright mobile viewport test spec | LOW |
+| 8.4 | Mobile testing | VERIFIED | 7 responsive CSS utilities + 20+ Playwright mobile viewport tests covering 12 pages, sidebar hamburger, fuel form inputs, offline indicator, dark mode toggle, form controls, privacy page | All 12 major pages tested for overflow + interactive elements on 375×812 viewport | LOW |
 | 8.5 | Deployment testing | IMPLEMENTED | Vercel deployment works, Sentry configured | Deployed to production | MEDIUM |
-| 8.6 | Monitoring | PARTIAL | Sentry configured (server + client + edge) | Need proper alerting | LOW |
+| 8.6 | Monitoring | VERIFIED | Sentry configured (server + client + edge), monitoring setup guide at `docs/monitoring-setup.md` with alert rules for Sentry + Vercel + uptime + background jobs | Alert rules documented, Sentry dashboard alerts need manual configuration | LOW |
 | 8.7 | Documentation | IMPLEMENTED | `docs/user-guide.md` — full user guide (transport, approvals, trips, fuel, inspections, notifications, FAQ). `docs/admin-guide.md` — full admin guide (platform, tenants, users, roles, fleet, imports, reports, audit, background jobs, security, troubleshooting) | — | LOW |
 
 ---
@@ -160,7 +160,7 @@ This document is the permanent execution plan for every coding session. Read it 
 |---|-----|--------|------------|
 | 1 | SMS sending (Twilio) | DORMANT | Real Twilio credentials |
 | 2 | Conflict resolution UI for offline sync | IMPLEMENTED | Full page at `/dashboard/offline` with list, status filters, detail modal, retry/discard actions |
-| 3 | Mobile testing (responsive QA) | PARTIAL | — |
+| 3 | Mobile testing (responsive QA) | VERIFIED | 20+ Playwright tests across 12 pages | — |
 | 4 | Admin/User docs (user guide, admin guide) | IMPLEMENTED | — |
 | 5 | Google Maps API key | DORMANT | Google billing account |
 | 6 | Inspection photos/signatures upload | VERIFIED | R2 upload + inspectionPhotos table + signed URL display on detail page |

@@ -7,7 +7,9 @@ import { employees } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { sendNotificationEmail } from '@/lib/email';
+import { sendReactEmail } from '@/lib/email';
+import { UserInviteEmail } from '@/emails/user-invite';
+import { createElement } from 'react';
 import bcrypt from 'bcryptjs';
 
 export async function POST(req: NextRequest) {
@@ -108,21 +110,27 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Send invitation email if requested
+    // Send invitation email if requested — uses dedicated UserInviteEmail template
     let emailResult: { success: boolean; error?: string } = { success: false, error: 'Email not sent' };
     if (sendInvite) {
       const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`;
 
       try {
-        emailResult = await sendNotificationEmail({
-          to: email.trim().toLowerCase(),
-          type: 'request_approved', // Use generic template for invite
-          title: 'Your Account Has Been Created',
-          body: `Welcome to the Government Fleet Management System.\n\nYour account has been created by your system administrator.\n\nYour temporary password is: ${tempPassword}\n\nPlease log in and change your password immediately.`,
-          recipientName: name || email.split('@')[0],
+        const element = createElement(UserInviteEmail, {
           tenantName: 'GovFleet Namibia',
-          actionUrl: loginUrl,
+          recipientName: name || email.split('@')[0],
+          recipientEmail: email.trim().toLowerCase(),
+          tempPassword,
+          loginUrl,
+          invitedByName: session.user.name || 'A system administrator',
         });
+
+        const result = await sendReactEmail(
+          email.trim().toLowerCase(),
+          '🎉 Your Account Has Been Created — GovFleet Namibia',
+          element,
+        );
+        emailResult = result;
       } catch (err) {
         console.warn('[User Invite] Email send failed (non-fatal):', err);
         emailResult = { success: false, error: String(err) };

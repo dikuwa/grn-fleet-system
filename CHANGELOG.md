@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-07-20 — Session 29: User Invite Flow — branded email, invite management, resend/revoke
+
+### Added
+
+- **User Invite Email template** (`src/emails/user-invite.tsx`) — Branded invite email using the NotificationEmail base template with recipient name, email, temp password, login URL, and inviter name.
+- **Invite Management API** (`GET/POST /api/admin/invites`) — Lists pending invites (tenant-scoped JOIN query avoiding cross-tenant leaks), supports `resend` (generates new password, updates hash, re-sends email via `UserInviteEmail` template) and `revoke` (suspends tenant membership) actions.
+- **Invite Route Updated** (`src/app/api/users/invite/route.ts`) — Now uses `sendReactEmail` with the dedicated `UserInviteEmail` component instead of generic `request_approved` template.
+- **Admin Users Page Tabs** (`/dashboard/admin/users`) — New tab navigation: All Users | Active | Pending Invites. Pending tab loads from `/api/admin/invites` showing invite details, days since invite, and Resend/Revoke actions with loading states and result feedback.
+- **`PendingInviteRow` component** — Inline component with Resend (generates new temp password + re-sends email) and Revoke (suspends membership) actions, with per-action loading indicators.
+
+### Fixed
+
+- **Invite route** — Fixed `session.userName` and `session.tenantName` TS errors (properties don't exist on `AuthSession`; uses `session.user.name` and hardcoded fallback).
+- **Admin invites route** — Fixed `updatedAt` not existing on `tenantMemberships` update type. Removed dead `isNull` import. Switched from un-scoped user query + in-memory loop to proper tenant-scoped JOIN.
+- **Email template registry** — Removed dead `user_invite` entry (invite route uses `sendReactEmail` directly).
+
 ## 2026-07-20 — Session 28: Single-draft retry sync, conflict resolution E2E tests, sync engine refactor
 
 ### Added
