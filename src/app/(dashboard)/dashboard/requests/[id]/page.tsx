@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { CancelRequestButton } from './CancelRequestButton';
+import { RouteMapWrapper } from './route-map-wrapper';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -390,6 +391,21 @@ export default async function RequestDetailPage({ params }: PageProps) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
+            {/* Route Map Visualization */}
+            <div className="px-5 pt-4 pb-3">
+              <RouteMapWrapper routes={routes.map((r) => ({
+                id: r.id,
+                originName: r.originName,
+                destinationName: r.destinationName,
+                originCoordinates: r.originCoordinates as { lat: number; lng: number } | null,
+                destinationCoordinates: r.destinationCoordinates as { lat: number; lng: number } | null,
+                routePolyline: r.routePolyline,
+                mappedDistanceKm: r.mappedDistanceKm,
+                mappedDurationMinutes: r.mappedDurationMinutes,
+                totalKilometres: r.totalKilometres,
+              }))} />
+            </div>
+            {/* Route Details */}
             <div className="divide-y divide-border">
               {routes.map((r) => (
                 <div key={r.id} className="px-5 py-4">

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-07-20 — Session 36: Route map visualization on request detail page
+
+### Added
+
+- **Route map visualization** (`src/components/map/request-route-map.tsx`) — Leaflet-based interactive map showing route origins and destinations from transport requests. Features:
+  - Origin/destination circle markers with colored popups showing location name, distance, and duration
+  - Encoded polyline decoding and rendering for Google Maps route traces
+  - Dashed fallback lines connecting origin→destination when no polyline is available
+  - Auto-fits map bounds to show all routes with Namibia fallback
+- **Client wrapper** (`route-map-wrapper.tsx`) — Thin `'use client'` wrapper for dynamic import with `ssr: false` (required for Next.js 16 Turbopack compatibility)
+- **Wired into request detail page** — Route map displayed above route details in the Routes section when routes exist
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **Tests**: 72/72 passing
+- **Build**: Production build passes
+
 ## 2026-07-20 — Session 35: Toast wiring complete — final 8 mutation pages + E2E timeout fix
 
 ### Changed
