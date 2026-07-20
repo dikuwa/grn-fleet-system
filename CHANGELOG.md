@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-07-20 — Session 21: Dark mode E2E tests, active trips smoke tests, production deploy
+
+### Added
+
+- **Dark Mode E2E Tests** (`src/e2e/dark-mode.spec.ts`) — 7 test cases covering dark mode toggle on landing, contact, privacy, login, and dashboard pages. Verifies `.dark` CSS class on `<html>` (not just localStorage). Tests theme persistence across public page navigation. Hermetic per-test state via `addInitScript`.
+- **Active Trips & UI Smoke Tests** (`src/e2e/active-trips-smoke.spec.ts`) — 3 active trip tracking tests (status stats, duration rendering, detail navigation) + 11 dashboard UI smoke tests covering inspections, expiry alerts, compliance, defects, driver mobile, driver self-service, audit log, and notifications pages.
+
+### Fixed
+
+- **Active trips locator** — Narrowed from `a[href*="/dashboard/trips/"]` to exclude the "All Trips" header button via `:not(:has-text("All Trips"))`.
+- **Dark mode assertions** — Upgraded from localStorage-only checks to `await expect(page.locator('html')).toHaveClass(/dark/)` for stronger test signal.
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+- **Code Review**: All E2E fixes confirmed correct, hermetic beforeEach pattern approved ✅
+
+### Infrastructure
+
+- **Inngest env vars** — `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` verified present in Vercel production environment. 6 background job functions ready: step reminders, escalations, approval completes, daily vehicle licence expiry alerts, daily driver licence expiry alerts, weekly maintenance reminders. All tenant-isolated with notification creation.
+- **Latest production deploy**: Commits `e6cfe44`, `e001ea6`, `b98b500` deployed to Vercel production. All deployments showing "Ready" status.
+
+---
+
 ## 2026-07-20 — Session 20: Dark mode, real-time trip duration, PDF export E2E tests
 
 ### Added
