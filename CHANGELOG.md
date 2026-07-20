@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-07-20 — Session 28: Single-draft retry sync, conflict resolution E2E tests, sync engine refactor
+
+### Added
+
+- **`syncSingleDraft(draftId)` function** (`src/lib/offline-sync.ts`) — New function that syncs a single offline draft by ID using direct IndexedDB primary-key lookup via `getDraft(draftId)`. Returns `{ synced, error?, entityId? }`. `syncPendingDrafts` refactored to use `syncSingleDraft` in a loop for consistent code paths.
+- **Individual retry buttons** — Both row-level retry buttons and the detail modal retry button now call `handleRetrySingle(draft.id)` which only syncs that specific draft, rather than syncing all pending/failed drafts.
+- **Conflict Resolution E2E Test** (`src/e2e/offline-conflict-resolution.spec.ts`) — 7 test cases:
+  - Page loads with summary cards and empty state
+  - Status filter tabs clickable (All, Pending Sync, Failed, Conflict, Synced)
+  - Creates offline draft via fuel form → verifies it appears on offline page
+  - Discard button removes a draft from the list
+  - View Detail modal shows draft type, status, and form data JSON
+  - Breadcrumbs and header correct
+  - Sync All button exists (disabled state when no unsynced drafts)
+
+### Fixed
+
+- **`handleViewDetail` error handling** — Now wrapped in try/catch to prevent unhandled promise rejection if Dexie throws during draft detail fetch.
+- **`syncSingleDraft` efficiency** — Changed from `listDrafts()` + `.find()` (loads all drafts) to `getDraft(draftId)` (direct IndexedDB primary key lookup).
+
+### Status Updates
+
+| Module | Old Status | New Status |
+|--------|-----------|------------|
+| 1.8 Secure file access | PARTIAL | VERIFIED |
+
+---
+
 ## 2026-07-20 — Session 27: Inspection photo wiring (signed URLs), conflict resolution UI, sidebar link
 
 ### Added

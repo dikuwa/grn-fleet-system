@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
-import { syncPendingDrafts } from '@/lib/offline-sync';
+import { syncPendingDrafts, syncSingleDraft } from '@/lib/offline-sync';
 import {
   listDrafts,
   deleteDraft,
@@ -90,9 +90,19 @@ export default function OfflinePage() {
       const result = await syncPendingDrafts();
       await loadDrafts();
       if (result.synced > 0 || result.failed > 0) {
-        // Refresh count in sidebar via event
         window.dispatchEvent(new CustomEvent('offline-sync-complete', { detail: result }));
       }
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleRetrySingle = async (draftId: string) => {
+    setSyncing(true);
+    try {
+      await syncSingleDraft(draftId);
+      await loadDrafts();
+      window.dispatchEvent(new CustomEvent('offline-sync-complete', { detail: { synced: 1, failed: 0, errors: [] } }));
     } finally {
       setSyncing(false);
     }
@@ -104,8 +114,12 @@ export default function OfflinePage() {
   };
 
   const handleViewDetail = async (id: string) => {
-    const draft = await getDraft(id);
-    setSelectedDraft(draft ?? null);
+    try {
+      const draft = await getDraft(id);
+      setSelectedDraft(draft ?? null);
+    } catch (err) {
+      console.error('[Offline] Failed to load draft detail:', err);
+    }
   };
 
   const filteredDrafts = statusFilter === 'all'
@@ -295,7 +309,7 @@ export default function OfflinePage() {
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={handleSyncAll}
+                          onClick={() => handleRetrySingle(draft.id)}
                           disabled={syncing}
                         >
                           <RotateCcw className="h-3.5 w-3.5" />
@@ -386,7 +400,7 @@ export default function OfflinePage() {
                   Close
                 </Button>
                 {(selectedDraft.syncStatus === 'failed' || selectedDraft.syncStatus === 'conflict') && (
-                  <Button variant="primary" size="sm" onClick={handleSyncAll} loading={syncing} disabled={syncing}>
+                  <Button variant="primary" size="sm" onClick={() => handleRetrySingle(selectedDraft.id)} loading={syncing} disabled={syncing}>
                     <RotateCcw className="h-3.5 w-3.5" />
                     Retry Sync
                   </Button>

@@ -8,7 +8,7 @@
  * the `useOfflineSync` hook in a component that stays mounted.
  */
 
-import { listDrafts, markDraftSynced, markDraftFailed, removeSyncedDrafts } from '@/lib/offline-drafts';
+import { listDrafts, getDraft, markDraftSynced, markDraftFailed, removeSyncedDrafts } from '@/lib/offline-drafts';
 import type { OfflineDraft } from '@/lib/offline-drafts';
 import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
@@ -127,6 +127,48 @@ type SyncResult = {
 };
 
 /**
+ * Sync a single draft by ID.
+ * Returns the sync result for that one draft, or null if not found.
+ */
+export async function syncSingleDraft(
+  draftId: string,
+): Promise<{ synced: boolean; error?: string; entityId?: string | null } | null> {
+  const draft = await getDraft(draftId);
+  if (!draft) return null;
+
+  const endpoint = getEndpoint(draft);
+  if (!endpoint) {
+    await markDraftFailed(draft.id, 'Unknown draft type');
+    return { synced: false, error: 'Unknown draft type' };
+  }
+
+  try {
+    const payload = endpoint.transform(draft);
+    const res = await fetch(endpoint.url, {
+      method: endpoint.method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      const errorMsg = err.error || `HTTP ${res.status}`;
+      await markDraftFailed(draft.id, errorMsg);
+      return { synced: false, error: errorMsg };
+    }
+
+    const responseData = await res.json();
+    const entityId = responseData?.data?.id || responseData?.id || null;
+    await markDraftSynced(draft.id, entityId);
+    return { synced: true, entityId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Network error';
+    await markDraftFailed(draft.id, message);
+    return { synced: false, error: message };
+  }
+}
+
+/**
  * Attempt to sync all pending drafts.
  * Returns counts of synced/failed drafts.
  */
@@ -140,38 +182,21 @@ export async function syncPendingDrafts(): Promise<SyncResult> {
   if (toSync.length === 0) return result;
 
   for (const draft of toSync) {
-    const endpoint = getEndpoint(draft);
-    if (!endpoint) {
-      await markDraftFailed(draft.id, 'Unknown draft type');
+    const singleResult = await syncSingleDraft(draft.id);
+    if (!singleResult) {
+      await markDraftFailed(draft.id, 'Draft not found');
       result.failed++;
       continue;
     }
-
-    try {
-      const payload = endpoint.transform(draft);
-      const res = await fetch(endpoint.url, {
-        method: endpoint.method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        await markDraftFailed(draft.id, err.error || `HTTP ${res.status}`);
-        result.failed++;
-        result.errors.push({ id: draft.id, draftType: draft.draftType, error: err.error || `HTTP ${res.status}` });
-        continue;
-      }
-
-      const responseData = await res.json();
-      const entityId = responseData?.data?.id || responseData?.id || null;
-      await markDraftSynced(draft.id, entityId);
+    if (singleResult.synced) {
       result.synced++;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Network error';
-      await markDraftFailed(draft.id, message);
+    } else {
       result.failed++;
-      result.errors.push({ id: draft.id, draftType: draft.draftType, error: message });
+      result.errors.push({
+        id: draft.id,
+        draftType: draft.draftType,
+        error: singleResult.error || 'Unknown error',
+      });
     }
   }
 

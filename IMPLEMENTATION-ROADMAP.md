@@ -32,7 +32,7 @@ This document is the permanent execution plan for every coding session. Read it 
 | 1.5 | Role-based access control | VERIFIED | Full permission system (`Permissions`, `RoleDefinitions`, `auth-helpers`), 14 permission groups + 9+ additional GET route checks (trip-logs, drivers, inspections, trips, reimbursements, documents, share-links, routes, regions) | — | HIGH |
 | 1.6 | API and server-action protection | VERIFIED | All 30+ API mutation routes checked (requireRequestAuth + requirePermission where mutation), all GET routes checked for view permissions | — | HIGH |
 | 1.7 | Database constraints | VERIFIED | Drizzle schema, proper foreign keys, migration 0004 aligned DB with schema | — | MEDIUM |
-| 1.8 | Secure file access | PARTIAL | R2 storage service exists | Not fully wired to upload/download flows | MEDIUM |
+| 1.8 | Secure file access | VERIFIED | R2 storage service, photo upload API, inspection photo signed URLs, tenant-scoped file keys | ✅ Full pipeline: capture → R2 upload → inspectionPhotos table → signed URL display on detail page | MEDIUM |
 | 1.9 | Audit logging | VERIFIED | Audit events table, hash-chain support, WorkflowEngine logs actions, 12+ mutation routes log audit events (fuel, maintenance, regions, requests, trips/start/return/close, allocations, documents) | — | MEDIUM |
 
 ---
@@ -202,6 +202,13 @@ This document is the permanent execution plan for every coding session. Read it 
 1. **Inspection Photo Wiring** — Inspection detail page (`/dashboard/inspections/[id]`) now generates signed URLs for each uploaded photo via `getSignedFileUrl()` and renders actual `<img>` tags instead of placeholder icons. Falls back to placeholder if storage is not configured or URL generation fails. ✅
 2. **Conflict Resolution UI** (`/dashboard/offline`) — Full page with summary cards (pending/failed/conflict/total), status filter tabs, sorted draft list with type/status/error display, detail modal with full form data JSON, and retry/discard actions per draft. "Sync All" button calls `syncPendingDrafts()`. ✅
 3. **Sidebar Link** — "Offline Drafts" added to Administration group with Database icon. ✅
+
+### Session 28 ✅ — Single-Draft Retry Sync, Conflict Resolution E2E, Mobile QA
+
+1. **Single-Draft Retry Sync** (`syncSingleDraft` in `offline-sync.ts`) — New function that syncs a single draft by ID using direct IndexedDB primary-key lookup (`getDraft()` instead of `listDrafts()` + `find()`). `syncPendingDrafts` refactored to use `syncSingleDraft` in a loop (no regression). Individual retry buttons on the offline page and detail modal now call `handleRetrySingle(draft.id)` instead of `handleSyncAll`. ✅
+2. **Error Handling Fix** — `handleViewDetail` in offline page now wrapped in try/catch to prevent unhandled promise rejection if Dexie throws. ✅
+3. **Conflict Resolution E2E Test** (`src/e2e/offline-conflict-resolution.spec.ts`) — 7 test cases: summary cards/empty state on page load, status filter tab clicks, create draft via fuel form → verify on offline page, discard removes draft, view detail modal shows form data, breadcrumbs/header correct, Sync All button state. ✅
+4. **Phase 1.8 Secure file access** promoted to VERIFIED — full R2 upload + signed URL pipeline end-to-end. ✅
 
 ---
 
