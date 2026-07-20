@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-07-20 — Session 30: Programme of Activities — standalone management page, API, sidebar link
+
+### Added
+
+- **Programme Activities API** (`GET/POST /api/programmes`) — GET lists all programme activities with transport request details (tenant-scoped JOIN, search, status filter, pagination). POST creates a draft transport request and linked activity record with auto-generated POA reference number.
+- **Programmes Management Page** (`/dashboard/programmes`) — Full management UI with:
+  - Responsive card grid (1→2→3 columns)
+  - CreateProgrammeDialog with title, description, venue, date range, est. km fields
+  - Search with query param
+  - Programme cards with title, reference, status badge, date range, venue, km, "View Request" link
+  - Pagination
+  - Error, loading, empty states
+- **Sidebar Link** — "Programmes" added under Requests & Approvals group with ClipboardList icon.
+
+### Fixed
+
+- **TS error in programmes route** — `or()` and `and()` from Drizzle return `SQL | undefined`; added `!` non-null assertions since conditions always includes the tenant filter.
+- **Missing `</Link>` closing tag** — Programme cards wrapped in `<Link>` but closed with `</Card>`; fixed to `</Link>`.
+- **Dead schema code** — Removed unused `programmeActivities` table from `src/db/schema/requests.ts` (migration not applied, feature uses existing `requestActivities` table).
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **Tests**: 72/72 passing
+- **Code Review**: All changes approved
+
 ## 2026-07-20 — Session 29: User Invite Flow — branded email, invite management, resend/revoke
 
 ### Added

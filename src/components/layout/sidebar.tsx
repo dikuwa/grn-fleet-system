@@ -65,6 +65,7 @@ const navGroups: NavGroup[] = [
     label: 'Requests & Approvals',
     items: [
       { label: 'My Requests', href: '/dashboard/requests', icon: FileText },
+      { label: 'Programmes', href: '/dashboard/programmes', icon: ClipboardList },
       { label: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck },
     ],
   },

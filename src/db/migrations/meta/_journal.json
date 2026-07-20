@@ -57,6 +57,13 @@
       "when": 1784498500000,
       "tag": "0007_cleanup_regions",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784552700000,
+      "tag": "0008_noisy_wind",
+      "breakpoints": true
     }
   ]
 }

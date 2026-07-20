@@ -48,7 +48,7 @@ export const requestRevisions = pgTable('request_revisions', {
 });
 
 /**
- * Request activities (programme of activities)
+ * Request activities (programme of activities, linked to a request)
  */
 export const requestActivities = pgTable('request_activities', {
   id: uuid('id').primaryKey().defaultRandom(),
