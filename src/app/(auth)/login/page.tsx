@@ -3,11 +3,12 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, LogIn, AlertCircle, Sun, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { APP_NAME } from '@/lib/constants';
 import { signIn } from '@/lib/auth-client';
+import { useTheme } from '@/lib/theme-provider';
 
 /** Inner form component that calls useSearchParams */
 function LoginForm() {
@@ -19,6 +20,7 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const { theme, toggleTheme } = useTheme();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +49,18 @@ function LoginForm() {
 
   return (
     <div className="space-y-6">
-      <div className="text-center">
+      <div className="relative text-center">
+        <button
+          onClick={toggleTheme}
+          className="absolute -right-1 -top-1 flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-500 hover:bg-muted transition-colors"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? (
+            <Sun className="h-[18px] w-[18px] theme-icon-enter" />
+          ) : (
+            <Moon className="h-[18px] w-[18px] theme-icon-enter" key={theme} />
+          )}
+        </button>
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-800 text-lg font-bold text-white">
           G
         </div>

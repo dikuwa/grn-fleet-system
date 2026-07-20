@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { APP_NAME } from '@/lib/constants';
 import { Mail, Phone, MapPin, ArrowLeft } from 'lucide-react';
+import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 
 export default function ContactPage() {
   const handleSubmit = (e: React.FormEvent) => {
@@ -12,14 +13,13 @@ export default function ContactPage() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-50 border-b border-border bg-white/95 backdrop-blur-sm">
+      <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur-sm">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
           <Link href="/" className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-white text-sm font-bold">G</div>
             <span className="text-sm font-semibold text-ink-950">{APP_NAME}</span>
           </Link>
-          <Link href="/" className="flex items-center gap-1 text-sm text-ink-500 hover:text-ink-950 transition-colors">
-            <ArrowLeft className="h-4 w-4" /> Back to Home          </Link>
+          <PublicThemeToggle />
           <div className="flex items-center gap-4">
             <Link href="/about" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">About</Link>
             <Link href="/services" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">Services</Link>

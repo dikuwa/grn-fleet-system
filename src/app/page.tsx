@@ -1,12 +1,13 @@
 import Link from 'next/link';
 import { ArrowRight, Shield, Truck, FileText, BarChart3 } from 'lucide-react';
 import { APP_NAME } from '@/lib/constants';
+import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 
 export default function HomePage() {
   return (
     <div className="flex min-h-screen flex-col">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-border bg-white/95 backdrop-blur-sm">
+      <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur-sm">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-white text-sm font-bold">
@@ -26,6 +27,7 @@ export default function HomePage() {
             <Link href="#pilot" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">
               Pilot
             </Link>
+            <PublicThemeToggle />
             <Link
               href="/login"
               className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 transition-colors"
