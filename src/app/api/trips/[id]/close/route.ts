@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips, tripClosures, fuelTransactions } from '@/db/schema/trips';
 import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
+import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
@@ -102,6 +103,19 @@ export async function POST(
       changedByUserId: userId,
       referenceEntityType: 'trip',
       referenceEntityId: id,
+    });
+
+    // Audit log
+    await db.insert(auditEvents).values({
+      tenantId,
+      tenantSequence: 0,
+      eventType: 'trip_closed',
+      actorUserId: userId,
+      action: 'close',
+      entityType: 'trip',
+      entityId: id,
+      summary: `Trip closed: ${totalFuelLitres}L fuel used, ${totalFuelCost} total cost`,
+      sourceChannel: 'web',
     });
 
     // Trigger document generation (trip completion + fuel summary)

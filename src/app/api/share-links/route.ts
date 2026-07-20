@@ -3,14 +3,18 @@ import { getDb } from '@/db';
 import { shareLinks, generatedDocuments } from '@/db/schema/documents';
 import { eq, and } from 'drizzle-orm';
 import { generateShareToken } from '@/lib/share-token';
-import { getServerSessionFromRequest } from '@/lib/session';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     const userId = session.user.id;
 
     const body = await request.json();
@@ -80,10 +84,12 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getServerSessionFromRequest(request);
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const { searchParams } = new URL(request.url);
     const linkId = searchParams.get('linkId');

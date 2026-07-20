@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { generateDocumentPdf } from '@/lib/pdf/generate';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
@@ -21,6 +22,9 @@ export async function GET(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.FILE_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     // Verify the document exists and belongs to this tenant
     const db = getDb();

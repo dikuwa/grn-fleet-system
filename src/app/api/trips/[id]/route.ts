@@ -11,7 +11,8 @@ import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 export async function GET(
   _req: NextRequest,
@@ -22,6 +23,9 @@ export async function GET(
     const auth = await requireRequestAuth(_req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.TRIP_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
 

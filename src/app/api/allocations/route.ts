@@ -3,6 +3,7 @@ import { getDb } from '@/db';
 import { vehicleAllocations, trips } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
+import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
@@ -142,6 +143,19 @@ export async function POST(req: NextRequest) {
 
     // Trigger document generation (trip authority)
     const doc = await onTripIssued(allocation.id, tenantId, userId);
+
+    // Audit log
+    await db.insert(auditEvents).values({
+      tenantId,
+      tenantSequence: 0,
+      eventType: 'allocation_created',
+      actorUserId: userId,
+      action: 'create',
+      entityType: 'allocation',
+      entityId: allocation.id,
+      summary: `Allocation created: request ${resolvedRequestId?.slice(0, 8)} → vehicle ${resolvedVehicleId?.slice(0, 8)}`,
+      sourceChannel: 'web',
+    });
 
     return NextResponse.json({ allocation, trip, document: doc, recommendation });
   } catch (error) {

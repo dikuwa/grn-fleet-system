@@ -3,7 +3,8 @@ import { getDb } from '@/db';
 import { vehicleInspections, inspectionItemResults, inspectionTemplateItems, inspectionPhotos } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 
 export async function GET(
@@ -15,6 +16,9 @@ export async function GET(
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.INSPECTION_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
 

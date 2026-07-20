@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips } from '@/db/schema/trips';
+import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq } from 'drizzle-orm';
@@ -51,6 +52,19 @@ export async function POST(
       })
       .where(eq(trips.id, id))
       .returning();
+
+    // Audit log
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: 0,
+      eventType: 'trip_returned',
+      actorUserId: session.user.id,
+      action: 'return',
+      entityType: 'trip',
+      entityId: id,
+      summary: `Trip returned: status changed to return_inspection`,
+      sourceChannel: 'web',
+    });
 
     return NextResponse.json({ trip: updatedTrip });
   } catch (error) {

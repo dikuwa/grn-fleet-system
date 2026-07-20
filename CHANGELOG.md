@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-07-20 — Session 25: RBAC permission enforcement, audit logging expansion, email templates, notification delivery E2E
+
+### Added
+
+- **Permission checks on 10 API routes** (Phase 1.5 RBAC enforcement):
+  - `regions/route.ts` — `TENANT_MANAGE` on POST/PATCH/DELETE
+  - `inspections/[id]/route.ts` — `INSPECTION_VIEW` on GET
+  - `reimbursements/[id]/route.ts` — `FUEL_VIEW` on GET
+  - `trips/[id]/route.ts` — `TRIP_VIEW` on GET
+  - `drivers/route.ts` — `STAFF_VIEW` on GET
+  - `share-links/route.ts` — `FILE_UPLOAD` on POST/DELETE (also fixed DELETE to use `requireRequestAuth`)
+  - `documents/[id]/action/route.ts` — `FILE_UPLOAD` on POST
+  - `documents/[id]/pdf/route.ts` — `FILE_VIEW` on GET
+  - `routes/calculate/route.ts` — `REQUEST_VIEW` on POST
+  - `trip-logs/route.ts` — `TRIP_VIEW` on GET (GET handler was missing any permission check)
+- **Audit logging on 5 mutation routes** (Phase 1.9 expansion):
+  - `trips/[id]/close/route.ts` — `trip_closed` event with fuel summary
+  - `trips/[id]/start/route.ts` — `trip_started` event with vehicle reference
+  - `trips/[id]/return/route.ts` — `trip_returned` event
+  - `allocations/route.ts` — `allocation_created` event with request→vehicle mapping
+  - `documents/[id]/action/route.ts` — `document_issued`/`document_superseded` events
+- **Email templates for audit events** (`src/emails/audit-notification.tsx`):
+  - Reusable template extending `NotificationEmail` with entity type badge and summary
+  - 11 new template types registered in pipeline: fuel_created, maintenance_created, region_created/updated/deleted, trip_started/returned/closed, allocation_created, document_issued/superseded
+- **Notification delivery E2E test** (`src/e2e/notification-delivery.spec.ts`):
+  - 5 test cases: fuel transaction → notification creation, delivery record properties, Mark All Read via UI, type filtering returns correct types, unread count endpoint returns valid data
+
+### Fixed
+
+- **share-links/route.ts** — `DELETE` handler was using `getServerSessionFromRequest()` directly instead of the standard `requireRequestAuth()` pattern; now consistent with all other routes
+- **Dead imports** — Removed unused `getServerSessionFromRequest` from share-links route after refactoring
+
+### Status Updates
+
+| Module | Old Status | New Status |
+|--------|-----------|------------|
+| 1.5 RBAC | IMPLEMENTED | VERIFIED (all API routes checked) |
+| 1.6 API protection | IMPLEMENTED | VERIFIED (all 30+ mutation routes protected) |
+| 1.9 Audit logging | IMPLEMENTED | VERIFIED (12+ mutation routes logged) |
+| 5.2 Email | IMPLEMENTED | VERIFIED (11 new audit event templates) |
+
 ## 2026-07-20 — Session 24: E2E audit trail test, email notifications for audit events, mobile test expansion
 
 ### Added

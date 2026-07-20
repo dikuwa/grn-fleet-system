@@ -8,13 +8,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, departments, offices, driverProfiles, driverLicences } from '@/db/schema/people';
 import { eq, and, or, ilike, asc } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.STAFF_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const { searchParams } = new URL(request.url);
     const q = searchParams.get('q')?.trim() || '';

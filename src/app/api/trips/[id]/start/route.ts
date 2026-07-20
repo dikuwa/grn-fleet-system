@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips } from '@/db/schema/trips';
 import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
+import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
@@ -76,6 +77,19 @@ export async function POST(
         console.warn('[trips/start] Document generation failed:', err);
       });
     }
+
+    // Audit log
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: 0,
+      eventType: 'trip_started',
+      actorUserId: session.user.id,
+      action: 'start',
+      entityType: 'trip',
+      entityId: id,
+      summary: `Trip started: vehicle ${trip.vehicleId?.slice(0, 8) || 'unknown'}`,
+      sourceChannel: 'web',
+    });
 
     return NextResponse.json({ trip: updatedTrip });
   } catch (error) {

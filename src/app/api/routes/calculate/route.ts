@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { calculateRoute, calculateMultiRoute, isRouteCalculatorConfigured } from '@/lib/route-calculator';
 import { getDb } from '@/db';
 import { requestRoutes, transportRequests } from '@/db/schema/requests';
@@ -22,6 +23,9 @@ export async function POST(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.REQUEST_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     // Check if route calculator is configured
     if (!isRouteCalculatorConfigured()) {

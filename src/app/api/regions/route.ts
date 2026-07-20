@@ -3,7 +3,8 @@ import { getDb } from '@/db';
 import { regions } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, like, or, type SQL } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 /**
  * GET /api/regions
@@ -50,6 +51,9 @@ export async function POST(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
     const body = await req.json();
@@ -144,6 +148,9 @@ export async function PATCH(req: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     const db = getDb();
     const body = await req.json();
 
@@ -225,6 +232,9 @@ export async function DELETE(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
     const id = new URL(req.url).searchParams.get('id');

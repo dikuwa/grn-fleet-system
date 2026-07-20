@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
+import { auditEvents } from '@/db/schema/audit';
 import { eq } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 export async function POST(
   request: NextRequest,
@@ -11,6 +13,10 @@ export async function POST(
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
+    const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
     const body = await request.json();
@@ -52,6 +58,19 @@ export async function POST(
         .where(eq(generatedDocuments.id, id))
         .returning();
 
+      // Audit log
+      await db.insert(auditEvents).values({
+        tenantId: doc.tenantId,
+        tenantSequence: 0,
+        eventType: 'document_issued',
+        actorUserId: session.user.id,
+        action: 'issue',
+        entityType: 'document',
+        entityId: id,
+        summary: `Document issued: ${doc.documentType || 'unknown'}`,
+        sourceChannel: 'web',
+      });
+
       return NextResponse.json({ success: true, data: updated });
     }
 
@@ -71,6 +90,19 @@ export async function POST(
         })
         .where(eq(generatedDocuments.id, id))
         .returning();
+
+      // Audit log
+      await db.insert(auditEvents).values({
+        tenantId: doc.tenantId,
+        tenantSequence: 0,
+        eventType: 'document_superseded',
+        actorUserId: session.user.id,
+        action: 'supersede',
+        entityType: 'document',
+        entityId: id,
+        summary: `Document superseded: ${doc.documentType || 'unknown'}`,
+        sourceChannel: 'web',
+      });
 
       return NextResponse.json({ success: true, data: updated });
     }

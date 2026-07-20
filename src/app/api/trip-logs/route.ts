@@ -23,6 +23,9 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    const permCheck = await requirePermission(session, Permissions.TRIP_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     const { searchParams } = new URL(request.url);
     const tripId = searchParams.get('tripId');
     const limit = parseInt(searchParams.get('limit') || '50', 10);
