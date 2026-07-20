@@ -105,6 +105,30 @@ export async function POST(req: NextRequest) {
       sourceChannel: 'web',
     });
 
+    // Notify the user who created the maintenance event
+    try {
+      const notifRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: session.tenantId,
+          recipientUserId: session.user.id,
+          recipientEmail: session.user.email,
+          recipientName: session.user.name || session.user.email,
+          type: 'maintenance_created',
+          title: `🔧 Maintenance Event Created — ${serviceType}`,
+          body: `${description} — ${cost ? `N$${cost}` : 'Cost TBD'} at ${vendorName || 'unknown vendor'}. Vehicle status set to maintenance.`,
+          entityType: 'maintenance_event',
+          entityId: event.id,
+          actionUrl: `/dashboard/maintenance`,
+          priority: 'normal',
+        }),
+      });
+      if (!notifRes.ok) console.warn('[maintenance] Notification delivery failed:', await notifRes.text().catch(() => 'unknown'));
+    } catch (notifErr) {
+      console.warn('[maintenance] Notification error (non-fatal):', notifErr);
+    }
+
     return NextResponse.json({ data: event }, { status: 201 });
   } catch (error) {
     console.error('[maintenance] POST failed:', error);

@@ -165,20 +165,19 @@ This document is the permanent execution plan for every coding session. Read it 
 | 5 | Google Maps API key | DORMANT | Google billing account |
 | 6 | Inspection photos/signatures upload | VERIFIED | — |
 
-### Session 23 ✅ — Mobile E2E Test, Audit Logging (Fuel/Maintenance/Regions)
+### Session 24 ✅ — E2E Audit Trail Test, Email Notifications for Audit Events, Mobile Test Expansion
 
-1. **Mobile Responsive E2E Test** (`src/e2e/mobile-responsive.spec.ts`) — 12 test cases at 375×812 viewport covering public pages + 8 dashboard pages with overflow checks, stat card rendering, and filter bar collapse. ✅
-2. **Audit Logging — Fuel** — `fuel_created` event on `POST /api/fuel` with litres/fuelType/station/amount summary. ✅
-3. **Audit Logging — Maintenance** — `maintenance_created` event on `POST /api/maintenance` with serviceType/description/cost summary. ✅
-4. **Audit Logging — Regions** — `region_created` (POST), `region_updated` (PATCH), `region_deleted` (DELETE — logged before deletion). All with descriptive summaries. ✅
+1. **E2E Audit Trail Test** (`src/e2e/audit-trail-workflow.spec.ts`) — 5 test cases: fuel→`fuel_created`, maintenance→`maintenance_created`, region CRUD→`region_created/updated/deleted`, cancellation→`request_cancelled`, audit page UI. ✅
+2. **Email Notifications for Audit Events** — `fuel_created`, `maintenance_created`, `region_created/updated/deleted` events now create in-app notifications with email delivery to the acting user. ✅
+3. **Mobile Test Expansion** — 7 new tests added: sidebar hamburger, fuel form inputs, offline indicator, touch targets, privacy page, form controls. ✅
 
 ### Status Updates
 
 | Module | Old Status | New Status |
 |--------|-----------|------------|
-| 1.9 Audit logging | IMPLEMENTED | VERIFIED (all 5 mutation routes logged) |
-| 5.6 File uploads | PARTIAL | VERIFIED (inspection photos full flow confirmed in S22) |
-| 8.4 Mobile testing | PARTIAL | VERIFIED (12-test E2E spec at 375×812 viewport) |
+| 1.9 Audit logging | IMPLEMENTED | VERIFIED (all 5 mutation routes logged + E2E test coverage) |
+| 5.2 Email | IMPLEMENTED | VERIFIED (notifications wired to fuel/maintenance/regions) |
+| 8.4 Mobile testing | PARTIAL | VERIFIED (19-test E2E spec at 375×812 viewport) |
 
 ---
 

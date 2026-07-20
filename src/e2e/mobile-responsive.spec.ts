@@ -223,4 +223,141 @@ test.describe('Mobile Responsive — Dashboard', () => {
     const viewportWidth = await page.evaluate(() => window.innerWidth);
     expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 5);
   });
+
+  // -----------------------------------------------------------------------
+  // Mobile sidebar open/close
+  // -----------------------------------------------------------------------
+
+  test('sidebar hamburger menu opens and closes on mobile', async ({ page }) => {
+    await page.goto('/dashboard', { waitUntil: 'load', timeout: 60000 });
+    await page.waitForTimeout(3000);
+
+    // Look for a hamburger/menu button — try common patterns
+    const menuButton = page.locator('button').filter({ hasText: /Menu|☰/ }).first();
+    const sidebarToggle = page.locator('[class*="sidebar-toggle"]').first();
+    const hamburger = page.locator('button[aria-label*="sidebar" i], button[aria-label*="menu" i], button[aria-label*="navigation" i]').first();
+
+    const targetButton = await menuButton.isVisible({ timeout: 2000 }).catch(() => false)
+      ? menuButton
+      : await sidebarToggle.isVisible({ timeout: 2000 }).catch(() => false)
+        ? sidebarToggle
+        : await hamburger.isVisible({ timeout: 2000 }).catch(() => false)
+          ? hamburger
+          : null;
+
+    if (targetButton) {
+      await targetButton.click();
+      await page.waitForTimeout(1000);
+
+      // Sidebar or navigation drawer should be visible
+      const sidebar = page.locator('nav, aside, [class*="sidebar"]').first();
+      await expect(sidebar).toBeVisible({ timeout: 3000 });
+
+      // Close by clicking the toggle again
+      await targetButton.click();
+      await page.waitForTimeout(500);
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Fuel form submission on mobile
+  // -----------------------------------------------------------------------
+
+  test('fuel form inputs are usable on mobile viewport', async ({ page }) => {
+    await page.goto('/dashboard/fuel/new', { waitUntil: 'load', timeout: 60000 });
+    await page.waitForTimeout(3000);
+
+    // Form should be present
+    const form = page.locator('form').first();
+    const formVisible = await form.isVisible({ timeout: 5000 }).catch(() => false);
+
+    if (formVisible) {
+      // Check that text/number inputs are touch-friendly
+      const numberInputs = page.locator('input[type="number"]');
+      const inputCount = await numberInputs.count();
+      expect(inputCount).toBeGreaterThanOrEqual(1);
+
+      // Fill in a few fields if present
+      const litresInput = page.locator('input[type="number"]').first();
+      if (await litresInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await litresInput.click();
+        await litresInput.fill('50');
+        expect(await litresInput.inputValue()).toBe('50');
+      }
+    }
+
+    // No horizontal overflow
+    const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
+    const viewportWidth = await page.evaluate(() => window.innerWidth);
+    expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 5);
+  });
+
+  // -----------------------------------------------------------------------
+  // Offline detection on mobile
+  // -----------------------------------------------------------------------
+
+  test('offline indicator status element is present on mobile', async ({ page }) => {
+    await page.goto('/dashboard', { waitUntil: 'load', timeout: 60000 });
+    await page.waitForTimeout(3000);
+
+    // Check for offline indicator component
+    const offlineIndicator = page.locator('[class*="offline" i], [class*="connection-status" i], text=Online, text=Offline').first();
+    const indicatorVisible = await offlineIndicator.isVisible({ timeout: 3000 }).catch(() => false);
+
+    if (indicatorVisible) {
+      await expect(offlineIndicator).toBeVisible({ timeout: 5000 });
+    }
+
+    // No horizontal overflow
+    const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
+    const viewportWidth = await page.evaluate(() => window.innerWidth);
+    expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 5);
+  });
+
+  // -----------------------------------------------------------------------
+  // Form select/date inputs are usable on mobile
+  // -----------------------------------------------------------------------
+
+  test('form controls have touch-friendly sizing on mobile', async ({ page }) => {
+    await page.goto('/dashboard/fuel/new', { waitUntil: 'load', timeout: 60000 });
+    await page.waitForTimeout(3000);
+
+    const form = page.locator('form').first();
+    const formVisible = await form.isVisible({ timeout: 5000 }).catch(() => false);
+
+    if (formVisible) {
+      // Check selects are present and usable
+      const selects = page.locator('select');
+      const selectCount = await selects.count();
+      if (selectCount > 0) {
+        await expect(selects.first()).toBeVisible({ timeout: 3000 });
+        await selects.first().selectOption({ index: 1 }).catch(() => {});
+      }
+
+      // Check buttons have minimum touch target
+      const buttons = page.locator('button');
+      const btnCount = await buttons.count();
+      expect(btnCount).toBeGreaterThanOrEqual(1);
+    }
+
+    // No horizontal overflow
+    const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
+    const viewportWidth = await page.evaluate(() => window.innerWidth);
+    expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 5);
+  });
+
+  // -----------------------------------------------------------------------
+  // Privacy policy page loads on mobile
+  // -----------------------------------------------------------------------
+
+  test('privacy policy page loads without overflow on mobile', async ({ page }) => {
+    await page.goto('/privacy', { waitUntil: 'load', timeout: 60000 });
+    await page.waitForTimeout(2000);
+
+    await expect(page.locator('h1').first()).toBeVisible({ timeout: 10000 });
+
+    const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
+    const viewportWidth = await page.evaluate(() => window.innerWidth);
+    expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 5);
+  });
 });

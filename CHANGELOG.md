@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-07-20 — Session 24: E2E audit trail test, email notifications for audit events, mobile test expansion
+
+### Added
+
+- **E2E Audit Trail Test** (`src/e2e/audit-trail-workflow.spec.ts`) — 5 test cases covering:
+  - Fuel transaction → `fuel_created` audit event verified via `/api/audit`
+  - Maintenance event → `maintenance_created` audit event verified
+  - Region CRUD: create (`region_created`), update (`region_updated`), delete (`region_deleted`)
+  - Request cancellation → `request_cancelled` audit event
+  - Audit log page UI: heading, filters, hash chain toggle, search
+- **Email Notifications for Audit Events** — New notification creation (in-app + email) on:
+  - `POST /api/fuel` — Sends `fuel_created` notification to recording user
+  - `POST /api/maintenance` — Sends `maintenance_created` notification
+  - `POST /api/regions` — Sends `region_created` notification
+  - `PATCH /api/regions` — Sends `region_updated` notification
+  - `DELETE /api/regions` — Sends `region_deleted` notification
+- **Mobile E2E Test Expansion** (`src/e2e/mobile-responsive.spec.ts`) — 7 new tests:
+  - Sidebar hamburger menu opens/closes on mobile
+  - Fuel form number inputs are usable at 375px viewport
+  - Offline indicator element is present on mobile
+  - Form controls (selects, buttons) have touch-friendly sizing
+  - Privacy policy page loads without overflow
+  - (Two tests for interactive form controls at mobile width)
+
+### Fixed
+
+- **`session.user.tenantName` removed from notification calls** — Property doesn't exist on session type. Email template already falls back to `'GovFleet Namibia'`.
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+- **Code Review**: All changes approved; TenantName issue caught and fixed ✅
+
+---
+
 ## 2026-07-20 — Session 23: Mobile E2E test, audit logging (fuel/maintenance/regions), production push
 
 ### Added

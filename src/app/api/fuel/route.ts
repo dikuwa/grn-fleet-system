@@ -138,6 +138,30 @@ export async function POST(req: NextRequest) {
       sourceChannel: 'web',
     });
 
+    // Notify the user who recorded the fuel entry
+    try {
+      const notifRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: session.tenantId,
+          recipientUserId: session.user.id,
+          recipientEmail: session.user.email,
+          recipientName: session.user.name || session.user.email,
+          type: 'fuel_created',
+          title: `⛽ Fuel Entry Recorded — ${litres}L`,
+          body: `${litres}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amount}. Vehicle: ${vehicleId || 'N/A'}.`,
+          entityType: 'fuel_transaction',
+          entityId: transaction.id,
+          actionUrl: `/dashboard/fuel`,
+          priority: 'normal',
+        }),
+      });
+      if (!notifRes.ok) console.warn('[fuel] Notification delivery failed:', await notifRes.text().catch(() => 'unknown'));
+    } catch (notifErr) {
+      console.warn('[fuel] Notification error (non-fatal):', notifErr);
+    }
+
     return NextResponse.json({ success: true, data: transaction });
   } catch (error) {
     console.error('[fuel] POST failed:', error);

@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
-    // Audit log
+    // Audit log + notification
     await db.insert(auditEvents).values({
       tenantId: session.tenantId,
       tenantSequence: 0,
@@ -104,6 +104,29 @@ export async function POST(req: NextRequest) {
       summary: `Region created: ${region.name} (${region.code})`,
       sourceChannel: 'web',
     });
+
+    // Notify the user who created the region
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: session.tenantId,
+          recipientUserId: session.user.id,
+          recipientEmail: session.user.email,
+          recipientName: session.user.name || session.user.email,
+          type: 'region_created',
+          title: `🗺️ Region Created — ${region.name}`,
+          body: `Region "${region.name}" (${region.code}) was created.`,
+          entityType: 'region',
+          entityId: region.id,
+          actionUrl: `/dashboard/admin/regions`,
+          priority: 'normal',
+        }),
+      });
+    } catch (notifErr) {
+      console.warn('[regions] Notification error (non-fatal):', notifErr);
+    }
 
     return NextResponse.json({ region }, { status: 201 });
   } catch (error) {
@@ -151,7 +174,7 @@ export async function PATCH(req: NextRequest) {
       .where(eq(regions.id, body.id))
       .returning();
 
-    // Audit log
+    // Audit log + notification
     await db.insert(auditEvents).values({
       tenantId: session.tenantId,
       tenantSequence: 0,
@@ -163,6 +186,29 @@ export async function PATCH(req: NextRequest) {
       summary: `Region updated: ${updated.name} (${updated.code})`,
       sourceChannel: 'web',
     });
+
+    // Notify the user who updated the region
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: session.tenantId,
+          recipientUserId: session.user.id,
+          recipientEmail: session.user.email,
+          recipientName: session.user.name || session.user.email,
+          type: 'region_updated',
+          title: `🗺️ Region Updated — ${updated.name}`,
+          body: `Region "${updated.name}" (${updated.code}) was updated.`,
+          entityType: 'region',
+          entityId: updated.id,
+          actionUrl: `/dashboard/admin/regions`,
+          priority: 'normal',
+        }),
+      });
+    } catch (notifErr) {
+      console.warn('[regions] Notification error (non-fatal):', notifErr);
+    }
 
     return NextResponse.json({ region: updated });
   } catch (error) {
@@ -209,6 +255,29 @@ export async function DELETE(req: NextRequest) {
       summary: `Region deleted (ID: ${id})`,
       sourceChannel: 'web',
     });
+
+    // Notify the user who deleted the region
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: session.tenantId,
+          recipientUserId: session.user.id,
+          recipientEmail: session.user.email,
+          recipientName: session.user.name || session.user.email,
+          type: 'region_deleted',
+          title: `🗺️ Region Deleted`,
+          body: `Region (ID: ${id}) was deleted.`,
+          entityType: 'region',
+          entityId: id,
+          actionUrl: `/dashboard/admin/regions`,
+          priority: 'normal',
+        }),
+      });
+    } catch (notifErr) {
+      console.warn('[regions] Notification error (non-fatal):', notifErr);
+    }
 
     await db.delete(regions).where(eq(regions.id, id));
 
