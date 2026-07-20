@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ClipboardCheck, ChevronLeft, CheckCircle2, XCircle, Loader2, Camera, Trash2 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 interface Vehicle {
@@ -75,6 +76,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 export default function NewInspectionPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
@@ -194,9 +196,11 @@ export default function NewInspectionPage() {
         throw new Error(err.error || 'Failed to submit inspection');
       }
 
+      toast({ title: 'Inspection submitted', description: `${checklist.filter(i => i.result === 'pass').length} passed, ${checklist.filter(i => i.result === 'fail').length} failed`, variant: checklist.some(i => i.isCritical && i.result === 'fail') ? 'error' : 'success' });
       router.push('/dashboard/inspections');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+      toast({ title: 'Inspection failed', description: err instanceof Error ? err.message : 'Could not submit inspection', variant: 'error' });
     } finally {
       setSubmitting(false);
     }

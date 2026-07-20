@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-07-20 — Session 32: Platform Polish — useToast hook, ErrorBoundary, CSS animations, toast wiring
+
+### Added
+
+- **`useToast` hook** (`src/lib/use-toast.ts`) — Lightweight DOM-based toast notification system. Supports 4 variants (default/success/error/pending) with auto-dismiss (4s default), animated entrance/exit, manual dismiss, and timer cleanup on unmount. Mounts toasts into `#toast-container` div with graceful fallback to `document.body`.
+- **`ErrorBoundary` component** (`src/components/ui/error-boundary.tsx`) — React class component that catches render errors in its subtree. Shows branded fallback UI with error message and "Try Again" button. Supports optional `fallback` ReactNode and `label` string.
+- **CSS Animations** (`src/app/globals.css`):
+  - `@keyframes page-enter` + `.page-enter` — Fade-in + 8px slide-up on mount (300ms ease-out)
+  - `@keyframes shimmer` + `.skeleton-shimmer` — Gradient loading skeleton animation (1.5s loop)
+  - `.stagger-enter` — Staggered child entrance with 50ms delays (up to 8 children)
+
+### Changed
+
+- **Dashboard shell** (`src/components/layout/dashboard-shell.tsx`):
+  - Main content wrapped in `<ErrorBoundary label="Dashboard">` to catch render errors
+  - Fixed-position `#toast-container` div rendered for the `useToast` hook
+  - `<main>` tag gets `.page-enter` class for mount animation
+- **Fuel new entry page** — Wired `useToast()`: shows success toast on transaction creation, error toast on failure
+- **Inspection new page** — Wired `useToast()`: shows success toast (green) or critical-fail toast (red) on submission, error toast on API failure
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **Tests**: 72/72 passing
+- **Code Review**: All changes approved
+
 ## 2026-07-20 — Session 31: Enhanced Analytics — 5 deep-dive metrics, dedicated UI, sidebar link
 
 ### Added

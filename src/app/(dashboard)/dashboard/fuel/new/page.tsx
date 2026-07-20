@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft, deleteDraft } from '@/lib/offline-drafts';
 import { DEFAULT_TENANT_ID } from '@/lib/constants';
@@ -15,6 +16,7 @@ import { DEFAULT_TENANT_ID } from '@/lib/constants';
 export default function NewFuelEntryPage() {
   const router = useRouter();
   const { data: session } = useSession();
+  const { toast } = useToast();
   const [formData, setFormData] = useState({
     vehicleGrn: '',
     tripRef: '',
@@ -127,9 +129,11 @@ export default function NewFuelEntryPage() {
       }
       // Clean up draft if it exists
       if (draftId) await deleteDraft(draftId);
+      toast({ title: 'Fuel entry recorded', description: `${formData.litres}L of ${formData.fuelType} for ${formData.vehicleGrn}`, variant: 'success' });
       router.push('/dashboard/fuel');
     } catch (err) {
       console.error('Fuel entry failed:', err);
+      toast({ title: 'Failed to record', description: err instanceof Error ? err.message : 'Transaction could not be saved', variant: 'error' });
       setIsSubmitting(false);
     }
   }, [router, formData, session, draftId, isOnline]);
