@@ -30,7 +30,7 @@ export default function ContactPage() {
         </div>
       </header>
 
-      <section className="flex-1 bg-gradient-to-b from-canvas to-white py-24">
+      <section className="flex-1 bg-gradient-to-b from-canvas to-surface py-24">
         <div className="mx-auto max-w-[700px] px-6">
           <div className="text-center">
             <h1 className="text-3xl font-[650] tracking-tight text-ink-950">Contact Us</h1>

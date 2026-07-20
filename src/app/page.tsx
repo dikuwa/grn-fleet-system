@@ -72,7 +72,7 @@ export default function HomePage() {
       </section>
 
       {/* Features */}
-      <section id="features" className="border-b border-border bg-white py-24">
+      <section id="features" className="border-b border-border bg-surface py-24">
         <div className="mx-auto max-w-[1200px] px-6">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-[650] tracking-tight text-ink-950">
@@ -86,7 +86,7 @@ export default function HomePage() {
             {features.map((feature) => (
               <div
                 key={feature.title}
-                className="group rounded-[10px] border border-border bg-white p-6 transition-all hover:border-brand-100 hover:shadow-sm"
+                className="group rounded-[10px] border border-border bg-surface p-6 transition-all hover:border-brand-100 hover:shadow-sm"
               >
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
                   {feature.icon}
@@ -132,7 +132,7 @@ export default function HomePage() {
       </section>
 
       {/* Pilot Section */}
-      <section id="pilot" className="border-b border-border bg-white py-24">
+      <section id="pilot" className="border-b border-border bg-surface py-24">
         <div className="mx-auto max-w-[1200px] px-6">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-[650] tracking-tight text-ink-950">
