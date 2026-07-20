@@ -24,6 +24,7 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 const DRAFT_TYPE_LABELS: Record<string, string> = {
   fuel: 'Fuel Entry',
@@ -41,6 +42,7 @@ const DRAFT_TYPE_ICONS: Record<string, React.ReactNode> = {
 };
 
 export default function SyncConflictsPage() {
+  const { toast } = useToast();
   const [drafts, setDrafts] = useState<OfflineDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -85,6 +87,7 @@ export default function SyncConflictsPage() {
   async function handleDelete(draftId: string) {
     await deleteDraft(draftId);
     setDrafts((prev) => prev.filter((d) => d.id !== draftId));
+    toast({ title: 'Draft Deleted', description: 'Offline draft has been discarded.', variant: 'default' });
   }
 
   async function handleRetry(draftId: string) {

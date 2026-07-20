@@ -21,7 +21,7 @@ export default defineConfig({
   webServer: {
     command: 'pnpm build && pnpm start',
     port: 3000,
-    timeout: 120000,
+    timeout: 600000,
     reuseExistingServer: !process.env.CI,
     env: {
       DATABASE_URL: process.env.DATABASE_URL || '',

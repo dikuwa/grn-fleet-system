@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea, Label } from '@/components/ui/input';
 import { ChevronLeft, CheckCircle2, XCircle, ArrowLeft } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 export default function ApprovalActionPage() {
@@ -15,6 +16,7 @@ export default function ApprovalActionPage() {
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const { toast } = useToast();
 
   const handleAction = useCallback(async (actionType: string) => {
     setIsSubmitting(true);
@@ -37,8 +39,15 @@ export default function ApprovalActionPage() {
 
       router.push(`/dashboard/approvals/${params.id}`);
       router.refresh();
+      toast({
+        title: actionType === 'approved' ? 'Approved' : actionType === 'returned' ? 'Returned for Changes' : 'Rejected',
+        description: `Request has been ${actionType}.`,
+        variant: actionType === 'rejected' ? 'error' : 'success',
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+      const msg = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setError(msg);
+      toast({ title: 'Action Failed', description: msg, variant: 'error' });
       setIsSubmitting(false);
     }
   }, [params.id, router, comment]);

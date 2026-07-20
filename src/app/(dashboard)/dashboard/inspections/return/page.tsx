@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff, Truck, Camera, Trash2 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
 
@@ -62,6 +63,7 @@ export default function ReturnInspectionPage() {
   const [tripInfo, setTripInfo] = useState<{ make: string; model: string; licenceNumber: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
+  const { toast } = useToast();
   const [photos, setPhotos] = useState<Array<{ file: File; preview: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -153,6 +155,7 @@ export default function ReturnInspectionPage() {
       });
       if (res.ok) {
         router.push('/dashboard/inspections');
+        toast({ title: 'Return Inspection Complete', description: 'Post-trip inspection recorded successfully.', variant: 'success' });
         return;
       }
     } catch {

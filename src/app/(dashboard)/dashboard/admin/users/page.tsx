@@ -14,6 +14,7 @@ import {
   Users, Search, ChevronRight, Mail, Loader2, Send, CheckCircle2, XCircle,
   RotateCcw, Ban,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 interface TenantUser {
   id: string;
@@ -53,6 +54,7 @@ function PendingInviteRow({
 }) {
   const [loading, setLoading] = useState<'resend' | 'revoke' | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const handleResend = useCallback(async () => {
     setLoading('resend');
@@ -67,8 +69,11 @@ function PendingInviteRow({
       if (!res.ok) throw new Error(json.error || 'Failed');
       setResult(json.data?.message || 'Invitation re-sent');
       onAction();
+      toast({ title: 'Invite Resent', description: `Invitation re-sent to ${invite.email}.`, variant: 'success' });
     } catch (err) {
-      setResult(err instanceof Error ? err.message : 'Failed to resend');
+      const msg = err instanceof Error ? err.message : 'Failed to resend';
+      setResult(msg);
+      toast({ title: 'Resend Failed', description: msg, variant: 'error' });
     } finally {
       setLoading(null);
     }
@@ -88,8 +93,11 @@ function PendingInviteRow({
       if (!res.ok) throw new Error(json.error || 'Failed');
       setResult(json.data?.message || 'Invitation revoked');
       onAction();
+      toast({ title: 'Invite Revoked', description: `Invitation for ${invite.email} has been revoked.`, variant: 'default' });
     } catch (err) {
-      setResult(err instanceof Error ? err.message : 'Failed to revoke');
+      const msg = err instanceof Error ? err.message : 'Failed to revoke';
+      setResult(msg);
+      toast({ title: 'Revoke Failed', description: msg, variant: 'error' });
     } finally {
       setLoading(null);
     }
@@ -156,6 +164,7 @@ function PendingInviteRow({
 
 export default function AdminUsersPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [page, setPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -241,12 +250,15 @@ export default function AdminUsersPage() {
       setInviteName('');
       setInviteRoleId('');
       refetch();
+      toast({ title: 'User Invited', description: `Invitation sent to ${inviteEmail.trim()}.`, variant: 'success' });
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to invite user';
       setInviteResult({
         success: false,
         emailSent: false,
-        message: err instanceof Error ? err.message : 'Failed to invite user',
+        message: msg,
       });
+      toast({ title: 'Invite Failed', description: msg, variant: 'error' });
     } finally {
       setIsInviting(false);
     }

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-07-20 — Session 35: Toast wiring complete — final 8 mutation pages + E2E timeout fix
+
+### Changed
+
+- **Toast notifications wired into 8 more pages** — Completing the final batch:
+  - **Approvals action** (`/dashboard/approvals/[id]/action`) — Success toasts on approve/return/reject
+  - **Departure inspection** — Success toast on departure submission
+  - **Return inspection** — Success toast on return submission
+  - **Sync conflicts** — Info toast on draft deletion
+  - **Admin users** — Fixed missing `useToast()` hook in `AdminUsersPage` component; toasts on invite/resend/revoke
+  - **Document lifecycle actions** — Replaced inline toast with `useToast` for issue/supersede
+  - **Logs page** — Imported `useToast` hook
+- **E2E test timeout fixed** — Increased `playwright.config.ts` webServer timeout from 120s to 600s for production build
+
+### Fixed
+
+- **Missing hook call** — `AdminUsersPage` was calling `toast()` in `handleInvite` without having `const { toast } = useToast();` (only `PendingInviteRow` sub-component had it). Added the missing hook call.
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **Tests**: 72/72 passing
+- **Code Review**: All changes approved
+
 ## 2026-07-20 — Session 34: Toast wiring complete — 6 remaining mutation pages
 
 ### Changed

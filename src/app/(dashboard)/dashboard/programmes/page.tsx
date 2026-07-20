@@ -13,6 +13,7 @@ import {
   CalendarDays, MapPin, Gauge, Plus, Search, Loader2, XCircle,
   ArrowRight,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
 interface ProgrammeActivity {
@@ -62,6 +63,7 @@ function CreateProgrammeDialog({
   const [estimatedKm, setEstimatedKm] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -109,8 +111,11 @@ function CreateProgrammeDialog({
       setEstimatedKm('');
       onOpenChange(false);
       onCreated();
+      toast({ title: 'Programme Created', description: `${title.trim()} has been added.`, variant: 'success' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create programme');
+      const msg = err instanceof Error ? err.message : 'Failed to create programme';
+      setError(msg);
+      toast({ title: 'Creation Failed', description: msg, variant: 'error' });
     } finally {
       setIsSubmitting(false);
     }
