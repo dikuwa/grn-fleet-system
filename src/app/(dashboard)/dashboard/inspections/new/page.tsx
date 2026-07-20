@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ClipboardCheck, ChevronLeft, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { ClipboardCheck, ChevronLeft, CheckCircle2, XCircle, Loader2, Camera, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 
 interface Vehicle {
@@ -89,6 +89,9 @@ export default function NewInspectionPage() {
   const [fuelLevel, setFuelLevel] = useState('');
   const [notes, setNotes] = useState('');
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [photos, setPhotos] = useState<Array<{ file: File; preview: string; key?: string; uploading: boolean }>>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -142,8 +145,27 @@ export default function NewInspectionPage() {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
+    setUploadError(null);
 
     try {
+      // Upload photos first (best-effort), collect keys
+      const photoKeys: string[] = [];
+      for (const photo of photos) {
+        if (photo.uploading) continue;
+        try {
+          const formData = new FormData();
+          formData.append('file', photo.file);
+          formData.append('category', 'inspection');
+          const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
+          if (uploadRes.ok) {
+            const uploadJson = await uploadRes.json();
+            if (uploadJson.data?.key) photoKeys.push(uploadJson.data.key);
+          }
+        } catch {
+          // Photo upload is best-effort
+        }
+      }
+
       const body: Record<string, unknown> = {
         vehicleId,
         type,
@@ -154,6 +176,7 @@ export default function NewInspectionPage() {
           comment: item.comment || null,
           isCritical: item.isCritical,
         })),
+        photoKeys: photoKeys.length > 0 ? photoKeys : undefined,
       };
 
       if (tripId) body.tripId = tripId;
@@ -348,6 +371,69 @@ export default function NewInspectionPage() {
                   className="h-20 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none"
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Photos */}
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Photos</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {photos.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {photos.map((photo, idx) => (
+                    <div key={idx} className="relative rounded-[8px] border border-border overflow-hidden group">
+                      <img src={photo.preview} alt={`Photo ${idx + 1}`} className="h-24 w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
+                        className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                      {photo.uploading && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                          <Loader2 className="h-5 w-5 animate-spin text-white" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  const newPhotos = files.map((file) => ({
+                    file,
+                    preview: URL.createObjectURL(file),
+                    uploading: false,
+                  }));
+                  setPhotos((prev) => [...prev, ...newPhotos]);
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }}
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Camera className="h-4 w-4" />
+                  {photos.length > 0 ? 'Add More Photos' : 'Take / Upload Photos'}
+                </Button>
+                {photos.length > 0 && (
+                  <span className="text-xs text-ink-500">{photos.length} photo{photos.length !== 1 ? 's' : ''} selected</span>
+                )}
+              </div>
+              {uploadError && <p className="text-xs text-status-error-text">{uploadError}</p>}
             </CardContent>
           </Card>
 

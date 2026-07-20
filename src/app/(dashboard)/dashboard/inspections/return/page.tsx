@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
-import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff, Truck } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff, Truck, Camera, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
 
@@ -62,6 +62,8 @@ export default function ReturnInspectionPage() {
   const [tripInfo, setTripInfo] = useState<{ make: string; model: string; licenceNumber: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
+  const [photos, setPhotos] = useState<Array<{ file: File; preview: string }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch trip/vehicle info if tripId is provided
   useEffect(() => {
@@ -113,6 +115,21 @@ export default function ReturnInspectionPage() {
 
     // Try online submission first
     try {
+      // Upload photos first (best-effort)
+      const photoKeys: string[] = [];
+      for (const photo of photos) {
+        try {
+          const fd = new FormData();
+          fd.append('file', photo.file);
+          fd.append('category', 'inspection');
+          const uploadRes = await fetch('/api/upload', { method: 'POST', body: fd });
+          if (uploadRes.ok) {
+            const uploadJson = await uploadRes.json();
+            if (uploadJson.data?.key) photoKeys.push(uploadJson.data.key);
+          }
+        } catch { /* best-effort */ }
+      }
+
       const res = await fetch('/api/inspections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -131,6 +148,7 @@ export default function ReturnInspectionPage() {
             isBlocking: item.isBlocking,
           })),
           notes,
+          photoKeys: photoKeys.length > 0 ? photoKeys : undefined,
         }),
       });
       if (res.ok) {
@@ -304,6 +322,48 @@ export default function ReturnInspectionPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Photos */}
+        <Card>
+          <CardHeader><CardTitle>Photos</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            {photos.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {photos.map((photo, idx) => (
+                  <div key={idx} className="relative rounded-[8px] border border-border overflow-hidden group">
+                    <img src={photo.preview} alt={`Photo ${idx + 1}`} className="h-24 w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
+                      className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                const newPhotos = files.map((file) => ({ file, preview: URL.createObjectURL(file) }));
+                setPhotos((prev) => [...prev, ...newPhotos]);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+            />
+            <Button type="button" variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
+              <Camera className="h-4 w-4" />
+              {photos.length > 0 ? 'Add More Photos' : 'Take / Upload Photos'}
+            </Button>
+            {photos.length > 0 && <span className="text-xs text-ink-500 ml-2">{photos.length} photo{photos.length !== 1 ? 's' : ''} selected</span>}
+          </CardContent>
+        </Card>
 
         {/* Notes */}
         <Card>

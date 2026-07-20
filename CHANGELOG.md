@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-07-19 — Session 13: Inspection Detail, Templates API, Status Timeline, Vehicle Lifecycle
+
+### Added
+
+- **Inspection Detail Page** (`/dashboard/inspections/[id]`) — Server component with status/summary cards (pass/fail counts), vehicle details, linked trip info, checklist results grouped by category with pass/fail/NA/critical badges, defects section with severity/blocking badges, photos grid, notes, bottom actions (Back, View Vehicle, View Trip).
+- **Inspection Templates API** (`/api/inspection-templates`) — Full CRUD with GET (list by type + items), POST (create template + items), PUT (update + replace items), DELETE (cascade). Tenant-isolated, permission-gated (`VEHICLE_MANAGE`).
+- **Inspection Templates Page** (`/dashboard/inspections/templates`) — Departure/return type tabs, template cards with item count/status/version, edit/toggle-active/delete actions, create/edit modal with category selector, critical toggle, add/remove items.
+- **Vehicle Lifecycle — Trip Start** — Trip start API now sets vehicle status to `allocated` and logs `vehicleStatusEvents` record.
+- **Vehicle Lifecycle — Trip Close** — Trip close API returns vehicle to `available` with status event logging.
+- **Vehicle Lifecycle — Inspection Auto-close** — Return inspection (all pass) now returns vehicle to `available` with status event.
+- **Status Timeline Tab** — Added "Status Timeline" tab on vehicle detail page (`/dashboard/fleet/[id]`) showing chronological status changes with dot timeline UI, `previous → new` arrow transitions, reasons, and latest-event highlighting.
+- **Insp. Templates Sidebar Link** — Added to Fleet & Maintenance section below Inspections.
+- **Maintenance API** — When maintenance event is created, vehicle status auto-sets to `maintenance` and status event is logged.
+
+### Fixed
+
+- **Inspections API** — Cleaned up unnecessary dynamic import for `vehicleStatusEvents` (was already statically imported).
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+
+### Infrastructure
+
+- **RESEND_API_KEY** — Configured in Vercel production env vars
+- **EMAIL_FROM** — Configured in Vercel production env vars (`info@flextechmedia.com`)
+
 ## 2026-07-19 — Session 12: Vehicle Import, Email Templates, Regions, Public Pages, Permission Tests, Schema Cleanup
 
 ### Added

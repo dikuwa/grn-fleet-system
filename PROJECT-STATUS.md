@@ -191,12 +191,25 @@ Verified end-to-end: `POST /api/approvals/[id]/action` delegates to `WorkflowEng
 - **TypeScript**: Clean compile (0 errors)
 - **Migrations**: 0005 applied successfully
 
+## Session 13 — Inspection Detail, Templates, Vehicle Lifecycle (2026-07-20)
+
+### Added
+
+- **Inspection Detail Page** (`/dashboard/inspections/[id]`) — Full inspection overview with status/summary cards, vehicle details, linked trip info, checklist results grouped by category, defects section, photos grid, notes, and bottom actions.
+- **Inspection Templates API** (`/api/inspection-templates`) — Full CRUD with tenant isolation and permission gating.
+- **Inspection Templates Page** (`/dashboard/inspections/templates`) — Departure/return tabs, template cards, create/edit modal with item management.
+- **Vehicle Lifecycle** — Trip start sets vehicle to `allocated`, trip close returns to `available`, return inspection auto-close returns to `available`. All with `vehicleStatusEvents` logging. Maintenance creation auto-sets vehicle to `maintenance`.
+- **Status Timeline Tab** — Chronological status changes on vehicle detail page with dot timeline UI.
+- **Insp. Templates Sidebar Link** — Added below Inspections in Fleet & Maintenance section.
+- **RESEND_API_KEY & EMAIL_FROM** — Configured in Vercel production env vars. Email sending pipeline is fully ready.
+
+### Validation
+
+- **Tests**: 72/72 passing (5 files)
+- **TypeScript**: Clean compile (0 errors)
+
 ## Known Gaps
 
 - SMS won't send until Twilio credentials are set
-- Email (Resend) key not configured — React Email templates are ready
-- No Vercel deployment for this session (builder timeout)
-
-## Blockers
-
-- Vercel deploy command times out after 300s — may need manual deploy via Vercel dashboard
+- No E2E workflow integration tests covering the full approval → allocation → trip → inspection lifecycle
+- Missing: user invitation flow (back-end API exists, no front-end invite form)

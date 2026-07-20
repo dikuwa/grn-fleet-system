@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, vehicleInspections, inspectionItemResults, inspectionTemplates, tripClosures } from '@/db/schema/trips';
+import { trips, vehicleInspections, inspectionItemResults, inspectionTemplates, tripClosures, inspectionPhotos } from '@/db/schema/trips';
 import { vehicles, vehicleDefects, vehicleStatusEvents } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
       fuelLevel,
       checklist, // Array of { templateItemId, result, comment }
       notes,
+      photoKeys,
     } = body;
 
     // Validate required fields
@@ -239,6 +240,16 @@ export async function POST(req: NextRequest) {
           await onTripClosed(tripId, tenantId, userId);
         } catch { /* silent — doc gen is best-effort */ }
       }
+    }
+
+    // Link uploaded photos if provided
+    if (photoKeys && Array.isArray(photoKeys) && photoKeys.length > 0) {
+      const photoValues = photoKeys.map((key: string) => ({
+        inspectionId: inspection.id,
+        fileKey: key,
+        stage: type,
+      }));
+      await db.insert(inspectionPhotos).values(photoValues);
     }
 
     // Trigger document generation
