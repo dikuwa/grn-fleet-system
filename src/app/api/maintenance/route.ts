@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { maintenanceEvents } from '@/db/schema/fleet';
 import { vehicles } from '@/db/schema/fleet';
+import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
@@ -90,6 +91,19 @@ export async function POST(req: NextRequest) {
         referenceEntityType: 'maintenance',
         referenceEntityId: event.id,
       });
+
+    // Audit log
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: 0,
+      eventType: 'maintenance_created',
+      actorUserId: session.user.id,
+      action: 'create',
+      entityType: 'maintenance_event',
+      entityId: event.id,
+      summary: `Maintenance: ${serviceType} — ${description} (${cost || 'cost TBD'})`,
+      sourceChannel: 'web',
+    });
 
     return NextResponse.json({ data: event }, { status: 201 });
   } catch (error) {

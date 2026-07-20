@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-07-20 — Session 23: Mobile E2E test, audit logging (fuel/maintenance/regions), production push
+
+### Added
+
+- **Mobile Responsive E2E Test** (`src/e2e/mobile-responsive.spec.ts`) — 12 test cases at 375×812 viewport:
+  - Public pages: landing page usability, login form, contact page no-overflow
+  - Dashboard: stat cards render, filter bar collapse, 8 key pages load without horizontal overflow (fleet, requests, active trips, inspections, reports, fuel, maintenance, allocations)
+- **Audit Logging — Fuel** — New `fuel_created` audit event on `POST /api/fuel` with litres/fuelType/station/amount summary
+- **Audit Logging — Maintenance** — New `maintenance_created` audit event on `POST /api/maintenance` with serviceType/description/cost summary
+- **Audit Logging — Regions** — New audit events on all mutation endpoints: `region_created` (POST), `region_updated` (PATCH), `region_deleted` (DELETE — logged before deletion)
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+- **Code Review**: All audit logging additions match existing pattern, imports correct, summaries descriptive ✅
+
+---
+
 ## 2026-07-20 — Session 22: Mobile responsive fixes, user & admin docs, photo upload verified
 
 ### Added

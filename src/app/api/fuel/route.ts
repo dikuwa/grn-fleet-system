@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { fuelTransactions } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
+import { auditEvents } from '@/db/schema/audit';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -123,6 +124,19 @@ export async function POST(req: NextRequest) {
         recordedByUserId: session.user.id,
       })
       .returning();
+
+    // Audit log
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: 0,
+      eventType: 'fuel_created',
+      actorUserId: session.user.id,
+      action: 'create',
+      entityType: 'fuel_transaction',
+      entityId: transaction.id,
+      summary: `Fuel: ${litres}L of ${fuelType} at ${stationName || 'unknown station'} — ${amount}`,
+      sourceChannel: 'web',
+    });
 
     return NextResponse.json({ success: true, data: transaction });
   } catch (error) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { regions } from '@/db/schema/fleet';
+import { auditEvents } from '@/db/schema/audit';
 import { eq, and, like, or, type SQL } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 
@@ -91,6 +92,19 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
+    // Audit log
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: 0,
+      eventType: 'region_created',
+      actorUserId: session.user.id,
+      action: 'create',
+      entityType: 'region',
+      entityId: region.id,
+      summary: `Region created: ${region.name} (${region.code})`,
+      sourceChannel: 'web',
+    });
+
     return NextResponse.json({ region }, { status: 201 });
   } catch (error) {
     console.error('[regions] POST failed:', error);
@@ -137,6 +151,19 @@ export async function PATCH(req: NextRequest) {
       .where(eq(regions.id, body.id))
       .returning();
 
+    // Audit log
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: 0,
+      eventType: 'region_updated',
+      actorUserId: session.user.id,
+      action: 'update',
+      entityType: 'region',
+      entityId: updated.id,
+      summary: `Region updated: ${updated.name} (${updated.code})`,
+      sourceChannel: 'web',
+    });
+
     return NextResponse.json({ region: updated });
   } catch (error) {
     console.error('[regions] PATCH failed:', error);
@@ -169,6 +196,19 @@ export async function DELETE(req: NextRequest) {
     if (!existing || existing.tenantId !== session.tenantId) {
       return NextResponse.json({ error: 'Region not found' }, { status: 404 });
     }
+
+    // Audit log before deletion
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: 0,
+      eventType: 'region_deleted',
+      actorUserId: session.user.id,
+      action: 'delete',
+      entityType: 'region',
+      entityId: id,
+      summary: `Region deleted (ID: ${id})`,
+      sourceChannel: 'web',
+    });
 
     await db.delete(regions).where(eq(regions.id, id));
 
