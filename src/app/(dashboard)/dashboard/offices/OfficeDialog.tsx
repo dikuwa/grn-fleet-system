@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Plus } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 export function OfficeDialog({ tenantId }: { tenantId: string }) {
   const router = useRouter();
@@ -16,6 +17,7 @@ export function OfficeDialog({ tenantId }: { tenantId: string }) {
   const [address, setAddress] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const { toast } = useToast();
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,8 +37,11 @@ export function OfficeDialog({ tenantId }: { tenantId: string }) {
       setCode('');
       setAddress('');
       router.refresh();
+      toast({ title: 'Office Created', description: `${name.trim()} has been added.`, variant: 'success' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create office');
+      const msg = err instanceof Error ? err.message : 'Failed to create office';
+      setError(msg);
+      toast({ title: 'Creation Failed', description: msg, variant: 'error' });
     } finally {
       setSaving(false);
     }

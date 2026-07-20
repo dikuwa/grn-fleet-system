@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Plus } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 export function DepartmentDialog({ tenantId }: { tenantId: string }) {
   const router = useRouter();
@@ -14,6 +15,7 @@ export function DepartmentDialog({ tenantId }: { tenantId: string }) {
   const [code, setCode] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const { toast } = useToast();
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,8 +34,11 @@ export function DepartmentDialog({ tenantId }: { tenantId: string }) {
       setName('');
       setCode('');
       router.refresh();
+      toast({ title: 'Department Created', description: `${name.trim()} has been added.`, variant: 'success' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create department');
+      const msg = err instanceof Error ? err.message : 'Failed to create department';
+      setError(msg);
+      toast({ title: 'Creation Failed', description: msg, variant: 'error' });
     } finally {
       setSaving(false);
     }

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { FileText, ChevronLeft, ChevronRight, Check, Plus, Trash2, MapPin, Users, User, CalendarDays } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
+import { useToast } from '@/lib/use-toast';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -749,6 +750,7 @@ export default function NewRequestPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reference = generateReference();
+  const { toast } = useToast();
 
   const updateForm = useCallback((patch: Partial<RequestFormData>) => {
     setFormData((prev) => ({ ...prev, ...patch }));
@@ -787,8 +789,11 @@ export default function NewRequestPage() {
 
       const data = await res.json();
       router.push(`/dashboard/requests/${data.request.id}`);
+      toast({ title: 'Request Submitted', description: 'Transport request has been created successfully.', variant: 'success' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit request. Please try again.');
+      const msg = err instanceof Error ? err.message : 'Failed to submit request. Please try again.';
+      setError(msg);
+      toast({ title: 'Submission Failed', description: msg, variant: 'error' });
     } finally {
       setSubmitting(false);
     }

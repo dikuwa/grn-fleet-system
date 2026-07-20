@@ -12,6 +12,7 @@ import {
   Building2, ChevronLeft, ChevronRight, CheckCircle2, Loader2,
   Plus, X, Shield, Users, Mail, Palette, MapPin, Hash,
 } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -122,6 +123,7 @@ export default function OnboardTenantPage() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<OnboardForm>({ ...DEFAULT_FORM });
   const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   // Update simple field
   const updateField = useCallback(<K extends keyof OnboardForm>(key: K, value: OnboardForm[K]) => {
@@ -234,9 +236,11 @@ export default function OnboardTenantPage() {
     },
     onSuccess: () => {
       router.push('/dashboard/platform/tenants');
+      toast({ title: 'Tenant Created', description: 'Organisation has been onboarded successfully.', variant: 'success' });
     },
     onError: (err: Error) => {
       setError(err.message);
+      toast({ title: 'Onboarding Failed', description: err.message, variant: 'error' });
     },
   });
 

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea, Label } from '@/components/ui/input';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ChevronLeft, CreditCard, Fuel, CalendarDays, CheckCircle2, XCircle, DollarSign } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import Link from 'next/link';
 
@@ -46,6 +47,7 @@ export default function ReimbursementDetailPage() {
   const [actionComment, setActionComment] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const initialLoadRef = useRef(false);
+  const { toast } = useToast();
 
   const fetchData = useCallback(async () => {
     try {
@@ -82,8 +84,15 @@ export default function ReimbursementDetailPage() {
       }
       setActionComment('');
       await fetchData();
+      toast({
+        title: actionType === 'approved' ? 'Approved' : actionType === 'paid' ? 'Paid' : 'Rejected',
+        description: `Claim has been ${actionType}.`,
+        variant: actionType === 'rejected' ? 'error' : 'success',
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Action failed');
+      const msg = err instanceof Error ? err.message : 'Action failed';
+      setError(msg);
+      toast({ title: 'Action Failed', description: msg, variant: 'error' });
     } finally {
       setActionLoading(false);
     }

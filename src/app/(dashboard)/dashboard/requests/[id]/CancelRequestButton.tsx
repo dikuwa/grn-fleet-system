@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { XCircle } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import { useRouter } from 'next/navigation';
 
 interface CancelRequestButtonProps {
@@ -28,6 +29,7 @@ export function CancelRequestButton({ requestId, currentStatus, disabled }: Canc
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const { toast } = useToast();
 
   const canCancel = !nonCancellableStatuses.includes(currentStatus);
 
@@ -48,8 +50,11 @@ export function CancelRequestButton({ requestId, currentStatus, disabled }: Canc
       }
       setOpen(false);
       router.refresh();
+      toast({ title: 'Request Cancelled', description: 'The transport request has been cancelled.', variant: 'success' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to cancel');
+      const msg = err instanceof Error ? err.message : 'Failed to cancel';
+      setError(msg);
+      toast({ title: 'Cancellation Failed', description: msg, variant: 'error' });
     } finally {
       setLoading(false);
     }

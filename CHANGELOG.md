@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-07-20 — Session 34: Toast wiring complete — 6 remaining mutation pages
+
+### Changed
+
+- **Toast notifications wired into 6 more pages** — Completing the toast coverage across all key mutation flows:
+  - **Reimbursements detail** (`/dashboard/reimbursements/[id]`) — Success/error toasts on approve, pay, reject actions
+  - **Cancel Request button** (`CancelRequestButton.tsx`) — Success toast on cancellation, error toast on failure
+  - **Platform onboard** (`/dashboard/platform/onboard`) — Success toast after tenant creation, error toast on onboarding failure
+  - **Office dialog** (`OfficeDialog.tsx`) — Success toast with office name on creation, error toast on failure
+  - **Department dialog** (`DepartmentDialog.tsx`) — Success toast with department name on creation, error toast on failure
+  - **New transport request** (`/dashboard/requests/new`) — Success toast after submission, error toast on failure
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **Code Review**: All changes approved — total **20 pages** now wired with consistent toast pattern
+
 ## 2026-07-20 — Session 33: Toast wiring across 11 dashboard mutation pages
 
 ### Changed
