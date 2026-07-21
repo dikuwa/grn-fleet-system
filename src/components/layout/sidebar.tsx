@@ -34,6 +34,7 @@ import {
   Mail,
   Layers,
   Database,
+  Link2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -109,6 +110,7 @@ const navGroups: NavGroup[] = [
     label: 'Documents & Reports',
     items: [
       { label: 'Documents', href: '/dashboard/documents', icon: FileSpreadsheet },
+      { label: 'Share Links', href: '/dashboard/share-links', icon: Link2 },
       { label: 'Reports', href: '/dashboard/reports', icon: FileBarChart },
       { label: 'Enhanced Analytics', href: '/dashboard/reports', icon: BarChart3 },
     ],

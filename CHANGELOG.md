@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-21 — Session 43: Share Link Dashboard, Cross-Tenant Analytics, Vehicle Recommender Verified
+
+### Added
+
+- **Share Link Dashboard** (`/dashboard/share-links`) — Dedicated page listing all share links with per-tenant pagination. Features 4 summary stat cards (Active, Expired, Revoked, Total Views), status filter tabs, search by document type, share link rows with status badges (Active/Expired/Revoked), view counts, expiry dates, redaction profiles, and revoke action on active links. Backed by new `GET /api/share-links` endpoint with pagination and JOIN to documents table.
+- **Cross-Tenant Analytics API** (`GET /api/platform/analytics`) — Returns aggregate stats across all tenants: total tenants/vehicles/trips/employees/requests/fuel volume/cost. Includes per-tenant vehicle and active-trip breakdowns ranked by count. Requires PLATFORM_ADMIN permission.
+- **Platform Dashboard** (`/dashboard/platform`) — Replaces the old static page with 8 KPI stat cards in a 4-column grid (tenants, vehicles, active trips, employees, requests, trips, fuel volume, fuel cost). Features horizontal bar charts for per-tenant vehicles and active trips, plus quick actions row.
+- **Sidebar** — Added "Share Links" to Documents & Reports group with Link2 icon.
+
+### Verified
+
+- **Vehicle Recommender** — Already fully integrated in allocation creation UI with scored recommendations, vehicle selection from results, and availability checking.
+
 ## 2026-07-21 — Session 42: Defect Auto-Resolution, Document Lifecycle Automation, Migration 0010
 
 ### Added

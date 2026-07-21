@@ -1,294 +1,197 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
-import { StatCard } from '@/components/ui/card';
 import {
-  Globe, Users, Truck, FileText, Gauge, Building2,
-  Loader2, Database, CheckCircle2, XCircle, AlertTriangle,
-  Clock, RefreshCw, Activity, Smartphone,
+  Building2, CarFront, Gauge, Users, FileText, Fuel, Loader2,
+  Database, Globe, TrendingUp, BarChart3, Activity, RefreshCcw,
 } from 'lucide-react';
 import Link from 'next/link';
-import { formatDate } from '@/lib/utils';
+import { formatNumber } from '@/lib/utils';
 
-interface EnvHealth {
-  database: boolean;
-  backgroundJobs: boolean;
-  errorMonitoring: boolean;
-  email: boolean;
-}
-
-interface PlatformDashboardData {
-  tenants: { total: number; active: number; suspended: number; inactive: number };
-  totalMembers: number;
-  vehicles: { total: number; active: number; maintenance: number };
-  requests: { totalRequests: number };
-  trips: { total: number; active: number };
-  recentTenants: { id: string; name: string; code: string; type: string; status: string; createdAt: string }[];
-  envHealth: EnvHealth;
+interface AnalyticsData {
+  summary: {
+    totalTenants: number;
+    activeTenants: number;
+    totalVehicles: number;
+    totalTrips: number;
+    activeTrips: number;
+    totalEmployees: number;
+    totalRequests: number;
+    totalFuelLitres: number;
+    totalFuelCost: number;
+  };
+  tenantBreakdown: {
+    vehicles: Array<{ tenantId: string; tenantName: string; vehicleCount: number }>;
+    activeTrips: Array<{ tenantId: string; tenantName: string; activeTripCount: number }>;
+  };
 }
 
 export default function PlatformDashboardPage() {
-  const [data, setData] = useState<PlatformDashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const fetchedRef = useRef(false);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/platform/dashboard');
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error || 'Failed to load platform data');
-      }
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['platform-analytics'],
+    queryFn: async () => {
+      const res = await fetch('/api/platform/analytics');
       const json = await res.json();
-      setData(json.data as PlatformDashboardData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load platform data');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      if (!res.ok) throw new Error(json.error || 'Failed to load platform analytics');
+      return json.data as AnalyticsData;
+    },
+  });
 
-  useEffect(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
-    fetchData();
-  }, [fetchData]);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Platform Administration" description="Loading platform overview..." />
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Platform' }]} />
+        <PageHeader title="Platform Dashboard" description="Cross-tenant analytics and management" />
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-ink-400" />
+          <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
         </div>
       </div>
     );
   }
 
-  if (error) {
+  if (error || !data) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Platform Administration" description="Could not load platform data" />
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Platform' }]} />
+        <PageHeader title="Platform Dashboard" description="Cross-tenant analytics and management" />
         <EmptyState
-          icon={<Database className="h-8 w-8" />}
-          title="Unable to Load Data"
-          description={error}
-          action={{ label: 'Retry', onClick: fetchData }}
+          icon={<Database className="h-6 w-6" />}
+          title={error instanceof Error ? error.message : 'Unable to load analytics'}
+          action={{ label: 'Retry', onClick: () => refetch() }}
         />
       </div>
     );
   }
 
-  const d = data!;
+  const { summary, tenantBreakdown } = data;
+
+  const statCards = [
+    { icon: Globe, label: 'Total Tenants', value: summary.totalTenants, sub: `${summary.activeTenants} active`, color: 'bg-blue-50 text-blue-700' },
+    { icon: CarFront, label: 'Total Vehicles', value: summary.totalVehicles, sub: 'across all tenants', color: 'bg-green-50 text-green-700' },
+    { icon: Gauge, label: 'Active Trips', value: summary.activeTrips, sub: `${Math.round(summary.activeTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-amber-50 text-amber-700', highlight: summary.activeTrips > 0 },
+    { icon: Users, label: 'Total Employees', value: summary.totalEmployees, sub: `${Math.round(summary.totalEmployees / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-purple-50 text-purple-700' },
+    { icon: FileText, label: 'Transport Requests', value: summary.totalRequests, sub: `${Math.round(summary.totalRequests / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-indigo-50 text-indigo-700' },
+    { icon: TrendingUp, label: 'Total Trips', value: summary.totalTrips, sub: `${Math.round(summary.totalTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-teal-50 text-teal-700' },
+    { icon: Fuel, label: 'Fuel Volume', value: `${Math.round(summary.totalFuelLitres).toLocaleString()} L`, sub: `N$${Math.round(summary.totalFuelCost).toLocaleString()} total cost`, color: 'bg-orange-50 text-orange-700' },
+    { icon: Activity, label: 'Fuel Cost', value: `N$${Math.round(summary.totalFuelCost).toLocaleString()}`, sub: `Avg N$${summary.totalFuelLitres > 0 ? (summary.totalFuelCost / summary.totalFuelLitres).toFixed(2) : '0.00'}/L`, color: 'bg-rose-50 text-rose-700' },
+  ];
 
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[
         { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Platform Administration' },
+        { label: 'Platform' },
       ]} />
       <PageHeader
-        title="Platform Administration"
-        description="Overview of all tenants and system-wide metrics"
+        title="Platform Dashboard"
+        description={`Cross-tenant analytics for ${summary.activeTenants} of ${summary.totalTenants} active tenants`}
       >
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={fetchData}>
-            <RefreshCw className="h-4 w-4" /> Refresh
-          </Button>
-          <Button variant="primary" size="sm" asChild>
-            <Link href="/dashboard/platform/tenants">
-              <Globe className="h-4 w-4" /> All Tenants
-            </Link>
-          </Button>
-        </div>
+        <Button variant="secondary" size="sm" asChild>
+          <Link href="/dashboard/platform/tenants">
+            <Building2 className="h-4 w-4" /> Manage Tenants
+          </Link>
+        </Button>
       </PageHeader>
 
-      {/* Tenant Stats */}
+      {/* Summary Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Active Tenants"
-          value={String(d.tenants.active)}
-          trend={{ value: `${d.tenants.active} of ${d.tenants.total} active`, positive: true }}
-          icon={<Globe className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Suspended"
-          value={String(d.tenants.suspended)}
-          trend={{ value: `${d.tenants.suspended} suspended`, positive: d.tenants.suspended === 0 }}
-          icon={<XCircle className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Total Members"
-          value={String(d.totalMembers)}
-          trend={{ value: 'Across all tenants', positive: true }}
-          icon={<Users className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Total Tenants"
-          value={String(d.tenants.total)}
-          trend={{ value: `${d.tenants.inactive} inactive`, positive: d.tenants.inactive === 0 }}
-          icon={<Activity className="h-5 w-5" />}
-        />
+        {statCards.map((stat) => (
+          <Card key={stat.label}>
+            <CardContent className="pt-4">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className={`flex h-10 w-10 items-center justify-center rounded-lg ${stat.color}`}>
+                    <stat.icon className="h-5 w-5" />
+                  </p>
+                </div>
+                {stat.highlight && (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400">
+                    <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
+                  </span>
+                )}
+              </div>
+              <p className="mt-3 text-2xl font-[650] tabular-nums text-ink-950">{stat.value}</p>
+              <p className="text-xs text-ink-500">{stat.label}</p>
+              <p className="text-[11px] text-ink-400">{stat.sub}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      {/* Usage Metrics */}
-      <Card>
-        <CardHeader>
-          <CardTitle>System Usage</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-6 sm:grid-cols-3">
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-brand-50">
-              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-brand-100 text-brand-700">
-                <Truck className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-ink-950">{d.vehicles.total}</p>
-                <p className="text-xs text-ink-500">
-                  {d.vehicles.active} available · {d.vehicles.maintenance} in maintenance
-                </p>
-                <p className="text-xs text-ink-500">Total Vehicles</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-blue-50">
-              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-100 text-blue-700">
-                <FileText className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-ink-950">{d.requests.totalRequests}</p>
-                <p className="text-xs text-ink-500">Transport Requests</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-green-50">
-              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-green-100 text-green-700">
-                <Gauge className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-ink-950">{d.trips.total}</p>
-                <p className="text-xs text-ink-500">
-                  {d.trips.active} active
-                </p>
-                <p className="text-xs text-ink-500">Total Trips</p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Environment Health */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Environment Status</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="flex items-center gap-3 p-3 rounded-lg border border-border">
-              {d.envHealth.database
-                ? <CheckCircle2 className="h-5 w-5 text-status-success-text shrink-0" />
-                : <AlertTriangle className="h-5 w-5 text-status-error-text shrink-0" />}
-              <div>
-                <p className="text-sm font-medium text-ink-950">Database</p>
-                <p className="text-xs text-ink-500">
-                  {d.envHealth.database ? 'Connected' : 'Not configured'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg border border-border">
-              {d.envHealth.backgroundJobs
-                ? <CheckCircle2 className="h-5 w-5 text-status-success-text shrink-0" />
-                : <AlertTriangle className="h-5 w-5 text-status-pending-text shrink-0" />}
-              <div>
-                <p className="text-sm font-medium text-ink-950">Background Jobs</p>
-                <p className="text-xs text-ink-500">
-                  {d.envHealth.backgroundJobs ? 'Connected' : 'Not configured (optional)'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg border border-border">
-              {d.envHealth.errorMonitoring
-                ? <CheckCircle2 className="h-5 w-5 text-status-success-text shrink-0" />
-                : <AlertTriangle className="h-5 w-5 text-status-pending-text shrink-0" />}
-              <div>
-                <p className="text-sm font-medium text-ink-950">Error Monitoring</p>
-                <p className="text-xs text-ink-500">
-                  {d.envHealth.errorMonitoring ? 'Sentry connected' : 'Not configured (optional)'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg border border-border">
-              {d.envHealth.email
-                ? <CheckCircle2 className="h-5 w-5 text-status-success-text shrink-0" />
-                : <AlertTriangle className="h-5 w-5 text-status-pending-text shrink-0" />}
-              <div>
-                <p className="text-sm font-medium text-ink-950">Email</p>
-                <p className="text-xs text-ink-500">
-                  {d.envHealth.email ? 'Configured' : 'Not configured (optional)'}
-                </p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Recent Tenants */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Tenants</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {d.recentTenants.length === 0 ? (
-            <div className="px-5 pb-4">
-              <p className="text-sm text-ink-500">No tenants registered yet.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {d.recentTenants.map((t) => (
-                <Link
-                  key={t.id}
-                  href={`/dashboard/platform/tenants/${t.id}`}
-                  className="flex items-center justify-between px-5 py-3 hover:bg-canvas/50 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
-                      <Building2 className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-ink-950">{t.name}</p>
-                      <p className="text-xs text-ink-500">{t.code} · {t.type.replace(/_/g, ' ')}</p>
+      {/* Per-Tenant Breakdown */}
+      <div className="grid gap-6 sm:grid-cols-2">
+        <Card>
+          <CardContent className="pt-4">
+            <h3 className="text-sm font-[650] text-ink-950 mb-3 flex items-center gap-2">
+              <CarFront className="h-4 w-4 text-brand-700" /> Vehicles per Tenant
+            </h3>
+            {tenantBreakdown.vehicles.length === 0 ? (
+              <p className="text-xs text-ink-500">No vehicles registered</p>
+            ) : (
+              <div className="space-y-2">
+                {tenantBreakdown.vehicles.map((t) => (
+                  <div key={t.tenantId} className="flex items-center justify-between">
+                    <span className="text-sm text-ink-700 truncate flex-1">{t.tenantName}</span>
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 rounded-full bg-brand-200" style={{ width: `${Math.min((t.vehicleCount / Math.max(...tenantBreakdown.vehicles.map((x) => x.vehicleCount), 1)) * 100, 100)}px` }} />
+                      <span className="text-sm font-medium tabular-nums text-ink-950 w-8 text-right">{t.vehicleCount}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={
-                      t.status === 'active' ? 'success' :
-                      t.status === 'suspended' ? 'error' : 'cancelled'
-                    }>
-                      {t.status}
-                    </Badge>
-                    <span className="text-xs text-ink-400">
-                      <Clock className="inline h-3 w-3 mr-1" />
-                      {t.createdAt ? formatDate(t.createdAt) : ''}
-                    </span>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-4">
+            <h3 className="text-sm font-[650] text-ink-950 mb-3 flex items-center gap-2">
+              <Gauge className="h-4 w-4 text-amber-600" /> Active Trips per Tenant
+            </h3>
+            {tenantBreakdown.activeTrips.length === 0 ? (
+              <p className="text-xs text-ink-500">No active trips</p>
+            ) : (
+              <div className="space-y-2">
+                {tenantBreakdown.activeTrips.map((t) => (
+                  <div key={t.tenantId} className="flex items-center justify-between">
+                    <Link
+                      href={`/dashboard/platform/tenants/${t.tenantId}`}
+                      className="text-sm text-ink-700 hover:text-brand-700 truncate flex-1 transition-colors"
+                    >
+                      {t.tenantName}
+                    </Link>
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 rounded-full bg-amber-200" style={{ width: `${Math.min((t.activeTripCount / Math.max(...tenantBreakdown.activeTrips.map((x) => x.activeTripCount), 1)) * 100, 100)}px` }} />
+                      <span className="text-sm font-medium tabular-nums text-ink-950 w-8 text-right">{t.activeTripCount}</span>
+                    </div>
                   </div>
-                </Link>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Quick Actions */}
+      <Card>
+        <CardContent className="pt-4">
+          <h3 className="text-sm font-[650] text-ink-950 mb-3">Quick Actions</h3>
+          <div className="flex flex-wrap gap-3">
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/dashboard/platform/tenants"><Building2 className="h-4 w-4" /> All Tenants</Link>
+            </Button>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/dashboard/share-links"><Globe className="h-4 w-4" /> Share Links</Link>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => refetch()}>
+              <RefreshCcw className="h-4 w-4" /> Refresh Analytics
+            </Button>
+          </div>
         </CardContent>
-        <div className="border-t border-border px-5 py-3">
-          <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/platform/tenants">
-              View All Tenants
-            </Link>
-          </Button>
-        </div>
       </Card>
     </div>
   );
