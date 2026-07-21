@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, CheckCircle2, Truck, Star, AlertTriangle } from 'lucide-react';
+import { VehicleAvailabilityCheck } from './VehicleAvailabilityCheck';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 
@@ -257,7 +258,16 @@ export default function NewAllocationPage() {
           </Card>
         )}
 
-        <div className="mt-6 flex items-center justify-end gap-3">
+        {/* Vehicle Availability Check */}
+        {selectedVehicleId && startDate && (
+          <VehicleAvailabilityCheck
+            vehicleId={selectedVehicleId}
+            startDate={startDate}
+            endDate={endDate}
+          />
+        )}
+
+        <div className="flex items-center justify-end gap-3">
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/allocations">Cancel</Link>
           </Button>

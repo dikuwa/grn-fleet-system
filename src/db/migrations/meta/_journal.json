@@ -64,6 +64,13 @@
       "when": 1784552700000,
       "tag": "0008_noisy_wind",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784646600000,
+      "tag": "0009_noisy_holidays",
+      "breakpoints": true
     }
   ]
 }

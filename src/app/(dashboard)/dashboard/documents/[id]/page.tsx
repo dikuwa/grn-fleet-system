@@ -27,6 +27,7 @@ import { createElement } from 'react';
 import { DocumentLifecycleActions } from './lifecycle-actions';
 import { CreateShareLinkButton } from './create-share-link';
 import { ShareActions } from './share-actions';
+import { QRDisplay } from './qr-display';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -259,7 +260,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
             <CardTitle>Secure Sharing</CardTitle>
             <CreateShareLinkButton documentId={doc.id} />
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             {activeShares.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-center">
                 <Link2 className="h-8 w-8 text-ink-300 mb-2" />
@@ -298,6 +299,9 @@ export default async function DocumentDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* QR Code */}
+      <QRDisplay shareUrl={shareUrl} documentTitle={doc.documentType} />
 
       {/* Version History */}
       {doc.documentVersion > 1 && (

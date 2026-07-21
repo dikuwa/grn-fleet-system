@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { APP_NAME } from '@/lib/constants';
 import { createHash } from 'node:crypto';
+import QRCode from 'qrcode';
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -90,6 +91,20 @@ export default async function SharePage({ params }: PageProps) {
 
   const brandColor = data.tenant.brandColor || '#2563eb';
   const docTypeLabel = DOCUMENT_TYPE_LABELS[data.documentType] || data.documentType;
+
+  // Generate QR code for the verification URL
+  let qrCodeDataUrl: string | null = null;
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const verificationUrl = `${baseUrl}/share/${token}`;
+    qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, {
+      width: 180,
+      margin: 1,
+      color: { dark: '#1F4E8C', light: '#FFFFFF' },
+    });
+  } catch {
+    // QR generation failed silently
+  }
 
   const verificationStatus = data.isRevoked
     ? { label: 'Revoked', color: 'text-status-error-text bg-status-error-bg border-status-error-border' }

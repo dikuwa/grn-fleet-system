@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-07-21 — Session 41: Availability UI, QR Codes on Documents, Business-Day Crons, Migration 0009
+
+### Added
+
+- **Vehicle Availability Check component** (`src/app/(dashboard)/dashboard/allocations/new/VehicleAvailabilityCheck.tsx`) — Real-time availability checker wired into allocation creation page. Fetches `GET /api/vehicles/[id]/availability` when a vehicle is selected. Shows green "Available" indicator or detailed blocker list with severity badges (error/warning). Each blocker shows type icon and detail text. Works with date range pickers to pass `?from=&to=` query params.
+- **QR Codes on Documents** — Two locations:
+  - **Share verification page** (`/share/[token]`) — Server-side QR code generation via `qrcode` library, renders verification URL as scannable QR, visible on the public document verification page
+  - **Document detail page** (`qr-display.tsx`) — Client component that generates QR from share URL, supports download as PNG via canvas export
+- **Migration 0009** (`src/db/migrations/0009_noisy_holidays.sql`) — Creates `tenant_holidays` table with tenant_id FK, name, holiday_date, is_recurring_yearly flag, indexes on tenant_id and holiday_date
+- **Business-Day Calendar library** (`src/lib/business-day.ts`) — `isBusinessDay(tenantId, date?)` checks weekends (Sat/Sun) and tenant holidays (exact date + yearly recurring), `nextBusinessDay()`/`previousBusinessDay()` helpers
+- **Business-day wired into Inngest crons** — All 3 cron functions (`vehicleLicenceExpiryAlert`, `driverLicenceExpiryAlert`, `maintenanceReminder`) now call `isBusinessDay()` with per-tenant caching to skip processing on holidays/weekends
+
+### Fixed
+
+- **Recurring holiday N+1 in business-day.ts** — Changed from two-step query (select id → for each, select full date) to single query selecting `holidayDate` directly
+- **Vehicle licence expiry cache** — Added `vehicleBdCache` Map to avoid N+1 business-day queries for same-tenant vehicles
+- **QRDisplay type** — Changed `shareUrl` type from `string | null` to `string | null | undefined` for server component optional chaining compatibility
+
 ## 2026-07-21 — Session 40: Vehicle Availability API, Document Verification Page, Business-Day Calendar
 
 ### Added

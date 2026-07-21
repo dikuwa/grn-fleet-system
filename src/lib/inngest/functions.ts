@@ -224,10 +224,14 @@ export const vehicleLicenceExpiryAlert = inngest
           const db = getDb();
           const { vehicles } = await import('@/db/schema/fleet');
           const { lte } = await import('drizzle-orm');
+          const { isBusinessDay } = await import('@/lib/business-day');
+
+          const today = new Date();
 
           const thirtyDays = new Date();
           thirtyDays.setDate(thirtyDays.getDate() + 30);
 
+          // Fetch expiring licences tenantIds first so we can check per-tenant
           const expiringSoon = await db
             .select({
               vehicleId: vehicles.id,
@@ -240,8 +244,17 @@ export const vehicleLicenceExpiryAlert = inngest
               lte(vehicles.licenceExpiryDate, thirtyDays.toISOString().split('T')[0]),
             );
 
+          // Track which tenants we've already checked today (cache)
+          const vehicleBdCache = new Map<string, boolean>();
+
           let notificationCount = 0;
           for (const v of expiringSoon) {
+            // Check business day once per tenant
+            if (!vehicleBdCache.has(v.tenantId)) {
+              vehicleBdCache.set(v.tenantId, await isBusinessDay(v.tenantId, today));
+            }
+            if (!vehicleBdCache.get(v.tenantId)) continue;
+
             const daysLeft = v.licenceExpiryDate
               ? Math.ceil((new Date(v.licenceExpiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
               : 0;
@@ -282,7 +295,9 @@ export const driverLicenceExpiryAlert = inngest
           const { driverProfiles, driverLicences } = await import('@/db/schema/people');
           const { employees } = await import('@/db/schema/people');
           const { lte } = await import('drizzle-orm');
+          const { isBusinessDay } = await import('@/lib/business-day');
 
+          const today = new Date();
           const thirtyDays = new Date();
           thirtyDays.setDate(thirtyDays.getDate() + 30);
 
@@ -311,7 +326,16 @@ export const driverLicenceExpiryAlert = inngest
               lte(driverLicences.expiryDate, thirtyDays.toISOString().split('T')[0]),
             );
 
+          // Track which tenants we've already checked today (cache)
+          const businessDayCache = new Map<string, boolean>();
+
           for (const l of expiringLicences) {
+            // Check business day once per tenant
+            if (!businessDayCache.has(l.tenantId)) {
+              businessDayCache.set(l.tenantId, await isBusinessDay(l.tenantId, today));
+            }
+            if (!businessDayCache.get(l.tenantId)) continue;
+
             const daysLeft = Math.ceil((new Date(l.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
             const isExpired = daysLeft <= 0;
 
@@ -380,7 +404,9 @@ export const maintenanceReminder = inngest
           const db = getDb();
           const { maintenanceEvents, vehicles } = await import('@/db/schema/fleet');
           const { lte } = await import('drizzle-orm');
+          const { isBusinessDay } = await import('@/lib/business-day');
 
+          const today = new Date();
           const fourteenDays = new Date();
           fourteenDays.setDate(fourteenDays.getDate() + 14);
 
@@ -402,7 +428,16 @@ export const maintenanceReminder = inngest
               ),
             );
 
+          // Track which tenants we've already checked today (cache)
+          const maintenanceBusinessDayCache = new Map<string, boolean>();
+
           for (const m of upcomingMaintenance) {
+            // Check business day once per tenant
+            if (!maintenanceBusinessDayCache.has(m.tenantId)) {
+              maintenanceBusinessDayCache.set(m.tenantId, await isBusinessDay(m.tenantId, today));
+            }
+            if (!maintenanceBusinessDayCache.get(m.tenantId)) continue;
+
             await db.insert(notifications).values({
               tenantId: m.tenantId,
               recipientUserId: '00000000-0000-0000-0000-000000000000',
