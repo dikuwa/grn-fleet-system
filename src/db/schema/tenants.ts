@@ -111,3 +111,17 @@ export const roleAssignments = pgTable('role_assignments', {
   reason: text('reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Tenant holidays (for business-day calendar)
+ */
+export const tenantHolidays = pgTable('tenant_holidays', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  holidayDate: timestamp('holiday_date', { withTimezone: true }).notNull(),
+  isRecurringYearly: boolean('is_recurring_yearly').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

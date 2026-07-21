@@ -1,217 +1,203 @@
-/**
- * Public Share View
- *
- * Resolves a secure share token and displays the shared document to
- * external viewers. This page is intentionally minimal — no dashboard,
- * no navigation, just the document content and metadata.
- *
- * Route: /share/[token]
- *
- * Access control is handled entirely by the share token: validity,
- * expiry, revocation, and view limits are checked server-side before
- * any content is rendered.
- */
-
-import { notFound } from 'next/navigation';
-import { verifyShareToken } from '@/lib/share-token';
 import { getDb } from '@/db';
-import { generatedDocuments } from '@/db/schema/documents';
-import { tenants } from '@/db/schema/tenants';
+import { shareLinks, generatedDocuments } from '@/db/schema/documents';
+import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { eq } from 'drizzle-orm';
-import { formatDate, formatDateTime } from '@/lib/utils';
-import { createElement } from 'react';
-import { FileText, Clock, CheckCircle2, XCircle, AlertTriangle, Shield } from 'lucide-react';
+import { notFound } from 'next/navigation';
+import { APP_NAME } from '@/lib/constants';
+import { createHash } from 'node:crypto';
 
 interface PageProps {
   params: Promise<{ token: string }>;
 }
 
-export default async function SharedDocumentPage({ params }: PageProps) {
-  const { token } = await params;
-
-  if (!token) notFound();
-
-  const verification = await verifyShareToken(token);
-
-  if (!verification.valid) {
-    const errorMessages: Record<string, { title: string; description: string; icon: 'expired' | 'revoked' | 'not_found' | 'limit' }> = {
-      not_found: {
-        title: 'Document Not Found',
-        description: 'This share link could not be found. It may have been removed or the link may be incorrect.',
-        icon: 'not_found',
-      },
-      revoked: {
-        title: 'Share Link Revoked',
-        description: 'This share link has been revoked by the document owner. Please request a new link.',
-        icon: 'revoked',
-      },
-      expired: {
-        title: 'Share Link Expired',
-        description: 'This share link has expired. Please request a new link from the document owner.',
-        icon: 'expired',
-      },
-      max_views_exceeded: {
-        title: 'View Limit Reached',
-        description: 'This share link has reached its maximum number of views. Please request a new link.',
-        icon: 'limit',
-      },
-      verification_error: {
-        title: 'Verification Error',
-        description: 'The share link could not be verified. Please try again or request a new link.',
-        icon: 'not_found',
-      },
-    };
-
-    const error = errorMessages[verification.reason || 'not_found'] || errorMessages.not_found;
-
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-        <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-50">
-            {error.icon === 'expired' ? (
-              <Clock className="h-8 w-8 text-red-500" />
-            ) : error.icon === 'revoked' ? (
-              <XCircle className="h-8 w-8 text-red-500" />
-            ) : (
-              <AlertTriangle className="h-8 w-8 text-red-500" />
-            )}
-          </div>
-          <h1 className="text-xl font-bold text-gray-900">{error.title}</h1>
-          <p className="mt-2 text-sm text-gray-500">{error.description}</p>
-
-          {verification.shareLink && (
-            <div className="mt-4 rounded-lg bg-gray-50 p-3 text-left text-xs text-gray-500">
-              <p>Document ID: {verification.shareLink.documentId.slice(0, 8)}…</p>
-              <p>Created: {formatDate(verification.shareLink.createdAt)}</p>
-              {verification.shareLink.expiresAt && (
-                <p>Expires: {formatDate(verification.shareLink.expiresAt)}</p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Resolve the actual document
+async function resolveSharedDocument(token: string) {
   const db = getDb();
-  const shareLink = verification.shareLink!;
 
+  // Hash the token to find the share link (Node.js crypto for server-side)
+  const tokenHash = createHash('sha256')
+    .update(token)
+    .digest('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  const [link] = await db
+    .select()
+    .from(shareLinks)
+    .where(eq(shareLinks.tokenHash, tokenHash))
+    .limit(1);
+
+  if (!link) return null;
+
+  // Fetch the document
   const [doc] = await db
     .select()
     .from(generatedDocuments)
-    .where(eq(generatedDocuments.id, shareLink.documentId))
+    .where(eq(generatedDocuments.id, link.documentId))
     .limit(1);
 
-  if (!doc) notFound();
+  if (!doc) return null;
 
-  // Look up tenant name for branding
+  // Fetch tenant + branding info
   const [tenant] = await db
-    .select({ name: tenants.name })
+    .select({
+      name: tenants.name,
+      code: tenants.code,
+      logoUrl: tenantBranding.logoUrl,
+      brandColor: tenantBranding.primaryColor,
+    })
     .from(tenants)
+    .leftJoin(tenantBranding, eq(tenantBranding.tenantId, tenants.id))
     .where(eq(tenants.id, doc.tenantId))
     .limit(1);
 
-  const statusIcon = doc.status === 'issued' ? CheckCircle2 :
-    doc.status === 'draft' ? Clock : XCircle;
+  const isExpired = new Date(link.expiresAt) < new Date();
+  const isRevoked = link.isRevoked;
+
+  return {
+    documentType: doc.documentType,
+    documentVersion: doc.documentVersion,
+    status: doc.status,
+    createdAt: doc.createdAt.toISOString(),
+    linkCreatedAt: link.createdAt.toISOString(),
+    expiresAt: link.expiresAt.toISOString(),
+    isExpired,
+    isRevoked,
+    currentViews: link.currentViews,
+    maxViews: link.maxViews,
+    tenant: tenant || { name: 'Unknown', code: '', logoUrl: null, brandColor: null },
+  };
+}
+
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  transport_request: 'Transport Request',
+  trip_authority: 'Trip Authority',
+  vehicle_allocation: 'Vehicle Allocation',
+  fuel_summary: 'Fuel Summary',
+  inspection_report: 'Inspection Report',
+  trip_completion: 'Trip Completion Report',
+  maintenance_report: 'Maintenance Report',
+  audit_report: 'Audit Report',
+};
+
+export default async function SharePage({ params }: PageProps) {
+  const { token } = await params;
+  const data = await resolveSharedDocument(token);
+
+  if (!data) {
+    notFound();
+  }
+
+  const brandColor = data.tenant.brandColor || '#2563eb';
+  const docTypeLabel = DOCUMENT_TYPE_LABELS[data.documentType] || data.documentType;
+
+  const verificationStatus = data.isRevoked
+    ? { label: 'Revoked', color: 'text-status-error-text bg-status-error-bg border-status-error-border' }
+    : data.isExpired
+      ? { label: 'Expired', color: 'text-status-warning-text bg-status-warning-bg border-status-warning-border' }
+      : { label: 'Active', color: 'text-status-success-text bg-status-success-bg border-status-success-border' };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-gray-600" />
-            <span className="text-sm font-medium text-gray-900">
-              {tenant?.name || 'Government Fleet Management'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <Shield className="h-3.5 w-3.5" />
-            <span>Securely shared document</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Content */}
-      <main className="mx-auto max-w-4xl px-4 py-8">
-        {/* Title Card */}
-        <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">
-                {doc.documentType.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
-              </h1>
-              <p className="mt-1 text-sm text-gray-500">
-                Version {doc.documentVersion} · {formatDate(doc.createdAt)}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${
-                doc.status === 'issued' ? 'bg-green-50 text-green-700' :
-                doc.status === 'draft' ? 'bg-amber-50 text-amber-700' :
-                'bg-red-50 text-red-700'
-              }`}>
-                {createElement(statusIcon, { className: 'h-3.5 w-3.5' })}
-                {doc.status}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Document Content */}
-        <div className="rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
-          <div className="mx-auto max-w-[210mm] min-h-[297mm]">
-            {/* Document Header */}
-            <div className="mb-6 border-b border-gray-300 pb-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-gray-500">{tenant?.name || 'Government Fleet'}</p>
-                  <p className="text-lg font-bold text-gray-900">
-                    {doc.documentType.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
-                  </p>
-                </div>
-                <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-mono text-gray-500">
-                  v{doc.documentVersion}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-gray-400">
-                Reference: {doc.id.slice(0, 8)} · Generated {formatDateTime(doc.createdAt)}
-              </p>
-            </div>
-
-            {/* Snapshot Data */}
-            {doc.snapshotData && Object.keys(doc.snapshotData).length > 0 ? (
-              <div className="space-y-3 text-sm">
-                {Object.entries(doc.snapshotData).map(([key, value]) => (
-                  <div key={key} className="flex border-b border-gray-100 py-2">
-                    <span className="w-1/3 font-medium text-gray-600 text-xs uppercase tracking-wider">
-                      {key.replace(/_/g, ' ')}
-                    </span>
-                    <span className="w-2/3 text-gray-900">
-                      {typeof value === 'object' && value !== null
-                        ? JSON.stringify(value, null, 2)
-                        : String(value ?? 'N/A')}
-                    </span>
-                  </div>
-                ))}
-              </div>
+    <div className="min-h-screen bg-page flex items-center justify-center p-4">
+      <div className="w-full max-w-lg">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-surface shadow-sm mb-4">
+            {data.tenant.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={data.tenant.logoUrl} alt="" className="w-10 h-10 object-contain" />
             ) : (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <FileText className="h-12 w-12 text-gray-300 mb-3" />
-                <p className="text-sm text-gray-500">Document content is not available</p>
-                <p className="text-xs text-gray-400 mt-1">The snapshot data for this document could not be loaded.</p>
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                style={{ backgroundColor: brandColor }}
+              >
+                {data.tenant.code.charAt(0)}
               </div>
             )}
+          </div>
+          <h1 className="text-xl font-semibold text-ink-950">
+            {data.tenant.name}
+          </h1>
+          <p className="text-sm text-ink-500 mt-1">{APP_NAME}</p>
+        </div>
+
+        {/* Verification Card */}
+        <div className="bg-surface rounded-2xl shadow-sm border border-border p-6 space-y-6">
+          {/* Status Badge */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium text-ink-700">Document Verification</h2>
+            <span
+              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${verificationStatus.color}`}
+            >
+              {verificationStatus.label}
+            </span>
+          </div>
+
+          {/* Document Info */}
+          <div className="space-y-3">
+            <div className="flex justify-between py-2 border-b border-border">
+              <span className="text-sm text-ink-500">Document Type</span>
+              <span className="text-sm font-medium text-ink-950">{docTypeLabel}</span>
+            </div>
+            <div className="flex justify-between py-2 border-b border-border">
+              <span className="text-sm text-ink-500">Version</span>
+              <span className="text-sm font-medium text-ink-950">v{data.documentVersion}</span>
+            </div>
+            <div className="flex justify-between py-2 border-b border-border">
+              <span className="text-sm text-ink-500">Status</span>
+              <span className="text-sm font-medium text-ink-950 capitalize">{data.status}</span>
+            </div>
+            <div className="flex justify-between py-2 border-b border-border">
+              <span className="text-sm text-ink-500">Issued</span>
+              <span className="text-sm font-medium text-ink-950">
+                {new Date(data.createdAt).toLocaleDateString('en-NA', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </span>
+            </div>
+            {data.maxViews && (
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <span className="text-sm text-gray-500">Views</span>
+                <span className="text-sm font-medium text-gray-900">
+                  {data.currentViews} / {data.maxViews}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Validity Period */}
+          <div className="bg-gray-50 rounded-xl p-4">
+            <p className="text-xs text-gray-500 mb-1">Validity</p>
+            <p className="text-sm text-gray-700">
+              Created {new Date(data.linkCreatedAt).toLocaleDateString('en-NA')}
+              {' — '}
+              Expires {new Date(data.expiresAt).toLocaleDateString('en-NA')}
+            </p>
+          </div>
+
+          {/* Verification Seal */}
+          <div className="text-center pt-2">
+            <div className="inline-flex items-center gap-2 text-xs text-gray-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span>Digitally Verified — {APP_NAME}</span>
+            </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="mt-6 text-center text-xs text-gray-400">
-          <p>This document was shared securely via the Government Fleet Management System.</p>
-          <p className="mt-1">© {new Date().getFullYear()} {tenant?.name || 'Government Fleet Management'}. All rights reserved.</p>
-        </div>
-      </main>
+        <p className="text-center text-xs text-gray-400 mt-6">
+          This verification page confirms the authenticity of a government fleet document.
+          {data.status === 'superseded' && (
+            <span className="block mt-1 text-amber-500">
+              Note: This document has been superseded by a newer version.
+            </span>
+          )}
+        </p>
+      </div>
     </div>
   );
 }

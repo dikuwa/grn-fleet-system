@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-21 — Session 40: Vehicle Availability API, Document Verification Page, Business-Day Calendar
+
+### Added
+
+- **Vehicle Availability API** (`GET /api/vehicles/[id]/availability`) — Checks if a vehicle is eligible for allocation. Verifies: vehicle status is available/provisional, no critical unresolved defects (error), no major unresolved defects (warning), no overlapping allocations in date range, no scheduled maintenance blocks, valid licence and roadworthy dates. Returns `{ available, hasWarnings, blockers[] }`
+- **Document Verification Page** (`/share/[token]`) — Public page that resolves a share token and displays document authenticity info: type, version, status (current/superseded), issue date, view count. Shows tenant branding with logo/initial badge. Verifies token hash via Node.js crypto. Displays Active/Expired/Revoked status badges. Warns if document is superseded
+- **Business-Day Calendar** — `tenant_holidays` table with name, holiday_date, is_recurring_yearly. Settings page already has quiet hours (start/end), emergency bypass toggle, and notification channel preferences
+
+### Fixed
+
+- **Availability API** — Replaced `as any` cast with proper `ne()` operator from drizzle-orm for state comparison
+- **Share page design tokens** — Replaced hardcoded gray color classes with project design token variables (`ink-*`, `page`, `surface`, `border-border`, `status-*-*`) for dark mode compatibility
+
 ## 2026-07-21 — Session 39: Vehicle Issue & Driver Acknowledgement, Service Reminders, Security Hardening
 
 ### Added
