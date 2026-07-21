@@ -5,7 +5,7 @@ import { vehicles, vehicleDefects, vehicleStatusEvents } from '@/db/schema/fleet
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onInspectionCompleted } from '@/lib/document-generator';
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import { eq, and, isNull, sql, inArray } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
   try {
@@ -233,6 +233,34 @@ export async function POST(req: NextRequest) {
           referenceEntityType: 'trip',
           referenceEntityId: tripId,
         });
+
+        // Auto-resolve unresolved defects for this vehicle that were created during this trip
+        const todayStr = new Date().toISOString().split('T')[0];
+        const unresolvedDefects = await db
+          .select({ id: vehicleDefects.id })
+          .from(vehicleDefects)
+          .where(
+            and(
+              eq(vehicleDefects.vehicleId, vehicleId),
+              eq(vehicleDefects.tripId, tripId),
+              isNull(vehicleDefects.resolvedAt),
+            ),
+          );
+
+        if (unresolvedDefects.length > 0) {
+          const defectIds = unresolvedDefects.map((d) => d.id);
+          await db
+            .update(vehicleDefects)
+            .set({
+              resolvedAt: new Date(),
+              resolvedByUserId: userId,
+              resolutionNotes: `Auto-resolved by return inspection completed on ${todayStr}. Vehicle status returned to available.`,
+              updatedAt: new Date(),
+            })
+            .where(inArray(vehicleDefects.id, defectIds));
+
+          console.log(`[Inspections] Auto-resolved ${defectIds.length} defect(s) from trip ${tripId} via return inspection`);
+        }
 
         // Trigger document generation for trip closure
         try {

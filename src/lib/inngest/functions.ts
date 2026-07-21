@@ -461,7 +461,100 @@ export const maintenanceReminder = inngest
 // Register all functions
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Document Expiry Alert Cron
+// ---------------------------------------------------------------------------
+
+export const documentExpiryAlert = inngest
+  ? inngest.createFunction(
+      { id: 'document-expiry-alert', retries: 2 },
+      { cron: '0 8 * * *' }, // Daily at 08:00
+      async ({ step }) => {
+        return step.run('Check document expiry dates', async () => {
+          const db = getDb();
+          const { generatedDocuments } = await import('@/db/schema/documents');
+          const { gte, lte, not, eq: eqOp } = await import('drizzle-orm');
+          const { isBusinessDay } = await import('@/lib/business-day');
+
+          const today = new Date();
+          const thirtyDays = new Date();
+          thirtyDays.setDate(thirtyDays.getDate() + 30);
+
+          // Find documents expiring within 30 days that have an expiresAt set
+          const expiringDocs = await db
+            .select({
+              docId: generatedDocuments.id,
+              documentType: generatedDocuments.documentType,
+              documentVersion: generatedDocuments.documentVersion,
+              entityType: generatedDocuments.entityType,
+              entityId: generatedDocuments.entityId,
+              expiresAt: generatedDocuments.expiresAt,
+              tenantId: generatedDocuments.tenantId,
+            })
+            .from(generatedDocuments)
+            .where(
+              and(
+                gte(generatedDocuments.expiresAt, today),
+                lte(generatedDocuments.expiresAt, thirtyDays),
+                not(eqOp(generatedDocuments.status, 'superseded')),
+              ),
+            );
+
+          if (expiringDocs.length === 0) {
+            return { skipped: true, reason: 'No documents expiring within 30 days' };
+          }
+
+          // Group by tenant for business-day check
+          const expiryBdCache = new Map<string, boolean>();
+
+          for (const doc of expiringDocs) {
+            const expiresAt = doc.expiresAt ? new Date(doc.expiresAt) : null;
+            if (!expiresAt) continue;
+
+            // Check business day once per tenant
+            if (!expiryBdCache.has(doc.tenantId)) {
+              expiryBdCache.set(doc.tenantId, await isBusinessDay(doc.tenantId, today));
+            }
+            if (!expiryBdCache.get(doc.tenantId)) continue;
+
+            const daysRemaining = Math.ceil((expiresAt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            const isExpired = daysRemaining <= 0;
+            const label = doc.documentType.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+            await db.insert(notifications).values({
+              tenantId: doc.tenantId,
+              recipientUserId: '00000000-0000-0000-0000-000000000000',
+              type: 'reminder',
+              title: isExpired
+                ? `📄 Document Expired: ${label}`
+                : `📄 Document Expiring: ${label} (${daysRemaining} days)`,
+              body: `${label} v${doc.documentVersion} ${isExpired ? `expired on ${expiresAt.toISOString().split('T')[0]}` : `will expire on ${expiresAt.toISOString().split('T')[0]} (${daysRemaining} days remaining)`}.`,
+              entityType: doc.entityType,
+              entityId: doc.entityId,
+              actionUrl: `/dashboard/documents/${doc.docId}`,
+              priority: daysRemaining <= 7 ? 'high' : 'normal',
+            });
+          }
+
+          return { sent: true, count: expiringDocs.length };
+        });
+      },
+    )
+  : null;
+
+// ---------------------------------------------------------------------------
+// Register all functions
+// ---------------------------------------------------------------------------
+
 /** Array of all registered Inngest functions (with nulls filtered out) */
 export const inngestFunctions = (
-  [stepReminder, stepEscalation, approvalCompleted, vehicleLicenceExpiryAlert, driverLicenceExpiryAlert, maintenanceReminder] as const
+  [
+    stepReminder,
+    stepEscalation,
+    approvalCompleted,
+    vehicleLicenceExpiryAlert,
+    driverLicenceExpiryAlert,
+    maintenanceReminder,
+    documentExpiryAlert,
+  ] as const
 ).filter((f): f is NonNullable<typeof f> => f !== null);

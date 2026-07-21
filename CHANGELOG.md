@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-21 — Session 42: Defect Auto-Resolution, Document Lifecycle Automation, Migration 0010
+
+### Added
+
+- **Defect Auto-Resolution** (`src/app/api/inspections/route.ts`) — When a return inspection auto-closes a trip (all items pass), the system now automatically resolves any unresolved vehicle defects linked to that trip. Sets `resolvedAt`, `resolvedByUserId`, and resolution notes: "Auto-resolved by return inspection completed on YYYY-MM-DD". Uses bulk-update via `inArray` for efficiency.
+- **Document Expiry Column** — Migration 0010 adds `expires_at` (timestamp with time zone) to `generated_documents` table, with dedicated index for expiry queries
+- **Document Expiry Email Template** (`src/emails/document-expiry.tsx`) — Branded email alert for expiring/expired documents with document type label, reference, days remaining, vehicle licence info. Uses `⚠️` icon for expired, `📄` for upcoming, with colour-coded emergency badge
+- **Document Expiry Alert Cron** (`documentExpiryAlert` in `src/lib/inngest/functions.ts`) — Daily cron at 08:00 that checks for documents expiring within the next 30 days. Creates in-app notifications with type-specific titles, priority levels (high if ≤7 days), and document detail action links. Uses per-tenant business-day caching to skip holidays/weekends
+- **Email Registry** (`src/lib/email.ts`) — Registered `document_expiry` template type using `DocumentExpiryEmail` component
+
 ## 2026-07-21 — Session 41: Availability UI, QR Codes on Documents, Business-Day Crons, Migration 0009
 
 ### Added

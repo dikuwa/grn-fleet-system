@@ -20,6 +20,7 @@ export const generatedDocuments = pgTable('generated_documents', {
   status: text('status').notNull().default('draft'), // draft, issued, superseded
   redactionProfile: text('redaction_profile').default('internal'), // internal, external_standard, external_minimal
   reason: text('reason'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
   generatedByUserId: text('generated_by_user_id').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

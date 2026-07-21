@@ -82,6 +82,7 @@ async function getTemplateRegistry(): Promise<Record<string, TemplateEntry>> {
     EmergencyOverrideEmail,
     ReminderEmail,
     AuditNotificationEmail,
+    DocumentExpiryEmail,
   ] = await Promise.all([
     import('@/emails/request-approved').then((m) => m.RequestApprovedEmail),
     import('@/emails/request-rejected').then((m) => m.RequestRejectedEmail),
@@ -90,6 +91,7 @@ async function getTemplateRegistry(): Promise<Record<string, TemplateEntry>> {
     import('@/emails/emergency-override').then((m) => m.EmergencyOverrideEmail),
     import('@/emails/reminder').then((m) => m.ReminderEmail),
     import('@/emails/audit-notification').then((m) => m.AuditNotificationEmail),
+    import('@/emails/document-expiry').then((m) => m.DocumentExpiryEmail),
   ]);
 
   return {
@@ -304,6 +306,18 @@ async function getTemplateRegistry(): Promise<Record<string, TemplateEntry>> {
         actionUrl: data.actionUrl,
         entityType: data.type,
         entitySummary: stripEmoji(data.title),
+      }),
+    },
+    document_expiry: {
+      component: DocumentExpiryEmail,
+      buildProps: (data) => ({
+        recipientName: data.recipientName,
+        tenantName: data.tenantName,
+        documentType: data.type.replace('document_expiry_', ''),
+        documentReference: stripEmoji(data.title),
+        expiryDate: data.body.split('on ')[1]?.split(' ')[0] || new Date().toISOString().split('T')[0],
+        daysRemaining: 0,
+        actionUrl: data.actionUrl,
       }),
     },
   };
