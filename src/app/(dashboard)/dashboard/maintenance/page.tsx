@@ -41,6 +41,12 @@ async function fetchMaintenance(sp: Record<string, string | undefined>) {
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
+  const now = new Date();
+  const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  // Add dueSoon + overdue filters
+  const spDueFilter = sp.due?.trim();
+
   const [rows, totalResult] = await Promise.all([
     db
       .select({
@@ -76,7 +82,13 @@ async function fetchMaintenance(sp: Record<string, string | undefined>) {
 
   const totalCost = rows.reduce((sum, r) => sum + (r.cost ? Number(r.cost) : 0), 0);
   const upcomingServices = rows.filter(
-    (r) => r.nextServiceDate && new Date(r.nextServiceDate) > new Date(),
+    (r) => r.nextServiceDate && new Date(r.nextServiceDate) > now,
+  ).length;
+  const dueSoonCount = rows.filter(
+    (r) => r.nextServiceDate && new Date(r.nextServiceDate) <= sevenDaysFromNow && new Date(r.nextServiceDate) >= now,
+  ).length;
+  const overdueCount = rows.filter(
+    (r) => r.nextServiceDate && new Date(r.nextServiceDate) < now,
   ).length;
 
   return {
@@ -86,7 +98,11 @@ async function fetchMaintenance(sp: Record<string, string | undefined>) {
     page,
     totalCost,
     upcomingServices,
-    filters: { serviceType },
+    dueSoonCount,
+    overdueCount,
+    overdueRows: rows.filter((r) => r.nextServiceDate && new Date(r.nextServiceDate) < now),
+    dueSoonRows: rows.filter((r) => r.nextServiceDate && new Date(r.nextServiceDate) <= sevenDaysFromNow && new Date(r.nextServiceDate) >= now),
+    filters: { serviceType, due: spDueFilter },
   };
 }
 
@@ -178,6 +194,40 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
         </Button>
       </PageHeader>
 
+      {/* Due-soon tabs */}
+      {result.overdueCount > 0 || result.dueSoonCount > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/dashboard/maintenance"
+            className={`inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors ${
+              !result.filters.due ? 'bg-brand-50 text-brand-700' : 'bg-surface text-ink-500 hover:text-ink-700'
+            }`}
+          >
+            All
+          </Link>
+          {result.dueSoonCount > 0 && (
+            <Link
+              href="/dashboard/maintenance?due=soon"
+              className={`inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors ${
+                result.filters.due === 'soon' ? 'bg-status-warning-bg text-status-warning-text' : 'bg-surface text-ink-500 hover:text-ink-700'
+              }`}
+            >
+              Due Soon ({result.dueSoonCount})
+            </Link>
+          )}
+          {result.overdueCount > 0 && (
+            <Link
+              href="/dashboard/maintenance?due=overdue"
+              className={`inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors ${
+                result.filters.due === 'overdue' ? 'bg-status-error-bg text-status-error-text' : 'bg-surface text-ink-500 hover:text-ink-700'
+              }`}
+            >
+              Overdue ({result.overdueCount})
+            </Link>
+          )}
+        </div>
+      ) : null}
+
       {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-4">
         <Card>
@@ -249,16 +299,24 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Maintenance List */}
-      {result.rows.length === 0 ? (
-        <EmptyState
-          icon={<Wrench className="h-8 w-8" />}
-          title="No maintenance events"
-          description="There are no maintenance events matching the current filters."
-        />
-      ) : (
-        <div className="space-y-3">
-          {result.rows.map((event) => (
+      {/* Derive display rows from active filter */}
+      {(() => {
+        const displayRows =
+          result.filters.due === 'soon'
+            ? result.dueSoonRows
+            : result.filters.due === 'overdue'
+              ? result.overdueRows
+              : result.rows;
+
+        return displayRows.length === 0 ? (
+          <EmptyState
+            icon={<Wrench className="h-8 w-8" />}
+            title="No maintenance events"
+            description="There are no maintenance events matching the current filters."
+          />
+        ) : (
+          <div className="space-y-3">
+            {displayRows.map((event) => (
             <div
               key={event.id}
               className="rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm"
@@ -307,17 +365,23 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
                       {formatCurrency(Number(event.cost))}
                     </span>
                   )}
-                  {event.nextServiceDate && (
-                    <span className="text-[11px] text-ink-500">
-                      Next: {formatDate(event.nextServiceDate)}
-                    </span>
-                  )}
+                  {event.nextServiceDate && (() => {
+                    const daysUntil = Math.ceil((new Date(event.nextServiceDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                    if (daysUntil < 0) {
+                      return <Badge variant="error" size="sm">Overdue {Math.abs(daysUntil)}d</Badge>;
+                    }
+                    if (daysUntil <= 7) {
+                      return <Badge variant="emergency" size="sm">Due in {daysUntil}d</Badge>;
+                    }
+                    return <span className="text-[11px] text-ink-500">Next: {formatDate(event.nextServiceDate)}</span>;
+                  })()}
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
+      )()}
 
       {/* Pagination */}
       {result.totalPages > 1 && (

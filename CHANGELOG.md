@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-07-21 — Session 39: Vehicle Issue & Driver Acknowledgement, Service Reminders, Security Hardening
+
+### Added
+
+- **Vehicle Issue API** (`POST /api/trips/[id]/issue`) — Creates tripIssues record (keysIssued, fuelCardIssued, issueOdometer, notes). Validates trip is pending, has allocationId, and no existing issue. Updates trip.issuedAt. Logs `vehicle_issued` audit event.
+- **Driver Acknowledgement API** (`POST /api/trips/[id]/acknowledge`) — Updates tripIssues with acknowledgedByDriverId (resolved from session employee) and acknowledgedAt. Validates issue exists first. Logs `driver_acknowledged` audit event.
+- **TripActions UI** — Pending trips show "Issue Vehicle" button (if not issued), "Driver Acknowledge" (if issued but unacknowledged), plus "Start Trip" always. Uses lucide-react icons (KeyRound, UserCheck).
+- **Trip detail page** — Timeline now shows Vehicle Issued (with keys/fuel card status) and Driver Acknowledged entries
+- **Service Reminders** — Maintenance page now has due-soon filter tabs (Due Soon / Overdue) with `due=soon|overdue` query param. Each event shows "Due in Xd" (orange) or "Overdue Xd" (red) badges
+- **Maintenance Report Snapshot** (`buildMaintenanceReportSnapshot`) — Aggregates all maintenance events for a vehicle with total cost, next service info
+- **Audit Report Snapshot** (`buildAuditReportSnapshot`) — Latest 100 audit events per tenant
+
+### Fixed
+
+- **Maintenance filter tabs** — Due Soon/Overdue tabs were cosmetic-only (highlighted but never filtered). Now correctly post-filter `rows` using pre-computed `dueSoonRows`/`overdueRows` arrays
+- **Document Generator import** — `maintenanceEvents` was imported from `@/db/schema/trips` (wrong module), causing Turbopack build failure. Moved to `@/db/schema/fleet` where it's defined
+- **Config consolidation** — Deleted `next.config.ts` (was overriding `next.config.js` since Next.js prefers `.ts`). Now `withSentryConfig()` from `@sentry/nextjs` is actually applied in production, making Sentry instrumentation functional
+
 ## 2026-07-21 — Session 38: E2E signIn fix across 11 files, DB migrations 0006-0008 applied, approvals query bug fix
 
 ### Fixed

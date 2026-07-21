@@ -14,8 +14,9 @@ import { generatedDocuments } from '@/db/schema/documents';
 import { trips, fuelTransactions, reimbursements, vehicleInspections, tripClosures } from '@/db/schema/trips';
 import { validateDocumentSnapshot, hasSchema } from '@/lib/document-validation';
 import { transportRequests, requestActivities, requestDrivers } from '@/db/schema/requests';
+import { auditEvents } from '@/db/schema/audit';
 import { vehicleAllocations } from '@/db/schema/trips';
-import { vehicles } from '@/db/schema/fleet';
+import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 
@@ -205,6 +206,69 @@ async function buildFuelSummarySnapshot(tripId: string) {
   };
 }
 
+async function buildMaintenanceReportSnapshot(vehicleId: string) {
+  const db = getDb();
+  const events = await db
+    .select()
+    .from(maintenanceEvents)
+    .where(eq(maintenanceEvents.vehicleId, vehicleId))
+    .orderBy(desc(maintenanceEvents.serviceDate));
+
+  if (events.length === 0) return null;
+
+  const totalCost = events.reduce((sum, e) => sum + (e.cost ? Number(e.cost) : 0), 0);
+  const nextService = events.find((e) => e.nextServiceDate && new Date(e.nextServiceDate) > new Date());
+
+  const [vehicle] = await db
+    .select({ licenceNumber: vehicles.licenceNumber, make: vehicles.make, model: vehicles.model })
+    .from(vehicles)
+    .where(eq(vehicles.id, vehicleId))
+    .limit(1);
+
+  return {
+    vehicleId,
+    vehicle: vehicle ? `${vehicle.make} ${vehicle.model} (${vehicle.licenceNumber})` : 'Unknown',
+    totalEvents: events.length,
+    totalCost: Number(totalCost.toFixed(2)),
+    nextServiceDate: nextService?.nextServiceDate || null,
+    nextServiceOdometer: nextService?.nextServiceOdometer || null,
+    events: events.map((e) => ({
+      date: e.serviceDate,
+      type: e.serviceType,
+      description: e.description,
+      cost: e.cost ? Number(e.cost) : null,
+      vendor: e.vendorName,
+      odometer: e.serviceOdometer,
+    })),
+  };
+}
+
+async function buildAuditReportSnapshot(tenantId: string) {
+  const db = getDb();
+  const events = await db
+    .select()
+    .from(auditEvents)
+    .where(eq(auditEvents.tenantId, tenantId))
+    .orderBy(desc(auditEvents.createdAt))
+    .limit(100);
+
+  return {
+    tenantId,
+    totalEvents: events.length,
+    period: 'Last 100 events',
+    eventTypes: [...new Set(events.map((e) => e.eventType))],
+    generatedAt: new Date().toISOString(),
+    events: events.map((e) => ({
+      type: e.eventType,
+      action: e.action,
+      entityType: e.entityType,
+      summary: e.summary,
+      timestamp: e.createdAt.toISOString(),
+      actor: e.actorUserId,
+    })),
+  };
+}
+
 async function buildTripCompletionSnapshot(tripId: string) {
   const db = getDb();
 
@@ -262,6 +326,8 @@ const BUILDERS: Record<string, (id: string) => Promise<Record<string, unknown> |
   trip: buildTripCompletionSnapshot,
   vehicle_allocation: buildTripAuthoritySnapshot,
   inspection: buildInspectionReportSnapshot,
+  maintenance: buildMaintenanceReportSnapshot,
+  tenant: buildAuditReportSnapshot,
 };
 
 /**
