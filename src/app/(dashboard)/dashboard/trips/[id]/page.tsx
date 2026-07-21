@@ -1,5 +1,5 @@
 import { getDb, isDbConnected } from '@/db';
-import { trips, tripLogEntries, fuelTransactions, vehicleInspections } from '@/db/schema/trips';
+import { trips, tripLogEntries, fuelTransactions, vehicleInspections, tripIssues } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
@@ -14,7 +14,7 @@ import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { notFound } from 'next/navigation';
 import {
-  Truck, ChevronLeft, User, CalendarDays, Clock, Gauge, CheckCircle2, XCircle, AlertTriangle, FileText,
+  Truck, ChevronLeft, User, CalendarDays, Clock, Gauge, CheckCircle2, XCircle, AlertTriangle, FileText, UserCheck as UserCheckIcon,
 } from 'lucide-react';
 import { TripActions } from '../components/TripActions';
 import Link from 'next/link';
@@ -46,6 +46,7 @@ async function fetchTripDetail(id: string, tenantId: string) {
       closedAt: trips.closedAt,
       createdAt: trips.createdAt,
       vehicleId: trips.vehicleId,
+      allocationId: trips.allocationId,
       requestId: trips.requestId,
       make: vehicles.make,
       model: vehicles.model,
@@ -67,7 +68,22 @@ async function fetchTripDetail(id: string, tenantId: string) {
 
   if (!trip) notFound();
 
-  const [logEntries, fuel, inspections] = await Promise.all([
+  const [issueRecord, logEntries, fuel, inspections] = await Promise.all([
+    db
+      .select({
+        id: tripIssues.id,
+        issuedAt: tripIssues.issuedAt,
+        issueOdometer: tripIssues.issueOdometer,
+        keysIssued: tripIssues.keysIssued,
+        fuelCardIssued: tripIssues.fuelCardIssued,
+        acknowledgedAt: tripIssues.acknowledgedAt,
+        acknowledgedByDriverId: tripIssues.acknowledgedByDriverId,
+        notes: tripIssues.notes,
+      })
+      .from(tripIssues)
+      .where(eq(tripIssues.allocationId, trip.allocationId))
+      .limit(1)
+      .then((r) => r[0] ?? null),
     db
       .select({
         id: tripLogEntries.id,
@@ -103,7 +119,7 @@ async function fetchTripDetail(id: string, tenantId: string) {
   const totalFuelCost = fuel.reduce((sum, f) => sum + Number(f.amount), 0);
   const totalLogKm = logEntries.reduce((sum, e) => sum + (e.distanceKm ?? 0), 0);
 
-  return { trip, logEntries, fuel, inspections, totalFuelLitres, totalFuelCost, totalLogKm };
+  return { trip, issueRecord, logEntries, fuel, inspections, totalFuelLitres, totalFuelCost, totalLogKm };
 }
 
 export default async function TripDetailPage({ params }: PageProps) {
@@ -144,7 +160,7 @@ export default async function TripDetailPage({ params }: PageProps) {
     );
   }
 
-  const { trip, logEntries, fuel, inspections } = data;
+  const { trip, issueRecord, logEntries, fuel, inspections } = data;
   const variant = TRIP_STATUS_VARIANTS[trip.status] ?? 'info';
 
   return (
@@ -159,7 +175,13 @@ export default async function TripDetailPage({ params }: PageProps) {
         description={`${trip.licenceNumber}${trip.vehicleRegisterNumber ? ` · ${trip.vehicleRegisterNumber}` : ''}`}
       >
         <div className="flex items-center gap-2">
-          <TripActions tripId={trip.id} status={trip.status} tenantId={session.tenantId} />
+          <TripActions
+              tripId={trip.id}
+              status={trip.status}
+              tenantId={session.tenantId}
+              hasIssue={!!issueRecord}
+              hasAcknowledge={!!issueRecord?.acknowledgedAt}
+            />
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/trips"><ChevronLeft className="h-4 w-4" /> Back to Trips</Link>
           </Button>
@@ -204,7 +226,8 @@ export default async function TripDetailPage({ params }: PageProps) {
         <CardContent>
           <div className="space-y-4">
             <TimelineItem icon={<FileText />} title="Request" subtitle={trip.requestReference ?? '—'} time={formatDate(trip.createdAt)} status="complete" />
-            <TimelineItem icon={<Truck />} title="Vehicle Issued" time={trip.issuedAt ? formatDateTime(trip.issuedAt) : 'Pending'} status={trip.issuedAt ? 'complete' : 'pending'} />
+            <TimelineItem icon={<Truck />} title="Vehicle Issued" subtitle={issueRecord ? `${issueRecord.keysIssued ? 'Keys ✓' : ''}${issueRecord.fuelCardIssued ? ' Fuel Card ✓' : ''}` : undefined} time={issueRecord?.issuedAt ? formatDateTime(issueRecord.issuedAt) : trip.issuedAt ? formatDateTime(trip.issuedAt) : 'Pending'} status={issueRecord ? 'complete' : 'pending'} />
+            <TimelineItem icon={<UserCheckIcon />} title="Driver Acknowledged" time={issueRecord?.acknowledgedAt ? formatDateTime(issueRecord.acknowledgedAt) : 'Pending'} status={issueRecord?.acknowledgedAt ? 'complete' : 'pending'} />
             <TimelineItem icon={<Gauge />} title="Trip Started" time={trip.startedAt ? formatDateTime(trip.startedAt) : 'Pending'} status={trip.startedAt ? 'complete' : 'pending'} />
             <TimelineItem icon={<CheckCircle2 />} title="Returned" time={trip.returnedAt ? formatDateTime(trip.returnedAt) : 'Pending'} status={trip.returnedAt ? 'complete' : 'pending'} />
             <TimelineItem icon={<Clock />} title="Closed" time={trip.closedAt ? formatDateTime(trip.closedAt) : 'Pending'} status={trip.closedAt ? 'complete' : 'pending'} />
