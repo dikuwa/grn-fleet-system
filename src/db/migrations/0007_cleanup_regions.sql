@@ -60,4 +60,4 @@ CREATE INDEX IF NOT EXISTS "idx_notifications_recipient" ON "notifications" ("te
 CREATE INDEX IF NOT EXISTS "idx_allocations_vehicle_dates" ON "vehicle_allocations" ("vehicle_id", "start_at", "end_at");
 
 -- Employee lookups by tenant
-CREATE INDEX IF NOT EXISTS "idx_employees_tenant" ON "employees" ("tenant_id", "is_active", "is_driver");
+CREATE INDEX IF NOT EXISTS "idx_employees_tenant" ON "employees" ("tenant_id", "employment_status", "is_driver");

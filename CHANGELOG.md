@@ -1,6 +1,17 @@
 # Changelog
 
-## 2026-07-21 — Session 37: E2E route calculation tests, rate limit bypass, admin role assignment
+## 2026-07-21 — Session 38: E2E signIn fix across 11 files, DB migrations 0006-0008 applied, approvals query bug fix
+
+### Fixed
+
+- **E2E sign-in fix across 11 test files** — Auth API returns token at top level (`body.token`), not nested under `body.session`. All `signIn` functions now use `body.token || body.session?.token` fallback pattern. Files: `full-trip-workflow`, `regional-trip-workflow`, `dark-mode`, `mobile-responsive`, `active-trips-smoke`, `audit-trail-workflow`, `offline-conflict-resolution`, `offline-drafts`, `pdf-export`, `photo-upload-workflow`, `notification-delivery`.
+- **Notification-delivery test** — Also fixed wrong credentials (`admin@kavango.gov.na` → `admin@kavangoeast.gov.na`) and wrong API path (`/api/auth/sign-in/email` → `/api/auth/sign-in`).
+- **DB migrations 0006-0008 applied** — Migration 0007 had a bug (referenced `is_active` column on `employees` table instead of `employment_status`), now fixed and applied.
+- **Approvals query bug fixed** — COUNT query was joining only `workflowInstances` but its WHERE clause referenced `transportRequests.tenantId`, causing PostgreSQL error `missing FROM-clause entry for table "transport_requests"`. Added `.leftJoin(transportRequests, ...)` to the COUNT query.
+
+### Infrastructure
+
+- All 3 pending migrations (0006, 0007, 0008) applied successfully to Neon production database.
 
 ### Added
 

@@ -11,13 +11,13 @@ async function signIn(page: Page) {
   });
   expect(res.status()).toBe(200);
   const body = await res.json();
-  expect(body.session).toBeDefined();
-  expect(body.session.token).toBeDefined();
+  const token = body.token || body.session?.token;
+  expect(token).toBeDefined();
 
   await page.context().addCookies([
     {
       name: 'better-auth.session_token',
-      value: body.session.token,
+      value: token,
       domain: new URL(BASE).hostname,
       path: '/',
       httpOnly: false,
@@ -25,7 +25,7 @@ async function signIn(page: Page) {
     },
   ]);
 
-  return body.session;
+  return { token, user: body.user || body.session?.user };
 }
 
 async function getCookieHeader(page: Page): Promise<string> {

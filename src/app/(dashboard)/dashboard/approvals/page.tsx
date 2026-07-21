@@ -65,6 +65,7 @@ async function fetchApprovals(sp: Record<string, string | undefined>, tenantId: 
     db
       .select({ count: sql<number>`count(*)` })
       .from(workflowInstances)
+      .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
       .where(where),
   ]);
 

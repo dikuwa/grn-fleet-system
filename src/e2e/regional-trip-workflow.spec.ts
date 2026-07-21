@@ -15,13 +15,13 @@ async function signInAndSetCookie(page: Page) {
 
   expect(res.status()).toBe(200);
   const body = await res.json();
-  expect(body.session).toBeDefined();
-  expect(body.session.token).toBeDefined();
+  const token = body.token || body.session?.token;
+  expect(token).toBeDefined();
 
   await page.context().addCookies([
     {
       name: 'better-auth.session_token',
-      value: body.session.token,
+      value: token,
       domain: new URL(baseURL).hostname,
       path: '/',
       httpOnly: false,

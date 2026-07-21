@@ -17,22 +17,30 @@ import { test, expect, type Page } from '@playwright/test';
 
 /** Sign in via the sign-in API and set the session cookie */
 async function signIn(page: Page): Promise<string> {
-  const email = 'admin@kavango.gov.na';
-  const password = 'admin123';
+  const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
+  const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
-  const response = await page.request.post('/api/auth/sign-in/email', {
+  const response = await page.request.post('/api/auth/sign-in', {
     data: { email, password },
   });
 
-  // The response body may include a session or token
+  expect(response.status()).toBe(200);
   const body = await response.json();
-  expect(response.ok()).toBeTruthy();
+  const token = body.token || body.session?.token;
+  expect(token).toBeDefined();
 
-  // Get the session cookie from the page context
-  // Wait a moment for cookies to be set
-  await page.waitForTimeout(500);
-  const cookies = await page.context().cookies();
-  const token = cookies.find((c) => c.name === 'better-auth.session_token')?.value ?? '';
+  // Set the session cookie for subsequent requests
+  await page.context().addCookies([
+    {
+      name: 'better-auth.session_token',
+      value: token,
+      domain: 'localhost',
+      path: '/',
+      httpOnly: false,
+      sameSite: 'Lax',
+    },
+  ]);
+
   return token;
 }
 
