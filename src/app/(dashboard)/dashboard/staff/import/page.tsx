@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import Papa from 'papaparse';
 import { useSession } from '@/lib/auth-client';
+import { parseImportFile } from '@/lib/file-import';
 import { DEFAULT_TENANT_ID } from '@/lib/constants';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
@@ -60,27 +61,16 @@ export default function StaffImportPage() {
 
     setFileName(file.name);
 
-    // Parse CSV using papaparse (handles quotes, commas in fields, headers)
-    Papa.parse<string[]>(file, {
-      header: false,
-      skipEmptyLines: true,
-      complete: (result) => {
-        if (result.data.length < 1) return;
-
-        const headers = result.data[0].map((h: string) => h.trim());
-        const parsedRows: ImportRow[] = result.data.slice(1).map(
-          (values: string[], idx: number) => {
-            const rowData: Record<string, string> = {};
-            headers.forEach((h, i) => {
-              rowData[h] = (values[i] || '').trim();
-            });
-            return {
-              rowNumber: idx + 2,
-              data: rowData,
-              errors: [],
-              isDuplicate: false,
-            };
-          },
+    parseImportFile(file)
+      .then((parsed) => {
+        const headers = parsed.headers;
+        const parsedRows: ImportRow[] = parsed.rows.map(
+          (rowData: Record<string, string>, idx: number) => ({
+            rowNumber: idx + 2,
+            data: rowData,
+            errors: [],
+            isDuplicate: false,
+          }),
         );
 
         // Auto-map known columns
@@ -114,12 +104,11 @@ export default function StaffImportPage() {
         setRows(validated);
 
         setStep('mapping');
-      },
-      error: () => {
-        // Silently fail — user can retry
-      },
-    });
-  }, []);
+      })
+      .catch((err) => {
+        toast({ title: 'Parse Error', description: err.message, variant: 'error' });
+      });
+  }, [toast]);
 
   const handleCommitImport = useCallback(async () => {
     setIsCommitting(true);
@@ -248,18 +237,19 @@ export default function StaffImportPage() {
               <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
                 <Upload className="h-8 w-8 text-brand-700" />
               </div>
-              <h3 className="text-base font-semibold text-ink-950">Upload CSV File</h3>
+              <h3 className="text-base font-semibold text-ink-950">Upload File</h3>
               <p className="mt-1 max-w-sm text-sm text-ink-500">
-                Drag and drop your CSV file here, or click to browse. The file should contain employee data with column headers.
+                Drag and drop your CSV or Excel file here, or click to browse. The file should contain employee data with column headers.
               </p>
               <div className="mt-6 flex items-center gap-4 text-xs text-ink-500">
-                <span>Supported: .csv</span>
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                <span>Supported: .csv, .xlsx</span>
                 <span className="text-ink-300">|</span>
                 <span>Max: 10MB</span>
                 <span className="text-ink-300">|</span>
                 <span>Template available</span>
               </div>
-              <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileSelect} />
+              <input ref={fileInputRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={handleFileSelect} />
             </div>
           </CardContent>
         </Card>

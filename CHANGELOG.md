@@ -1,6 +1,25 @@
 # Changelog
 
+## 2026-07-21 — Session 44: XLSX Import Support, Share link filter fix, dead import cleanup
+
+### Added
+
+- **XLSX Import Support** (`src/lib/file-import.ts`) — New shared utility that parses both CSV (via PapaParse) and XLSX (via SheetJS) files. Auto-detects format by `.xlsx?` extension. Both staff and vehicle import wizards now accept `.csv` and `.xlsx` files with the same column mapping, validation, and preview workflow. Excel date cells preserved via `cellDates: true`. Sheet names exposed for future sheet-selector UI.
+- **Staff Import Wizard** — Updated to use `parseImportFile()` utility. Upload UI now shows "Supported: .csv, .xlsx" with FileSpreadsheet icon. Error feedback via toast on parse failure.
+- **Vehicle Import Wizard** — Same XLSX support applied. Accepts `.csv,.xlsx`, shows both formats in upload area, error via toast.
+
+---
+
 ## 2026-07-21 — Session 44: Share link API active filter fix, dead import cleanup
+
+### Fixed
+
+- **Share link API active filter** (`src/app/api/share-links/route.ts`) — Added `gte(shareLinks.expiresAt, new Date())` to the `status=active` condition so expired-but-unrevoked links are excluded. Added missing `gte` import.
+- **Removed dead import** (`src/app/(dashboard)/dashboard/platform/page.tsx`) — Removed unused `formatNumber` import from `@/lib/utils`.
+
+---
+
+## 2026-07-21 — Session 43: Share Link Dashboard, Cross-Tenant Analytics, Vehicle Recommender Verified
 
 ### Fixed
 
