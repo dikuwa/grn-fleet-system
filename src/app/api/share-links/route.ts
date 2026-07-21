@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { shareLinks, generatedDocuments } from '@/db/schema/documents';
-import { eq, and, desc, count } from 'drizzle-orm';
+import { eq, and, desc, count, gte } from 'drizzle-orm';
 import { generateShareToken } from '@/lib/share-token';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -29,7 +29,10 @@ export async function GET(request: NextRequest) {
 
     // Build conditions
     const conditions = [eq(shareLinks.tenantId, session.tenantId)];
-    if (status === 'active') conditions.push(eq(shareLinks.isRevoked, false));
+    if (status === 'active') {
+      conditions.push(eq(shareLinks.isRevoked, false));
+      conditions.push(gte(shareLinks.expiresAt, new Date()));
+    }
     else if (status === 'revoked') conditions.push(eq(shareLinks.isRevoked, true));
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;

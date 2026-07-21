@@ -10,7 +10,7 @@ import {
   Database, Globe, TrendingUp, BarChart3, Activity, RefreshCcw,
 } from 'lucide-react';
 import Link from 'next/link';
-import { formatNumber } from '@/lib/utils';
+
 
 interface AnalyticsData {
   summary: {

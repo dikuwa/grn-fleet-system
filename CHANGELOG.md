@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-21 — Session 44: Share link API active filter fix, dead import cleanup
+
+### Fixed
+
+- **Share link API active filter** (`src/app/api/share-links/route.ts`) — Added `gte(shareLinks.expiresAt, new Date())` to the `status=active` condition so expired-but-unrevoked links are excluded. Added missing `gte` import.
+- **Removed dead import** (`src/app/(dashboard)/dashboard/platform/page.tsx`) — Removed unused `formatNumber` import from `@/lib/utils`.
+
+---
+
 ## 2026-07-21 — Session 43: Share Link Dashboard, Cross-Tenant Analytics, Vehicle Recommender Verified
 
 ### Added
