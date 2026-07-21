@@ -19,6 +19,7 @@ import {
   roles,
   permissions,
   rolePermissions,
+  roleAssignments,
   offices,
   departments,
   employees,
@@ -30,7 +31,7 @@ import {
   account,
 } from '@/db/schema';
 import { Permissions, RoleDefinitions } from '@/lib/permissions';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
@@ -294,6 +295,36 @@ async function seed() {
     userId: adminUserId,
     status: 'active',
   }).onConflictDoNothing();
+
+  // 13. Assign admin user to Transport Admin role
+  console.log('Assigning admin role...');
+  const [membership] = await db
+    .select({ id: tenantMemberships.id })
+    .from(tenantMemberships)
+    .where(and(
+      eq(tenantMemberships.tenantId, TENANT_ID as any),
+      eq(tenantMemberships.userId, adminUserId),
+    ))
+    .limit(1);
+
+  if (membership) {
+    const [transportAdminRole] = await db
+      .select({ id: roles.id })
+      .from(roles)
+      .where(and(
+        eq(roles.tenantId, TENANT_ID as any),
+        eq(roles.name, RoleDefinitions.TRANSPORT_ADMIN.name),
+      ))
+      .limit(1);
+
+    if (transportAdminRole) {
+      await db.insert(roleAssignments).values({
+        tenantMembershipId: membership.id,
+        roleId: transportAdminRole.id,
+      }).onConflictDoNothing();
+      console.log('   Admin user assigned Transport Admin role');
+    }
+  }
 
   console.log('✅ Seed complete!');
   console.log('   Tenant: Kavango East Regional Council');

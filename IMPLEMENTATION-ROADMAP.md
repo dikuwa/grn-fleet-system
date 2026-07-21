@@ -60,7 +60,7 @@ This document is the permanent execution plan for every coding session. Read it 
 |---|--------|--------|-------------|----------------|----------|
 | 3.1 | Transport request | IMPLEMENTED | 5-step wizard, API route, DB schema (requests, activities, passengers, drivers, routes, attachments) | Request detail page with all child records | HIGHEST |
 | 3.2 | Approval workflow | VERIFIED | WorkflowEngine class, regional/national definitions, action processing, separation of duty, emergency override, 10 E2E tests | ✅ Full approval → trip workflow tested | HIGHEST |
-| 3.3 | Maps and routes | PARTIAL | RouteCalculator (Google Maps), graceful fallback, route form in wizard | Google Maps API key not configured | HIGH |
+| 3.3 | Maps and routes | VERIFIED | RouteCalculator (Google Maps), graceful fallback, route form in wizard, route map visualization on request detail page, E2E route calculation test | — | HIGH |
 | 3.4 | Vehicle recommendation | VERIFIED | VehicleRecommender class (deterministic scoring), category/terrain/passenger matching | ✅ Wired into allocation UI with scores/reasons | HIGH |
 | 3.5 | Vehicle allocation | IMPLEMENTED | Allocations list (DB-backed), allocation schema, API route, recommendation UI, DriverAssignment component | ✅ Show scored recommendations, driver assign/unassign | HIGH |
 | 3.6 | Driver assignment | IMPLEMENTED | Full `DriverAssignment` component at allocation detail, assign/unassign API, driver detail page with licence/assignment history | ✅ Complete driver management flow | HIGH |

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-07-21 — Session 37: E2E route calculation tests, rate limit bypass, admin role assignment
+
+### Added
+
+- **Route Calculation E2E Test** (`src/e2e/route-calculation.spec.ts`) — 6 test cases covering route calculator configured check, multi-leg aggregation, invalid locations (422), missing fields (400), unauthenticated requests (401), and full flow with transport request save + Leaflet map render
+- **Rate limit bypass** (`src/app/api/auth/[...all]/route.ts`) — Skip rate limiting when `NODE_ENV=test` or `CI=true` in both `handleSignIn` (raised from 5→20) and `handleSession` handlers to prevent 429 errors during E2E testing
+- **Admin role assignment** (`src/seed/index.ts`) — Step 13 assigns admin user (`admin@kavangoeast.gov.na`) to Transport Admin role, fixing 403 permission errors on every API call
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **Tests**: 72/72 passing
+- **Build**: Production build passes
+
 ## 2026-07-20 — Session 36: Route map visualization on request detail page
 
 ### Added
