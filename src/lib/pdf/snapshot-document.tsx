@@ -122,7 +122,8 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
   },
   badge: {
-    padding: '2 8',
+    paddingVertical: 2,
+    paddingHorizontal: 8,
     borderRadius: 3,
     fontSize: 8,
     fontWeight: 'bold',
@@ -202,7 +203,9 @@ export const SnapshotDocument: React.FC<{ data: SnapshotDocumentData }> = ({ dat
 
   return (
     <Document>
-      <Page size="A4" style={styles.page}>
+      <Page size="A4" style={styles.page}
+        wrap
+      >
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>{displayType}</Text>
@@ -310,14 +313,10 @@ export const SnapshotDocument: React.FC<{ data: SnapshotDocumentData }> = ({ dat
         })}
 
         {/* Footer */}
-        <Text style={styles.footer}>
+        <Text style={styles.footer} fixed>
           {data.tenantDocumentFooter || 'Fleet Management System — Generated Document'}
         </Text>
-        <Text
-          style={styles.pageNumber}
-          render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`}
-          fixed
-        />
+        {/* Page number is rendered via Page.render prop — see below */}
       </Page>
     </Document>
   );
