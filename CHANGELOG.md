@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-07-22 — Session 45: Trip lifecycle completion — return_due detection, E2E lifecycle tests
+
+### Added
+
+- **Return Due Detection API** (`POST /api/trips/check-return-due`) — Finds all `in_progress` trips whose allocation `endAt` has passed and transitions them to `return_due`. Includes audit logging (`trip_return_due`), vehicle status events, and concurrent-safety via `eq(trips.status, 'in_progress')` in the UPDATE WHERE clause.
+- **Trip Return Due E2E Test** (`src/e2e/trip-return-due-lifecycle.spec.ts`) — 8-test suite covering: request creation + approval completion, allocation with past end date, trip creation, departure inspection → in_progress, return_due detection via API, return marking + return inspection → closure_review/closed, trip close, closure review page smoke test.
+
+### Changed
+
+- **Return API** (`POST /api/trips/[id]/return`) — Now accepts `return_due` and `pending` statuses in addition to `in_progress`, enabling overdue trips to be marked as returned.
+- **TripActions** — `return_inspection` status "Close Trip" link now points to the specific trip detail page (`/dashboard/trips/${tripId}`) instead of the closure review list page.
+
+### Fixed
+
+- **Return route status check** — Changed strict `trip.status !== 'in_progress'` guard to accept `['in_progress', 'return_due', 'pending']` so the return_due → return_inspection transition works.
+
+---
+
 ## 2026-07-21 — Session 44: XLSX Import Support, Share link filter fix, dead import cleanup
 
 ### Added
