@@ -543,6 +543,133 @@ export const documentExpiryAlert = inngest
   : null;
 
 // ---------------------------------------------------------------------------
+// Trip Return Due Check Cron
+// ---------------------------------------------------------------------------
+
+export const tripReturnDueCheck = inngest
+  ? inngest.createFunction(
+      { id: 'trip-return-due-check', retries: 2 },
+      { cron: '0 8 * * *' }, // Daily at 08:00
+      async ({ step }) => {
+        return step.run('Check for overdue trips across all tenants', async () => {
+          const db = getDb();
+          const { tenants: tenantsTable } = await import('@/db/schema/tenants');
+          const { trips, vehicleAllocations } = await import('@/db/schema/trips');
+          const { vehicles, vehicleStatusEvents } = await import('@/db/schema/fleet');
+          const { auditEvents } = await import('@/db/schema/audit');
+          const { notifications } = await import('@/db/schema/notifications');
+          const { eq, and, lt, sql: drizzleSql } = await import('drizzle-orm');
+          const { isBusinessDay } = await import('@/lib/business-day');
+
+          const today = new Date();
+          const bdCache = new Map<string, boolean>();
+
+          // Get all active tenants
+          const allTenants = await db
+            .select({ id: tenantsTable.id })
+            .from(tenantsTable)
+            .catch(() => []);
+
+          if (allTenants.length === 0) {
+            return { skipped: true, reason: 'No tenants found' };
+          }
+
+          let totalOverdue = 0;
+          let totalNotifications = 0;
+
+          for (const tenant of allTenants) {
+            // Check business day once per tenant
+            if (!bdCache.has(tenant.id)) {
+              bdCache.set(tenant.id, await isBusinessDay(tenant.id, today));
+            }
+            if (!bdCache.get(tenant.id)) continue;
+
+            // Find in_progress trips past their allocation end time
+            const overdueTrips = await db
+              .select({
+                id: trips.id,
+                vehicleId: trips.vehicleId,
+                endAt: vehicleAllocations.endAt,
+                make: vehicles.make,
+                model: vehicles.model,
+                licenceNumber: vehicles.licenceNumber,
+              })
+              .from(trips)
+              .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+              .innerJoin(vehicles, eq(trips.vehicleId, vehicles.id))
+              .where(
+                and(
+                  eq(trips.tenantId, tenant.id),
+                  eq(trips.status, 'in_progress'),
+                  lt(vehicleAllocations.endAt, today),
+                ),
+              );
+
+            if (overdueTrips.length === 0) continue;
+
+            // Update to return_due
+            const overdueIds = overdueTrips.map((t) => t.id);
+            await db
+              .update(trips)
+              .set({ status: 'return_due', updatedAt: today })
+              .where(
+                and(
+                  eq(trips.tenantId, tenant.id),
+                  eq(trips.status, 'in_progress'),
+                  drizzleSql`${trips.id} = ANY(${overdueIds}::uuid[])`,
+                ),
+              );
+
+            totalOverdue += overdueTrips.length;
+
+            for (const trip of overdueTrips) {
+              // Audit log
+              await db.insert(auditEvents).values({
+                tenantId: tenant.id,
+                tenantSequence: 0,
+                eventType: 'trip_return_due',
+                actorUserId: '00000000-0000-0000-0000-000000000000',
+                action: 'system_flag',
+                entityType: 'trip',
+                entityId: trip.id,
+                summary: `Trip flagged return_due: ${trip.make} ${trip.model} (${trip.licenceNumber}) — allocation ended at ${trip.endAt?.toISOString()}`,
+                sourceChannel: 'system',
+              });
+
+              // Vehicle status event
+              await db.insert(vehicleStatusEvents).values({
+                vehicleId: trip.vehicleId,
+                previousStatus: 'allocated',
+                newStatus: 'return_due',
+                reason: 'Allocation period ended. Trip flagged as return_due by daily cron.',
+                changedByUserId: '00000000-0000-0000-0000-000000000000',
+                referenceEntityType: 'trip',
+                referenceEntityId: trip.id,
+              });
+
+              // Create notification
+              await db.insert(notifications).values({
+                tenantId: tenant.id,
+                recipientUserId: '00000000-0000-0000-0000-000000000000',
+                type: 'escalation',
+                title: '⚠️ Trip Return Overdue',
+                body: `${trip.make} ${trip.model} (${trip.licenceNumber}) — return was due. Please arrange return and inspection.`,
+                entityType: 'trip',
+                entityId: trip.id,
+                actionUrl: `/dashboard/trips/${trip.id}`,
+                priority: 'high',
+              });
+              totalNotifications++;
+            }
+          }
+
+          return { sent: totalOverdue > 0, overdueCount: totalOverdue, notificationCount: totalNotifications };
+        });
+      },
+    )
+  : null;
+
+// ---------------------------------------------------------------------------
 // Register all functions
 // ---------------------------------------------------------------------------
 
@@ -556,5 +683,6 @@ export const inngestFunctions = (
     driverLicenceExpiryAlert,
     maintenanceReminder,
     documentExpiryAlert,
+    tripReturnDueCheck,
   ] as const
 ).filter((f): f is NonNullable<typeof f> => f !== null);

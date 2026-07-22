@@ -44,6 +44,7 @@ async function fetchDashboardData(tenantId: string) {
     vehicleCounts,
     defectCounts,
     tripCounts,
+    returnDueCount,
     recentReqs,
     fuelMonth,
     pendingApprovals,
@@ -89,6 +90,16 @@ async function fetchDashboardData(tenantId: string) {
         and(
           eq(trips.tenantId, tenantId),
           eq(trips.status, 'in_progress'),
+        ),
+      ),
+    // Return due trip count
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(trips)
+      .where(
+        and(
+          eq(trips.tenantId, tenantId),
+          eq(trips.status, 'return_due'),
         ),
       ),
     // Recent requests (last 5)
@@ -285,10 +296,13 @@ async function fetchDashboardData(tenantId: string) {
     (l) => !expiredDriverLicences.find((e) => e.id === l.id),
   );
 
+  const returnDueCountNum = Number(returnDueCount[0]?.count ?? 0);
+
   return {
     activeRequests,
     approvalPendingCount,
     activeTripCount,
+    returnDueCount: returnDueCountNum,
     openDefectTotal,
     availableCount,
     onTripCount,
@@ -362,6 +376,33 @@ export default async function DashboardPage() {
         description="Fleet Operations Overview"
       />
 
+      {/* Return Due Alert Banner */}
+      {data.returnDueCount > 0 && (
+        <div className="rounded-[10px] border border-red-200 bg-red-50 p-4 dark:border-red-800/40 dark:bg-red-950/20">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+                  {data.returnDueCount} Trip{data.returnDueCount !== 1 ? 's' : ''} Return Overdue
+                </p>
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  These trips have exceeded their allocation end time and need immediate attention.
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/dashboard/trips/active"
+              className="shrink-0 rounded-[8px] bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-700"
+            >
+              View Overdue Trips
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -377,6 +418,13 @@ export default async function DashboardPage() {
           icon={<Truck className="h-5 w-5" />}
         />
         <StatCard
+          title="Return Overdue"
+          value={String(data.returnDueCount)}
+          description="Overdue for return"
+          icon={<AlertTriangle className="h-5 w-5" />}
+          className={data.returnDueCount > 0 ? 'border-red-200 bg-red-50/50' : ''}
+        />
+        <StatCard
           title="Pending Approvals"
           value={String(data.pendingApprovalCount)}
           description="Awaiting decision"
@@ -386,7 +434,7 @@ export default async function DashboardPage() {
           title="Open Defects"
           value={String(data.openDefectTotal)}
           description="Needs attention"
-          icon={<AlertTriangle className="h-5 w-5" />}
+          icon={<Wrench className="h-5 w-5" />}
         />
         <StatCard
           title="Expired/Expiring"

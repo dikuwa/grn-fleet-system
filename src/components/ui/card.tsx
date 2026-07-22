@@ -70,11 +70,12 @@ interface StatCardProps {
   description?: string;
   icon?: React.ReactNode;
   trend?: { value: string; positive: boolean };
+  className?: string;
 }
 
-export function StatCard({ title, value, description, icon, trend }: StatCardProps) {
+export function StatCard({ title, value, description, icon, trend, className }: StatCardProps) {
   return (
-    <Card>
+    <Card className={className}>
       <CardContent>
         <div className="flex items-start justify-between pt-4">
           <div className="space-y-1">
