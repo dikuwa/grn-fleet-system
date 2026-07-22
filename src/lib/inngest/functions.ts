@@ -577,6 +577,12 @@ export const tripReturnDueCheck = inngest
           let totalOverdue = 0;
           let totalNotifications = 0;
 
+          // Get email module for sending notifications
+          const [emailModule] = await Promise.all([
+            import('@/lib/email'),
+          ]);
+          const sendEmail = emailModule.sendNotificationEmail;
+
           for (const tenant of allTenants) {
             // Check business day once per tenant
             if (!bdCache.has(tenant.id)) {
@@ -589,6 +595,7 @@ export const tripReturnDueCheck = inngest
               .select({
                 id: trips.id,
                 vehicleId: trips.vehicleId,
+                requestId: trips.requestId,
                 endAt: vehicleAllocations.endAt,
                 make: vehicles.make,
                 model: vehicles.model,
@@ -620,9 +627,33 @@ export const tripReturnDueCheck = inngest
                 ),
               );
 
+            // Fetch requester emails for each overdue trip
+            const requestIds = overdueTrips.map((t) => t.requestId).filter(Boolean);
+            let requesterEmails: Array<{ requestId: string; email: string | null; name: string | null }> = [];
+            if (requestIds.length > 0) {
+              const { transportRequests } = await import('@/db/schema/requests');
+              const { employees } = await import('@/db/schema/people');
+              const { inArray } = await import('drizzle-orm');
+              requesterEmails = await db
+                .select({
+                  requestId: transportRequests.id,
+                  email: employees.email,
+                  name: employees.firstName,
+                })
+                .from(transportRequests)
+                .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+                .where(
+                  and(
+                    eq(transportRequests.tenantId, tenant.id),
+                    inArray(transportRequests.id, requestIds),
+                  ),
+                );
+            }
+
             totalOverdue += overdueTrips.length;
 
             for (const trip of overdueTrips) {
+              const requester = requesterEmails.find((r) => r.requestId === trip.requestId);
               // Audit log
               await db.insert(auditEvents).values({
                 tenantId: tenant.id,
@@ -660,6 +691,22 @@ export const tripReturnDueCheck = inngest
                 priority: 'high',
               });
               totalNotifications++;
+
+              // Send email notification if we have the requester's address
+              if (requester?.email && sendEmail) {
+                try {
+                  await sendEmail({
+                    to: requester.email,
+                    type: 'trip_returned',
+                    title: '⚠️ Trip Return Overdue',
+                    body: `${trip.make} ${trip.model} (${trip.licenceNumber}) — this trip's return was due at ${trip.endAt ? new Date(trip.endAt).toLocaleDateString() : 'the scheduled time'}. Please arrange the vehicle return and post-trip inspection immediately.`,
+                    actionUrl: `/dashboard/trips/${trip.id}`,
+                    recipientName: requester.name || 'Fleet Manager',
+                  });
+                } catch (emailErr) {
+                  console.warn(`[tripReturnDueCheck] Email to ${requester.email} failed:`, emailErr);
+                }
+              }
             }
           }
 
