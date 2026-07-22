@@ -10,6 +10,7 @@ import React from 'react';
 import { renderToStream } from '@react-pdf/renderer';
 import { TripAuthorityDocument, type TripAuthorityData } from './trip-authority';
 import { InspectionReportDocument, type InspectionReportData } from './inspection-report';
+import { SnapshotDocument, type SnapshotDocumentData } from './snapshot-document';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { vehicles } from '@/db/schema/fleet';
@@ -192,8 +193,27 @@ export async function generateDocumentPdf(
       }
       break;
     }
-    default:
-      return null;
+    default: {
+      // Use the generic snapshot PDF for all other document types
+      if (doc.snapshotData) {
+        const [t] = await db
+          .select()
+          .from(tenants)
+          .where(eq(tenants.id, doc.tenantId))
+          .limit(1);
+        const snapshotData: SnapshotDocumentData = {
+          documentType: doc.documentType,
+          documentVersion: doc.documentVersion,
+          tenantName: t?.name,
+          tenantDocumentFooter: undefined,
+          snapshotData: doc.snapshotData as Record<string, unknown>,
+          generatedAt: doc.createdAt.toISOString(),
+        };
+        const element = React.createElement(SnapshotDocument as React.ComponentType<{ data: SnapshotDocumentData }>, { data: snapshotData }) as React.ReactElement;
+        buffer = await renderPdfToBuffer(element);
+      }
+      break;
+    }
   }
 
   if (!buffer) return null;

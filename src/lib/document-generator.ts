@@ -32,6 +32,7 @@ export type DocumentType =
   | 'inspection_report'
   | 'trip_completion'
   | 'maintenance_report'
+  | 'vehicle_history'
   | 'audit_report';
 
 interface DocumentPayload {
@@ -206,6 +207,108 @@ async function buildFuelSummarySnapshot(tripId: string) {
   };
 }
 
+async function buildVehicleHistorySnapshot(vehicleId: string) {
+  const db = getDb();
+
+  const [vehicle] = await db
+    .select()
+    .from(vehicles)
+    .where(eq(vehicles.id, vehicleId))
+    .limit(1);
+  if (!vehicle) return null;
+
+  // All maintenance events
+  const maintenance = await db
+    .select()
+    .from(maintenanceEvents)
+    .where(eq(maintenanceEvents.vehicleId, vehicleId))
+    .orderBy(desc(maintenanceEvents.serviceDate));
+
+  // All fuel transactions
+  const fuel = await db
+    .select()
+    .from(fuelTransactions)
+    .where(eq(fuelTransactions.vehicleId, vehicleId))
+    .orderBy(desc(fuelTransactions.createdAt));
+
+  // All inspections
+  const inspections = await db
+    .select()
+    .from(vehicleInspections)
+    .where(eq(vehicleInspections.vehicleId, vehicleId))
+    .orderBy(desc(vehicleInspections.createdAt));
+
+  // All trips
+  const tripData = await db
+    .select({
+      id: trips.id,
+      status: trips.status,
+      issuedAt: trips.issuedAt,
+      startedAt: trips.startedAt,
+      returnedAt: trips.returnedAt,
+      closedAt: trips.closedAt,
+    })
+    .from(trips)
+    .where(eq(trips.vehicleId, vehicleId))
+    .orderBy(desc(trips.createdAt));
+
+  const totalMaintenanceCost = maintenance.reduce((sum, e) => sum + (e.cost ? Number(e.cost) : 0), 0);
+  const totalFuelLitres = fuel.reduce((sum, f) => sum + Number(f.litres), 0);
+  const totalFuelCost = fuel.reduce((sum, f) => sum + Number(f.amount), 0);
+  const totalTripCount = tripData.length;
+
+  return {
+    vehicleId: vehicle.id,
+    licenceNumber: vehicle.licenceNumber,
+    vehicleRegisterNumber: vehicle.vehicleRegisterNumber,
+    make: vehicle.make,
+    model: vehicle.model,
+    vin: vehicle.vin,
+    manufactureYear: vehicle.manufactureYear,
+    colour: vehicle.colour,
+    fuelType: vehicle.fuelType,
+    status: vehicle.status,
+    currentOdometer: vehicle.currentOdometer,
+    totalTripCount,
+    totalMaintenanceCost: Number(totalMaintenanceCost.toFixed(2)),
+    totalMaintenanceEvents: maintenance.length,
+    totalFuelLitres: Number(totalFuelLitres.toFixed(1)),
+    totalFuelCost: Number(totalFuelCost.toFixed(2)),
+    totalInspections: inspections.length,
+    generatedAt: new Date().toISOString(),
+    maintenance: maintenance.map((e) => ({
+      date: e.serviceDate,
+      type: e.serviceType,
+      description: e.description,
+      cost: e.cost ? Number(e.cost) : null,
+      vendor: e.vendorName,
+    })),
+    fuel: fuel.map((f) => ({
+      date: f.createdAt.toISOString(),
+      litres: Number(f.litres),
+      amount: Number(f.amount),
+      fuelType: f.fuelType,
+      station: f.stationName,
+    })),
+    inspections: inspections.map((i) => ({
+      id: i.id,
+      type: i.type,
+      status: i.status,
+      overallPass: i.overallPass,
+      odometer: i.odometerReading,
+      date: i.createdAt.toISOString(),
+    })),
+    trips: tripData.map((t) => ({
+      id: t.id,
+      status: t.status,
+      issuedAt: t.issuedAt?.toISOString(),
+      startedAt: t.startedAt?.toISOString(),
+      returnedAt: t.returnedAt?.toISOString(),
+      closedAt: t.closedAt?.toISOString(),
+    })),
+  };
+}
+
 async function buildMaintenanceReportSnapshot(vehicleId: string) {
   const db = getDb();
   const events = await db
@@ -327,6 +430,7 @@ const BUILDERS: Record<string, (id: string) => Promise<Record<string, unknown> |
   vehicle_allocation: buildTripAuthoritySnapshot,
   inspection: buildInspectionReportSnapshot,
   maintenance: buildMaintenanceReportSnapshot,
+  vehicle: buildVehicleHistorySnapshot,
   tenant: buildAuditReportSnapshot,
 };
 
