@@ -33,6 +33,7 @@ import { requirePermission, forbiddenResponse } from '@/lib/auth-helpers';
 import type { PermissionCode } from '@/lib/permissions';
 import { Permissions } from '@/lib/permissions';
 import { notifications } from '@/db/schema';
+import { workflowStepToStatus, workflowCompletedStatus } from '@/lib/request-status';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -383,12 +384,21 @@ export class WorkflowEngine {
       };
     }
 
+    // Look up the request scope for status mapping
+    const [reqRecord] = await this.db
+      .select({ scope: transportRequests.scope })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, instance.requestId))
+      .limit(1);
+    const scope: 'regional' | 'national' = (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
+
     // Advance to the next step
     const nextStepOrder = currentStep.stepOrder + 1;
     const nextStep = steps.find((s) => s.stepOrder === nextStepOrder);
 
     if (!nextStep) {
       // Workflow is complete — approve the request
+      const completedStatus = workflowCompletedStatus();
       await this.db
         .update(workflowInstances)
         .set({ currentStepOrder: currentStep.stepOrder, status: 'completed', updatedAt: new Date() })
@@ -396,7 +406,7 @@ export class WorkflowEngine {
 
       await this.db
         .update(transportRequests)
-        .set({ status: 'approved', updatedAt: new Date() })
+        .set({ status: completedStatus, updatedAt: new Date() })
         .where(eq(transportRequests.id, instance.requestId));
 
       await this.logAuditEvent({
@@ -416,16 +426,16 @@ export class WorkflowEngine {
       return { ok: true, message: 'Workflow completed. Request approved.', instance: updatedInstance };
     }
 
-    // Advance to the next step
+    // Advance to the next step with a descriptive business status
+    const businessStatus = workflowStepToStatus(nextStepOrder, nextStep.actionType, scope);
     await this.db
       .update(workflowInstances)
       .set({ currentStepOrder: nextStepOrder, updatedAt: new Date() })
       .where(eq(workflowInstances.id, instance.id));
 
-    // Update request status to reflect current stage
     await this.db
       .update(transportRequests)
-      .set({ status: `workflow_step_${nextStepOrder}`, updatedAt: new Date() })
+      .set({ status: businessStatus, updatedAt: new Date() })
       .where(eq(transportRequests.id, instance.requestId));
 
     await this.logAuditEvent({
@@ -433,7 +443,7 @@ export class WorkflowEngine {
       entityId: instance.id,
       action: 'workflow.advanced',
       actorUserId: session.user.id,
-      metadata: { fromStep: currentStep.stepOrder, toStep: nextStepOrder, stepLabel: nextStep.label },
+      metadata: { fromStep: currentStep.stepOrder, toStep: nextStepOrder, stepLabel: nextStep.label, businessStatus },
     }, session.tenantId);
 
     const [updatedInstance] = await this.db
@@ -522,9 +532,21 @@ export class WorkflowEngine {
       .set({ status: 'overridden', updatedAt: new Date() })
       .where(eq(workflowInstances.id, instance.id));
 
+    // Emergency override sets status to a reasonable business status
+    // rather than a generic 'approved_emergency'
+    const nextStepOrder = instance.currentStepOrder;
+    const currentStepAction = steps.find((s) => s.stepOrder === nextStepOrder)?.actionType ?? 'release';
+    const [reqRecord] = await this.db
+      .select({ scope: transportRequests.scope })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, instance.requestId))
+      .limit(1);
+    const scope: 'regional' | 'national' = (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
+    const emergencyStatus = workflowStepToStatus(nextStepOrder, currentStepAction, scope);
+
     await this.db
       .update(transportRequests)
-      .set({ status: 'approved_emergency', updatedAt: new Date() })
+      .set({ status: emergencyStatus, updatedAt: new Date() })
       .where(eq(transportRequests.id, instance.requestId));
 
     await this.logAuditEvent({

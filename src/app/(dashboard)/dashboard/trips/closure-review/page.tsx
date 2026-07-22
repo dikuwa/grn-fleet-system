@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { statusConfig } from '@/lib/request-status';
 import Link from 'next/link';
 import { ClosureReviewActions } from './ClosureReviewActions';
 
@@ -37,15 +38,15 @@ interface ClosureTrip {
 }
 
 const TRIP_STATUS_LABELS: Record<string, string> = {
-  closure_review: 'Closure Review',
-  return_inspection: 'Return Inspection',
-  return_due: 'Return Due',
+  closure_review: statusConfig('closure_review').label,
+  return_inspection: statusConfig('return_inspection').label,
+  return_due: statusConfig('return_due').label,
 };
 
 const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
-  closure_review: 'pending',
-  return_inspection: 'info',
-  return_due: 'emergency',
+  closure_review: statusConfig('closure_review').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  return_inspection: statusConfig('return_inspection').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  return_due: statusConfig('return_due').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
 };
 
 async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]> {

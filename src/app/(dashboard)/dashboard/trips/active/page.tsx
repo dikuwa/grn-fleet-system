@@ -14,16 +14,17 @@ import {
 } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { statusConfig } from '@/lib/request-status';
 import Link from 'next/link';
 import { ActiveTripDuration } from './ActiveTripDuration';
 
 const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
-  pending: 'pending',
-  in_progress: 'info',
-  return_due: 'emergency',
-  return_inspection: 'pending',
-  closure_review: 'pending',
-  closed: 'success',
+  pending: statusConfig('pending').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  in_progress: statusConfig('in_progress').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  return_due: statusConfig('return_due').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  return_inspection: statusConfig('return_inspection').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  closure_review: statusConfig('closure_review').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  closed: statusConfig('closed').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
 };
 
 async function fetchActiveTrips(tenantId: string) {
@@ -205,12 +206,7 @@ export default async function ActiveTripsPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-[650] text-ink-950">{trip.make} {trip.model}</p>
-                        <StatusBadge status={variant} label={
-                          trip.status === 'in_progress' ? 'In Progress' :
-                          trip.status === 'return_due' ? 'Return Due' :
-                          trip.status === 'return_inspection' ? 'Return Insp.' :
-                          'Closure Review'
-                        } />
+                        <StatusBadge status={variant} label={statusConfig(trip.status).label} />
                         {trip.startedAt && (
                           <ActiveTripDuration tripId={trip.id} startedAt={trip.startedAt.toISOString()} />
                         )}

@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database } from 'lucide-react';
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { statusConfig } from '@/lib/request-status';
 import { notFound } from 'next/navigation';
 import {
   Truck, ChevronLeft, User, CalendarDays, Clock, Gauge, CheckCircle2, XCircle, AlertTriangle, FileText, UserCheck as UserCheckIcon,
@@ -24,13 +25,17 @@ interface PageProps {
 }
 
 const TRIP_STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending', in_progress: 'In Progress', return_due: 'Return Due',
-  return_inspection: 'Return Inspection', closure_review: 'Closure Review', closed: 'Closed',
+  pending: statusConfig('pending').label, in_progress: statusConfig('in_progress').label, return_due: statusConfig('return_due').label,
+  return_inspection: statusConfig('return_inspection').label, closure_review: statusConfig('closure_review').label, closed: statusConfig('closed').label,
 };
 
 const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
-  pending: 'pending', in_progress: 'info', return_due: 'emergency',
-  return_inspection: 'pending', closure_review: 'pending', closed: 'success',
+  pending: statusConfig('pending').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  in_progress: statusConfig('in_progress').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  return_due: statusConfig('return_due').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  return_inspection: statusConfig('return_inspection').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  closure_review: statusConfig('closure_review').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  closed: statusConfig('closed').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
 };
 
 async function fetchTripDetail(id: string, tenantId: string) {

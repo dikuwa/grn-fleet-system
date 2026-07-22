@@ -13,28 +13,30 @@ import { Database, Truck, Search, ChevronRight, ChevronLeft, Download } from 'lu
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { statusConfig } from '@/lib/request-status';
 import Link from 'next/link';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
+// Trip status labels & variants derived from request-status utility
 const TRIP_STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  in_progress: 'In Progress',
-  return_due: 'Return Due',
-  return_inspection: 'Return Inspection',
-  closure_review: 'Closure Review',
-  closed: 'Closed',
+  pending: statusConfig('pending').label,
+  in_progress: statusConfig('in_progress').label,
+  return_due: statusConfig('return_due').label,
+  return_inspection: statusConfig('return_inspection').label,
+  closure_review: statusConfig('closure_review').label,
+  closed: statusConfig('closed').label,
 };
 
 const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
-  pending: 'pending',
-  in_progress: 'info',
-  return_due: 'emergency',
-  return_inspection: 'pending',
-  closure_review: 'pending',
-  closed: 'success',
+  pending: statusConfig('pending').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  in_progress: statusConfig('in_progress').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  return_due: statusConfig('return_due').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  return_inspection: statusConfig('return_inspection').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  closure_review: statusConfig('closure_review').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+  closed: statusConfig('closed').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
 };
 
 async function fetchTrips(sp: Record<string, string | undefined>, tenantId: string) {

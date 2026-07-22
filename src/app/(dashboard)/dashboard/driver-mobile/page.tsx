@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useSession } from '@/lib/auth-client';
+import { statusConfig } from '@/lib/request-status';
 import {
   Gauge, ClipboardCheck, ClipboardList, Truck,
   ChevronRight, Clock, MapPin, Wifi, WifiOff,
@@ -80,29 +81,11 @@ export default function DriverMobileDashboardPage() {
   );
 
   const statusVariant = (status: string): 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency' => {
-    switch (status) {
-      case 'in_progress': return 'success';
-      case 'pending': return 'pending';
-      case 'issued': return 'info';
-      case 'returned': return 'info';
-      case 'closed': return 'success';
-      case 'completed': return 'success';
-      case 'cancelled': return 'cancelled';
-      default: return 'pending';
-    }
+    return statusConfig(status).variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency';
   };
 
   const statusLabel = (status: string): string => {
-    switch (status) {
-      case 'in_progress': return 'In Progress';
-      case 'pending': return 'Pending';
-      case 'issued': return 'Issued';
-      case 'returned': return 'Returned';
-      case 'closed': return 'Closed';
-      case 'completed': return 'Completed';
-      case 'cancelled': return 'Cancelled';
-      default: return status;
-    }
+    return statusConfig(status).label;
   };
 
   return (
