@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-07-22 — Session 46: Maintenance form UI, return_due email alerts
+
+### Added
+
+- **Maintenance Form UI** (`/dashboard/maintenance/new`) — Full client-side form page following the `fuel/new` pattern. Features vehicle selector with status badge, auto-fill odometer on vehicle selection, service type dropdown (scheduled/repair/inspection), description, cost, vendor, notes, and next service reminder section with date/odometer fields. Backed by `POST /api/maintenance` API with proper validation and vehicle lifecycle integration.
+- **Return Due Email Alerts** — The `tripReturnDueCheck` Inngest cron now sends email notifications to trip requesters when their trips are flagged as `return_due`. Uses existing `trip_returned` email template (AuditNotificationEmail) with trip details, vehicle info, and direct action link. Email send is best-effort (try/catch around failures).
+
+### Changed
+
+- **Inngest cron efficiency** — Moved `sendNotificationEmail` import outside the tenant loop so it's imported once instead of per-tenant, matching the `driverLicenceExpiryAlert` pattern.
+
+### Fixed
+
+- **Inngest function TS error** — Fixed `requesterEmails` type from `{ ... email: string }` to `{ ... email: string | null }` to match nullable `leftJoin` results from `employees.email`.
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+- **Build**: Production build passes ✅
+
+---
+
 ## 2026-07-22 — Session 45: Trip lifecycle completion — return_due detection, E2E lifecycle tests
 
 ### Added
