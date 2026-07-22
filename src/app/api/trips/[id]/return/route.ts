@@ -36,9 +36,9 @@ export async function POST(
       return NextResponse.json({ error: 'Trip not found in your tenant' }, { status: 404 });
     }
 
-    if (trip.status !== 'in_progress') {
+    if (!['in_progress', 'return_due', 'pending'].includes(trip.status)) {
       return NextResponse.json(
-        { error: `Cannot return trip with status "${trip.status}". Only in-progress trips can be returned.` },
+        { error: `Cannot return trip with status "${trip.status}". Only in-progress, return-due, or pending trips can be returned.` },
         { status: 409 },
       );
     }

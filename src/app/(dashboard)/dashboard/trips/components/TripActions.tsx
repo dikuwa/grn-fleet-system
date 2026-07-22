@@ -133,7 +133,7 @@ export function TripActions({ tripId, status, tenantId, hasIssue, hasAcknowledge
           </Link>
         </Button>
         <Button variant="secondary" size="sm" asChild>
-          <Link href={`/dashboard/trips/closure-review`}>
+          <Link href={`/dashboard/trips/${tripId}`}>
             <CheckSquare className="h-4 w-4" /> Close Trip
           </Link>
         </Button>
