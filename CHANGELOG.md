@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-07-23 — Session 47: Complete audit P0 — roles, permissions, sidebar filtering, test accounts, idempotent seed
+
+### Added
+
+- **Role definitions** (3 new): `TENANT_ADMIN` (tenant:view/manage, staff, audit, report), `INSPECTOR` (inspection:perform/view, trip:view, vehicle:view), `MAINTENANCE_OFFICER` (vehicle:view/update, maintenance:view/manage, trip:view, fuel:view, inspection:view)
+- **Permissions** (3 new): `MAINTENANCE_VIEW`, `MAINTENANCE_MANAGE`, `DRIVER_MANAGE`
+- **Auth helpers** — `getSessionPermissions()` resolves every active permission for current session; `requireAnyPermission()` checks permission arrays instead of single code; `hasPermission()` now validates `startDate` bounds
+- **Sidebar permission filtering** (`dashboard-access.ts`) — Route-level access rules for all dashboard paths. Sidebar filters nav items reactively via `canAccessDashboardPath()` using the active user's permission codes
+- **Regions API consolidation** — Deleted duplicate `/api/admin/regions` (both route + [id]). Canonical `/api/regions` now uses `requireAnyPermission([TENANT_VIEW, TENANT_MANAGE])` for GET
+- **Schema additions** (migration 0011): `departmentId/officeId/regionId` on `transport_requests` (fixes free-text department); `availabilityStatus/unavailableUntil/lastVerifiedAt/verifiedByUserId` on `driver_profiles`; `regionId/officeId/departmentId` on `workflow_definitions`; `assignedUserId` on `workflow_steps`; `driverAcknowledgedAt`/`driverAcknowledgedByEmployeeId` on `trips`; `clientSyncId` on `fuel_transactions`; unique indexes for idempotent inserts; gist exclusion constraints for overlapping allocations
+- **Idempotent seed** — Complete rewrite with upsert patterns (`onConflictDoNothing`, check-then-insert) for all entities: tenant, branding, offices, departments, permissions (15 roles), 14 employees, driver profiles+licences, 5 vehicles, workout definitions, 13 login accounts with role assignments and workflow step assignments
+- **13 role-specific test accounts**: tenant-admin, platform-admin, transport-admin, requester, supervisor, release-officer, regional-authoriser, national-release, national-authoriser, driver, inspector, maintenance, auditor — all linked to employees with proper role assignments
+- **Workflow Routing Admin UI** (`/dashboard/admin/workflows`) — Assign approval paths by region/office/department scope with per-step user assignment
+- **Workflow engine** — Region/office/department specificity-based definition selection with fallback error if no route configured
+- **DashboardShell** — Passes `permissionCodes` to Sidebar + MobileSidebar, responsive overflow fix via `md:ml-*` responsive classes
+
+### Changed
+
+- **admin@kavangoeast.gov.na** — Now assigned **Tenant Administrator** role only (strictly manages Kavango East, removed Transport Admin / Supervisor / Inspector overlaps)
+- **Regions admin page** — Now uses `/api/regions` (canonical endpoint) instead of deleted `/api/admin/regions`
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Tests**: 72/72 passing ✅
+- **Build**: Production build passes ✅
+- **Seed**: 14 employees, 13 login accounts, 2 driver profiles+licences, 15 roles, all idempotent ✅
+- **Deploy**: Vercel production ✅
+
+---
+
 ## 2026-07-22 — Session 46: Maintenance form UI, return_due email alerts
 
 ### Added
