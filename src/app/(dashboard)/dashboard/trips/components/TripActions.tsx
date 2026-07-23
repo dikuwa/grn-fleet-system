@@ -9,12 +9,16 @@ import Link from 'next/link';
 interface TripActionsProps {
   tripId: string;
   status: string;
-  tenantId: string;
   hasIssue?: boolean;
   hasAcknowledge?: boolean;
+  hasDepartureInspection?: boolean;
+  vehicleId: string;
+  canManage: boolean;
+  canDrive: boolean;
+  canInspect: boolean;
 }
 
-export function TripActions({ tripId, status, tenantId, hasIssue, hasAcknowledge }: TripActionsProps) {
+export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepartureInspection, vehicleId, canManage, canDrive, canInspect }: TripActionsProps) {
   const router = useRouter();
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState('');
@@ -23,17 +27,19 @@ export function TripActions({ tripId, status, tenantId, hasIssue, hasAcknowledge
     setIsWorking(true);
     setError('');
     try {
-      const res = await fetch(`/api/trips/${tripId}`);
-      if (!res.ok) throw new Error('Failed to load trip details');
-      const data = await res.json();
-      const vehicleId = data.trip?.vehicleId || '';
-      router.push(`/dashboard/inspections/departure?tripId=${tripId}&vehicleId=${vehicleId}`);
+      const res = await fetch(`/api/trips/${tripId}/start`, { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to start trip');
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trip');
     } finally {
       setIsWorking(false);
     }
   }, [tripId, router]);
+
+  const handleDepartureInspection = useCallback(() => {
+    router.push(`/dashboard/inspections/new?type=departure&tripId=${tripId}&vehicleId=${vehicleId}`);
+  }, [tripId, vehicleId, router]);
 
   const handleMarkReturned = useCallback(async () => {
     setIsWorking(true);
@@ -43,7 +49,7 @@ export function TripActions({ tripId, status, tenantId, hasIssue, hasAcknowledge
       if (!res.ok) throw new Error('Failed to load trip details');
       const data = await res.json();
       const vehicleId = data.trip?.vehicleId || '';
-      router.push(`/dashboard/inspections/return?tripId=${tripId}&vehicleId=${vehicleId}`);
+      router.push(`/dashboard/inspections/new?type=return&tripId=${tripId}&vehicleId=${vehicleId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to mark returned');
     } finally {
@@ -95,19 +101,24 @@ export function TripActions({ tripId, status, tenantId, hasIssue, hasAcknowledge
   if (status === 'pending') {
     return (
       <div className="flex flex-wrap gap-2">
-        {!hasIssue && (
-          <Button variant="secondary" size="sm" loading={isWorking} onClick={handleIssueVehicle}>
-            <KeyRound className="h-4 w-4" /> Issue Vehicle
-          </Button>
-        )}
-        {hasIssue && !hasAcknowledge && (
+        {canDrive && !hasAcknowledge && (
           <Button variant="secondary" size="sm" loading={isWorking} onClick={handleAcknowledge}>
             <UserCheck className="h-4 w-4" /> Driver Acknowledge
           </Button>
         )}
-        <Button variant="primary" size="sm" loading={isWorking} onClick={handleStartTrip}>
+        {canInspect && !hasDepartureInspection && (
+          <Button variant="secondary" size="sm" onClick={handleDepartureInspection}>
+            <CheckSquare className="h-4 w-4" /> Departure Inspection
+          </Button>
+        )}
+        {canManage && hasAcknowledge && hasDepartureInspection && !hasIssue && (
+          <Button variant="secondary" size="sm" loading={isWorking} onClick={handleIssueVehicle}>
+            <KeyRound className="h-4 w-4" /> Issue Vehicle
+          </Button>
+        )}
+        {canDrive && hasIssue && <Button variant="primary" size="sm" loading={isWorking} onClick={handleStartTrip}>
           <Play className="h-4 w-4" /> Start Trip
-        </Button>
+        </Button>}
         {error && <p className="mt-1 w-full text-xs text-status-error-text">{error}</p>}
       </div>
     );
@@ -116,9 +127,9 @@ export function TripActions({ tripId, status, tenantId, hasIssue, hasAcknowledge
   if (status === 'in_progress') {
     return (
       <div>
-        <Button variant="primary" size="sm" loading={isWorking} onClick={handleMarkReturned}>
+        {canDrive && <Button variant="primary" size="sm" loading={isWorking} onClick={handleMarkReturned}>
           <RotateCcw className="h-4 w-4" /> Mark Returned
-        </Button>
+        </Button>}
         {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
       </div>
     );
@@ -128,7 +139,7 @@ export function TripActions({ tripId, status, tenantId, hasIssue, hasAcknowledge
     return (
       <div className="flex gap-2">
         <Button variant="secondary" size="sm" asChild>
-          <Link href={`/dashboard/inspections/return?tripId=${tripId}`}>
+          <Link href={`/dashboard/inspections/new?type=return&tripId=${tripId}`}>
             <CheckSquare className="h-4 w-4" /> Complete Return Inspection
           </Link>
         </Button>
@@ -150,7 +161,7 @@ export function TripActions({ tripId, status, tenantId, hasIssue, hasAcknowledge
           </Link>
         </Button>
         <Button variant="secondary" size="sm" asChild>
-          <Link href={`/dashboard/inspections/return?tripId=${tripId}`}>
+          <Link href={`/dashboard/inspections/new?type=return&tripId=${tripId}`}>
             <CheckSquare className="h-4 w-4" /> Return Inspection
           </Link>
         </Button>

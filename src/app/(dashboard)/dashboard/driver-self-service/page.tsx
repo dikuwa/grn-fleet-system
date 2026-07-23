@@ -61,6 +61,7 @@ interface DriverNotification {
 }
 
 export default function DriverSelfServicePage() {
+  const [licenceClock] = useState(() => Date.now());
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
   const [trips, setTrips] = useState<DriverTrip[]>([]);
   const [notifications, setNotifications] = useState<DriverNotification[]>([]);
@@ -200,11 +201,11 @@ export default function DriverSelfServicePage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-2">
-                  <Link href="/dashboard/inspections/departure" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                  <Link href="/dashboard/inspections/new?type=departure" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                     <ClipboardCheck className="h-5 w-5 text-brand-600" />
                     <span className="text-xs font-medium text-ink-700">Departure</span>
                   </Link>
-                  <Link href="/dashboard/inspections/return" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                  <Link href="/dashboard/inspections/new?type=return" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                     <ClipboardCheck className="h-5 w-5 text-green-600" />
                     <span className="text-xs font-medium text-ink-700">Return</span>
                   </Link>
@@ -323,7 +324,7 @@ export default function DriverSelfServicePage() {
                       <div className="space-y-3">
                         {driverInfo.licences.map((lic) => {
                           const expired = new Date(lic.expiryDate) < new Date();
-                          const expiringSoon = !expired && new Date(lic.expiryDate).getTime() - Date.now() < 30 * 24 * 60 * 60 * 1000;
+                          const expiringSoon = !expired && new Date(lic.expiryDate).getTime() - licenceClock < 30 * 24 * 60 * 60 * 1000;
                           return (
                             <div key={lic.id} className="flex items-center justify-between rounded-[8px] border border-border p-3">
                               <div className="flex items-center gap-3">

@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/immutability */
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -9,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { ClipboardCheck, ChevronLeft, CheckCircle2, XCircle, Loader2, Camera, Trash2 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
+import { saveDraft } from '@/lib/offline-drafts';
 
 interface Vehicle {
   id: string;
@@ -19,6 +21,7 @@ interface Vehicle {
 
 interface Trip {
   id: string;
+  vehicleId: string;
   make: string;
   model: string;
   licenceNumber: string;
@@ -93,6 +96,8 @@ export default function NewInspectionPage() {
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [photos, setPhotos] = useState<Array<{ file: File; preview: string; key?: string; uploading: boolean }>>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [inspectorAcknowledged, setInspectorAcknowledged] = useState(false);
+  const [driverAcknowledged, setDriverAcknowledged] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -104,6 +109,11 @@ export default function NewInspectionPage() {
     const tid = params.get('tripId');
     if (tid) setTripId(tid);
   }, []);
+
+  useEffect(() => {
+    const selectedTrip = trips.find((trip) => trip.id === tripId);
+    if (selectedTrip?.vehicleId) setVehicleId(selectedTrip.vehicleId);
+  }, [tripId, trips]);
 
   useEffect(() => {
     Promise.all([fetchVehicles(), fetchTrips()]).finally(() => setLoading(false));
@@ -127,11 +137,11 @@ export default function NewInspectionPage() {
 
   async function fetchTrips() {
     try {
-      const res = await fetch('/api/trips?status=in_progress,pending');
+      const res = await fetch('/api/trips?limit=100');
       if (!res.ok) return;
       const json = await res.json();
       const list = Array.isArray(json) ? json : (json.rows ?? []);
-      setTrips(list);
+      setTrips(list.filter((trip: { status?: string }) => ['pending', 'in_progress', 'return_due', 'return_inspection'].includes(trip.status || '')));
     } catch { /* silent */ }
   }
 
@@ -179,6 +189,8 @@ export default function NewInspectionPage() {
           isCritical: item.isCritical,
         })),
         photoKeys: photoKeys.length > 0 ? photoKeys : undefined,
+        inspectorAcknowledged,
+        driverAcknowledged,
       };
 
       if (tripId) body.tripId = tripId;
@@ -199,8 +211,21 @@ export default function NewInspectionPage() {
       toast({ title: 'Inspection submitted', description: `${checklist.filter(i => i.result === 'pass').length} passed, ${checklist.filter(i => i.result === 'fail').length} failed`, variant: checklist.some(i => i.isCritical && i.result === 'fail') ? 'error' : 'success' });
       router.push('/dashboard/inspections');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
-      toast({ title: 'Inspection failed', description: err instanceof Error ? err.message : 'Could not submit inspection', variant: 'error' });
+      const isNetworkFailure = !navigator.onLine || err instanceof TypeError;
+      if (isNetworkFailure) {
+        await saveDraft({
+          draftType: type === 'departure' ? 'inspection_departure' : 'inspection_return',
+          formData: { vehicleId, tripRef: tripId, odometerReading, fuelLevel, checklist, notes, photos: photos.map((photo) => photo.file), inspectorAcknowledged, driverAcknowledged },
+          userId: null,
+          tenantId: null,
+          syncStatus: 'pending',
+        });
+        toast({ title: 'Inspection saved offline', description: 'It will sync automatically when connectivity returns.', variant: 'success' });
+        router.push('/dashboard/offline');
+      } else {
+        setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+        toast({ title: 'Inspection failed', description: err instanceof Error ? err.message : 'Could not submit inspection', variant: 'error' });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -283,14 +308,15 @@ export default function NewInspectionPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink-500 mb-1.5">
-                  Trip (optional)
+                  Trip <span className="text-status-error-text">*</span>
                 </label>
                 <select
                   value={tripId}
                   onChange={(e) => setTripId(e.target.value)}
+                  required
                   className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
-                  <option value="">No linked trip</option>
+                  <option value="">Select trip...</option>
                   {trips.map((t) => (
                     <option key={t.id} value={t.id}>{t.make} {t.model} ({t.licenceNumber})</option>
                   ))}
@@ -537,6 +563,14 @@ export default function NewInspectionPage() {
         </div>
 
         {/* Submit */}
+        <Card className="mt-6">
+          <CardContent className="space-y-3 pt-4">
+            <p className="text-sm font-medium text-ink-950">Required acknowledgements</p>
+            <label className="flex items-start gap-2 text-sm text-ink-700"><input className="mt-1" type="checkbox" checked={inspectorAcknowledged} onChange={(event) => setInspectorAcknowledged(event.target.checked)} /><span>I confirm that I performed this inspection and the saved results are accurate.</span></label>
+            <label className="flex items-start gap-2 text-sm text-ink-700"><input className="mt-1" type="checkbox" checked={driverAcknowledged} onChange={(event) => setDriverAcknowledged(event.target.checked)} /><span>The assigned driver has reviewed and acknowledged the recorded vehicle condition.</span></label>
+            <p className="text-xs text-ink-500">Three evidence photos are required for this checklist.</p>
+          </CardContent>
+        </Card>
         <div className="mt-6 flex items-center justify-between gap-3">
           <div className="text-xs text-ink-500">
             {checklist.filter((i) => i.result === 'pass').length} passed ·{' '}
@@ -547,7 +581,7 @@ export default function NewInspectionPage() {
             <Button variant="secondary" size="sm" asChild>
               <Link href="/dashboard/inspections">Cancel</Link>
             </Button>
-            <Button variant="primary" size="sm" type="submit" loading={submitting}>
+            <Button variant="primary" size="sm" type="submit" loading={submitting} disabled={!inspectorAcknowledged || !driverAcknowledged || photos.length < 3}>
               <ClipboardCheck className="h-4 w-4" />
               {submitting ? 'Submitting...' : 'Submit Inspection'}
             </Button>

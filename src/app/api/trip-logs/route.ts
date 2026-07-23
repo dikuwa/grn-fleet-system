@@ -7,8 +7,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { tripLogEntries, trips } from '@/db/schema/trips';
+import { tripLogEntries, trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
+import { employees } from '@/db/schema/people';
+import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, desc } from 'drizzle-orm';
@@ -124,8 +126,9 @@ export async function POST(request: NextRequest) {
 
     // Verify the trip exists and belongs to the tenant
     const [trip] = await db
-      .select({ id: trips.id, tenantId: trips.tenantId })
+      .select({ id: trips.id, tenantId: trips.tenantId, status: trips.status, driverEmployeeId: vehicleAllocations.driverEmployeeId })
       .from(trips)
+      .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .where(eq(trips.id, tripId))
       .limit(1);
 
@@ -137,25 +140,54 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Trip does not belong to your organisation' }, { status: 403 });
     }
 
+    if (!['in_progress', 'return_due'].includes(trip.status)) {
+      return NextResponse.json({ error: 'Trip logs may only be added while a trip is in progress' }, { status: 409 });
+    }
+
+    const [employee] = await db.select({ id: employees.id }).from(employees)
+      .where(and(eq(employees.tenantId, session.tenantId), eq(employees.userId, session.user.id), eq(employees.employmentStatus, 'active')))
+      .limit(1);
+    if (!employee) return NextResponse.json({ error: 'Your login is not linked to an active employee record' }, { status: 403 });
+    if (employee.id !== trip.driverEmployeeId) return NextResponse.json({ error: 'Only the assigned driver may add trip logs' }, { status: 403 });
+
+    const out = odometerOut === null || odometerOut === undefined || odometerOut === '' ? null : Number(odometerOut);
+    const incoming = odometerIn === null || odometerIn === undefined || odometerIn === '' ? null : Number(odometerIn);
+    if ((out !== null && (!Number.isInteger(out) || out < 0)) || (incoming !== null && (!Number.isInteger(incoming) || incoming < 0))) {
+      return NextResponse.json({ error: 'Odometer readings must be non-negative whole numbers' }, { status: 422 });
+    }
+    if (out !== null && incoming !== null && incoming < out) return NextResponse.json({ error: 'Odometer-in cannot be lower than odometer-out' }, { status: 422 });
+    const calculatedDistance = out !== null && incoming !== null ? incoming - out : null;
+    if (distanceKm !== null && distanceKm !== undefined && calculatedDistance !== null && Number(distanceKm) !== calculatedDistance) {
+      return NextResponse.json({ error: 'Distance must match the submitted odometer readings' }, { status: 422 });
+    }
+
+    if (clientSyncId) {
+      const [existing] = await db.select().from(tripLogEntries)
+        .where(and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, clientSyncId))).limit(1);
+      if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
+    }
+
     const [entry] = await db
       .insert(tripLogEntries)
       .values({
         tripId,
         clientSyncId: clientSyncId || null,
-        driverEmployeeId: session.user.id, // Will be resolved to employee ID in production
+        driverEmployeeId: employee.id,
         logDate: new Date(logDate),
-        odometerOut: odometerOut ? Number(odometerOut) : null,
-        odometerIn: odometerIn ? Number(odometerIn) : null,
+        odometerOut: out,
+        odometerIn: incoming,
         departureTime: departureTime ? new Date(`${logDate}T${departureTime}`) : null,
         arrivalTime: arrivalTime ? new Date(`${logDate}T${arrivalTime}`) : null,
         origin: origin || null,
         destination: destination || null,
-        distanceKm: distanceKm ? Number(distanceKm) : null,
+        distanceKm: calculatedDistance ?? (distanceKm ? Number(distanceKm) : null),
         remarks: remarks || null,
         isSynced: true,
         syncState: 'synced',
       })
       .returning();
+
+    await db.insert(auditEvents).values({ tenantId: session.tenantId, tenantSequence: Date.now(), eventType: 'trip_log_created', actorUserId: session.user.id, action: 'create', entityType: 'trip_log_entry', entityId: entry.id, summary: `Driver trip log recorded for ${logDate}`, sourceChannel: clientSyncId ? 'offline_sync' : 'web' });
 
     return NextResponse.json({ success: true, data: entry }, { status: 201 });
   } catch (error) {

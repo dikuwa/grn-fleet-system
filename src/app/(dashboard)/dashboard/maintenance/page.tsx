@@ -21,19 +21,20 @@ import {
   Download,
 } from 'lucide-react';
 import Link from 'next/link';
+import { getServerSession } from '@/lib/session';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
-async function fetchMaintenance(sp: Record<string, string | undefined>) {
+async function fetchMaintenance(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
   const serviceType = sp.service_type?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
 
   if (serviceType) {
     conditions.push(eq(maintenanceEvents.serviceType, serviceType));
@@ -74,6 +75,7 @@ async function fetchMaintenance(sp: Record<string, string | undefined>) {
     db
       .select({ count: sql<number>`count(*)` })
       .from(maintenanceEvents)
+      .innerJoin(vehicles, eq(maintenanceEvents.vehicleId, vehicles.id))
       .where(where),
   ]);
 
@@ -123,6 +125,8 @@ const SERVICE_TYPE_LABELS: Record<string, string> = {
 
 export default async function MaintenancePage({ searchParams }: PageProps) {
   const sp = await searchParams;
+  const session = await getServerSession();
+  if (!session) return null;
 
   if (!isDbConnected()) {
     return (
@@ -143,7 +147,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchMaintenance>>;
   try {
-    result = await fetchMaintenance(sp);
+    result = await fetchMaintenance(sp, session.tenantId);
   } catch (error) {
     console.error('Maintenance query failed:', error);
     return (

@@ -1,8 +1,8 @@
 import { getDb, isDbConnected } from '@/db';
-import { workflowInstances, workflowDefinitions } from '@/db/schema/workflows';
+import { workflowInstances, workflowDefinitions, workflowSteps } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, desc, and, sql, type SQL } from 'drizzle-orm';
+import { eq, desc, and, sql, type SQL, or, isNull, ne } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,14 +22,17 @@ const WORKFLOW_STATUS_LABELS: Record<string, string> = {
   active: 'Active', completed: 'Completed', cancelled: 'Cancelled', overridden: 'Overridden',
 };
 
-async function fetchApprovals(sp: Record<string, string | undefined>, tenantId: string) {
+async function fetchApprovals(sp: Record<string, string | undefined>, tenantId: string, userId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
   const status = sp.status?.trim();
 
-  const conditions: SQL[] = [eq(transportRequests.tenantId, tenantId)];
+  const conditions: SQL[] = [
+    eq(transportRequests.tenantId, tenantId),
+    or(ne(workflowInstances.status, 'active'), eq(workflowSteps.assignedUserId, userId), isNull(workflowSteps.assignedUserId))!,
+  ];
 
   if (status) {
     conditions.push(eq(workflowInstances.status, status));
@@ -57,6 +60,7 @@ async function fetchApprovals(sp: Record<string, string | undefined>, tenantId: 
       .from(workflowInstances)
       .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
       .leftJoin(workflowDefinitions, eq(workflowInstances.definitionId, workflowDefinitions.id))
+      .leftJoin(workflowSteps, and(eq(workflowSteps.definitionId, workflowInstances.definitionId), eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder)))
       .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
       .where(where)
       .orderBy(desc(workflowInstances.createdAt))
@@ -66,6 +70,7 @@ async function fetchApprovals(sp: Record<string, string | undefined>, tenantId: 
       .select({ count: sql<number>`count(*)` })
       .from(workflowInstances)
       .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
+      .leftJoin(workflowSteps, and(eq(workflowSteps.definitionId, workflowInstances.definitionId), eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder)))
       .where(where),
   ]);
 
@@ -111,7 +116,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchApprovals>>;
   try {
-    result = await fetchApprovals(sp, session.tenantId);
+    result = await fetchApprovals(sp, session.tenantId, session.user.id);
   } catch (error) {
     console.error('Approvals query failed:', error);
     return (

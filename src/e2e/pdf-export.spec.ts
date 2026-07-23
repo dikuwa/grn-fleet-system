@@ -41,7 +41,7 @@ test.describe('PDF Export', () => {
 
   test('1. Reports page loads with export buttons', async ({ page }) => {
     await page.goto('/dashboard/reports');
-    await expect(page.getByText('Reports')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Reports & Analytics' })).toBeVisible();
 
     // Should see export buttons
     const exportBtn = page.locator('button:has-text("PDF"), button:has-text("Export"), a:has-text("PDF"), a:has-text("Export")').first();

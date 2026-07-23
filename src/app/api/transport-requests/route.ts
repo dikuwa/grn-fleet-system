@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { transportRequests, requestActivities, requestPassengers, requestDrivers, requestRoutes } from '@/db/schema/requests';
-import { employees } from '@/db/schema/people';
+import { employees, departments } from '@/db/schema/people';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { workflowDefinitions } from '@/db/schema/workflows';
 import { onRequestSubmitted } from '@/lib/document-generator';
 import { WorkflowEngine } from '@/lib/workflow-engine';
 import { eq, and } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireRequestAuth(req);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const permCheck = await requirePermission(session, Permissions.REQUEST_CREATE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body: any = await req.json();
     const {
@@ -23,52 +30,64 @@ export async function POST(req: NextRequest) {
       passengers,
       drivers,
       routes,
+      clientSubmissionId: bodySubmissionId,
     } = body;
+    const clientSubmissionId = req.headers.get('idempotency-key') || bodySubmissionId;
 
     // Validate required fields
     if (!purpose?.trim()) {
       return NextResponse.json({ error: 'Purpose is required' }, { status: 400 });
     }
+
     if (!scope) {
       return NextResponse.json({ error: 'Scope is required' }, { status: 400 });
     }
-
-    const auth = await requireRequestAuth(req);
-    if (!auth.ok) return auth.error;
-    const { session } = auth;
-
-    // Require permission to create requests
-    const permCheck = await requirePermission(session, Permissions.REQUEST_CREATE);
-    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
     const userId = session.user.id;
     const tenantId = session.tenantId;
 
+    if (clientSubmissionId) {
+      const [existingRequest] = await db.select().from(transportRequests)
+        .where(and(eq(transportRequests.tenantId, tenantId), eq(transportRequests.clientSubmissionId, clientSubmissionId))).limit(1);
+      if (existingRequest) return NextResponse.json({ request: existingRequest, reference: existingRequest.reference, duplicate: true });
+    }
+
     // Look up the requester employee — accept employeeNumber from form or resolve from session user
-    let requesterEmployeeId: string;
+    let requesterEmployee: { id: string; userId: string | null; departmentId: string | null; officeId: string | null; departmentName: string | null };
     if (requesterEmployeeNumber?.trim()) {
       const [found] = await db
-        .select({ id: employees.id })
+        .select({ id: employees.id, userId: employees.userId, departmentId: employees.departmentId, officeId: employees.officeId, departmentName: departments.name })
         .from(employees)
+        .leftJoin(departments, eq(employees.departmentId, departments.id))
         .where(and(eq(employees.employeeNumber, requesterEmployeeNumber), eq(employees.tenantId, tenantId)))
         .limit(1);
       if (!found) {
         return NextResponse.json({ error: 'Requester employee not found in your organisation' }, { status: 404 });
       }
-      requesterEmployeeId = found.id;
+      requesterEmployee = found;
+      if (found.userId !== userId) {
+        const createForOther = await requirePermission(session, Permissions.STAFF_MANAGE);
+        if (createForOther instanceof NextResponse) return NextResponse.json({ error: 'You may only submit a request for your own linked employee record' }, { status: 403 });
+      }
     } else {
       // Fall back to finding employee by linked user ID
       const [found] = await db
-        .select({ id: employees.id })
+        .select({ id: employees.id, userId: employees.userId, departmentId: employees.departmentId, officeId: employees.officeId, departmentName: departments.name })
         .from(employees)
-        .where(eq(employees.userId, userId))
+        .leftJoin(departments, eq(employees.departmentId, departments.id))
+        .where(and(eq(employees.userId, userId), eq(employees.tenantId, tenantId)))
         .limit(1);
       if (!found) {
         return NextResponse.json({ error: 'Could not identify requester. Log in or provide employee number.' }, { status: 400 });
       }
-      requesterEmployeeId = found.id;
+      requesterEmployee = found;
     }
+
+    const availableRoutes = await db.select({ id: workflowDefinitions.id, regionId: workflowDefinitions.regionId, officeId: workflowDefinitions.officeId, departmentId: workflowDefinitions.departmentId })
+      .from(workflowDefinitions).where(and(eq(workflowDefinitions.tenantId, tenantId), eq(workflowDefinitions.tripScope, scope), eq(workflowDefinitions.isActive, true)));
+    const hasMatchingRoute = availableRoutes.some((route) => !route.regionId && (!route.officeId || route.officeId === requesterEmployee.officeId) && (!route.departmentId || route.departmentId === requesterEmployee.departmentId));
+    if (!hasMatchingRoute) return NextResponse.json({ error: `No active ${scope} approval route is configured for this office and department` }, { status: 409 });
 
     // Generate a reference number
     const now = new Date();
@@ -88,11 +107,14 @@ export async function POST(req: NextRequest) {
       .values({
         tenantId,
         reference,
+        clientSubmissionId: clientSubmissionId || null,
         scope,
         status: 'submitted',
-        requesterEmployeeId,
+        requesterEmployeeId: requesterEmployee.id,
         requesterUserId: userId,
-        department: department || null,
+        departmentId: requesterEmployee.departmentId,
+        officeId: requesterEmployee.officeId,
+        department: requesterEmployee.departmentName || department || null,
         purpose,
         specialAuthorityRequired: specialAuthorityRequired || false,
         specialAuthorityReason: specialAuthorityReason || null,
@@ -176,7 +198,7 @@ export async function POST(req: NextRequest) {
       // Non-blocking — the request is still created
     }
 
-    return NextResponse.json({ request, document: doc, reference: request.reference });
+    return NextResponse.json({ request: { ...request, workflowInstanceId: wfResult.ok ? wfResult.instance.id : null }, document: doc, reference: request.reference });
   } catch (error) {
     console.error('[transport-requests] POST failed:', error);
     return NextResponse.json(

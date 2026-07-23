@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions } from '@/db/schema/trips';
-import { vehicles } from '@/db/schema/fleet';
+import { fuelTransactions, trips, vehicleAllocations } from '@/db/schema/trips';
+import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
+import { employees } from '@/db/schema/people';
+import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { notifications } from '@/db/schema/notifications';
+import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -79,51 +82,104 @@ export async function POST(req: NextRequest) {
     const { session } = auth;
 
     // Check permission — either fuel manager or driver recording fuel
-    const permCheck = await requirePermission(session, Permissions.FUEL_MANAGE);
-    if (permCheck instanceof NextResponse) {
+    const managerCheck = await requirePermission(session, Permissions.FUEL_MANAGE);
+    const isManager = !(managerCheck instanceof NextResponse);
+    if (!isManager) {
       const driverPerm = await requirePermission(session, Permissions.DRIVER_FUEL_CREATE);
       if (driverPerm instanceof NextResponse) return driverPerm;
     }
 
     const body = await req.json();
-    const { vehicleId, transactionAt, stationName, fuelType, litres, amount, paymentMethod, odometerReading, referenceNumber, fillType } = body;
+    const { tripId, tripRef, vehicleId, vehicleGrn, transactionAt, stationName, fuelType, litres, amount, paymentMethod, odometerReading, referenceNumber, fillType, clientSyncId } = body;
 
-    if (!fuelType || !litres || !amount || !paymentMethod) {
+    if ((!vehicleId && !vehicleGrn) || !fuelType || !litres || !amount || !paymentMethod) {
       return NextResponse.json(
-        { error: 'Missing required fields: fuelType, litres, amount, paymentMethod' },
+        { error: 'Missing required fields: vehicleId, fuelType, litres, amount, paymentMethod' },
         { status: 400 },
       );
     }
 
     const db = getDb();
 
+    let resolvedVehicleId = vehicleId as string | undefined;
+    let resolvedTripId = tripId as string | undefined;
+    if (!resolvedVehicleId && vehicleGrn) {
+      const [byGrn] = await db.select({ id: vehicles.id }).from(vehicles)
+        .where(and(eq(vehicles.tenantId, session.tenantId), eq(vehicles.licenceNumber, String(vehicleGrn)))).limit(1);
+      resolvedVehicleId = byGrn?.id;
+    }
+    if (!resolvedTripId && tripRef) {
+      const [byReference] = await db.select({ id: trips.id }).from(trips)
+        .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
+        .where(and(eq(trips.tenantId, session.tenantId), eq(transportRequests.reference, String(tripRef)))).limit(1);
+      resolvedTripId = byReference?.id;
+    }
+
     // Verify the vehicle belongs to this tenant
     const [vehicle] = await db
-      .select({ id: vehicles.id })
+      .select({ id: vehicles.id, currentOdometer: vehicles.currentOdometer })
       .from(vehicles)
-      .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, session.tenantId)))
+      .where(and(eq(vehicles.id, resolvedVehicleId || '00000000-0000-0000-0000-000000000000'), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
 
-    if (!vehicle && vehicleId) {
+    if (!vehicle) {
       return NextResponse.json({ error: 'Vehicle not found in your tenant' }, { status: 404 });
+    }
+
+    const litresNumber = Number(litres);
+    const amountNumber = Number(amount);
+    const odometerNumber = odometerReading === null || odometerReading === undefined || odometerReading === '' ? null : Number(odometerReading);
+    if (!Number.isFinite(litresNumber) || litresNumber <= 0 || !Number.isFinite(amountNumber) || amountNumber <= 0) {
+      return NextResponse.json({ error: 'Litres and amount must be positive numbers' }, { status: 422 });
+    }
+    if (odometerNumber !== null && (!Number.isInteger(odometerNumber) || odometerNumber < vehicle.currentOdometer)) {
+      return NextResponse.json({ error: `Odometer cannot be lower than the current reading (${vehicle.currentOdometer})` }, { status: 422 });
+    }
+
+    if (!isManager) {
+      if (!resolvedTripId) return NextResponse.json({ error: 'Drivers must record fuel against an assigned active trip' }, { status: 422 });
+      const [employee] = await db.select({ id: employees.id }).from(employees)
+        .where(and(eq(employees.tenantId, session.tenantId), eq(employees.userId, session.user.id), eq(employees.employmentStatus, 'active'))).limit(1);
+      if (!employee) return NextResponse.json({ error: 'Your login is not linked to an active employee record' }, { status: 403 });
+      const [assignedTrip] = await db.select({ id: trips.id }).from(trips)
+        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+        .where(and(eq(trips.id, resolvedTripId), eq(trips.tenantId, session.tenantId), eq(trips.vehicleId, resolvedVehicleId!), eq(vehicleAllocations.driverEmployeeId, employee.id), inArray(trips.status, ['in_progress', 'return_due']))).limit(1);
+      if (!assignedTrip) return NextResponse.json({ error: 'Trip is not active and assigned to this driver and vehicle' }, { status: 403 });
+    } else if (resolvedTripId) {
+      const [tenantTrip] = await db.select({ id: trips.id }).from(trips)
+        .where(and(eq(trips.id, resolvedTripId), eq(trips.tenantId, session.tenantId), eq(trips.vehicleId, resolvedVehicleId!))).limit(1);
+      if (!tenantTrip) return NextResponse.json({ error: 'Trip does not match this tenant and vehicle' }, { status: 422 });
+    }
+
+    if (clientSyncId && resolvedTripId) {
+      const [existing] = await db.select().from(fuelTransactions)
+        .where(and(eq(fuelTransactions.tripId, resolvedTripId), eq(fuelTransactions.clientSyncId, clientSyncId))).limit(1);
+      if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
     }
 
     const [transaction] = await db
       .insert(fuelTransactions)
       .values({
-        vehicleId: vehicleId || null,
+        tripId: resolvedTripId || null,
+        clientSyncId: clientSyncId || null,
+        vehicleId: resolvedVehicleId!,
         transactionAt: transactionAt ? new Date(transactionAt) : new Date(),
         stationName: stationName || null,
         fuelType,
-        litres: String(litres),
-        amount: String(amount),
-        odometerReading: odometerReading ? Number(odometerReading) : null,
+        litres: String(litresNumber),
+        amount: String(amountNumber),
+        odometerReading: odometerNumber,
         referenceNumber: referenceNumber || null,
         paymentMethod,
         fillType: fillType || 'full',
         recordedByUserId: session.user.id,
       })
       .returning();
+
+    if (odometerNumber !== null) {
+      await db.insert(vehicleOdometerEvents).values({ vehicleId: resolvedVehicleId!, odometerValue: odometerNumber, source: 'fuel', sourceEntityType: 'fuel_transaction', sourceEntityId: transaction.id, recordedByUserId: session.user.id });
+      await db.update(vehicles).set({ currentOdometer: odometerNumber, updatedAt: new Date() }).where(and(eq(vehicles.id, resolvedVehicleId!), eq(vehicles.tenantId, session.tenantId)));
+    }
 
     // Audit log
     await db.insert(auditEvents).values({
@@ -135,32 +191,10 @@ export async function POST(req: NextRequest) {
       entityType: 'fuel_transaction',
       entityId: transaction.id,
       summary: `Fuel: ${litres}L of ${fuelType} at ${stationName || 'unknown station'} — ${amount}`,
-      sourceChannel: 'web',
+      sourceChannel: clientSyncId ? 'offline_sync' : 'web',
     });
 
-    // Notify the user who recorded the fuel entry
-    try {
-      const notifRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: session.tenantId,
-          recipientUserId: session.user.id,
-          recipientEmail: session.user.email,
-          recipientName: session.user.name || session.user.email,
-          type: 'fuel_created',
-          title: `⛽ Fuel Entry Recorded — ${litres}L`,
-          body: `${litres}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amount}. Vehicle: ${vehicleId || 'N/A'}.`,
-          entityType: 'fuel_transaction',
-          entityId: transaction.id,
-          actionUrl: `/dashboard/fuel`,
-          priority: 'normal',
-        }),
-      });
-      if (!notifRes.ok) console.warn('[fuel] Notification delivery failed:', await notifRes.text().catch(() => 'unknown'));
-    } catch (notifErr) {
-      console.warn('[fuel] Notification error (non-fatal):', notifErr);
-    }
+    await db.insert(notifications).values({ tenantId: session.tenantId, recipientUserId: session.user.id, type: 'fuel_created', title: `Fuel Entry Recorded — ${litres}L`, body: `${litres}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amount}.`, entityType: 'fuel_transaction', entityId: transaction.id, actionUrl: '/dashboard/fuel', priority: 'normal' });
 
     return NextResponse.json({ success: true, data: transaction });
   } catch (error) {

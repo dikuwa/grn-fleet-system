@@ -33,6 +33,9 @@ import {
 import Link from 'next/link';
 import { CancelRequestButton } from './CancelRequestButton';
 import { RouteMapWrapper } from './route-map-wrapper';
+import { ResubmitRequestButton } from './ResubmitRequestButton';
+import { getSessionPermissions } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -46,6 +49,7 @@ async function fetchRequestDetail(id: string, tenantId: string) {
   const request = await db
     .select({
       id: transportRequests.id,
+      requesterUserId: transportRequests.requesterUserId,
       reference: transportRequests.reference,
       scope: transportRequests.scope,
       status: transportRequests.status,
@@ -168,6 +172,9 @@ export default async function RequestDetailPage({ params }: PageProps) {
   }
 
   const { request, activities, passengers, drivers, routes, attachments } = data;
+  const permissionCodes = await getSessionPermissions(session);
+  const canViewAll = permissionCodes.includes(Permissions.TENANT_MANAGE) || permissionCodes.includes(Permissions.REQUEST_REVIEW_TRANSPORT) || permissionCodes.includes(Permissions.REQUEST_APPROVE_SUPERVISOR) || permissionCodes.includes(Permissions.TRIP_AUTHORIZE_REGIONAL) || permissionCodes.includes(Permissions.TRIP_AUTHORIZE_NATIONAL);
+  if (!canViewAll && request.requesterUserId !== session.user.id) notFound();
   const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
   const requesterName = request.requesterFirstName && request.requesterLastName
     ? `${request.requesterFirstName} ${request.requesterLastName}`
@@ -184,6 +191,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
         title={request.reference}
         description={request.purpose || 'Transport request'}
       >
+        {request.requesterUserId === session.user.id && ['returned', 'rejected', 'supervisor_rejected'].includes(request.status) && <ResubmitRequestButton requestId={id} />}
         <CancelRequestButton requestId={id} currentStatus={request.status} />
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/requests">

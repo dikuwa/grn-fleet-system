@@ -3,6 +3,9 @@ import { getDb } from '@/db';
 import { notifications, notificationPreferences, notificationDeliveries } from '@/db/schema/notifications';
 import { eq, and, desc, count } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
+import { tenantMemberships } from '@/db/schema/tenants';
 import { sendNotificationEmail } from '@/lib/email';
 import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
 
@@ -79,9 +82,14 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const permission = await requirePermission(session, Permissions.TENANT_MANAGE);
+    if (permission instanceof NextResponse) return permission;
     const body = await request.json();
     const {
-      tenantId,
+      tenantId: requestedTenantId,
       recipientUserId,
       recipientEmail,
       recipientName,
@@ -95,7 +103,7 @@ export async function POST(request: NextRequest) {
       tenantName,
     } = body;
 
-    if (!tenantId || !recipientUserId || !type || !title) {
+    if (!recipientUserId || !type || !title) {
       return NextResponse.json(
         {
           error:
@@ -106,6 +114,10 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
+    const tenantId = session.tenantId;
+    if (requestedTenantId && requestedTenantId !== tenantId) return NextResponse.json({ error: 'Cross-tenant notification denied' }, { status: 403 });
+    const [recipientMembership] = await db.select({ id: tenantMemberships.id }).from(tenantMemberships).where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.userId, recipientUserId), eq(tenantMemberships.status, 'active'))).limit(1);
+    if (!recipientMembership) return NextResponse.json({ error: 'Recipient is not an active tenant member' }, { status: 404 });
 
     // 1. Create in-app notification
     const [notification] = await db
@@ -259,7 +271,7 @@ export async function PATCH(request: NextRequest) {
         await db
           .update(notifications)
           .set({ isRead: true, readAt: new Date() })
-          .where(eq(notifications.id, notificationId));
+          .where(and(eq(notifications.id, notificationId), eq(notifications.recipientUserId, userId), eq(notifications.tenantId, tenantId)));
       } else if (userId && tenantId) {
         // Mark all as read
         await db

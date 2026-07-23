@@ -24,6 +24,17 @@ interface TenantUser {
   tenantStatus: string;
   joinedAt: string | null;
   roles: Array<{ id: string; roleName: string; isActing: boolean }>;
+  employee: AvailableEmployee | null;
+}
+
+interface AvailableEmployee {
+  id: string;
+  employeeNumber: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  departmentName: string | null;
+  officeName: string | null;
 }
 
 interface RoleOption {
@@ -173,6 +184,7 @@ export default function AdminUsersPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
+  const [inviteEmployeeId, setInviteEmployeeId] = useState('');
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [inviteResult, setInviteResult] = useState<{ success: boolean; emailSent: boolean; message: string } | null>(null);
   const [isInviting, setIsInviting] = useState(false);
@@ -197,6 +209,7 @@ export default function AdminUsersPage() {
   });
 
   const users: TenantUser[] = data?.users ?? [];
+  const availableEmployees: AvailableEmployee[] = data?.availableEmployees ?? [];
   const total: number = data?.total ?? 0;
   const totalPages: number = data?.totalPages ?? 1;
 
@@ -205,6 +218,7 @@ export default function AdminUsersPage() {
     setInviteEmail('');
     setInviteName('');
     setInviteRoleId('');
+    setInviteEmployeeId('');
     setShowInvite(true);
 
     try {
@@ -231,6 +245,7 @@ export default function AdminUsersPage() {
           email: inviteEmail.trim(),
           name: inviteName.trim() || undefined,
           roleId: inviteRoleId || undefined,
+          employeeId: inviteEmployeeId,
           sendInvite: true,
         }),
       });
@@ -249,6 +264,7 @@ export default function AdminUsersPage() {
       setInviteEmail('');
       setInviteName('');
       setInviteRoleId('');
+      setInviteEmployeeId('');
       refetch();
       toast({ title: 'User Invited', description: `Invitation sent to ${inviteEmail.trim()}.`, variant: 'success' });
     } catch (err) {
@@ -287,6 +303,8 @@ export default function AdminUsersPage() {
   // Load pending invites when tab switches to pending
   useEffect(() => {
     if (activeTab === 'pending' && pendingInvites.length === 0) {
+      // The tab transition is the external event that triggers this fetch.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadPendingInvites();
     }
   }, [activeTab, pendingInvites.length, loadPendingInvites]);
@@ -331,6 +349,30 @@ export default function AdminUsersPage() {
             <DialogTitle>Invite New User</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label required>Staff Member</Label>
+              <select
+                value={inviteEmployeeId}
+                onChange={(event) => {
+                  const employeeId = event.target.value;
+                  setInviteEmployeeId(employeeId);
+                  const employee = availableEmployees.find((item) => item.id === employeeId);
+                  if (employee) {
+                    setInviteName(`${employee.firstName} ${employee.lastName}`);
+                    if (employee.email) setInviteEmail(employee.email);
+                  }
+                }}
+                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+              >
+                <option value="">Select an employee...</option>
+                {availableEmployees.map((employee) => (
+                  <option key={employee.id} value={employee.id}>
+                    {employee.employeeNumber} — {employee.firstName} {employee.lastName} ({employee.officeName || 'No office'})
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-ink-500">Accounts must be linked to an active employee record.</p>
+            </div>
             <div className="space-y-1.5">
               <Label required>Email Address</Label>
               <Input
@@ -382,7 +424,7 @@ export default function AdminUsersPage() {
                 size="sm"
                 onClick={handleInvite}
                 loading={isInviting}
-                disabled={!inviteEmail.trim() || isInviting}
+                disabled={!inviteEmployeeId || !inviteEmail.trim() || isInviting}
               >
                 <Send className="h-4 w-4" /> Send Invitation
               </Button>

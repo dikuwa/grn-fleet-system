@@ -68,6 +68,9 @@ export default withSentryConfig(nextConfig, {
   project: "javascript-nextjs-99",
   silent: !process.env.CI,
   widenClientFileUpload: true,
+  sourcemaps: {
+    disable: process.env.SENTRY_UPLOAD_SOURCEMAPS === 'true' ? false : 'disable-upload',
+  },
   tunnelRoute: "/monitoring",
   webpack: {
     automaticVercelMonitors: true,

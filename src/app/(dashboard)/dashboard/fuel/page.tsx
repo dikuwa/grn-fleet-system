@@ -74,6 +74,7 @@ async function fetchFuelEntries(sp: Record<string, string | undefined>, tenantId
     db
       .select({ count: sql<number>`count(*)` })
       .from(fuelTransactions)
+      .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
       .where(where),
   ]);
 

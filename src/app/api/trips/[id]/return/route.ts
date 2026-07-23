@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips } from '@/db/schema/trips';
+import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { employees } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 export async function POST(
   req: NextRequest,
@@ -17,28 +18,29 @@ export async function POST(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.TRIP_MANAGE);
+    const permCheck = await requireAnyPermission(session, [Permissions.TRIP_MANAGE, Permissions.DRIVER_LOG_CREATE]);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
 
     const [trip] = await db
-      .select()
+      .select({ trip: trips, driverEmployeeId: vehicleAllocations.driverEmployeeId })
       .from(trips)
-      .where(eq(trips.id, id))
+      .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+      .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
     if (!trip) {
       return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
     }
 
-    if (trip.tenantId !== session.tenantId) {
-      return NextResponse.json({ error: 'Trip not found in your tenant' }, { status: 404 });
-    }
+    const [employee] = await db.select({ id: employees.id }).from(employees)
+      .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId), eq(employees.employmentStatus, 'active'))).limit(1);
+    if (!employee || employee.id !== trip.driverEmployeeId) return NextResponse.json({ error: 'Only the assigned driver may return this trip' }, { status: 403 });
 
-    if (!['in_progress', 'return_due', 'pending'].includes(trip.status)) {
+    if (!['in_progress', 'return_due'].includes(trip.trip.status)) {
       return NextResponse.json(
-        { error: `Cannot return trip with status "${trip.status}". Only in-progress, return-due, or pending trips can be returned.` },
+        { error: `Cannot return trip with status "${trip.trip.status}". Only in-progress or return-due trips can be returned.` },
         { status: 409 },
       );
     }

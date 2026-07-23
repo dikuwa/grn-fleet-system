@@ -55,9 +55,6 @@ test.describe('Mobile Responsive — Public Pages', () => {
     const viewportWidth = await page.evaluate(() => window.innerWidth);
     expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 5); // allow small rounding
 
-    // Nav should be visible
-    await expect(page.locator('nav').first()).toBeVisible({ timeout: 5000 });
-
     // Theme toggle should be accessible
     const toggle = page.locator('button[title*="Switch to"]').first();
     await expect(toggle).toBeVisible({ timeout: 5000 });

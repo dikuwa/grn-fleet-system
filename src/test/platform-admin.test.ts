@@ -127,10 +127,10 @@ describe('Platform Tenants API — GET /api/platform/tenants', () => {
     expect(res.status).toBe(401);
   });
 
-  it('returns 403 without PLATFORM_ADMIN or TENANT_MANAGE', async () => {
-    const { requireRequestAuth, requireAnyPermission } = await import('@/lib/auth-helpers');
+  it('returns 403 without PLATFORM_ADMIN', async () => {
+    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
     vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
-    vi.mocked(requireAnyPermission).mockResolvedValue(mockForbidden() as never);
+    vi.mocked(requirePermission).mockResolvedValue(mockForbidden() as never);
 
     const req = { url: 'http://localhost:3000/api/platform/tenants?limit=25&page=1', method: 'GET' };
     const res = await route.GET(req as unknown as Request);
@@ -138,10 +138,10 @@ describe('Platform Tenants API — GET /api/platform/tenants', () => {
   });
 
   it('returns paginated tenants with member counts', async () => {
-    const { requireRequestAuth, requireAnyPermission } = await import('@/lib/auth-helpers');
+    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
     const { getDb } = await import('@/db');
     vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
-    vi.mocked(requireAnyPermission).mockResolvedValue(true as never);
+    vi.mocked(requirePermission).mockResolvedValue(true as never);
 
     const mockDb = createMockDb();
     // Count query
@@ -172,10 +172,10 @@ describe('Platform Tenants API — GET /api/platform/tenants', () => {
   });
 
   it('filters by search query', async () => {
-    const { requireRequestAuth, requireAnyPermission } = await import('@/lib/auth-helpers');
+    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
     const { getDb } = await import('@/db');
     vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
-    vi.mocked(requireAnyPermission).mockResolvedValue(true as never);
+    vi.mocked(requirePermission).mockResolvedValue(true as never);
 
     const mockDb = createMockDb();
     mockDb.pushResult([{ count: 1 }]);
@@ -548,13 +548,17 @@ describe('Trip Logs API — POST /api/trip-logs', () => {
     vi.mocked(requirePermission).mockResolvedValue(true as never);
 
     const mockDb = createMockDb();
-    const trip = { id: 'trip-1', tenantId: 'platform-tenant' };
+    const trip = { id: 'trip-1', tenantId: 'platform-tenant', status: 'in_progress', driverEmployeeId: 'employee-1' };
     const newEntry = { id: 'log-new', tripId: 'trip-1', logDate: new Date('2026-07-15'), odometerOut: 1000, odometerIn: null, origin: 'Rundu', destination: 'Divundu', distanceKm: null, remarks: null, isSynced: true, syncState: 'synced', createdAt: new Date() };
 
     // Trip lookup
     mockDb.pushResult([trip]);
+    // Authenticated employee lookup
+    mockDb.pushResult([{ id: 'employee-1' }]);
     // Insert returning
     mockDb.pushResult([newEntry]);
+    // Audit insert
+    mockDb.pushResult([]);
 
     vi.mocked(getDb).mockReturnValue(mockDb as never);
 

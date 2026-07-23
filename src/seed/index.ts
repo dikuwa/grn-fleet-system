@@ -3,13 +3,12 @@
  * Development Seed Data
  *
  * Creates Kavango East tenant with offices, departments, employees,
- * vehicle categories, vehicles, roles, permissions, and workflow definitions.
+ * vehicle categories, vehicles, roles, permissions, workflow definitions,
+ * driver profiles, driver licences, and login accounts.
  *
- * All emails are fictional (.test TLD). No login accounts are created.
+ * All operations are idempotent — safe to re-run.
  *
- * NOTE: This seed is designed for fresh databases.
- * On re-run, it will fail on unique constraint violations.
- * For development, run: pnpm db:seed
+ * Run: pnpm db:seed
  */
 import { getDb } from '@/db';
 import {
@@ -23,18 +22,25 @@ import {
   offices,
   departments,
   employees,
+  driverProfiles,
+  driverLicences,
   vehicleCategories,
   vehicles,
   workflowDefinitions,
   workflowSteps,
+  inspectionTemplates,
+  inspectionTemplateItems,
   user,
   account,
+  userProfiles,
 } from '@/db/schema';
 import { Permissions, RoleDefinitions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
+import { DEPARTURE_INSPECTION_ITEMS, RETURN_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
+const ISOLATION_TENANT_ID = '00000000-0000-0000-0000-000000000002';
 
 type StaffRow = {
   empNo: string;
@@ -52,100 +58,181 @@ async function seed() {
 
   console.log('🌱 Seeding development data...');
 
-  // 1. Create Kavango East tenant
+  // -------------------------------------------------------------------------
+  // 1. Tenant (idempotent)
+  // -------------------------------------------------------------------------
   console.log('Creating tenant...');
-  await db.insert(tenants).values({
-    id: TENANT_ID as any,
-    name: 'Kavango East Regional Council',
-    code: 'KERC',
-    slug: 'kavango-east',
-    type: 'regional_council',
-    status: 'active',
-    timezone: 'Africa/Windhoek',
-    locale: 'en-NA',
-  });
-
-  // 2. Create tenant branding
-  await db.insert(tenantBranding).values({
-    tenantId: TENANT_ID as any,
-    contactEmail: 'transport@kavangoeast.gov.na',
-    contactPhone: '+264 66 123 456',
-    address: 'Government Building, Rundu, Namibia',
-    documentFooter: 'Kavango East Regional Council — Fleet Management',
-    senderName: 'Kavango East Transport',
-    senderEmail: 'transport@kavangoeast.gov.na',
-  });
-
-  // 3. Create offices
-  console.log('Creating offices...');
-  const [headOffice] = await db
-    .insert(offices)
+  await db.insert(tenants)
     .values({
-      tenantId: TENANT_ID as any,
-      name: 'Head Office — Rundu',
-      type: 'head_office',
-      code: 'HOR',
-      address: 'Rundu, Kavango East',
-      email: 'info@kavangoeast.gov.na',
-      phone: '+264 66 123 400',
+      id: TENANT_ID as any,
+      name: 'Kavango East Regional Council',
+      code: 'KERC',
+      slug: 'kavango-east',
+      type: 'regional_council',
+      status: 'active',
+      timezone: 'Africa/Windhoek',
+      locale: 'en-NA',
     })
-    .returning();
+    .onConflictDoNothing();
 
-  const constituencyOffices = await db
-    .insert(offices)
-    .values([
-      { tenantId: TENANT_ID as any, parentId: headOffice.id, name: 'Rundu Urban Constituency Office', type: 'constituency_office', code: 'RUO' },
-      { tenantId: TENANT_ID as any, parentId: headOffice.id, name: 'Rundu Rural West Constituency Office', type: 'constituency_office', code: 'RRW' },
-      { tenantId: TENANT_ID as any, parentId: headOffice.id, name: 'Rundu Rural East Constituency Office', type: 'constituency_office', code: 'RRE' },
-      { tenantId: TENANT_ID as any, parentId: headOffice.id, name: 'Mukwe Constituency Office', type: 'constituency_office', code: 'MKO' },
-      { tenantId: TENANT_ID as any, parentId: headOffice.id, name: 'Kapako Constituency Office', type: 'constituency_office', code: 'KPO' },
-      { tenantId: TENANT_ID as any, parentId: headOffice.id, name: 'Mashare Constituency Office', type: 'constituency_office', code: 'MSO' },
-      { tenantId: TENANT_ID as any, parentId: headOffice.id, name: 'Nkurenkuru Settlement Office', type: 'settlement_office', code: 'NKO' },
-    ])
-    .returning();
+  // -------------------------------------------------------------------------
+  // 2. Tenant branding (idempotent)
+  // -------------------------------------------------------------------------
+  const [existingBranding] = await db
+    .select({ id: tenantBranding.id })
+    .from(tenantBranding)
+    .where(eq(tenantBranding.tenantId, TENANT_ID as any))
+    .limit(1);
 
-  // 4. Create departments
+  if (!existingBranding) {
+    await db.insert(tenantBranding).values({
+      tenantId: TENANT_ID as any,
+      contactEmail: 'transport@kavangoeast.gov.na',
+      contactPhone: '+264 66 123 456',
+      address: 'Government Building, Rundu, Namibia',
+      documentFooter: 'Kavango East Regional Council — Fleet Management',
+      senderName: 'Kavango East Transport',
+      senderEmail: 'transport@kavangoeast.gov.na',
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // 3. Offices (idempotent)
+  // -------------------------------------------------------------------------
+  console.log('Creating offices...');
+  const officeDataList = [
+    { tenantId: TENANT_ID as any, name: 'Head Office — Rundu', type: 'head_office' as const, code: 'HOR', address: 'Rundu, Kavango East', email: 'info@kavangoeast.gov.na', phone: '+264 66 123 400' },
+    { tenantId: TENANT_ID as any, name: 'Rundu Urban Constituency Office', type: 'constituency_office' as const, code: 'RUO' },
+    { tenantId: TENANT_ID as any, name: 'Rundu Rural West Constituency Office', type: 'constituency_office' as const, code: 'RRW' },
+    { tenantId: TENANT_ID as any, name: 'Rundu Rural East Constituency Office', type: 'constituency_office' as const, code: 'RRE' },
+    { tenantId: TENANT_ID as any, name: 'Mukwe Constituency Office', type: 'constituency_office' as const, code: 'MKO' },
+    { tenantId: TENANT_ID as any, name: 'Kapako Constituency Office', type: 'constituency_office' as const, code: 'KPO' },
+    { tenantId: TENANT_ID as any, name: 'Mashare Constituency Office', type: 'constituency_office' as const, code: 'MSO' },
+    { tenantId: TENANT_ID as any, name: 'Nkurenkuru Settlement Office', type: 'settlement_office' as const, code: 'NKO' },
+  ];
+
+  const existingOffices = await db
+    .select({ name: offices.name, id: offices.id })
+    .from(offices)
+    .where(eq(offices.tenantId, TENANT_ID as any));
+  const existingOfficeMap: Record<string, string> = {};
+  for (const o of existingOffices) {
+    existingOfficeMap[o.name] = o.id;
+  }
+
+  const officeMap: Record<string, string> = {};
+  for (const od of officeDataList) {
+    const found = existingOfficeMap[od.name];
+    if (found) {
+      officeMap[od.name] = found;
+    } else {
+      const [created] = await db.insert(offices).values(od).returning();
+      officeMap[created.name] = created.id;
+    }
+  }
+
+  const headOfficeId = officeMap['Head Office — Rundu'];
+
+  // Set parent for child offices (only on newly created ones)
+  for (const od of officeDataList) {
+    if (od.type === 'constituency_office' || od.type === 'settlement_office') {
+      const oid = officeMap[od.name];
+      if (oid && !existingOfficeMap[od.name]) {
+        await db.update(offices).set({ parentId: headOfficeId }).where(eq(offices.id, oid));
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 4. Departments (idempotent)
+  // -------------------------------------------------------------------------
   console.log('Creating departments...');
-  await db.insert(departments).values([
+  const deptDataList = [
     { tenantId: TENANT_ID as any, name: 'Office of the Chief Regional Officer', code: 'CRO' },
     { tenantId: TENANT_ID as any, name: 'Transport and Fleet Management', code: 'TFM' },
     { tenantId: TENANT_ID as any, name: 'Administration and Finance', code: 'ADM' },
     { tenantId: TENANT_ID as any, name: 'Community Development', code: 'CD' },
     { tenantId: TENANT_ID as any, name: 'Infrastructure and Planning', code: 'INP' },
-  ]);
+  ];
 
-  // 5. Create all permissions
+  const deptMap: Record<string, string> = {};
+  for (const dd of deptDataList) {
+    const [existing] = await db
+      .select({ id: departments.id })
+      .from(departments)
+      .where(and(eq(departments.tenantId, TENANT_ID as any), eq(departments.name, dd.name)))
+      .limit(1);
+    if (existing) {
+      deptMap[dd.name] = existing.id;
+    } else {
+      const [created] = await db.insert(departments).values(dd).returning();
+      deptMap[created.name] = created.id;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 5. Permissions (idempotent)
+  // -------------------------------------------------------------------------
   console.log('Creating permissions...');
   const allPermissionCodes = Object.values(Permissions);
-  await db.insert(permissions).values(
-    allPermissionCodes.map((code) => ({
+  for (const code of allPermissionCodes) {
+    await db.insert(permissions).values({
       code,
       name: code.replace(/[:-]/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
       description: `Permission to ${code.replace(/[:-]/g, ' ')}`,
       group: code.split(':')[0],
-    })),
-  );
+    }).onConflictDoNothing();
+  }
 
-  // 6. Create default roles
+  // -------------------------------------------------------------------------
+  // 6. Roles (idempotent)
+  // -------------------------------------------------------------------------
   console.log('Creating roles...');
-  const roleRecords = await db
-    .insert(roles)
-    .values([
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.TRANSPORT_ADMIN.name, isSystem: true },
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.REQUESTER.name, isSystem: true },
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.SUPERVISOR.name, isSystem: true },
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.CONTROL_ADMIN_OFFICER.name, isSystem: true },
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.DEPUTY_DIRECTOR.name, isSystem: true },
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.DIRECTOR.name, isSystem: true },
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.CHIEF_REGIONAL_OFFICER.name, isSystem: true },
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.DRIVER.name, isSystem: true },
-      { tenantId: TENANT_ID as any, name: RoleDefinitions.TENANT_AUDITOR.name, isSystem: true },
-    ])
-    .returning();
+  const roleNames = [
+    RoleDefinitions.TENANT_ADMIN.name,
+    RoleDefinitions.PLATFORM_SUPER_ADMIN.name,
+    RoleDefinitions.PLATFORM_SUPPORT.name,
+    RoleDefinitions.PLATFORM_AUDITOR.name,
+    RoleDefinitions.TRANSPORT_ADMIN.name,
+    RoleDefinitions.REQUESTER.name,
+    RoleDefinitions.SUPERVISOR.name,
+    RoleDefinitions.CONTROL_ADMIN_OFFICER.name,
+    RoleDefinitions.DEPUTY_DIRECTOR.name,
+    RoleDefinitions.DIRECTOR.name,
+    RoleDefinitions.CHIEF_REGIONAL_OFFICER.name,
+    RoleDefinitions.DRIVER.name,
+    RoleDefinitions.INSPECTOR.name,
+    RoleDefinitions.MAINTENANCE_OFFICER.name,
+    RoleDefinitions.TENANT_AUDITOR.name,
+  ];
 
-  // 7. Assign permissions to roles
+  const roleRecords: Array<{ id: string; name: string }> = [];
+  for (const roleName of roleNames) {
+    const [existing] = await db
+      .select({ id: roles.id, name: roles.name })
+      .from(roles)
+      .where(and(eq(roles.tenantId, TENANT_ID as any), eq(roles.name, roleName)))
+      .limit(1);
+    if (existing) {
+      roleRecords.push(existing);
+    } else {
+      const [created] = await db
+        .insert(roles)
+        .values({ tenantId: TENANT_ID as any, name: roleName, isSystem: true })
+        .returning();
+      roleRecords.push(created);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 7. Role-Permission mappings (sync — idempotent via delete+insert)
+  // -------------------------------------------------------------------------
   console.log('Assigning role permissions...');
   const rolePermMap: Record<string, readonly string[]> = {
+    [RoleDefinitions.PLATFORM_SUPER_ADMIN.name]: RoleDefinitions.PLATFORM_SUPER_ADMIN.permissions,
+    [RoleDefinitions.PLATFORM_SUPPORT.name]: RoleDefinitions.PLATFORM_SUPPORT.permissions,
+    [RoleDefinitions.PLATFORM_AUDITOR.name]: RoleDefinitions.PLATFORM_AUDITOR.permissions,
+    [RoleDefinitions.TENANT_ADMIN.name]: RoleDefinitions.TENANT_ADMIN.permissions,
     [RoleDefinitions.TRANSPORT_ADMIN.name]: RoleDefinitions.TRANSPORT_ADMIN.permissions,
     [RoleDefinitions.REQUESTER.name]: RoleDefinitions.REQUESTER.permissions,
     [RoleDefinitions.SUPERVISOR.name]: RoleDefinitions.SUPERVISOR.permissions,
@@ -154,25 +241,32 @@ async function seed() {
     [RoleDefinitions.DIRECTOR.name]: RoleDefinitions.DIRECTOR.permissions,
     [RoleDefinitions.CHIEF_REGIONAL_OFFICER.name]: RoleDefinitions.CHIEF_REGIONAL_OFFICER.permissions,
     [RoleDefinitions.DRIVER.name]: RoleDefinitions.DRIVER.permissions,
+    [RoleDefinitions.INSPECTOR.name]: RoleDefinitions.INSPECTOR.permissions,
+    [RoleDefinitions.MAINTENANCE_OFFICER.name]: RoleDefinitions.MAINTENANCE_OFFICER.permissions,
     [RoleDefinitions.TENANT_AUDITOR.name]: RoleDefinitions.TENANT_AUDITOR.permissions,
   };
 
   for (const role of roleRecords) {
     const perms = rolePermMap[role.name];
     if (perms) {
-      await db.insert(rolePermissions).values(
-        perms.map((permCode: string) => ({
-          roleId: role.id,
-          permissionCode: permCode,
-        })),
-      );
+      await db.delete(rolePermissions).where(eq(rolePermissions.roleId, role.id));
+      if (perms.length > 0) {
+        await db.insert(rolePermissions).values(
+          perms.map((permCode: string) => ({
+            roleId: role.id,
+            permissionCode: permCode,
+          })),
+        );
+      }
     }
   }
 
-  // 8. Create sample employees
+  // -------------------------------------------------------------------------
+  // 8. Employees (idempotent by employeeNumber)
+  // -------------------------------------------------------------------------
   console.log('Creating employees...');
   const staffData: StaffRow[] = [
-    { empNo: 'KERC001', title: 'Mr', firstName: 'Kandjimi', lastName: 'Amupanda', jobTitle: 'Transport Administrator', dept: 'Transport and Fleet Management', office: 'Head Office — Rundu', isDriver: false },
+    { empNo: 'KERC001', title: 'Mr', firstName: 'Kandjimi', lastName: 'Amupanda', jobTitle: 'Tenant Administrator', dept: 'Administration and Finance', office: 'Head Office — Rundu', isDriver: false },
     { empNo: 'KERC002', title: 'Ms', firstName: 'Maria', lastName: 'Shikongo', jobTitle: 'Programme Officer', dept: 'Community Development', office: 'Rundu Urban Constituency Office', isDriver: false },
     { empNo: 'KERC003', title: 'Mr', firstName: 'Petrus', lastName: 'Ndara', jobTitle: 'Supervisor', dept: 'Community Development', office: 'Rundu Urban Constituency Office', isDriver: false },
     { empNo: 'KERC004', title: 'Mr', firstName: 'Erastus', lastName: 'Hausiku', jobTitle: 'Control Administrative Officer', dept: 'Administration and Finance', office: 'Head Office — Rundu', isDriver: false },
@@ -182,67 +276,186 @@ async function seed() {
     { empNo: 'KERC008', title: 'Mr', firstName: 'Michael', lastName: 'Mwala', jobTitle: 'Driver', dept: 'Transport and Fleet Management', office: 'Head Office — Rundu', isDriver: true },
     { empNo: 'KERC009', title: 'Ms', firstName: 'Selma', lastName: 'Nangula', jobTitle: 'Driver', dept: 'Transport and Fleet Management', office: 'Rundu Urban Constituency Office', isDriver: true },
     { empNo: 'KERC010', title: 'Mr', firstName: 'Johannes', lastName: 'Shivute', jobTitle: 'Tenant Auditor', dept: 'Administration and Finance', office: 'Head Office — Rundu', isDriver: false },
+    { empNo: 'KERC011', title: 'Ms', firstName: 'Ndapewa', lastName: 'Hamutenya', jobTitle: 'Transport Administrator', dept: 'Transport and Fleet Management', office: 'Head Office — Rundu', isDriver: false },
+    { empNo: 'KERC012', title: 'Mr', firstName: 'Tangeni', lastName: 'Ndeitunga', jobTitle: 'Vehicle Inspector', dept: 'Transport and Fleet Management', office: 'Head Office — Rundu', isDriver: false },
+    { empNo: 'KERC013', title: 'Ms', firstName: 'Hilma', lastName: 'Nakashole', jobTitle: 'Maintenance Officer', dept: 'Transport and Fleet Management', office: 'Head Office — Rundu', isDriver: false },
+    { empNo: 'KERC014', title: 'Ms', firstName: 'Paulus', lastName: 'Platform', jobTitle: 'Platform Systems Administrator', dept: 'Administration and Finance', office: 'Head Office — Rundu', isDriver: false },
   ];
 
-  const officeMap: Record<string, string> = {};
-  for (const office of [headOffice, ...constituencyOffices]) {
-    officeMap[office.name] = office.id;
-  }
-
-  const allDepts = await db.select().from(departments);
-  const deptMap: Record<string, string> = {};
-  for (const d of allDepts) {
-    deptMap[d.name] = d.id;
-  }
-
+  const employeeIdMap: Record<string, string> = {};
   for (const s of staffData) {
-    await db.insert(employees).values({
-      tenantId: TENANT_ID as any,
-      employeeNumber: s.empNo,
-      title: s.title,
-      firstName: s.firstName,
-      lastName: s.lastName,
-      jobTitle: s.jobTitle,
-      departmentId: s.dept ? deptMap[s.dept] : undefined,
-      officeId: s.office ? officeMap[s.office] : undefined,
-      email: `${s.firstName.toLowerCase()}.${s.lastName.toLowerCase()}@kavangoeast.test`,
-      phone: '+264 81 000 0000',
-      employmentStatus: 'active',
-      isDriver: s.isDriver,
-    });
+    const empEmail = `${s.firstName.toLowerCase()}.${s.lastName.toLowerCase()}@kavangoeast.test`;
+    const [existingEmp] = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(and(eq(employees.tenantId, TENANT_ID as any), eq(employees.employeeNumber, s.empNo)))
+      .limit(1);
+
+    if (existingEmp) {
+      employeeIdMap[s.empNo] = existingEmp.id;
+      await db.update(employees).set({
+        title: s.title,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        jobTitle: s.jobTitle,
+        departmentId: s.dept ? deptMap[s.dept] : null,
+        officeId: s.office ? officeMap[s.office] : null,
+        isDriver: s.isDriver,
+        updatedAt: new Date(),
+      }).where(eq(employees.id, existingEmp.id));
+    } else {
+      const [created] = await db.insert(employees).values({
+        tenantId: TENANT_ID as any,
+        employeeNumber: s.empNo,
+        title: s.title,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        jobTitle: s.jobTitle,
+        departmentId: s.dept ? deptMap[s.dept] : undefined,
+        officeId: s.office ? officeMap[s.office] : undefined,
+        email: empEmail,
+        phone: '+264 81 000 0000',
+        employmentStatus: 'active',
+        isDriver: s.isDriver,
+      }).returning();
+      employeeIdMap[s.empNo] = created.id;
+    }
   }
 
-  // 9. Create vehicle categories
+  // -------------------------------------------------------------------------
+  // 8b. Driver profiles & licences (for employees marked isDriver)
+  // -------------------------------------------------------------------------
+  console.log('Creating driver profiles and licences...');
+  const driverEmployees = staffData.filter((s) => s.isDriver);
+  for (const de of driverEmployees) {
+    const empId = employeeIdMap[de.empNo];
+    if (!empId) continue;
+
+    // Check if driver profile already exists
+    const [existingProfile] = await db
+      .select({ id: driverProfiles.id })
+      .from(driverProfiles)
+      .where(eq(driverProfiles.employeeId, empId))
+      .limit(1);
+
+    let profileId: string;
+    if (existingProfile) {
+      profileId = existingProfile.id;
+      await db.update(driverProfiles).set({ driverStatus: 'authorised', availabilityStatus: 'available', lastVerifiedAt: new Date(), notes: 'Synchronised by development seed', updatedAt: new Date() }).where(eq(driverProfiles.id, profileId));
+    } else {
+      const [profile] = await db.insert(driverProfiles).values({
+        employeeId: empId,
+        driverStatus: 'authorised',
+        notes: 'Auto-created from seed',
+      }).returning();
+      profileId = profile.id;
+
+    }
+    const [existingLicence] = await db.select({ id: driverLicences.id }).from(driverLicences)
+      .where(eq(driverLicences.driverProfileId, profileId)).limit(1);
+    if (existingLicence) {
+      await db.update(driverLicences).set({ licenceNumber: `LIC-${de.empNo}`, licenceClass: 'B', issueDate: '2023-01-01', expiryDate: '2028-12-31', isVerified: true, verificationStatus: 'verified', updatedAt: new Date() }).where(eq(driverLicences.id, existingLicence.id));
+    } else {
+      await db.insert(driverLicences).values({
+        driverProfileId: profileId,
+        licenceNumber: `LIC-${de.empNo}`,
+        licenceClass: 'B',
+        issueDate: new Date('2023-01-01').toISOString().split('T')[0],
+        expiryDate: new Date('2028-12-31').toISOString().split('T')[0],
+        isVerified: true,
+        verificationStatus: 'verified',
+      });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 9. Vehicle categories (idempotent)
+  // -------------------------------------------------------------------------
   console.log('Creating vehicle categories...');
-  await db.insert(vehicleCategories).values([
+  const catDataList = [
     { tenantId: TENANT_ID as any, name: 'Sedan', code: 'SEDAN', description: 'Standard 4-door passenger vehicle suitable for tarred roads', passengerCapacity: 5, suitableTerrain: 'tar', fuelType: 'petrol' },
     { tenantId: TENANT_ID as any, name: 'Bakkie (Double Cab)', code: 'BAKKIE_DC', description: 'Pickup truck with double cab, suitable for gravel roads and field work', passengerCapacity: 5, suitableTerrain: 'gravel', fuelType: 'diesel' },
     { tenantId: TENANT_ID as any, name: 'Bakkie (Single Cab)', code: 'BAKKIE_SC', description: 'Pickup truck with single cab, for cargo and field work', passengerCapacity: 3, suitableTerrain: 'gravel', fuelType: 'diesel' },
-  ]);
+  ];
 
-  // 10. Create sample vehicles
+  for (const cd of catDataList) {
+    const [existingCat] = await db
+      .select({ id: vehicleCategories.id })
+      .from(vehicleCategories)
+      .where(and(eq(vehicleCategories.tenantId, TENANT_ID as any), eq(vehicleCategories.code, cd.code)))
+      .limit(1);
+    if (!existingCat) {
+      await db.insert(vehicleCategories).values(cd as any);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 10. Vehicles (idempotent by licenceNumber)
+  // -------------------------------------------------------------------------
   console.log('Creating vehicles...');
-  const [sedanCat] = await db.select().from(vehicleCategories).where(eq(vehicleCategories.code, 'SEDAN')).limit(1);
-  const [bakkieDCCat] = await db.select().from(vehicleCategories).where(eq(vehicleCategories.code, 'BAKKIE_DC')).limit(1);
+  const [sedanCat] = await db.select().from(vehicleCategories).where(and(eq(vehicleCategories.tenantId, TENANT_ID as any), eq(vehicleCategories.code, 'SEDAN'))).limit(1);
+  const [bakkieDCCat] = await db.select().from(vehicleCategories).where(and(eq(vehicleCategories.tenantId, TENANT_ID as any), eq(vehicleCategories.code, 'BAKKIE_DC'))).limit(1);
 
-  await db.insert(vehicles).values([
-    { tenantId: TENANT_ID as any, categoryId: sedanCat?.id, officeId: headOffice.id, licenceNumber: 'GRN-001-2024', vehicleRegisterNumber: 'N 12345 KER', make: 'Toyota', model: 'Corolla', manufactureYear: 2023, colour: 'White', fuelType: 'petrol', transmission: 'manual', currentOdometer: 45230, status: 'available' },
-    { tenantId: TENANT_ID as any, categoryId: sedanCat?.id, officeId: headOffice.id, licenceNumber: 'GRN-002-2024', vehicleRegisterNumber: 'N 12346 KER', make: 'Nissan', model: 'Sentra', manufactureYear: 2023, colour: 'Silver', fuelType: 'petrol', transmission: 'manual', currentOdometer: 38900, status: 'available' },
-    { tenantId: TENANT_ID as any, categoryId: bakkieDCCat?.id, officeId: headOffice.id, licenceNumber: 'GRN-003-2024', vehicleRegisterNumber: 'N 23456 KER', make: 'Toyota', model: 'Hilux Double Cab', manufactureYear: 2024, colour: 'White', fuelType: 'diesel', transmission: 'manual', currentOdometer: 18200, status: 'available' },
-    { tenantId: TENANT_ID as any, categoryId: bakkieDCCat?.id, officeId: headOffice.id, licenceNumber: 'GRN-004-2024', vehicleRegisterNumber: 'N 23457 KER', make: 'Ford', model: 'Ranger Double Cab', manufactureYear: 2024, colour: 'Blue', fuelType: 'diesel', transmission: 'automatic', currentOdometer: 25600, status: 'maintenance' },
-    { tenantId: TENANT_ID as any, categoryId: bakkieDCCat?.id, officeId: constituencyOffices[0].id, licenceNumber: 'GRN-005-2024', vehicleRegisterNumber: 'N 34567 KER', make: 'Toyota', model: 'Hilux Double Cab', manufactureYear: 2023, colour: 'White', fuelType: 'diesel', transmission: 'manual', currentOdometer: 32100, status: 'available' },
-  ]);
+  const vehicleList = [
+    { tenantId: TENANT_ID as any, categoryId: sedanCat?.id, officeId: headOfficeId, licenceNumber: 'GRN-001-2024', vehicleRegisterNumber: 'N 12345 KER', make: 'Toyota', model: 'Corolla', manufactureYear: 2023, colour: 'White', fuelType: 'petrol', transmission: 'manual', currentOdometer: 45230, status: 'available' },
+    { tenantId: TENANT_ID as any, categoryId: sedanCat?.id, officeId: headOfficeId, licenceNumber: 'GRN-002-2024', vehicleRegisterNumber: 'N 12346 KER', make: 'Nissan', model: 'Sentra', manufactureYear: 2023, colour: 'Silver', fuelType: 'petrol', transmission: 'manual', currentOdometer: 38900, status: 'available' },
+    { tenantId: TENANT_ID as any, categoryId: bakkieDCCat?.id, officeId: headOfficeId, licenceNumber: 'GRN-003-2024', vehicleRegisterNumber: 'N 23456 KER', make: 'Toyota', model: 'Hilux Double Cab', manufactureYear: 2024, colour: 'White', fuelType: 'diesel', transmission: 'manual', currentOdometer: 18200, status: 'available' },
+    { tenantId: TENANT_ID as any, categoryId: bakkieDCCat?.id, officeId: headOfficeId, licenceNumber: 'GRN-004-2024', vehicleRegisterNumber: 'N 23457 KER', make: 'Ford', model: 'Ranger Double Cab', manufactureYear: 2024, colour: 'Blue', fuelType: 'diesel', transmission: 'automatic', currentOdometer: 25600, status: 'maintenance' },
+    { tenantId: TENANT_ID as any, categoryId: bakkieDCCat?.id, officeId: officeMap['Rundu Urban Constituency Office'] || headOfficeId, licenceNumber: 'GRN-005-2024', vehicleRegisterNumber: 'N 34567 KER', make: 'Toyota', model: 'Hilux Double Cab', manufactureYear: 2023, colour: 'White', fuelType: 'diesel', transmission: 'manual', currentOdometer: 32100, status: 'available' },
+  ];
 
-  // 11. Create workflow definitions
+  for (const v of vehicleList) {
+    const [existing] = await db
+      .select({ id: vehicles.id })
+      .from(vehicles)
+      .where(and(eq(vehicles.tenantId, TENANT_ID as any), eq(vehicles.licenceNumber, v.licenceNumber)))
+      .limit(1);
+    if (!existing) {
+      await db.insert(vehicles).values(v as any);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 11. Workflow definitions (idempotent)
+  // -------------------------------------------------------------------------
   console.log('Creating workflow definitions...');
-  const [regionalDef] = await db.insert(workflowDefinitions)
-    .values({ tenantId: TENANT_ID as any, tripScope: 'regional', name: 'Regional Trip Workflow', isActive: true })
-    .returning();
 
-  const [nationalDef] = await db.insert(workflowDefinitions)
-    .values({ tenantId: TENANT_ID as any, tripScope: 'national', name: 'National Trip Workflow', isActive: true })
-    .returning();
+  // Upsert regional workflow
+  const [existingRegionalDef] = await db
+    .select({ id: workflowDefinitions.id })
+    .from(workflowDefinitions)
+    .where(and(eq(workflowDefinitions.tenantId, TENANT_ID as any), eq(workflowDefinitions.name, 'Regional Trip Workflow')))
+    .limit(1);
 
+  let regionalDef: { id: string };
+  if (existingRegionalDef) {
+    regionalDef = existingRegionalDef;
+  } else {
+    const [def] = await db.insert(workflowDefinitions)
+      .values({ tenantId: TENANT_ID as any, tripScope: 'regional', name: 'Regional Trip Workflow', isActive: true })
+      .returning();
+    regionalDef = def;
+  }
+
+  // Upsert national workflow
+  const [existingNationalDef] = await db
+    .select({ id: workflowDefinitions.id })
+    .from(workflowDefinitions)
+    .where(and(eq(workflowDefinitions.tenantId, TENANT_ID as any), eq(workflowDefinitions.name, 'National Trip Workflow')))
+    .limit(1);
+
+  let nationalDef: { id: string };
+  if (existingNationalDef) {
+    nationalDef = existingNationalDef;
+  } else {
+    const [def] = await db.insert(workflowDefinitions)
+      .values({ tenantId: TENANT_ID as any, tripScope: 'national', name: 'National Trip Workflow', isActive: true })
+      .returning();
+    nationalDef = def;
+  }
+
+  // Upsert workflow steps (idempotent — delete + re-insert)
+  await db.delete(workflowSteps).where(eq(workflowSteps.definitionId, regionalDef.id));
   await db.insert(workflowSteps).values([
     { definitionId: regionalDef.id, stepOrder: 1, actionType: 'supervisor_approve', requiredPermission: Permissions.REQUEST_APPROVE_SUPERVISOR, label: 'Supervisor Approval', allowsEmergencyOverride: false },
     { definitionId: regionalDef.id, stepOrder: 2, actionType: 'transport_review', requiredPermission: Permissions.REQUEST_REVIEW_TRANSPORT, label: 'Transport Review', allowsEmergencyOverride: false },
@@ -251,6 +464,25 @@ async function seed() {
     { definitionId: regionalDef.id, stepOrder: 5, actionType: 'acknowledge', requiredPermission: Permissions.DRIVER_LOG_CREATE, label: 'Driver Acknowledgement', allowsEmergencyOverride: false },
   ]);
 
+  // Versioned inspection templates are required; an empty checklist must never pass.
+  for (const templateSeed of [
+    { type: 'departure', name: 'Standard Departure Inspection', items: DEPARTURE_INSPECTION_ITEMS },
+    { type: 'return', name: 'Standard Return Inspection', items: RETURN_INSPECTION_ITEMS },
+  ]) {
+    let [template] = await db.select({ id: inspectionTemplates.id }).from(inspectionTemplates)
+      .where(and(eq(inspectionTemplates.tenantId, TENANT_ID as any), eq(inspectionTemplates.type, templateSeed.type), eq(inspectionTemplates.isActive, true))).limit(1);
+    if (!template) {
+      [template] = await db.insert(inspectionTemplates).values({ tenantId: TENANT_ID as any, name: templateSeed.name, type: templateSeed.type, version: 1, isActive: true }).returning({ id: inspectionTemplates.id });
+    }
+    const existingItems = await db.select({ label: inspectionTemplateItems.label }).from(inspectionTemplateItems).where(eq(inspectionTemplateItems.templateId, template.id));
+    const existingLabels = new Set(existingItems.map((item) => item.label));
+    const missingItems = templateSeed.items.filter((item) => !existingLabels.has(item.label));
+    if (missingItems.length) {
+      await db.insert(inspectionTemplateItems).values(missingItems.map((item) => ({ ...item, templateId: template.id, sortOrder: templateSeed.items.findIndex((candidate) => candidate.label === item.label) + 1 })));
+    }
+  }
+
+  await db.delete(workflowSteps).where(eq(workflowSteps.definitionId, nationalDef.id));
   await db.insert(workflowSteps).values([
     { definitionId: nationalDef.id, stepOrder: 1, actionType: 'supervisor_approve', requiredPermission: Permissions.REQUEST_APPROVE_SUPERVISOR, label: 'Supervisor Approval', allowsEmergencyOverride: false },
     { definitionId: nationalDef.id, stepOrder: 2, actionType: 'transport_review', requiredPermission: Permissions.REQUEST_REVIEW_TRANSPORT, label: 'Transport Review', allowsEmergencyOverride: false },
@@ -259,82 +491,108 @@ async function seed() {
     { definitionId: nationalDef.id, stepOrder: 5, actionType: 'acknowledge', requiredPermission: Permissions.DRIVER_LOG_CREATE, label: 'Driver Acknowledgement', allowsEmergencyOverride: false },
   ]);
 
-  // 12. Create login accounts
-  console.log('Creating login accounts...');
+  // -------------------------------------------------------------------------
+  // 12. Separate role-based login accounts linked to employees
+  // -------------------------------------------------------------------------
+  console.log('Creating role-based login accounts...');
   const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
   const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'changeme';
-  const adminUserId = 'user-seed-admin-001';
-
-  // Hash the password for Better Auth's account table
   const passwordHash = await bcrypt.hash(adminPassword, 10);
+  const loginAccounts = [
+    { key: 'tenant-admin', email: adminEmail, name: 'Kandjimi Amupanda', empNo: 'KERC001', roleName: RoleDefinitions.TENANT_ADMIN.name },
+    { key: 'platform-admin', email: 'platform.admin@grnfleet.test', name: 'Paulus Platform', empNo: 'KERC014', roleName: RoleDefinitions.PLATFORM_SUPER_ADMIN.name },
+    { key: 'transport-admin', email: 'transport.admin@kavangoeast.test', name: 'Ndapewa Hamutenya', empNo: 'KERC011', roleName: RoleDefinitions.TRANSPORT_ADMIN.name },
+    { key: 'requester', email: 'requester@kavangoeast.test', name: 'Maria Shikongo', empNo: 'KERC002', roleName: RoleDefinitions.REQUESTER.name },
+    { key: 'supervisor', email: 'supervisor@kavangoeast.test', name: 'Petrus Ndara', empNo: 'KERC003', roleName: RoleDefinitions.SUPERVISOR.name },
+    { key: 'release-officer', email: 'release.officer@kavangoeast.test', name: 'Erastus Hausiku', empNo: 'KERC004', roleName: RoleDefinitions.CONTROL_ADMIN_OFFICER.name },
+    { key: 'regional-authoriser', email: 'regional.authoriser@kavangoeast.test', name: 'Loide Kandjiri', empNo: 'KERC005', roleName: RoleDefinitions.DEPUTY_DIRECTOR.name },
+    { key: 'national-release', email: 'national.release@kavangoeast.test', name: 'Tomas Sikongo', empNo: 'KERC006', roleName: RoleDefinitions.DIRECTOR.name },
+    { key: 'national-authoriser', email: 'national.authoriser@kavangoeast.test', name: 'Rafael Kasume', empNo: 'KERC007', roleName: RoleDefinitions.CHIEF_REGIONAL_OFFICER.name },
+    { key: 'driver', email: 'driver@kavangoeast.test', name: 'Michael Mwala', empNo: 'KERC008', roleName: RoleDefinitions.DRIVER.name },
+    { key: 'inspector', email: 'inspector@kavangoeast.test', name: 'Tangeni Ndeitunga', empNo: 'KERC012', roleName: RoleDefinitions.INSPECTOR.name },
+    { key: 'maintenance', email: 'maintenance@kavangoeast.test', name: 'Hilma Nakashole', empNo: 'KERC013', roleName: RoleDefinitions.MAINTENANCE_OFFICER.name },
+    { key: 'auditor', email: 'auditor@kavangoeast.test', name: 'Johannes Shivute', empNo: 'KERC010', roleName: RoleDefinitions.TENANT_AUDITOR.name },
+  ];
+  const loginUserIds: Record<string, string> = {};
 
-  // Insert Better Auth user record
-  await db.insert(user).values({
-    id: adminUserId,
-    email: adminEmail,
-    emailVerified: true,
-    name: 'Kandjimi Amupanda',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }).onConflictDoNothing();
-
-  // Insert Better Auth account record with password hash
-  await db.insert(account).values({
-    id: 'acc-seed-admin-001',
-    accountId: adminEmail,
-    providerId: 'email',
-    userId: adminUserId,
-    password: passwordHash,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }).onConflictDoNothing();
-
-  // Create tenant membership linking admin to Kavango East
-  await db.insert(tenantMemberships).values({
-    tenantId: TENANT_ID as any,
-    userId: adminUserId,
-    status: 'active',
-  }).onConflictDoNothing();
-
-  // 13. Assign admin user to Transport Admin role
-  console.log('Assigning admin role...');
-  const [membership] = await db
-    .select({ id: tenantMemberships.id })
-    .from(tenantMemberships)
-    .where(and(
-      eq(tenantMemberships.tenantId, TENANT_ID as any),
-      eq(tenantMemberships.userId, adminUserId),
-    ))
-    .limit(1);
-
-  if (membership) {
-    const [transportAdminRole] = await db
-      .select({ id: roles.id })
-      .from(roles)
-      .where(and(
-        eq(roles.tenantId, TENANT_ID as any),
-        eq(roles.name, RoleDefinitions.TRANSPORT_ADMIN.name),
-      ))
-      .limit(1);
-
-    if (transportAdminRole) {
-      await db.insert(roleAssignments).values({
-        tenantMembershipId: membership.id,
-        roleId: transportAdminRole.id,
-      }).onConflictDoNothing();
-      console.log('   Admin user assigned Transport Admin role');
+  for (const login of loginAccounts) {
+    const [existingUser] = await db.select({ id: user.id }).from(user).where(eq(user.email, login.email)).limit(1);
+    const userId = existingUser?.id || `user-seed-${login.key}`;
+    loginUserIds[login.key] = userId;
+    if (!existingUser) {
+      await db.insert(user).values({ id: userId, email: login.email, emailVerified: true, name: login.name, createdAt: new Date(), updatedAt: new Date() });
+    } else {
+      await db.update(user).set({ name: login.name, emailVerified: true, updatedAt: new Date() }).where(eq(user.id, userId));
     }
+
+    const [existingProfile] = await db.select({ id: userProfiles.id }).from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
+    if (!existingProfile) {
+      await db.insert(userProfiles).values({ id: userId, userId, displayName: login.name, requiresPasswordChange: false, status: 'active' });
+    }
+
+    const [existingAccount] = await db.select({ id: account.id }).from(account).where(and(eq(account.userId, userId), eq(account.providerId, 'email'))).limit(1);
+    if (existingAccount) {
+      await db.update(account).set({ password: passwordHash, accountId: login.email, updatedAt: new Date() }).where(eq(account.id, existingAccount.id));
+    } else {
+      await db.insert(account).values({ id: `account-seed-${login.key}`, accountId: login.email, providerId: 'email', userId, password: passwordHash, createdAt: new Date(), updatedAt: new Date() });
+    }
+
+    let [membership] = await db.select({ id: tenantMemberships.id }).from(tenantMemberships)
+      .where(and(eq(tenantMemberships.tenantId, TENANT_ID as any), eq(tenantMemberships.userId, userId))).limit(1);
+    if (!membership) {
+      [membership] = await db.insert(tenantMemberships).values({ tenantId: TENANT_ID as any, userId, status: 'active' }).returning({ id: tenantMemberships.id });
+    } else {
+      await db.update(tenantMemberships).set({ status: 'active' }).where(eq(tenantMemberships.id, membership.id));
+    }
+
+    const employeeId = employeeIdMap[login.empNo];
+    if (!employeeId) throw new Error(`Missing seed employee ${login.empNo}`);
+    await db.update(employees).set({ userId, email: login.email, updatedAt: new Date() }).where(eq(employees.id, employeeId));
+
+    const roleRecord = roleRecords.find((role) => role.name === login.roleName);
+    if (!roleRecord) throw new Error(`Missing seed role ${login.roleName}`);
+    await db.delete(roleAssignments).where(eq(roleAssignments.tenantMembershipId, membership.id));
+    await db.insert(roleAssignments).values({ tenantMembershipId: membership.id, roleId: roleRecord.id, officeId: officeMap[staffData.find((staff) => staff.empNo === login.empNo)!.office] });
   }
 
+  for (const assignment of [
+    { definitionId: regionalDef.id, stepOrder: 1, userKey: 'supervisor' },
+    { definitionId: regionalDef.id, stepOrder: 2, userKey: 'transport-admin' },
+    { definitionId: regionalDef.id, stepOrder: 3, userKey: 'release-officer' },
+    { definitionId: regionalDef.id, stepOrder: 4, userKey: 'regional-authoriser' },
+    { definitionId: regionalDef.id, stepOrder: 5, userKey: 'driver' },
+    { definitionId: nationalDef.id, stepOrder: 1, userKey: 'supervisor' },
+    { definitionId: nationalDef.id, stepOrder: 2, userKey: 'transport-admin' },
+    { definitionId: nationalDef.id, stepOrder: 3, userKey: 'national-release' },
+    { definitionId: nationalDef.id, stepOrder: 4, userKey: 'national-authoriser' },
+    { definitionId: nationalDef.id, stepOrder: 5, userKey: 'driver' },
+  ]) {
+    await db.update(workflowSteps).set({ assignedUserId: loginUserIds[assignment.userKey] })
+      .where(and(eq(workflowSteps.definitionId, assignment.definitionId), eq(workflowSteps.stepOrder, assignment.stepOrder)));
+  }
+
+  // A second tenant with a known vehicle provides a stable cross-tenant isolation fixture.
+  await db.insert(tenants).values({ id: ISOLATION_TENANT_ID as any, name: 'Zambezi Regional Council — Isolation Fixture', code: 'ZRC', slug: 'zambezi-isolation', type: 'regional_council', status: 'active', timezone: 'Africa/Windhoek', locale: 'en-NA' }).onConflictDoNothing();
+  let [isolationOffice] = await db.select({ id: offices.id }).from(offices).where(and(eq(offices.tenantId, ISOLATION_TENANT_ID as any), eq(offices.code, 'ZHO'))).limit(1);
+  if (!isolationOffice) [isolationOffice] = await db.insert(offices).values({ tenantId: ISOLATION_TENANT_ID as any, name: 'Zambezi Head Office', type: 'head_office', code: 'ZHO' }).returning({ id: offices.id });
+  let [isolationCategory] = await db.select({ id: vehicleCategories.id }).from(vehicleCategories).where(and(eq(vehicleCategories.tenantId, ISOLATION_TENANT_ID as any), eq(vehicleCategories.code, 'ISO-SEDAN'))).limit(1);
+  if (!isolationCategory) [isolationCategory] = await db.insert(vehicleCategories).values({ tenantId: ISOLATION_TENANT_ID as any, name: 'Isolation Sedan', code: 'ISO-SEDAN', passengerCapacity: 5 }).returning({ id: vehicleCategories.id });
+  const [isolationVehicle] = await db.select({ id: vehicles.id }).from(vehicles).where(and(eq(vehicles.tenantId, ISOLATION_TENANT_ID as any), eq(vehicles.licenceNumber, 'ZRC-ISOLATION-001'))).limit(1);
+  if (!isolationVehicle) await db.insert(vehicles).values({ tenantId: ISOLATION_TENANT_ID as any, categoryId: isolationCategory.id, officeId: isolationOffice.id, licenceNumber: 'ZRC-ISOLATION-001', vehicleRegisterNumber: 'N 99999 ZM', make: 'Isolation', model: 'Fixture', manufactureYear: 2025, fuelType: 'petrol', currentOdometer: 10, status: 'available' });
+
+  // -------------------------------------------------------------------------
+  // Summary
+  // -------------------------------------------------------------------------
   console.log('✅ Seed complete!');
   console.log('   Tenant: Kavango East Regional Council');
-  console.log('   Employees: 10 created');
-  console.log('   Login accounts: 1 admin created');
-  console.log(`     Email:    ${adminEmail}`);
-  console.log(`     Password: ${adminPassword}`);
+  console.log(`   Employees: ${staffData.length} synchronised`);
+  console.log('   Driver profiles + licences: 2 created');
+  console.log(`   Login accounts: ${loginAccounts.length} role-based accounts`);
+  console.log(`   Test password: ${adminPassword}`);
   console.log('   Vehicles: 5 (3 available, 1 in maintenance, 1 at constituency)');
-  console.log('   Roles: 9 default roles with permissions');
+  console.log(`   Roles: ${roleNames.length} system roles with permissions`);
   console.log('   Workflows: Regional and National');
+  console.log('   Isolation fixture: second tenant with one vehicle');
 }
 
 seed()

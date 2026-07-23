@@ -6,7 +6,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, tripIssues } from '@/db/schema/trips';
+import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth } from '@/lib/auth-helpers';
@@ -27,8 +28,10 @@ export async function POST(
 
     // Fetch the trip with tenant isolation
     const [trip] = await db
-      .select()
+      .select({ id: trips.id, status: trips.status, driverAcknowledgedAt: trips.driverAcknowledgedAt, driverEmployeeId: vehicleAllocations.driverEmployeeId, requestStatus: transportRequests.status })
       .from(trips)
+      .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+      .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
@@ -43,33 +46,7 @@ export async function POST(
       );
     }
 
-    if (!trip.allocationId) {
-      return NextResponse.json(
-        { error: 'Trip has no allocation. Cannot acknowledge.' },
-        { status: 400 },
-      );
-    }
-
-    // Find the issue record for this trip's allocation
-    const [issue] = await db
-      .select()
-      .from(tripIssues)
-      .where(eq(tripIssues.allocationId, trip.allocationId))
-      .limit(1);
-
-    if (!issue) {
-      return NextResponse.json(
-        { error: 'Vehicle must be issued before driver can acknowledge. Please issue the vehicle first.' },
-        { status: 400 },
-      );
-    }
-
-    if (issue.acknowledgedAt) {
-      return NextResponse.json(
-        { error: 'Driver has already acknowledged this trip' },
-        { status: 409 },
-      );
-    }
+    if (trip.requestStatus !== 'authorised') return NextResponse.json({ error: 'Final authorisation is required before driver acknowledgement' }, { status: 409 });
 
     // Find the current user's employee record to use as acknowledgedByDriverId
     const [employee] = await db
@@ -78,14 +55,17 @@ export async function POST(
       .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)))
       .limit(1);
 
-    // Update the issue record with driver acknowledgement
-    const [updatedIssue] = await db
-      .update(tripIssues)
+    if (!employee || employee.id !== trip.driverEmployeeId) return NextResponse.json({ error: 'Only the assigned driver may acknowledge this trip' }, { status: 403 });
+    if (trip.driverAcknowledgedAt) return NextResponse.json({ success: true, alreadyAcknowledged: true });
+
+    const [updatedTrip] = await db
+      .update(trips)
       .set({
-        acknowledgedByDriverId: employee?.id || null,
-        acknowledgedAt: new Date(),
+        driverAcknowledgedByEmployeeId: employee.id,
+        driverAcknowledgedAt: new Date(),
+        updatedAt: new Date(),
       })
-      .where(eq(tripIssues.id, issue.id))
+      .where(eq(trips.id, trip.id))
       .returning();
 
     // Audit log
@@ -101,7 +81,7 @@ export async function POST(
       sourceChannel: 'web',
     });
 
-    return NextResponse.json({ success: true, issue: updatedIssue });
+    return NextResponse.json({ success: true, trip: updatedTrip });
   } catch (error) {
     console.error('[trips/acknowledge] POST failed:', error);
     return NextResponse.json({ error: 'Failed to acknowledge trip' }, { status: 500 });

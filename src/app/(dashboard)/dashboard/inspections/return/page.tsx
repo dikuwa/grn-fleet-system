@@ -63,6 +63,8 @@ export default function ReturnInspectionPage() {
   const [tripInfo, setTripInfo] = useState<{ make: string; model: string; licenceNumber: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
+  const [inspectorAcknowledged, setInspectorAcknowledged] = useState(false);
+  const [driverAcknowledged, setDriverAcknowledged] = useState(false);
   const { toast } = useToast();
   const [photos, setPhotos] = useState<Array<{ file: File; preview: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -109,7 +111,7 @@ export default function ReturnInspectionPage() {
 
   const criticalFails = checklist.filter((i) => i.isCritical && i.result === 'fail').length;
   const failsNeedingDescription = checklist.filter((i) => i.result === 'fail' && !i.defectDescription.trim());
-  const canComplete = odometer.length > 0 && criticalFails === 0 && failsNeedingDescription.length === 0;
+  const canComplete = odometer.length > 0 && criticalFails === 0 && failsNeedingDescription.length === 0 && inspectorAcknowledged && driverAcknowledged && photos.length >= 3;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,6 +153,8 @@ export default function ReturnInspectionPage() {
           })),
           notes,
           photoKeys: photoKeys.length > 0 ? photoKeys : undefined,
+          inspectorAcknowledged,
+          driverAcknowledged,
         }),
       });
       if (res.ok) {
@@ -169,7 +173,8 @@ export default function ReturnInspectionPage() {
         formData: {
           odometerReading: odometer,
           fuelLevel,
-          vehicleId: '',
+          vehicleId,
+          tripRef: tripId,
           checklist: checklist.map((item) => ({
             label: item.label,
             result: item.result,
@@ -179,6 +184,9 @@ export default function ReturnInspectionPage() {
             isBlocking: item.isBlocking,
           })),
           notes,
+          photos: photos.map((photo) => photo.file),
+          inspectorAcknowledged,
+          driverAcknowledged,
         },
         userId: null,
         tenantId: null,
@@ -373,6 +381,15 @@ export default function ReturnInspectionPage() {
           <CardHeader><CardTitle>Additional Notes</CardTitle></CardHeader>
           <CardContent>
             <Textarea placeholder="Any additional observations or handover notes..." value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Return Acknowledgements</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={inspectorAcknowledged} onChange={(event) => setInspectorAcknowledged(event.target.checked)} /> I confirm that I performed and recorded this return inspection.</label>
+            <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={driverAcknowledged} onChange={(event) => setDriverAcknowledged(event.target.checked)} /> The assigned driver confirms the returned vehicle condition.</label>
+            <p className="text-xs text-ink-500">Both acknowledgements and at least three inspection photos are required.</p>
           </CardContent>
         </Card>
 

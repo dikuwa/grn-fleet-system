@@ -6,7 +6,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, tripIssues } from '@/db/schema/trips';
+import { trips, tripIssues, vehicleInspections, vehicleAllocations } from '@/db/schema/trips';
+import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -30,8 +31,19 @@ export async function POST(
 
     // Fetch the trip with tenant isolation
     const [trip] = await db
-      .select()
+      .select({
+        id: trips.id,
+        status: trips.status,
+        allocationId: trips.allocationId,
+        requestId: trips.requestId,
+        driverAcknowledgedAt: trips.driverAcknowledgedAt,
+        driverAcknowledgedByEmployeeId: trips.driverAcknowledgedByEmployeeId,
+        requestStatus: transportRequests.status,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      })
       .from(trips)
+      .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
+      .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
@@ -52,6 +64,19 @@ export async function POST(
         { status: 400 },
       );
     }
+    if (trip.requestStatus !== 'authorised') return NextResponse.json({ error: 'Final authorisation is required before issue' }, { status: 409 });
+    if (!trip.driverEmployeeId || !trip.driverAcknowledgedAt || trip.driverAcknowledgedByEmployeeId !== trip.driverEmployeeId) {
+      return NextResponse.json({ error: 'The assigned driver must acknowledge the trip before issue' }, { status: 409 });
+    }
+    const [departureInspection] = await db.select({ id: vehicleInspections.id })
+      .from(vehicleInspections)
+      .where(and(
+        eq(vehicleInspections.tripId, id),
+        eq(vehicleInspections.type, 'departure'),
+        eq(vehicleInspections.status, 'completed'),
+        eq(vehicleInspections.overallPass, true),
+      )).limit(1);
+    if (!departureInspection) return NextResponse.json({ error: 'A passed pre-departure inspection is required before issue' }, { status: 409 });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body: any = await req.json().catch(() => ({}));
@@ -87,6 +112,8 @@ export async function POST(
         keysIssued,
         fuelCardIssued,
         issuedByUserId: session.user.id,
+        acknowledgedByDriverId: trip.driverEmployeeId,
+        acknowledgedAt: trip.driverAcknowledgedAt,
         notes: notes || null,
       })
       .returning();
@@ -96,6 +123,8 @@ export async function POST(
       .update(trips)
       .set({ issuedAt: new Date(), updatedAt: new Date() })
       .where(eq(trips.id, id));
+    await db.update(transportRequests).set({ status: 'vehicle_issued', updatedAt: new Date() }).where(eq(transportRequests.id, trip.requestId));
+    await db.update(vehicleAllocations).set({ state: 'issued', updatedAt: new Date() }).where(eq(vehicleAllocations.id, trip.allocationId));
 
     // Audit log
     await db.insert(auditEvents).values({

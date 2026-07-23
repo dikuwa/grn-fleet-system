@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
+    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body: OnboardingRequest = await request.json();

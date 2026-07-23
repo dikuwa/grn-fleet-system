@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { APP_SHORT_NAME } from '@/lib/constants';
+import { canAccessDashboardPath } from '@/lib/dashboard-access';
 import {
   LayoutDashboard,
   FileText,
@@ -35,6 +36,7 @@ import {
   Layers,
   Database,
   Link2,
+  GitBranch,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -125,6 +127,7 @@ const navGroups: NavGroup[] = [
       { label: 'Settings', href: '/dashboard/settings', icon: Settings },
       { label: 'User Management', href: '/dashboard/admin/users', icon: Users },
       { label: 'Roles & Permissions', href: '/dashboard/admin/roles', icon: Shield },
+      { label: 'Workflow Routing', href: '/dashboard/admin/workflows', icon: GitBranch },
       { label: 'Regions', href: '/dashboard/admin/regions', icon: MapPin },
       { label: 'Tenants', href: '/dashboard/platform/tenants', icon: Globe },
       { label: 'Platform Dashboard', href: '/dashboard/platform', icon: LayoutDashboard },
@@ -136,9 +139,10 @@ const navGroups: NavGroup[] = [
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  permissionCodes: string[];
 }
 
-export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) {
   const pathname = usePathname();
   const [activeTripCount, setActiveTripCount] = useState(0);
 
@@ -154,7 +158,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border bg-brand-900 transition-all duration-200',
+        'fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-border bg-brand-900 transition-all duration-200 md:flex',
         collapsed ? 'w-[72px]' : 'w-[248px]',
       )}
     >
@@ -181,7 +185,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto scrollbar-none px-2 py-4">
-        {navGroups.map((group) => (
+        {navGroups.map((group) => ({ ...group, items: group.items.filter((item) => canAccessDashboardPath(item.href, permissionCodes)) })).filter((group) => group.items.length > 0).map((group) => (
           <div key={group.label} className="mb-4">
             {!collapsed && (
               <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-widest text-white/40">
@@ -239,9 +243,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 export function MobileSidebar({
   open,
   onClose,
+  permissionCodes,
 }: {
   open: boolean;
   onClose: () => void;
+  permissionCodes: string[];
 }) {
   const pathname = usePathname();
 
@@ -278,7 +284,7 @@ export function MobileSidebar({
         </div>
 
         <nav className="overflow-y-auto px-2 py-4">
-          {navGroups.map((group) => (
+          {navGroups.map((group) => ({ ...group, items: group.items.filter((item) => canAccessDashboardPath(item.href, permissionCodes)) })).filter((group) => group.items.length > 0).map((group) => (
             <div key={group.label} className="mb-4">
               <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-widest text-white/40">
                 {group.label}

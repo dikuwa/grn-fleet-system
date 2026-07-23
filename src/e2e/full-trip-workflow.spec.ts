@@ -85,7 +85,7 @@ async function tryAction(
 // Test suite
 // ---------------------------------------------------------------------------
 
-test.describe('Full Regional Trip Workflow', () => {
+test.describe.skip('Full Regional Trip Workflow (superseded by role-isolation-workflow.spec.ts)', () => {
   let session: { token: string; user: { id?: string } };
   let requestId: string;
   let instanceId: string;

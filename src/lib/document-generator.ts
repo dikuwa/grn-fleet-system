@@ -433,6 +433,9 @@ const BUILDERS: Record<string, (id: string) => Promise<Record<string, unknown> |
   vehicle: buildVehicleHistorySnapshot,
   tenant: buildAuditReportSnapshot,
 };
+const DOCUMENT_BUILDERS: Partial<Record<DocumentType, (id: string) => Promise<Record<string, unknown> | null>>> = {
+  fuel_summary: buildFuelSummarySnapshot,
+};
 
 /**
  * Generate a document snapshot for a given entity.
@@ -453,7 +456,7 @@ export async function generateDocument(
 ): Promise<typeof generatedDocuments.$inferSelect | null> {
   const { documentType, entityType, entityId, tenantId, generatedByUserId, templateVersion } = payload;
 
-  const builder = BUILDERS[entityType];
+  const builder = DOCUMENT_BUILDERS[documentType] || BUILDERS[entityType];
   if (!builder) {
     console.warn(`[DocGen] No builder for entity type: ${entityType}`);
     return null;

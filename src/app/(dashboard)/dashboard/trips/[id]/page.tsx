@@ -12,6 +12,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database } from 'lucide-react';
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { getSessionPermissions } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { statusConfig } from '@/lib/request-status';
 import { notFound } from 'next/navigation';
 import {
@@ -53,6 +55,7 @@ async function fetchTripDetail(id: string, tenantId: string) {
       vehicleId: trips.vehicleId,
       allocationId: trips.allocationId,
       requestId: trips.requestId,
+      driverAcknowledgedAt: trips.driverAcknowledgedAt,
       make: vehicles.make,
       model: vehicles.model,
       licenceNumber: vehicles.licenceNumber,
@@ -166,6 +169,7 @@ export default async function TripDetailPage({ params }: PageProps) {
   }
 
   const { trip, issueRecord, logEntries, fuel, inspections } = data;
+  const permissionCodes = await getSessionPermissions(session);
   const variant = TRIP_STATUS_VARIANTS[trip.status] ?? 'info';
 
   return (
@@ -183,9 +187,13 @@ export default async function TripDetailPage({ params }: PageProps) {
           <TripActions
               tripId={trip.id}
               status={trip.status}
-              tenantId={session.tenantId}
+              vehicleId={trip.vehicleId}
               hasIssue={!!issueRecord}
-              hasAcknowledge={!!issueRecord?.acknowledgedAt}
+              hasAcknowledge={!!trip.driverAcknowledgedAt}
+              hasDepartureInspection={inspections.some((inspection) => inspection.type === 'departure' && inspection.overallPass)}
+              canManage={permissionCodes.includes(Permissions.TRIP_MANAGE)}
+              canDrive={permissionCodes.includes(Permissions.DRIVER_LOG_CREATE)}
+              canInspect={permissionCodes.includes(Permissions.INSPECTION_PERFORM)}
             />
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/trips"><ChevronLeft className="h-4 w-4" /> Back to Trips</Link>

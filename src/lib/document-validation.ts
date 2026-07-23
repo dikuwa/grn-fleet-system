@@ -157,8 +157,8 @@ const TRIP_AUTHORITY_SCHEMA: Schema = {
       type: 'object',
       required: true,
       properties: {
-        grnNumber: { type: 'string', required: true },
-        registrationNumber: { type: 'string', nullable: true },
+        licenceNumber: { type: 'string', required: true },
+        vehicleRegisterNumber: { type: 'string', nullable: true },
         make: { type: 'string' },
         model: { type: 'string' },
       },
@@ -180,7 +180,7 @@ const INSPECTION_REPORT_SCHEMA: Schema = {
       type: 'object',
       required: true,
       properties: {
-        grnNumber: { type: 'string', required: true },
+        licenceNumber: { type: 'string', required: true },
         registrationNumber: { type: 'string', nullable: true },
       },
     },
@@ -217,7 +217,7 @@ const TRIP_COMPLETION_SCHEMA: Schema = {
       type: 'object',
       required: true,
       properties: {
-        grnNumber: { type: 'string', required: true },
+        licenceNumber: { type: 'string', required: true },
         registrationNumber: { type: 'string', nullable: true },
       },
     },

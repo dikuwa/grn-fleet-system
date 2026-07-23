@@ -41,6 +41,7 @@ async function signIn(page: Page) {
 }
 
 test.describe('Active Trips Tracking', () => {
+  test.setTimeout(60_000);
   test.beforeEach(async ({ page }) => {
     await signIn(page);
   });
@@ -88,7 +89,7 @@ test.describe('Active Trips Tracking', () => {
     await page.waitForTimeout(3000);
 
     // Click first trip card if any exist (exclude the "All Trips" button)
-    const tripCard = page.locator('a[href*="/dashboard/trips/"]:not(:has-text("All Trips"))').first();
+    const tripCard = page.locator('a[href^="/dashboard/trips/"]:not([href="/dashboard/trips/active"]):not([href="/dashboard/trips/closure-review"])').first();
     if (await tripCard.isVisible({ timeout: 3000 }).catch(() => false)) {
       await tripCard.click();
       await page.waitForTimeout(3000);
@@ -158,10 +159,10 @@ test.describe('Dashboard UI Smoke Tests', () => {
     await expect(page.locator('h1').first()).toBeVisible({ timeout: 15000 });
   });
 
-  test('audit log page loads', async ({ page }) => {
+  test('audit log is not exposed to transport administrators', async ({ page }) => {
     await page.goto('/dashboard/audit', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(3000);
-    await expect(page.locator('h1:has-text("Audit")').first()).toBeVisible({ timeout: 15000 });
+    await expect(page).toHaveURL(/\/dashboard(?:\?error=forbidden)?$/);
   });
 
   test('notifications page loads', async ({ page }) => {

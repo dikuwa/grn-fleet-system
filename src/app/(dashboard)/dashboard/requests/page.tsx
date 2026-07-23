@@ -12,12 +12,14 @@ import { DEFAULT_PAGE_SIZE, STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constan
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
+import { getSessionPermissions } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
-async function fetchRequests(sp: Record<string, string | undefined>, tenantId: string) {
+async function fetchRequests(sp: Record<string, string | undefined>, tenantId: string, userId: string, canViewAll: boolean) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -27,6 +29,7 @@ async function fetchRequests(sp: Record<string, string | undefined>, tenantId: s
   const scope = sp.scope?.trim();
 
   const conditions: SQL[] = [eq(transportRequests.tenantId, tenantId)];
+  if (!canViewAll) conditions.push(eq(transportRequests.requesterUserId, userId));
 
   if (status) {
     conditions.push(eq(transportRequests.status, status));
@@ -76,6 +79,7 @@ async function fetchRequests(sp: Record<string, string | undefined>, tenantId: s
         count: sql<number>`count(*)`,
       })
       .from(transportRequests)
+      .where(where)
       .groupBy(transportRequests.status),
   ]);
 
@@ -146,9 +150,12 @@ export default async function RequestsPage({ searchParams }: PageProps) {
     );
   }
 
+  const permissionCodes = await getSessionPermissions(session);
+  const canViewAll = permissionCodes.includes(Permissions.TENANT_MANAGE) || permissionCodes.includes(Permissions.REQUEST_REVIEW_TRANSPORT);
+  const canCreate = permissionCodes.includes(Permissions.REQUEST_CREATE);
   let result: Awaited<ReturnType<typeof fetchRequests>>;
   try {
-    result = await fetchRequests(sp, session.tenantId);
+    result = await fetchRequests(sp, session.tenantId, session.user.id, canViewAll);
   } catch (error) {
     console.error('Requests query failed:', error);
     return (
@@ -176,12 +183,12 @@ export default async function RequestsPage({ searchParams }: PageProps) {
         title="Transport Requests"
         description="Create and manage transport requests across the council"
       >
-        <Button variant="primary" size="sm" asChild>
+        {canCreate && <Button variant="primary" size="sm" asChild>
           <Link href="/dashboard/requests/new">
             <Plus className="h-4 w-4" />
             New Request
           </Link>
-        </Button>
+        </Button>}
       </PageHeader>
 
       {/* Summary Cards */}
@@ -277,11 +284,6 @@ export default async function RequestsPage({ searchParams }: PageProps) {
             result.filters.search
               ? 'Try adjusting your search or filter criteria.'
               : 'Create your first transport request to get started.'
-          }
-          action={
-            !result.filters.search
-              ? { label: 'New Request', onClick: () => {} }
-              : undefined
           }
         />
       ) : (

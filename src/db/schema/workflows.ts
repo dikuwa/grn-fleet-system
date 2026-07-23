@@ -11,6 +11,9 @@ export const workflowDefinitions = pgTable('workflow_definitions', {
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
   tripScope: text('trip_scope').notNull(), // regional, national
+  regionId: uuid('region_id'),
+  officeId: uuid('office_id'),
+  departmentId: uuid('department_id'),
   version: integer('version').notNull().default(1),
   name: text('name').notNull(),
   isActive: boolean('is_active').notNull().default(true),
@@ -30,6 +33,7 @@ export const workflowSteps = pgTable('workflow_steps', {
   stepOrder: integer('step_order').notNull(),
   actionType: text('action_type').notNull(), // supervisor_approve, transport_review, release, authorise, acknowledge
   requiredPermission: text('required_permission'),
+  assignedUserId: text('assigned_user_id'),
   label: text('label').notNull(),
   description: text('description'),
   requiresComment: boolean('requires_comment').notNull().default(false),

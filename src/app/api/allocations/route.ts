@@ -8,10 +8,16 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
 import { VehicleRecommender } from '@/lib/vehicle-recommender';
-import { eq } from 'drizzle-orm';
+import { eq, and, lt, gt, inArray } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireRequestAuth(req);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body: any = await req.json();
     const {
@@ -27,14 +33,6 @@ export async function POST(req: NextRequest) {
     let resolvedRequestId = requestId;
     let resolvedVehicleId = vehicleId;
 
-    const auth = await requireRequestAuth(req);
-    if (!auth.ok) return auth.error;
-    const { session } = auth;
-
-    // Require allocation permission
-    const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
-    if (permCheck instanceof NextResponse) return permCheck;
-
     const db = getDb();
     const userId = session.user.id;
     const tenantId = session.tenantId;
@@ -44,7 +42,7 @@ export async function POST(req: NextRequest) {
       const [found] = await db
         .select({ id: transportRequests.id })
         .from(transportRequests)
-        .where(eq(transportRequests.reference, requestReference))
+        .where(and(eq(transportRequests.reference, requestReference), eq(transportRequests.tenantId, tenantId)))
         .limit(1);
       if (found) resolvedRequestId = found.id;
     }
@@ -54,7 +52,7 @@ export async function POST(req: NextRequest) {
       const [found] = await db
         .select({ id: vehicles.id })
         .from(vehicles)
-        .where(eq(vehicles.licenceNumber, vehicleGrn))
+        .where(and(eq(vehicles.licenceNumber, vehicleGrn), eq(vehicles.tenantId, tenantId)))
         .limit(1);
       if (found) resolvedVehicleId = found.id;
     }
@@ -95,26 +93,48 @@ export async function POST(req: NextRequest) {
     const [foundReq] = await db
       .select({ id: transportRequests.id, status: transportRequests.status })
       .from(transportRequests)
-      .where(eq(transportRequests.id, resolvedRequestId))
+      .where(and(eq(transportRequests.id, resolvedRequestId), eq(transportRequests.tenantId, tenantId)))
       .limit(1);
 
     if (!foundReq) {
       return NextResponse.json({ error: 'Transport request not found' }, { status: 404 });
+    }
+    if (!['transport_review', 'release_pending', 'vehicle_allocated'].includes(foundReq.status)) {
+      return NextResponse.json({ error: `Request cannot be allocated while status is "${foundReq.status}"` }, { status: 409 });
     }
 
     // Verify the vehicle exists
     const [vehicle] = await db
       .select({ id: vehicles.id, status: vehicles.status })
       .from(vehicles)
-      .where(eq(vehicles.id, resolvedVehicleId))
+      .where(and(eq(vehicles.id, resolvedVehicleId), eq(vehicles.tenantId, tenantId)))
       .limit(1);
 
     if (!vehicle) {
       return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 });
     }
+    if (vehicle.status !== 'available') {
+      return NextResponse.json({ error: `Vehicle is not available (status: ${vehicle.status})` }, { status: 409 });
+    }
 
     const startAt = new Date(startDate);
     const endAt = endDate ? new Date(endDate) : new Date(startAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+    if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime()) || endAt <= startAt) {
+      return NextResponse.json({ error: 'Allocation dates are invalid' }, { status: 400 });
+    }
+
+    const [overlap] = await db.select({ id: vehicleAllocations.id })
+      .from(vehicleAllocations)
+      .where(and(
+        eq(vehicleAllocations.vehicleId, resolvedVehicleId),
+        inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+        lt(vehicleAllocations.startAt, endAt),
+        gt(vehicleAllocations.endAt, startAt),
+      ))
+      .limit(1);
+    if (overlap) {
+      return NextResponse.json({ error: 'Vehicle is already allocated during this period' }, { status: 409 });
+    }
 
     // Create the allocation
     const [allocation] = await db
@@ -160,6 +180,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ allocation, trip, document: doc, recommendation });
   } catch (error) {
     console.error('[allocations] POST failed:', error);
+    if ((error as { code?: string })?.code === '23P01') {
+      return NextResponse.json({ error: 'Vehicle is already allocated during this period' }, { status: 409 });
+    }
     return NextResponse.json(
       { error: 'Failed to create allocation' },
       { status: 500 },

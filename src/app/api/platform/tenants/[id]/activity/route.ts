@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, desc, count, sql } from 'drizzle-orm';
-import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 /**
@@ -20,7 +20,7 @@ export async function GET(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requireAnyPermission(session, [Permissions.PLATFORM_ADMIN, Permissions.TENANT_MANAGE]);
+    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { searchParams } = new URL(request.url);

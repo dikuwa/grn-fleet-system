@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session';
 import { DashboardShell } from '@/components/layout/dashboard-shell';
+import { getSessionPermissions } from '@/lib/auth-helpers';
+import { canAccessDashboardPath } from '@/lib/dashboard-access';
+import { headers } from 'next/headers';
 
 export default async function DashboardLayout({
   children,
@@ -20,5 +23,11 @@ export default async function DashboardLayout({
     redirect('/login?redirect=/dashboard&error=tenant');
   }
 
-  return <DashboardShell tenantName={session.tenantSlug} userId={session.user.id}>{children}</DashboardShell>;
+  const permissionCodes = await getSessionPermissions(session);
+  const pathname = (await headers()).get('x-grn-pathname') || '/dashboard';
+  if (!canAccessDashboardPath(pathname, permissionCodes)) {
+    redirect('/dashboard?error=forbidden');
+  }
+
+  return <DashboardShell tenantName={session.tenantSlug} userId={session.user.id} permissionCodes={permissionCodes}>{children}</DashboardShell>;
 }

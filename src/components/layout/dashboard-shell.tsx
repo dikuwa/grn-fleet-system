@@ -13,36 +13,39 @@ interface DashboardShellProps {
   children: React.ReactNode;
   tenantName?: string;
   userId?: string;
+  permissionCodes: string[];
 }
 
-export function DashboardShell({ children, tenantName, userId }: DashboardShellProps) {
+export function DashboardShell({ children, tenantName, userId, permissionCodes }: DashboardShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen overflow-x-hidden">
       {/* Desktop sidebar */}
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        permissionCodes={permissionCodes}
       />
 
       {/* Mobile sidebar */}
       <MobileSidebar
         open={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
+        permissionCodes={permissionCodes}
       />
 
       {/* Main content */}
       <div
         className={cn(
-          'transition-all duration-200',
-          sidebarCollapsed ? 'ml-[72px]' : 'ml-[248px]',
+          'min-w-0 transition-all duration-200',
+          sidebarCollapsed ? 'md:ml-[72px]' : 'md:ml-[248px]',
         )}
       >
         <Topbar onMenuClick={() => setMobileMenuOpen(true)} tenantName={tenantName} userId={userId} />
 
-        <main className="mx-auto max-w-[1440px] px-4 py-6 md:px-6 lg:px-8 page-enter">
+        <main className="mx-auto min-w-0 max-w-[1440px] px-4 py-6 md:px-6 lg:px-8 page-enter">
           <ErrorBoundary label="Dashboard">
             {children}
           </ErrorBoundary>

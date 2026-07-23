@@ -86,6 +86,8 @@ export const trips = pgTable('trips', {
     .notNull()
     .references(() => vehicles.id),
   status: text('status').notNull().default('pending'), // pending, in_progress, return_due, return_inspection, closure_review, closed
+  driverAcknowledgedAt: timestamp('driver_acknowledged_at', { withTimezone: true }),
+  driverAcknowledgedByEmployeeId: uuid('driver_acknowledged_by_employee_id').references(() => employees.id),
   issuedAt: timestamp('issued_at', { withTimezone: true }),
   startedAt: timestamp('started_at', { withTimezone: true }),
   returnedAt: timestamp('returned_at', { withTimezone: true }),
@@ -226,6 +228,7 @@ export const fuelTransactions = pgTable('fuel_transactions', {
   id: uuid('id').primaryKey().defaultRandom(),
   tripId: uuid('trip_id')
     .references(() => trips.id, { onDelete: 'cascade' }),
+  clientSyncId: text('client_sync_id'),
   vehicleId: uuid('vehicle_id')
     .notNull()
     .references(() => vehicles.id),

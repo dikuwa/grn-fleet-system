@@ -168,7 +168,7 @@ export async function hasPermission(
   // Get all active role assignments for this membership (respecting time bounds)
   const now = new Date();
   const assignments = await db
-    .select({ roleId: roleAssignments.roleId, endDate: roleAssignments.endDate })
+    .select({ roleId: roleAssignments.roleId, startDate: roleAssignments.startDate, endDate: roleAssignments.endDate })
     .from(roleAssignments)
     .where(
       and(
@@ -178,6 +178,9 @@ export async function hasPermission(
 
   // Filter by time bounds: startDate must be <= now, endDate must be null or >= now
   const validAssignments = assignments.filter((a) => {
+    if (new Date(a.startDate) > now) {
+      return false;
+    }
     if (a.endDate && new Date(a.endDate) < now) {
       return false;
     }
@@ -195,6 +198,32 @@ export async function hasPermission(
     .where(inArray(rolePermissions.roleId, roleIds));
 
   return permissions.some((p) => p.permissionCode === permissionCode);
+}
+
+/** Resolve every active permission for the current tenant session. */
+export async function getSessionPermissions(session: AuthSession): Promise<PermissionCode[]> {
+  const db = getDb();
+  const now = new Date();
+  const rows = await db
+    .select({
+      permissionCode: rolePermissions.permissionCode,
+      startDate: roleAssignments.startDate,
+      endDate: roleAssignments.endDate,
+    })
+    .from(roleAssignments)
+    .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+    .innerJoin(rolePermissions, eq(rolePermissions.roleId, roleAssignments.roleId))
+    .where(
+      and(
+        eq(tenantMemberships.userId, session.user.id),
+        eq(tenantMemberships.tenantId, session.tenantId),
+        eq(tenantMemberships.status, 'active'),
+      ),
+    );
+
+  return Array.from(new Set(rows
+    .filter((row) => row.startDate <= now && (!row.endDate || row.endDate >= now))
+    .map((row) => row.permissionCode as PermissionCode)));
 }
 
 /**

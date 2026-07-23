@@ -103,7 +103,7 @@ test.describe('Offline Conflict Resolution', () => {
     for (const tab of filterTabs) {
       const tabButton = page.locator(`button:has-text("${tab}")`).first();
       if (await tabButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await tabButton.click();
+        if (await tabButton.isEnabled()) await tabButton.click();
         await page.waitForTimeout(500);
         // The active tab should have the brand-900 background class
         await expect(tabButton).toBeVisible();
@@ -230,7 +230,8 @@ test.describe('Offline Conflict Resolution', () => {
     await page.waitForTimeout(3000);
 
     // Click the eye/view button on the first draft
-    const viewButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+    const draftRow = page.locator('text=Fuel Transaction').first().locator('..');
+    const viewButton = draftRow.locator('button[title*="View"], button[aria-label*="View"]').first();
     if (await viewButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await viewButton.click();
       await page.waitForTimeout(1000);

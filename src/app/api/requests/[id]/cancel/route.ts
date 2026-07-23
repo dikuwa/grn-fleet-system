@@ -5,6 +5,8 @@ import { auditEvents } from '@/db/schema/audit';
 import { eq, and, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { requireAnyPermission } from '@/lib/auth-helpers';
+import { vehicleAllocations, workflowInstances } from '@/db/schema';
 
 /**
  * PATCH /api/requests/[id]/cancel
@@ -23,7 +25,7 @@ export async function PATCH(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.REQUEST_CANCEL);
+    const permCheck = await requireAnyPermission(session, [Permissions.REQUEST_CANCEL, Permissions.REQUEST_WITHDRAW]);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = (await request.json().catch(() => ({}))) as { reason?: string };
@@ -33,13 +35,17 @@ export async function PATCH(
 
     // Fetch the request, ensure it belongs to this tenant
     const [req] = await db
-      .select({ id: transportRequests.id, status: transportRequests.status })
+      .select({ id: transportRequests.id, status: transportRequests.status, requesterUserId: transportRequests.requesterUserId, workflowInstanceId: transportRequests.workflowInstanceId })
       .from(transportRequests)
       .where(and(eq(transportRequests.id, id), eq(transportRequests.tenantId, session.tenantId)))
       .limit(1);
 
     if (!req) {
       return NextResponse.json({ error: 'Transport request not found' }, { status: 404 });
+    }
+    if (req.requesterUserId !== session.user.id) {
+      const adminPermission = await requirePermission(session, Permissions.REQUEST_CANCEL);
+      if (adminPermission instanceof NextResponse) return adminPermission;
     }
 
     // Only allow cancellation of non-finalised requests
@@ -58,6 +64,8 @@ export async function PATCH(
         updatedAt: sql`now()`,
       })
       .where(eq(transportRequests.id, id));
+    await db.update(vehicleAllocations).set({ state: 'cancelled', updatedAt: new Date() }).where(eq(vehicleAllocations.requestId, id));
+    if (req.workflowInstanceId) await db.update(workflowInstances).set({ status: 'cancelled', updatedAt: new Date() }).where(eq(workflowInstances.id, req.workflowInstanceId));
 
     // Audit log
     await db.insert(auditEvents).values({

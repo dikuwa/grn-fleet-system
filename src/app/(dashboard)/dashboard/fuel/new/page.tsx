@@ -101,7 +101,8 @@ export default function NewFuelEntryPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vehicleGrn: formData.vehicleGrn,
-          tripId: null,
+          tripRef: formData.tripRef || null,
+          clientSyncId: crypto.randomUUID(),
           transactionAt: formData.transactionDate,
           stationName: formData.stationName,
           fuelType: formData.fuelType,

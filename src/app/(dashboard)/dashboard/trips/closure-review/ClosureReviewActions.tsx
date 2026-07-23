@@ -42,7 +42,7 @@ export function ClosureReviewActions({ tripId, tripStatus, hasReturnInspection }
   };
 
   const handleReturnInspection = () => {
-    router.push(`/dashboard/inspections/return?tripId=${tripId}`);
+    router.push(`/dashboard/inspections/new?type=return&tripId=${tripId}`);
   };
 
   if (actionResult?.success) {

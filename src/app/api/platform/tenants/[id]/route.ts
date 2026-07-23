@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tenants, tenantBranding, tenantMemberships } from '@/db/schema/tenants';
-import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, count } from 'drizzle-orm';
 
@@ -27,8 +27,7 @@ export async function GET(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // Require platform admin OR tenant manage permission
-    const permCheck = await requireAnyPermission(session, [Permissions.PLATFORM_ADMIN, Permissions.TENANT_MANAGE]);
+    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
@@ -91,7 +90,7 @@ export async function PATCH(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session as never, Permissions.TENANT_MANAGE as never);
+    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();

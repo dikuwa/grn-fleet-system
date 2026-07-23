@@ -156,6 +156,11 @@ export async function GET(request: NextRequest) {
     const reportType = searchParams.get('type') || 'fuel';
     const exportFormat = searchParams.get('export'); // 'csv' | 'excel'
 
+    const supportedReportTypes = new Set(['fuel', 'trips', 'fleet', 'maintenance', 'requests', 'approvals']);
+    if (!supportedReportTypes.has(reportType)) {
+      return NextResponse.json({ error: `Unsupported report type: ${reportType}` }, { status: 400 });
+    }
+
     // Require auth — reports are tenant-scoped
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;

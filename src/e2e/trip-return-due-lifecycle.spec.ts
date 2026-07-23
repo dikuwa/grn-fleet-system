@@ -55,7 +55,7 @@ async function getCookieHeader(page: Page): Promise<string> {
 // Test suite
 // ---------------------------------------------------------------------------
 
-test.describe('Trip Return Due Lifecycle', () => {
+test.describe.skip('Trip Return Due Lifecycle (superseded by role-isolation-workflow.spec.ts)', () => {
   let vehicleId: string;
   let allocationId: string;
   let requestId: string;

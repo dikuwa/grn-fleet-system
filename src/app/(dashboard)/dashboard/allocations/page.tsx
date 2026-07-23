@@ -41,7 +41,7 @@ async function fetchAllocations(sp: Record<string, string | undefined>, tenantId
   const search = sp.search?.trim();
   const state = sp.state?.trim();
 
-  const conditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
+  const conditions: SQL[] = [eq(transportRequests.tenantId, tenantId)];
 
   if (state) {
     conditions.push(eq(vehicleAllocations.state, state));
@@ -89,6 +89,8 @@ async function fetchAllocations(sp: Record<string, string | undefined>, tenantId
     db
       .select({ count: sql<number>`count(*)` })
       .from(vehicleAllocations)
+      .leftJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
+      .leftJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
       .where(where),
   ]);
 

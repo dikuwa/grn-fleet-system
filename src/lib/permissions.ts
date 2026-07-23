@@ -45,6 +45,11 @@ export const Permissions = {
   DRIVER_LOG_CREATE: 'driver:log-create',
   DRIVER_LOG_VIEW: 'driver:log-view',
   DRIVER_FUEL_CREATE: 'driver:fuel-create',
+  DRIVER_MANAGE: 'driver:manage',
+
+  // Maintenance
+  MAINTENANCE_VIEW: 'maintenance:view',
+  MAINTENANCE_MANAGE: 'maintenance:manage',
 
   // Fuel
   FUEL_MANAGE: 'fuel:manage',
@@ -101,6 +106,49 @@ export const RoleDefinitions = {
     isSystem: true,
     permissions: [Permissions.TENANT_VIEW, Permissions.AUDIT_READ, Permissions.AUDIT_EXPORT],
   },
+  TENANT_ADMIN: {
+    name: 'Tenant Administrator',
+    isSystem: true,
+    permissions: [
+      Permissions.TENANT_VIEW,
+      Permissions.TENANT_MANAGE,
+      Permissions.STAFF_MANAGE,
+      Permissions.STAFF_IMPORT,
+      Permissions.STAFF_VIEW,
+      Permissions.REQUEST_VIEW,
+      Permissions.REQUEST_CANCEL,
+      Permissions.VEHICLE_VIEW,
+      Permissions.AUDIT_READ,
+      Permissions.AUDIT_EXPORT,
+      Permissions.REPORT_VIEW,
+      Permissions.REPORT_EXPORT,
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
+    ],
+  },
+  INSPECTOR: {
+    name: 'Inspector',
+    isSystem: true,
+    permissions: [
+      Permissions.INSPECTION_PERFORM,
+      Permissions.INSPECTION_VIEW,
+      Permissions.TRIP_VIEW,
+      Permissions.VEHICLE_VIEW,
+    ],
+  },
+  MAINTENANCE_OFFICER: {
+    name: 'Maintenance Officer',
+    isSystem: true,
+    permissions: [
+      Permissions.VEHICLE_VIEW,
+      Permissions.VEHICLE_UPDATE,
+      Permissions.TRIP_VIEW,
+      Permissions.FUEL_VIEW,
+      Permissions.INSPECTION_VIEW,
+      Permissions.MAINTENANCE_VIEW,
+      Permissions.MAINTENANCE_MANAGE,
+    ],
+  },
   TRANSPORT_ADMIN: {
     name: 'Transport Administrator',
     isSystem: true,
@@ -113,6 +161,7 @@ export const RoleDefinitions = {
       Permissions.ALLOCATION_CREATE,
       Permissions.ALLOCATION_OVERRIDE,
       Permissions.VEHICLE_MANAGE,
+      Permissions.VEHICLE_VIEW,
       Permissions.VEHICLE_CREATE,
       Permissions.VEHICLE_UPDATE,
       Permissions.TRIP_CLOSE,
@@ -127,6 +176,11 @@ export const RoleDefinitions = {
       Permissions.REPORT_VIEW,
       Permissions.REPORT_EXPORT,
       Permissions.INSPECTION_VIEW,
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
+      Permissions.DRIVER_MANAGE,
+      Permissions.MAINTENANCE_VIEW,
+      Permissions.MAINTENANCE_MANAGE,
     ],
   },
   REQUESTER: {
@@ -193,6 +247,7 @@ export const RoleDefinitions = {
       Permissions.DRIVER_FUEL_CREATE,
       Permissions.TRIP_VIEW,
       Permissions.INSPECTION_VIEW,
+      Permissions.FILE_VIEW,
     ],
   },
   TENANT_AUDITOR: {
@@ -208,6 +263,8 @@ export const RoleDefinitions = {
       Permissions.INSPECTION_VIEW,
       Permissions.FUEL_VIEW,
       Permissions.STAFF_VIEW,
+      Permissions.MAINTENANCE_VIEW,
+      Permissions.FILE_VIEW,
     ],
   },
 } as const;
@@ -281,11 +338,16 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
       Permissions.DRIVER_LOG_CREATE,
       Permissions.DRIVER_LOG_VIEW,
       Permissions.DRIVER_FUEL_CREATE,
+      Permissions.DRIVER_MANAGE,
     ],
   },
   fuel: {
     label: 'Fuel Management',
     permissions: [Permissions.FUEL_MANAGE, Permissions.FUEL_VERIFY, Permissions.FUEL_VIEW],
+  },
+  maintenance: {
+    label: 'Maintenance',
+    permissions: [Permissions.MAINTENANCE_VIEW, Permissions.MAINTENANCE_MANAGE],
   },
   staff: {
     label: 'Staff Management',
@@ -297,7 +359,7 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   },
   platform: {
     label: 'Platform Administration',
-    permissions: [Permissions.TENANT_MANAGE, Permissions.TENANT_VIEW],
+    permissions: [Permissions.TENANT_MANAGE, Permissions.TENANT_VIEW, Permissions.PLATFORM_ADMIN, Permissions.PLATFORM_SUPPORT],
   },
   reports: {
     label: 'Reports',

@@ -234,7 +234,7 @@ describe('Permission system integrity', () => {
     expect(viewPerm[0].code).toBe('tenant:view');
   });
 
-  it('should allow Transport Administrator role to manage regions', async () => {
+  it('should reserve region management for Tenant Administrator', async () => {
     if (!TENANT_ID) return;
     const db = getDb();
 
@@ -252,8 +252,14 @@ describe('Permission system integrity', () => {
       .where(eq(rolePermissions.roleId, transportAdminRole.id));
 
     const assignedPerms = new Set(permRows.map((p) => p.code));
-    expect(assignedPerms.has('tenant:manage')).toBe(true);
-    expect(assignedPerms.has('tenant:view')).toBe(true);
+    expect(assignedPerms.has('tenant:manage')).toBe(false);
+
+    const [tenantAdminRole] = await db.select({ id: roles.id }).from(roles).where(eq(roles.name, 'Tenant Administrator')).limit(1);
+    expect(tenantAdminRole).toBeTruthy();
+    const tenantPermRows = await db.select({ code: rolePermissions.permissionCode }).from(rolePermissions).where(eq(rolePermissions.roleId, tenantAdminRole!.id));
+    const tenantPerms = new Set(tenantPermRows.map((permission) => permission.code));
+    expect(tenantPerms.has('tenant:manage')).toBe(true);
+    expect(tenantPerms.has('tenant:view')).toBe(true);
   });
 
   it('should have regions table with tenantId column', async () => {

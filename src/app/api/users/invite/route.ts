@@ -4,6 +4,8 @@ import { user } from '@/db/schema/better-auth';
 import { account } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { employees } from '@/db/schema/people';
+import { userProfiles } from '@/db/schema/auth';
+import { auditEvents } from '@/db/schema/audit';
 import { eq, and } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -27,9 +29,30 @@ export async function POST(req: NextRequest) {
     if (!email?.trim()) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
     }
+    if (!employeeId) {
+      return NextResponse.json({ error: 'Select the staff member this account belongs to' }, { status: 400 });
+    }
 
     const db = getDb();
     const now = new Date();
+
+    const [employee] = await db
+      .select({ id: employees.id, userId: employees.userId, employmentStatus: employees.employmentStatus })
+      .from(employees)
+      .where(and(eq(employees.id, employeeId), eq(employees.tenantId, session.tenantId)))
+      .limit(1);
+    if (!employee || employee.employmentStatus !== 'active') {
+      return NextResponse.json({ error: 'Active staff member not found in your organisation' }, { status: 404 });
+    }
+    if (employee.userId) {
+      return NextResponse.json({ error: 'This staff member already has a login account' }, { status: 409 });
+    }
+
+    const [selectedRole] = roleId ? await db.select().from(roles)
+      .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId))).limit(1) : [];
+    if (roleId && !selectedRole) {
+      return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
+    }
 
     // Check for duplicate email
     const [existingUser] = await db
@@ -58,6 +81,14 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     });
 
+    await db.insert(userProfiles).values({
+      id: userId,
+      userId,
+      displayName: name || email.split('@')[0],
+      requiresPasswordChange: true,
+      status: 'active',
+    });
+
     // Create account with password
     await db.insert(account).values({
       id: crypto.randomUUID?.() || `acct-${Date.now()}`,
@@ -81,34 +112,31 @@ export async function POST(req: NextRequest) {
       .returning();
 
     // Link to employee if specified
-    if (employeeId) {
-      await db
-        .update(employees)
-        .set({ userId, updatedAt: now })
-        .where(
-          and(
-            eq(employees.id, employeeId),
-            eq(employees.tenantId, session.tenantId),
-          ),
-        );
-    }
+    await db
+      .update(employees)
+      .set({ userId, updatedAt: now })
+      .where(and(eq(employees.id, employeeId), eq(employees.tenantId, session.tenantId)));
 
     // Assign role if specified
-    if (roleId) {
-      const [role] = await db
-        .select()
-        .from(roles)
-        .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
-        .limit(1);
-
-      if (role) {
+    if (selectedRole) {
         await db.insert(roleAssignments).values({
           tenantMembershipId: membership.id,
-          roleId: role.id,
+          roleId: selectedRole.id,
           startDate: now,
         });
-      }
     }
+
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: Date.now(),
+      eventType: 'user_account_created',
+      actorUserId: session.user.id,
+      action: 'create',
+      entityType: 'user',
+      entityId: employeeId,
+      summary: `Login account created for staff member ${employeeId}`,
+      after: { userId, employeeId, roleId: roleId || null },
+    });
 
     // Send invitation email if requested — uses dedicated UserInviteEmail template
     let emailResult: { success: boolean; error?: string } = { success: false, error: 'Email not sent' };

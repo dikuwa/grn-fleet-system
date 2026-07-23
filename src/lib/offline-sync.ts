@@ -41,7 +41,7 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
         method: 'POST',
         transform: (d) => ({
           vehicleGrn: fd(d.formData, 'vehicleGrn', ''),
-          tripId: fd<string | null>(d.formData, 'tripRef', null),
+          tripRef: fd<string | null>(d.formData, 'tripRef', null),
           transactionAt: fd(d.formData, 'transactionDate', new Date().toISOString()),
           stationName: fd(d.formData, 'stationName', ''),
           fuelType: fd(d.formData, 'fuelType', 'diesel'),
@@ -50,9 +50,7 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
           odometerReading: fd<number | null>(d.formData, 'odometerReading', null),
           paymentMethod: fd(d.formData, 'paymentMethod', 'fuel_card'),
           fillType: fd(d.formData, 'fillType', 'full'),
-          recordedByUserId: d.userId || 'system',
-          employeeNumber: fd(d.formData, 'employeeNumber', '') || undefined,
-          tenantId: d.tenantId || DEFAULT_TENANT_ID,
+          clientSyncId: d.id,
         }),
       };
 
@@ -108,6 +106,8 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
           checklist: fd<Array<Record<string, unknown>>>(d.formData, 'checklist', []),
           notes: fd<string | null>(d.formData, 'notes', null),
           tenantId: d.tenantId || DEFAULT_TENANT_ID,
+          inspectorAcknowledged: fd(d.formData, 'inspectorAcknowledged', false),
+          driverAcknowledged: fd(d.formData, 'driverAcknowledged', false),
         }),
       };
 
@@ -144,6 +144,20 @@ export async function syncSingleDraft(
 
   try {
     const payload = endpoint.transform(draft);
+    if (draft.draftType === 'inspection_departure' || draft.draftType === 'inspection_return') {
+      const files = fd<File[]>(draft.formData, 'photos', []);
+      const photoKeys: string[] = [];
+      for (const file of files) {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('category', 'inspection');
+        const upload = await fetch('/api/upload', { method: 'POST', body: form });
+        if (!upload.ok) throw new Error('Inspection photo upload failed during sync');
+        const uploaded = await upload.json();
+        if (uploaded.data?.key) photoKeys.push(uploaded.data.key);
+      }
+      payload.photoKeys = photoKeys;
+    }
     const res = await fetch(endpoint.url, {
       method: endpoint.method,
       headers: { 'Content-Type': 'application/json' },
@@ -207,5 +221,3 @@ export async function syncPendingDrafts(): Promise<SyncResult> {
 
   return result;
 }
-
-

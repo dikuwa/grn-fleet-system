@@ -15,6 +15,7 @@ import { eq, and, like, desc, count, or, inArray } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import bcrypt from 'bcryptjs';
+import { employees, departments, offices } from '@/db/schema/people';
 
 // ---------------------------------------------------------------------------
 // GET — List users
@@ -146,9 +147,38 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const employeeRows = await db
+      .select({
+        id: employees.id,
+        employeeNumber: employees.employeeNumber,
+        firstName: employees.firstName,
+        lastName: employees.lastName,
+        email: employees.email,
+        userId: employees.userId,
+        departmentName: departments.name,
+        officeName: offices.name,
+      })
+      .from(employees)
+      .leftJoin(departments, eq(employees.departmentId, departments.id))
+      .leftJoin(offices, eq(employees.officeId, offices.id))
+      .where(and(eq(employees.tenantId, session.tenantId), eq(employees.employmentStatus, 'active')));
+
+    const employeeByUser = new Map(employeeRows.filter((employee) => employee.userId).map((employee) => [employee.userId, employee]));
+    const usersWithEmployees = enrichedUsers.map((tenantUser) => ({
+      ...tenantUser,
+      employee: employeeByUser.get(tenantUser.id) || null,
+    }));
+
     return NextResponse.json({
       success: true,
-      data: { users: enrichedUsers, total, page, limit, totalPages: Math.ceil(total / limit) },
+      data: {
+        users: usersWithEmployees,
+        availableEmployees: employeeRows.filter((employee) => !employee.userId),
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     });
   } catch (error) {
     console.error('[Admin Users] GET failed:', error);
@@ -173,7 +203,7 @@ export async function POST(request: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
-    const { email, name, password, roleId } = body;
+    const { email, name, password, roleId, employeeId } = body;
 
     if (!email?.trim()) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
@@ -181,8 +211,18 @@ export async function POST(request: NextRequest) {
     if (!password?.trim() || password.length < 6) {
       return NextResponse.json({ error: 'Password is required (min 6 characters)' }, { status: 400 });
     }
+    if (!employeeId) {
+      return NextResponse.json({ error: 'An employee record is required' }, { status: 400 });
+    }
 
     const db = getDb();
+
+    const [employee] = await db.select({ id: employees.id, userId: employees.userId })
+      .from(employees)
+      .where(and(eq(employees.id, employeeId), eq(employees.tenantId, session.tenantId), eq(employees.employmentStatus, 'active')))
+      .limit(1);
+    if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+    if (employee.userId) return NextResponse.json({ error: 'Employee already has an account' }, { status: 409 });
 
     // Check for duplicate email
     const [existingUser] = await db
@@ -247,6 +287,8 @@ export async function POST(request: NextRequest) {
         });
       }
     }
+
+    await db.update(employees).set({ userId, updatedAt: now }).where(eq(employees.id, employeeId));
 
     return NextResponse.json({
       success: true,

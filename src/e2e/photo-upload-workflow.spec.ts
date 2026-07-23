@@ -105,6 +105,7 @@ test.describe('Photo Upload Workflow', () => {
       multipart: {
         file: file,
         category: 'inspection',
+        public: 'true',
       },
       headers: { cookie: await getCookieHeader(page) },
     });
@@ -207,7 +208,7 @@ test.describe('Photo Upload Workflow', () => {
 
     // Verify the file input is hidden but exists
     const fileInput = page.locator('input[type="file"][accept="image/*"]');
-    await expect(fileInput).toBeVisible({ timeout: 5000 });
+    await expect(fileInput).toBeAttached({ timeout: 5000 });
     await expect(fileInput).toHaveAttribute('accept', 'image/*');
     await expect(fileInput).toHaveAttribute('capture', 'environment');
 
@@ -232,7 +233,7 @@ test.describe('Photo Upload Workflow', () => {
 
     // Verify file input has mobile camera capture attribute
     const fileInput = page.locator('input[type="file"][accept="image/*"]');
-    await expect(fileInput).toBeVisible({ timeout: 5000 });
+    await expect(fileInput).toBeAttached({ timeout: 5000 });
     await expect(fileInput).toHaveAttribute('accept', 'image/*');
     await expect(fileInput).toHaveAttribute('capture', 'environment');
 
@@ -295,7 +296,7 @@ test.describe('Photo Upload Workflow', () => {
 
     // Verify file input
     const fileInput = page.locator('input[type="file"][accept="image/*"]');
-    await expect(fileInput).toBeVisible({ timeout: 5000 });
+    await expect(fileInput).toBeAttached({ timeout: 5000 });
     await expect(fileInput).toHaveAttribute('capture', 'environment');
   });
 });

@@ -94,6 +94,10 @@ export const driverProfiles = pgTable('driver_profiles', {
     .unique()
     .references(() => employees.id, { onDelete: 'cascade' }),
   driverStatus: text('driver_status').notNull().default('authorised'), // authorised, suspended, expired
+  availabilityStatus: text('availability_status').notNull().default('available'), // available, assigned, unavailable, leave
+  unavailableUntil: timestamp('unavailable_until', { withTimezone: true }),
+  lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),
+  verifiedByUserId: text('verified_by_user_id'),
   internalAuthorisationRef: text('internal_authorisation_ref'),
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

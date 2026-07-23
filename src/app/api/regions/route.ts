@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { regions } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
+import { notifications } from '@/db/schema/notifications';
 import { eq, and, like, or, type SQL } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 /**
@@ -14,6 +15,9 @@ export async function GET(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requireAnyPermission(session, [Permissions.TENANT_VIEW, Permissions.TENANT_MANAGE]);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
     const { searchParams } = new URL(req.url);
@@ -109,28 +113,17 @@ export async function POST(req: NextRequest) {
       sourceChannel: 'web',
     });
 
-    // Notify the user who created the region
-    try {
-      await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: session.tenantId,
-          recipientUserId: session.user.id,
-          recipientEmail: session.user.email,
-          recipientName: session.user.name || session.user.email,
-          type: 'region_created',
-          title: `🗺️ Region Created — ${region.name}`,
-          body: `Region "${region.name}" (${region.code}) was created.`,
-          entityType: 'region',
-          entityId: region.id,
-          actionUrl: `/dashboard/admin/regions`,
-          priority: 'normal',
-        }),
-      });
-    } catch (notifErr) {
-      console.warn('[regions] Notification error (non-fatal):', notifErr);
-    }
+    await db.insert(notifications).values({
+      tenantId: session.tenantId,
+      recipientUserId: session.user.id,
+      type: 'region_created',
+      title: `Region Created — ${region.name}`,
+      body: `Region "${region.name}" (${region.code}) was created.`,
+      entityType: 'region',
+      entityId: region.id,
+      actionUrl: '/dashboard/admin/regions',
+      priority: 'normal',
+    });
 
     return NextResponse.json({ region }, { status: 201 });
   } catch (error) {
@@ -194,28 +187,17 @@ export async function PATCH(req: NextRequest) {
       sourceChannel: 'web',
     });
 
-    // Notify the user who updated the region
-    try {
-      await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: session.tenantId,
-          recipientUserId: session.user.id,
-          recipientEmail: session.user.email,
-          recipientName: session.user.name || session.user.email,
-          type: 'region_updated',
-          title: `🗺️ Region Updated — ${updated.name}`,
-          body: `Region "${updated.name}" (${updated.code}) was updated.`,
-          entityType: 'region',
-          entityId: updated.id,
-          actionUrl: `/dashboard/admin/regions`,
-          priority: 'normal',
-        }),
-      });
-    } catch (notifErr) {
-      console.warn('[regions] Notification error (non-fatal):', notifErr);
-    }
+    await db.insert(notifications).values({
+      tenantId: session.tenantId,
+      recipientUserId: session.user.id,
+      type: 'region_updated',
+      title: `Region Updated — ${updated.name}`,
+      body: `Region "${updated.name}" (${updated.code}) was updated.`,
+      entityType: 'region',
+      entityId: updated.id,
+      actionUrl: '/dashboard/admin/regions',
+      priority: 'normal',
+    });
 
     return NextResponse.json({ region: updated });
   } catch (error) {
@@ -266,28 +248,17 @@ export async function DELETE(req: NextRequest) {
       sourceChannel: 'web',
     });
 
-    // Notify the user who deleted the region
-    try {
-      await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/notifications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: session.tenantId,
-          recipientUserId: session.user.id,
-          recipientEmail: session.user.email,
-          recipientName: session.user.name || session.user.email,
-          type: 'region_deleted',
-          title: `🗺️ Region Deleted`,
-          body: `Region (ID: ${id}) was deleted.`,
-          entityType: 'region',
-          entityId: id,
-          actionUrl: `/dashboard/admin/regions`,
-          priority: 'normal',
-        }),
-      });
-    } catch (notifErr) {
-      console.warn('[regions] Notification error (non-fatal):', notifErr);
-    }
+    await db.insert(notifications).values({
+      tenantId: session.tenantId,
+      recipientUserId: session.user.id,
+      type: 'region_deleted',
+      title: 'Region Deleted',
+      body: `Region (ID: ${id}) was deleted.`,
+      entityType: 'region',
+      entityId: id,
+      actionUrl: '/dashboard/admin/regions',
+      priority: 'normal',
+    });
 
     await db.delete(regions).where(eq(regions.id, id));
 

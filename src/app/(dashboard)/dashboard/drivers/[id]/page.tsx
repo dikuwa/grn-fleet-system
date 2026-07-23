@@ -34,7 +34,7 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-async function fetchDriverDetail(employeeId: string) {
+async function fetchDriverDetail(employeeId: string, tenantId: string) {
   const db = getDb();
 
   const employee = await db
@@ -56,7 +56,7 @@ async function fetchDriverDetail(employeeId: string) {
     .from(employees)
     .leftJoin(departments, eq(employees.departmentId, departments.id))
     .leftJoin(offices, eq(employees.officeId, offices.id))
-    .where(eq(employees.id, employeeId))
+    .where(and(eq(employees.id, employeeId), eq(employees.tenantId, tenantId)))
     .limit(1)
     .then((r) => r[0] ?? null);
 
@@ -141,7 +141,7 @@ export default async function DriverDetailPage({ params }: PageProps) {
 
   let data: Awaited<ReturnType<typeof fetchDriverDetail>>;
   try {
-    data = await fetchDriverDetail(id);
+    data = await fetchDriverDetail(id, session.tenantId);
   } catch (error) {
     console.error('Driver detail query failed:', error);
     return (
@@ -162,12 +162,14 @@ export default async function DriverDetailPage({ params }: PageProps) {
   }
 
   const { employee, profile, licences, assignmentHistory } = data;
+  const expiryCutoff = new Date();
+  expiryCutoff.setDate(expiryCutoff.getDate() + 30);
 
   const activeLicences = licences.filter(
     (l) => l.verificationStatus === 'verified' && l.expiryDate && new Date(l.expiryDate) > new Date(),
   );
   const expiringLicences = licences.filter(
-    (l) => l.expiryDate && new Date(l.expiryDate) > new Date() && new Date(l.expiryDate) < new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    (l) => l.expiryDate && new Date(l.expiryDate) > new Date() && new Date(l.expiryDate) < expiryCutoff,
   );
   const expiredLicences = licences.filter(
     (l) => l.expiryDate && new Date(l.expiryDate) <= new Date(),
@@ -265,7 +267,7 @@ export default async function DriverDetailPage({ params }: PageProps) {
             <div className="divide-y divide-border">
               {licences.map((licence) => {
                 const isExpired = licence.expiryDate && new Date(licence.expiryDate) <= new Date();
-                const isExpiring = licence.expiryDate && new Date(licence.expiryDate) > new Date() && new Date(licence.expiryDate) < new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+                const isExpiring = licence.expiryDate && new Date(licence.expiryDate) > new Date() && new Date(licence.expiryDate) < expiryCutoff;
                 const status = isExpired ? 'error' : isExpiring ? 'pending' : licence.verificationStatus === 'verified' ? 'success' : 'pending';
                 const statusLabel = isExpired ? 'Expired' : isExpiring ? 'Expiring Soon' : licence.verificationStatus.charAt(0).toUpperCase() + licence.verificationStatus.slice(1);
                 return (

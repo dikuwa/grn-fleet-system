@@ -46,10 +46,10 @@ export default function AdminRegionsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/regions?includeInactive=true');
+      const res = await fetch('/api/regions');
       const json = await res.json();
-      if (!json.success) throw new Error(json.error || 'Failed to load regions');
-      setRegions(json.data || []);
+      if (!res.ok) throw new Error(json.error || 'Failed to load regions');
+      setRegions(json.rows || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load regions');
     } finally {
@@ -98,15 +98,13 @@ export default function AdminRegionsPage() {
         sortOrder: Number(formSortOrder) || 0,
       };
 
-      const url = editingId
-        ? `/api/admin/regions/${editingId}`
-        : '/api/admin/regions';
+      const url = '/api/regions';
       const method = editingId ? 'PATCH' : 'POST';
 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(editingId ? { ...body, id: editingId } : body),
       });
 
       const json = await res.json();
@@ -127,7 +125,7 @@ export default function AdminRegionsPage() {
     setDeleting(id);
 
     try {
-      const res = await fetch(`/api/admin/regions/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/regions?id=${id}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete region');
       toast({ title: 'Region deleted', description: 'Region removed successfully', variant: 'success' });
@@ -141,10 +139,10 @@ export default function AdminRegionsPage() {
 
   const handleToggleActive = async (region: Region) => {
     try {
-      const res = await fetch(`/api/admin/regions/${region.id}`, {
+      const res = await fetch('/api/regions', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isActive: !region.isActive }),
+        body: JSON.stringify({ id: region.id, isActive: !region.isActive }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update region');
@@ -357,4 +355,3 @@ export default function AdminRegionsPage() {
     </div>
   );
 }
-

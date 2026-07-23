@@ -8,18 +8,18 @@ The coder must verify current install commands from the repository/registry befo
 
 ## 2. JB/VibeKit feature units selected
 
-| Need | Candidate | Use |
-|---|---|---|
-| Authentication UI | JB Better Auth UI | Install as a base, remove public sign-up/OAuth/mandatory email verification, adapt to tenant access |
-| Advanced tables | Data Table | Requests, staff, fleet, fuel, reports and audit |
-| Searchable selections | Searchable Select | Staff, drivers, offices, vehicles and locations |
-| Request/import workflows | Multi-Step Form | Transport request and staff/vehicle imports |
-| Notifications | Notification Center | Bell dropdown and notification centre |
-| Private uploads | File Storage UI | Documents, inspection photos and receipts; adapt to private R2 |
-| Official documents | Printable Templates | Structural base only; build government-specific React PDF templates |
-| Analytics | Charts & Dashboard Grid | Use selectively for reports |
-| Organisation UI | Organization & Team UI | Reuse role/member patterns, replace invite/public onboarding behaviour |
-| Form primitives | VibeKit Form fallback | Install in Phase 1 if current shadcn form package is absent |
+| Need                     | Candidate               | Use                                                                                                 |
+| ------------------------ | ----------------------- | --------------------------------------------------------------------------------------------------- |
+| Authentication UI        | JB Better Auth UI       | Install as a base, remove public sign-up/OAuth/mandatory email verification, adapt to tenant access |
+| Advanced tables          | Data Table              | Requests, staff, fleet, fuel, reports and audit                                                     |
+| Searchable selections    | Searchable Select       | Staff, drivers, offices, vehicles and locations                                                     |
+| Request/import workflows | Multi-Step Form         | Transport request and staff/vehicle imports                                                         |
+| Notifications            | Notification Center     | Bell dropdown and notification centre                                                               |
+| Private uploads          | File Storage UI         | Documents, inspection photos and receipts; adapt to private R2                                      |
+| Official documents       | Printable Templates     | Structural base only; build government-specific React PDF templates                                 |
+| Analytics                | Charts & Dashboard Grid | Use selectively for reports                                                                         |
+| Organisation UI          | Organization & Team UI  | Reuse role/member patterns, replace invite/public onboarding behaviour                              |
+| Form primitives          | VibeKit Form fallback   | Install in Phase 1 if current shadcn form package is absent                                         |
 
 ## 3. VibeKit primitives selected
 

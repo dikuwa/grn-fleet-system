@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, tripClosures, fuelTransactions } from '@/db/schema/trips';
-import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
+import { trips, tripClosures, fuelTransactions, vehicleAllocations } from '@/db/schema/trips';
+import { transportRequests } from '@/db/schema/requests';
+import { vehicles, vehicleStatusEvents, vehicleDefects } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 
 export async function POST(
   req: NextRequest,
@@ -88,18 +89,24 @@ export async function POST(
       })
       .where(eq(trips.id, id))
       .returning();
+    await db.update(transportRequests).set({ status: 'closed', updatedAt: new Date() }).where(eq(transportRequests.id, trip.requestId));
+    await db.update(vehicleAllocations).set({ state: 'released', updatedAt: new Date() }).where(eq(vehicleAllocations.id, trip.allocationId));
 
-    // Return vehicle to available status + log status event
+    const [blockingDefect] = await db.select({ id: vehicleDefects.id }).from(vehicleDefects)
+      .where(and(eq(vehicleDefects.vehicleId, trip.vehicleId), eq(vehicleDefects.isBlocking, true), isNull(vehicleDefects.resolvedAt))).limit(1);
+    const resultingVehicleStatus = blockingDefect ? 'maintenance' : 'available';
+
+    // Return safe vehicles to the pool; vehicles with blocking defects remain in maintenance.
     await db
       .update(vehicles)
-      .set({ status: 'available', updatedAt: new Date() })
+      .set({ status: resultingVehicleStatus, updatedAt: new Date() })
       .where(eq(vehicles.id, trip.vehicleId));
 
     await db.insert(vehicleStatusEvents).values({
       vehicleId: trip.vehicleId,
       previousStatus: trip.status === 'closure_review' ? 'allocated' : 'allocated',
-      newStatus: 'available',
-      reason: `Trip closed: ${id.slice(0, 8)}...`,
+      newStatus: resultingVehicleStatus,
+      reason: blockingDefect ? 'Trip closed with unresolved blocking defect' : `Trip closed: ${id.slice(0, 8)}...`,
       changedByUserId: userId,
       referenceEntityType: 'trip',
       referenceEntityId: id,

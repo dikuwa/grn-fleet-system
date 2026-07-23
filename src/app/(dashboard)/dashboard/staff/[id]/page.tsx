@@ -12,7 +12,7 @@ import {
   driverLicences,
   employeeDocuments,
 } from '@/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import {
   Mail,
   Phone,
@@ -26,6 +26,10 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { getServerSession } from '@/lib/session';
+import { hasPermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
+import { ConvertToDriver } from '@/components/drivers/convert-to-driver';
 
 interface PageParams {
   id: string;
@@ -38,7 +42,7 @@ interface EmployeeDetailData {
   docs: Awaited<ReturnType<typeof fetchDocs>>;
 }
 
-async function fetchEmployee(id: string) {
+async function fetchEmployee(id: string, tenantId: string) {
   const dbo = getDb();
   return dbo
     .select({
@@ -62,7 +66,7 @@ async function fetchEmployee(id: string) {
     .from(employees)
     .leftJoin(departments, eq(employees.departmentId, departments.id))
     .leftJoin(offices, eq(employees.officeId, offices.id))
-    .where(eq(employees.id, id))
+    .where(and(eq(employees.id, id), eq(employees.tenantId, tenantId)))
     .limit(1)
     .then((rows) => rows[0] ?? null);
 }
@@ -95,8 +99,8 @@ async function fetchDocs(employeeId: string) {
     .orderBy(desc(employeeDocuments.createdAt));
 }
 
-async function fetchEmployeeDetail(id: string): Promise<EmployeeDetailData> {
-  const employee = await fetchEmployee(id);
+async function fetchEmployeeDetail(id: string, tenantId: string): Promise<EmployeeDetailData> {
+  const employee = await fetchEmployee(id, tenantId);
   if (!employee) throw new Error('NOT_FOUND');
 
   const driverProfile = employee.isDriver ? await fetchDriverProfile(employee.id) : null;
@@ -114,6 +118,11 @@ export default async function EmployeeDetailPage({
   params: Promise<PageParams>;
 }) {
   const { id } = await params;
+  const session = await getServerSession();
+  if (!session) notFound();
+  const canView = await hasPermission(session, Permissions.STAFF_VIEW);
+  if (!canView) notFound();
+  const canManageDrivers = await hasPermission(session, Permissions.DRIVER_MANAGE);
 
   if (!isDbConnected()) {
     return (
@@ -126,7 +135,7 @@ export default async function EmployeeDetailPage({
 
   let data: EmployeeDetailData;
   try {
-    data = await fetchEmployeeDetail(id);
+    data = await fetchEmployeeDetail(id, session.tenantId);
   } catch (error) {
     if (error instanceof Error && error.message === 'NOT_FOUND') {
       notFound();
@@ -147,9 +156,12 @@ export default async function EmployeeDetailPage({
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Staff Directory', href: '/dashboard/staff' }, { label: `${employee.firstName} ${employee.lastName}` }]} />
       <PageHeader title="Employee Detail" description="View employee information and records">
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/staff"><ChevronLeft className="h-4 w-4" />Back to Directory</Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {canManageDrivers && !driverProfile && <ConvertToDriver employeeId={employee.id} employeeName={`${employee.firstName} ${employee.lastName}`} />}
+          <Button variant="secondary" size="sm" asChild>
+            <Link href="/dashboard/staff"><ChevronLeft className="h-4 w-4" />Back to Directory</Link>
+          </Button>
+        </div>
       </PageHeader>
 
       <div className="grid gap-6 lg:grid-cols-3">

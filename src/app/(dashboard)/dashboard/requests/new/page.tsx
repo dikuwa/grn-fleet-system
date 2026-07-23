@@ -749,6 +749,7 @@ export default function NewRequestPage() {
   const [formData, setFormData] = useState<RequestFormData>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [clientSubmissionId] = useState(() => crypto.randomUUID());
   const reference = generateReference();
   const { toast } = useToast();
 
@@ -779,6 +780,7 @@ export default function NewRequestPage() {
           passengers: formData.passengers,
           drivers: formData.drivers,
           routes: formData.routes,
+          clientSubmissionId,
         }),
       });
 

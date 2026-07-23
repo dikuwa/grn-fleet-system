@@ -1,6 +1,6 @@
 import { pgTable, uuid, text, timestamp, boolean, integer, jsonb } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
-import { employees } from './people';
+import { employees, departments, offices } from './people';
 
 /**
  * Transport requests
@@ -11,6 +11,7 @@ export const transportRequests = pgTable('transport_requests', {
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
   reference: text('reference').notNull(),
+  clientSubmissionId: text('client_submission_id'),
   revision: integer('revision').notNull().default(1),
   scope: text('scope').notNull(), // regional, national
   status: text('status').notNull().default('draft'),
@@ -18,6 +19,9 @@ export const transportRequests = pgTable('transport_requests', {
     .notNull()
     .references(() => employees.id),
   requesterUserId: text('requester_user_id').notNull(),
+  departmentId: uuid('department_id').references(() => departments.id),
+  officeId: uuid('office_id').references(() => offices.id),
+  regionId: uuid('region_id'),
   department: text('department'),
   purpose: text('purpose'),
   specialAuthorityRequired: boolean('special_authority_required').notNull().default(false),

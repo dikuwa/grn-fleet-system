@@ -127,11 +127,11 @@ describe('WorkflowEngine — Initialisation', () => {
   it('creates an active workflow instance for an existing request', async () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
     const mockDb = createMockDb();
-    mockDb.limit = vi.fn()
-      .mockResolvedValueOnce([{ id: 'request-1', scope: 'regional' }]) // request found
-      .mockResolvedValueOnce([]) // no matching definition
-      .mockResolvedValueOnce([MOCK_WORKFLOW_INSTANCE_SELECT]); // inserted instance
-    mockDb.returning = vi.fn().mockResolvedValue([MOCK_WORKFLOW_INSTANCE_SELECT]);
+    mockDb.limit = vi.fn().mockResolvedValueOnce([{ id: 'request-1', scope: 'regional', officeId: null, departmentId: null, regionId: null }]);
+    mockDb.orderBy = vi.fn()
+      .mockResolvedValueOnce([{ id: 'definition-1', tenantId: 'tenant-1', tripScope: 'regional', version: 1, regionId: null, officeId: null, departmentId: null }])
+      .mockResolvedValueOnce([{ definitionId: 'definition-1', stepOrder: 1, actionType: 'supervisor_approve', label: 'Supervisor Approval', assignedUserId: null }]);
+    mockDb.returning = vi.fn().mockResolvedValue([{ ...MOCK_WORKFLOW_INSTANCE_SELECT, definitionId: 'definition-1' }]);
 
     const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     const result = await engine.initializeForRequest('request-1', 'tenant-1');
@@ -153,6 +153,7 @@ describe('WorkflowEngine — Action processing', () => {
     const mockDb = createMockDb();
     mockDb.limit = vi.fn()
       .mockResolvedValueOnce([instance]) // instance lookup
+      .mockResolvedValueOnce([{ tenantId: 'tenant-1' }]) // tenant isolation
       .mockResolvedValueOnce([{ scope }]) // request scope for built-in steps
       .mockResolvedValueOnce([instance]); // updated instance after action
     return mockDb;
@@ -178,7 +179,9 @@ describe('WorkflowEngine — Action processing', () => {
   it('returns error when workflow is not active', async () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
     const mockDb = createMockDb();
-    mockDb.limit = vi.fn().mockResolvedValue([{ ...MOCK_WORKFLOW_INSTANCE_SELECT, status: 'completed' }]);
+    mockDb.limit = vi.fn()
+      .mockResolvedValueOnce([{ ...MOCK_WORKFLOW_INSTANCE_SELECT, status: 'completed' }])
+      .mockResolvedValueOnce([{ tenantId: 'tenant-1' }]);
 
     const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     const result = await engine.processAction(
