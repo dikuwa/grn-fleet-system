@@ -159,10 +159,42 @@ test.describe('Dashboard UI Smoke Tests', () => {
     await expect(page.locator('h1').first()).toBeVisible({ timeout: 15000 });
   });
 
-  test('audit log is not exposed to transport administrators', async ({ page }) => {
+  test('audit log page loads for authorized users', async ({ page }) => {
     await page.goto('/dashboard/audit', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(3000);
-    await expect(page).toHaveURL(/\/dashboard(?:\?error=forbidden)?$/);
+    // Tenant admin has AUDIT_READ — page should load
+    await expect(page.locator('h1:has-text("Audit")').first()).toBeVisible({ timeout: 15000 });
+  });
+
+  test('audit log API rejects unauthorized roles', async ({ page }) => {
+    // Sign in as transport-admin (no AUDIT_READ permission)
+    const transportEmail = 'transport.admin@kavangoeast.test';
+    const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
+
+    const res = await page.request.post(`${BASE}/api/auth/sign-in`, {
+      data: { email: transportEmail, password },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    const token = body.token || body.session?.token;
+    expect(token).toBeDefined();
+
+    await page.context().addCookies([
+      {
+        name: 'better-auth.session_token',
+        value: token,
+        domain: new URL(BASE).hostname,
+        path: '/',
+        httpOnly: false,
+        sameSite: 'Lax',
+      },
+    ]);
+
+    // Audit API should reject transport admins with 403
+    const apiRes = await page.request.get(`${BASE}/api/audit?limit=1`);
+    expect(apiRes.status()).toBe(403);
+
+    // Page renders client-side empty state (no server redirect) — API contract is the gate
   });
 
   test('notifications page loads', async ({ page }) => {
