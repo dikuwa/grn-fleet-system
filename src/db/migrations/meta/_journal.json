@@ -85,6 +85,13 @@
       "when": 1784764800000,
       "tag": "0011_role_workflow_foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784908225315,
+      "tag": "0012_add_username_column",
+      "breakpoints": true
     }
   ]
 }

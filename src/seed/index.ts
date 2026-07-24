@@ -520,9 +520,9 @@ async function seed() {
     const userId = existingUser?.id || `user-seed-${login.key}`;
     loginUserIds[login.key] = userId;
     if (!existingUser) {
-      await db.insert(user).values({ id: userId, email: login.email, emailVerified: true, name: login.name, createdAt: new Date(), updatedAt: new Date() });
+      await db.insert(user).values({ id: userId, email: login.email, username: login.key, emailVerified: true, name: login.name, createdAt: new Date(), updatedAt: new Date() });
     } else {
-      await db.update(user).set({ name: login.name, emailVerified: true, updatedAt: new Date() }).where(eq(user.id, userId));
+      await db.update(user).set({ name: login.name, username: login.key, emailVerified: true, updatedAt: new Date() }).where(eq(user.id, userId));
     }
 
     const [existingProfile] = await db.select({ id: userProfiles.id }).from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
@@ -589,6 +589,8 @@ async function seed() {
   console.log('   Driver profiles + licences: 2 created');
   console.log(`   Login accounts: ${loginAccounts.length} role-based accounts`);
   console.log(`   Test password: ${adminPassword}`);
+  console.log('   Username format: <role-key> (e.g. tenant-admin, driver, requester)');
+  console.log('   Username also accepts email addresses as fallback.');
   console.log('   Vehicles: 5 (3 available, 1 in maintenance, 1 at constituency)');
   console.log(`   Roles: ${roleNames.length} system roles with permissions`);
   console.log('   Workflows: Regional and National');
