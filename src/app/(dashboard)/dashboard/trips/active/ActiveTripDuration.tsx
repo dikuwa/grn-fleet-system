@@ -20,20 +20,22 @@ function formatDuration(startedAt: string | null): string {
 export function ActiveTripDuration({ tripId, startedAt }: { tripId: string; startedAt: string | null }) {
   const [duration, setDuration] = useState(() => formatDuration(startedAt));
   const startedRef = useRef(startedAt);
-  startedRef.current = startedAt;
+
+  useEffect(() => {
+    startedRef.current = startedAt;
+  }, [startedAt]);
 
   useEffect(() => {
     if (!startedAt) return;
 
-    // Immediate update
-    setDuration(formatDuration(startedAt));
-
     // Update every second for live feel
+    setDuration(formatDuration(startedAt));
     const timer = setInterval(() => {
       setDuration(formatDuration(startedRef.current));
     }, 1_000);
 
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
   }, [startedAt]);
 
   if (!startedAt) return null;

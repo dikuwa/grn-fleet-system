@@ -114,7 +114,7 @@ export async function PATCH(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
-    const { name, tenantStatus, addRoleId, removeRoleId } = body;
+    const { name, tenantStatus, addRoleId, removeRoleId, startDate, endDate } = body;
 
     const db = getDb();
 
@@ -176,7 +176,8 @@ export async function PATCH(
         await db.insert(roleAssignments).values({
           tenantMembershipId: membership.id,
           roleId: addRoleId,
-          startDate: new Date(),
+          startDate: startDate ? new Date(startDate) : new Date(),
+          endDate: endDate ? new Date(endDate) : null,
         });
       }
     }

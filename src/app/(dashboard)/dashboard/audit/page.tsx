@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ import {
   History,
   Wifi,
   WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 
 type EventType =
@@ -134,48 +135,89 @@ const eventIconColors: Record<EventType, string> = {
 export default function AuditLogPage() {
   const [selectedType, setSelectedType] = useState<EventType>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [showHashChain, setShowHashChain] = useState(false);
   const [events, setEvents] = useState<AuditEvent[]>(mockEvents);
   const [isLive, setIsLive] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [total, setTotal] = useState(mockEvents.length);
+  const LIMIT = 50;
 
-  // Attempt to fetch live audit data on mount
+  // Debounce search — wait 300ms after last keystroke before fetching
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setDebouncedSearch(value);
+    }, 300);
+  };
+
+  const fetchEvents = async (opts: { append?: boolean; eventType?: string; search?: string }) => {
+    const { append = false, eventType, search } = opts;
+    const params = new URLSearchParams();
+    params.set('limit', String(LIMIT));
+    if (append) params.set('offset', String(offset));
+    if (eventType && eventType !== 'all') params.set('eventType', eventType);
+    if (search) params.set('search', search);
+
+    const res = await fetch(`/api/audit?${params}`);
+    if (!res.ok) return;
+    const json = await res.json();
+    if (!json?.success) return;
+
+    const apiEvents = (json.data?.events || []).map((e: Record<string, string>) => ({
+      id: e.id,
+      timestamp: new Date(e.createdAt).toLocaleString('en-NA', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      eventType: (e.eventType || 'request') as EventType,
+      action: e.action || 'Event recorded',
+      actor: e.actorUserId || 'System',
+      entity: e.entityType || '—',
+      severity: 'info' as const,
+      details: e.summary || 'No details available.',
+    }));
+
+    if (append) {
+      setEvents((prev) => [...prev, ...apiEvents]);
+    } else {
+      setEvents(apiEvents);
+    }
+    if (apiEvents.length > 0) setIsLive(true);
+    setTotal(json.data?.total || 0);
+    setOffset((prev) => append ? prev + apiEvents.length : apiEvents.length);
+  };
+
+  // Fetch on mount and when event type / debounced search changes
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/audit?limit=50')
-      .then((res) => res.ok ? res.json() : null)
-      .then((json) => {
-        if (cancelled || !json?.success) return;
-        const apiEvents = (json.data?.events || []).map((e: Record<string, string>) => ({
-          id: e.id,
-          timestamp: new Date(e.createdAt).toLocaleString('en-NA', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-          eventType: (e.eventType || 'request') as EventType,
-          action: e.action || 'Event recorded',
-          actor: e.actorUserId || 'System',
-          entity: e.entityType || '—',
-          severity: 'info' as const,
-          details: e.summary || 'No details available.',
-        }));
-        if (apiEvents.length > 0) {
-          setEvents(apiEvents);
-          setIsLive(true);
-        }
-      })
-      .catch(() => { /* Keep mock data */ })
-      .finally(() => { if (!cancelled) setIsLoading(false); });
+    setIsLoading(true);
+    setOffset(0);
+    setEvents([]);
+    fetchEvents({ eventType: selectedType, search: debouncedSearch || undefined }).finally(() => {
+      if (!cancelled) setIsLoading(false);
+    });
     return () => { cancelled = true; };
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+  }, [selectedType, debouncedSearch]);
 
-  const filteredEvents = events.filter((event) => {
-    const typeMatch = selectedType === 'all' || event.eventType === selectedType;
-    const searchMatch =
-      !searchQuery ||
-      event.action.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.actor.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.entity.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.details.toLowerCase().includes(searchQuery.toLowerCase());
-    return typeMatch && searchMatch;
-  });
+  const handleLoadMore = async () => {
+    setLoadingMore(true);
+    await fetchEvents({ append: true, eventType: selectedType, search: debouncedSearch || undefined });
+    setLoadingMore(false);
+  };
+
+  const handleRefresh = async () => {
+    setIsLoading(true);
+    setOffset(0);
+    setEvents([]);
+    await fetchEvents({ eventType: selectedType, search: debouncedSearch || undefined });
+    setIsLoading(false);
+  };
+
+  // Client-side filtering is no longer needed — API does it
+  const filteredEvents = events;
 
   return (
     <div className="space-y-6">
@@ -262,7 +304,7 @@ export default function AuditLogPage() {
               <Input
                 placeholder="Search events by action, actor, entity, or details..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 className="pl-9"
               />
             </div>
@@ -342,8 +384,14 @@ export default function AuditLogPage() {
           })}
 
           <div className="flex items-center justify-center pt-2">
-            <Button variant="secondary" size="sm" loading={isLoading}>
+            <div className="text-xs text-ink-400 mr-3">
+              Showing {events.length} of {total} events
+            </div>
+            <Button variant="secondary" size="sm" onClick={handleLoadMore} loading={loadingMore} disabled={events.length >= total || loadingMore}>
               Load More Events
+            </Button>
+            <Button variant="secondary" size="sm" onClick={handleRefresh} loading={isLoading} className="ml-2">
+              <RefreshCw className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>

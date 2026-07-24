@@ -57,6 +57,9 @@ const envSchema = z.object({
   VONAGE_API_SECRET: z.string().optional(),
   VONAGE_FROM_NUMBER: z.string().optional(),
 
+  // Auth
+  FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN: z.string().optional().default('false'),
+
   // Feature Flags
   NEXT_PUBLIC_ENABLE_OFFLINE_DRAFTS: z.string().optional().default('true'),
   ENABLE_EXTERNAL_SHARING: z.string().optional().default('false'),

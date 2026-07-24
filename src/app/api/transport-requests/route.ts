@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { transportRequests, requestActivities, requestPassengers, requestDrivers, requestRoutes } from '@/db/schema/requests';
 import { employees, departments } from '@/db/schema/people';
+import { tenantMemberships, roleAssignments, rolePermissions } from '@/db/schema/tenants';
+import { notifications } from '@/db/schema/notifications';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { workflowDefinitions } from '@/db/schema/workflows';
@@ -54,10 +56,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Look up the requester employee — accept employeeNumber from form or resolve from session user
-    let requesterEmployee: { id: string; userId: string | null; departmentId: string | null; officeId: string | null; departmentName: string | null };
+    let requesterEmployee: { id: string; userId: string | null; departmentId: string | null; officeId: string | null; departmentName: string | null; firstName: string };
     if (requesterEmployeeNumber?.trim()) {
       const [found] = await db
-        .select({ id: employees.id, userId: employees.userId, departmentId: employees.departmentId, officeId: employees.officeId, departmentName: departments.name })
+        .select({ id: employees.id, userId: employees.userId, departmentId: employees.departmentId, officeId: employees.officeId, departmentName: departments.name, firstName: employees.firstName })
         .from(employees)
         .leftJoin(departments, eq(employees.departmentId, departments.id))
         .where(and(eq(employees.employeeNumber, requesterEmployeeNumber), eq(employees.tenantId, tenantId)))
@@ -73,7 +75,7 @@ export async function POST(req: NextRequest) {
     } else {
       // Fall back to finding employee by linked user ID
       const [found] = await db
-        .select({ id: employees.id, userId: employees.userId, departmentId: employees.departmentId, officeId: employees.officeId, departmentName: departments.name })
+        .select({ id: employees.id, userId: employees.userId, departmentId: employees.departmentId, officeId: employees.officeId, departmentName: departments.name, firstName: employees.firstName })
         .from(employees)
         .leftJoin(departments, eq(employees.departmentId, departments.id))
         .where(and(eq(employees.userId, userId), eq(employees.tenantId, tenantId)))
@@ -87,7 +89,40 @@ export async function POST(req: NextRequest) {
     const availableRoutes = await db.select({ id: workflowDefinitions.id, regionId: workflowDefinitions.regionId, officeId: workflowDefinitions.officeId, departmentId: workflowDefinitions.departmentId })
       .from(workflowDefinitions).where(and(eq(workflowDefinitions.tenantId, tenantId), eq(workflowDefinitions.tripScope, scope), eq(workflowDefinitions.isActive, true)));
     const hasMatchingRoute = availableRoutes.some((route) => !route.regionId && (!route.officeId || route.officeId === requesterEmployee.officeId) && (!route.departmentId || route.departmentId === requesterEmployee.departmentId));
-    if (!hasMatchingRoute) return NextResponse.json({ error: `No active ${scope} approval route is configured for this office and department` }, { status: 409 });
+    if (!hasMatchingRoute) {
+      // Notify Tenant Administrators about the missing route configuration
+      try {
+        const adminMemberships = await db
+          .select({ userId: tenantMemberships.userId })
+          .from(tenantMemberships)
+          .innerJoin(roleAssignments, eq(tenantMemberships.id, roleAssignments.tenantMembershipId))
+          .innerJoin(rolePermissions, eq(roleAssignments.roleId, rolePermissions.roleId))
+          .where(
+            and(
+              eq(tenantMemberships.tenantId, tenantId),
+              eq(tenantMemberships.status, 'active'),
+              eq(rolePermissions.permissionCode, 'tenant:manage'),
+            ),
+          )
+          .groupBy(tenantMemberships.userId);
+        for (const admin of adminMemberships) {
+          await db.insert(notifications).values({
+            tenantId,
+            recipientUserId: admin.userId,
+            type: 'action_required',
+            title: `⚠️ Workflow Route Missing — ${requesterEmployee.firstName} blocked`,
+            body: `${requesterEmployee.firstName} was blocked from submitting a ${scope} transport request. No active approval route matches office ${requesterEmployee.officeId ? requesterEmployee.officeId : '—'} / department ${requesterEmployee.departmentId ? requesterEmployee.departmentId : '—'}. Please configure a workflow route in Admin → Workflow Routing.`,
+            entityType: 'system',
+            entityId: 'workflow-config',
+            actionUrl: '/dashboard/admin/workflows',
+            priority: 'high',
+          });
+        }
+      } catch {
+        // Notification is best-effort
+      }
+      return NextResponse.json({ error: `No active ${scope} approval route is configured for this office and department. The Tenant Administrator has been notified.` }, { status: 409 });
+    }
 
     // Generate a reference number
     const now = new Date();

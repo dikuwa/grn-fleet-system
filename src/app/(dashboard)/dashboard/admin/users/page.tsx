@@ -12,7 +12,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Users, Search, ChevronRight, Mail, Loader2, Send, CheckCircle2, XCircle,
-  RotateCcw, Ban,
+  RotateCcw, Ban, User, Copy, Download, ExternalLink, Smartphone,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
@@ -65,6 +65,7 @@ function PendingInviteRow({
 }) {
   const [loading, setLoading] = useState<'resend' | 'revoke' | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
   const { toast } = useToast();
 
   const handleResend = useCallback(async () => {
@@ -91,7 +92,7 @@ function PendingInviteRow({
   }, [invite.id, onAction]);
 
   const handleRevoke = useCallback(async () => {
-    if (!confirm(`Revoke invitation for ${invite.email}?`)) return;
+    setShowRevokeConfirm(false);
     setLoading('revoke');
     setResult(null);
     try {
@@ -115,57 +116,85 @@ function PendingInviteRow({
   }, [invite.id, onAction]);
 
   return (
-    <div className="flex items-center justify-between px-5 py-3.5 hover:bg-muted/50 transition-colors">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-700 text-sm font-semibold">
-          {(invite.name || invite.email)[0].toUpperCase()}
+    <>
+      <div className="flex items-center justify-between px-5 py-3.5 hover:bg-muted/50 transition-colors">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-700 text-sm font-semibold">
+            {(invite.name || invite.email)[0].toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-ink-950 truncate">
+                {invite.name || 'Unnamed'}
+              </span>
+              <Badge variant="pending" size="sm">Pending</Badge>
+              {invite.daysSinceInvite > 7 && (
+                <Badge variant="error" size="sm">Expired</Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <Mail className="h-3 w-3 text-ink-400" />
+              <span className="text-xs text-ink-500">{invite.email}</span>
+              <span className="text-xs text-ink-400">
+                · {invite.daysSinceInvite}d ago
+              </span>
+            </div>
+          </div>
         </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-ink-950 truncate">
-              {invite.name || 'Unnamed'}
-            </span>
-            <Badge variant="pending" size="sm">Pending</Badge>
-            {invite.daysSinceInvite > 7 && (
-              <Badge variant="error" size="sm">Expired</Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-2 mt-0.5">
-            <Mail className="h-3 w-3 text-ink-400" />
-            <span className="text-xs text-ink-500">{invite.email}</span>
-            <span className="text-xs text-ink-400">
-              · {invite.daysSinceInvite}d ago
-            </span>
-          </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {result && (
+            <span className="text-xs text-ink-500 mr-2 max-w-[160px] truncate">{result}</span>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleResend}
+            loading={loading === 'resend'}
+            disabled={loading !== null}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Resend
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowRevokeConfirm(true)}
+            loading={loading === 'revoke'}
+            disabled={loading !== null}
+            className="text-status-error-text hover:text-status-error-text"
+          >
+            <Ban className="h-3.5 w-3.5" />
+            Revoke
+          </Button>
         </div>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        {result && (
-          <span className="text-xs text-ink-500 mr-2 max-w-[160px] truncate">{result}</span>
-        )}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleResend}
-          loading={loading === 'resend'}
-          disabled={loading !== null}
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          Resend
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleRevoke}
-          loading={loading === 'revoke'}
-          disabled={loading !== null}
-          className="text-status-error-text hover:text-status-error-text"
-        >
-          <Ban className="h-3.5 w-3.5" />
-          Revoke
-        </Button>
-      </div>
-    </div>
+
+      {/* Revoke Confirmation Dialog */}
+      <Dialog open={showRevokeConfirm} onOpenChange={setShowRevokeConfirm}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Revoke Invitation</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-ink-700">
+            Are you sure you want to revoke the invitation for <strong>{invite.email}</strong>?
+            This will suspend their access and prevent them from logging in.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowRevokeConfirm(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleRevoke}
+              className="bg-status-error-text hover:bg-red-700"
+            >
+              <Ban className="h-4 w-4" /> Revoke
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -183,11 +212,24 @@ export default function AdminUsersPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
+  const [inviteUsername, setInviteUsername] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
   const [inviteEmployeeId, setInviteEmployeeId] = useState('');
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [inviteResult, setInviteResult] = useState<{ success: boolean; emailSent: boolean; message: string } | null>(null);
   const [isInviting, setIsInviting] = useState(false);
+
+  // Credential sharing dialog
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [credentialData, setCredentialData] = useState<{
+    fullName: string;
+    username: string;
+    email: string;
+    tempPassword: string;
+    roleName: string;
+    loginUrl: string;
+  } | null>(null);
+  const [copied, setCopied] = useState<'full' | 'password' | 'username' | null>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'pending'>('all');
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
@@ -217,6 +259,7 @@ export default function AdminUsersPage() {
     setInviteResult(null);
     setInviteEmail('');
     setInviteName('');
+    setInviteUsername('');
     setInviteRoleId('');
     setInviteEmployeeId('');
     setShowInvite(true);
@@ -244,6 +287,7 @@ export default function AdminUsersPage() {
         body: JSON.stringify({
           email: inviteEmail.trim(),
           name: inviteName.trim() || undefined,
+          username: inviteUsername.trim() || undefined,
           roleId: inviteRoleId || undefined,
           employeeId: inviteEmployeeId,
           sendInvite: true,
@@ -261,8 +305,15 @@ export default function AdminUsersPage() {
           : `User created. RESEND_API_KEY not configured — provide password to user manually.`,
       });
 
+      // Show credential dialog if we have credentials
+      if (json.data?.credentials) {
+        setCredentialData(json.data.credentials);
+        setShowCredentials(true);
+      }
+
       setInviteEmail('');
       setInviteName('');
+      setInviteUsername('');
       setInviteRoleId('');
       setInviteEmployeeId('');
       refetch();
@@ -389,6 +440,15 @@ export default function AdminUsersPage() {
                 value={inviteName}
                 onChange={(e) => setInviteName(e.target.value)}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Username</Label>
+              <Input
+                placeholder="Auto-generated if empty"
+                value={inviteUsername}
+                onChange={(e) => setInviteUsername(e.target.value)}
+              />
+              <p className="text-xs text-ink-500">Username is used for login. Generated from name if left empty.</p>
             </div>
             <div className="space-y-1.5">
               <Label>Role</Label>
@@ -581,6 +641,191 @@ export default function AdminUsersPage() {
           </div>
         </div>
       )}
+      {/* Credential Sharing Dialog */}
+      <Dialog open={showCredentials} onOpenChange={setShowCredentials}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>User Account Created</DialogTitle>
+          </DialogHeader>
+
+          {credentialData && (
+            <div className="space-y-4">
+              <div className="rounded-[8px] border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800/40 dark:bg-green-950/20 dark:text-green-300">
+                <CheckCircle2 className="h-4 w-4 inline mr-1" />
+                Account created successfully. Share the credentials below with the user.
+              </div>
+
+              {/* Formatted Credential Block */}
+              <div className="rounded-[8px] border border-border bg-muted p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap relative group">
+                <button
+                  onClick={async () => {
+                    const text = `--------------------------------\n\nWelcome to GRN Fleet Management\n\nName:\n${credentialData.fullName}\n\nUsername:\n${credentialData.username}\n\nTemporary Password:\n${credentialData.tempPassword}\n\nRole:\n${credentialData.roleName}\n\nLogin URL:\n${credentialData.loginUrl}\n\nPlease change your password after your first login.\n\n--------------------------------`;
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      setCopied('full');
+                      setTimeout(() => setCopied(null), 2000);
+                      toast({ title: 'Copied', description: 'Full credentials copied to clipboard.', variant: 'success' });
+                    } catch {
+                      toast({ title: 'Copy Failed', description: 'Unable to copy to clipboard.', variant: 'error' });
+                    }
+                  }}
+                  className="absolute top-2 right-2 flex items-center gap-1 rounded-[4px] bg-surface border border-border px-2 py-1 text-xs font-sans text-ink-500 hover:text-ink-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  {copied === 'full' ? (
+                    <><CheckCircle2 className="h-3 w-3" /> Copied</>
+                  ) : (
+                    <><Copy className="h-3 w-3" /> Copy All</>
+                  )}
+                </button>
+                <span className="text-ink-500">--------------------------------</span>
+                <br />
+                <br />
+                <span className="text-ink-500">Welcome to GRN Fleet Management</span>
+                <br />
+                <br />
+                <span className="text-ink-500">Name:</span>
+                <br />
+                <span className="text-ink-950 font-semibold">{credentialData.fullName}</span>
+                <br />
+                <br />
+                <span className="text-ink-500">Username:</span>
+                <br />
+                <span className="text-ink-950 font-semibold">{credentialData.username}</span>
+                <br />
+                <br />
+                <span className="text-ink-500">Temporary Password:</span>
+                <br />
+                <span className="text-ink-950 font-bold tracking-wider">{credentialData.tempPassword}</span>
+                <br />
+                <br />
+                <span className="text-ink-500">Role:</span>
+                <br />
+                <span className="text-ink-950">{credentialData.roleName}</span>
+                <br />
+                <br />
+                <span className="text-ink-500">Login URL:</span>
+                <br />
+                <span className="text-brand-600">{credentialData.loginUrl}</span>
+                <br />
+                <br />
+                <span className="text-ink-400 italic">Please change your password after your first login.</span>
+                <br />
+                <br />
+                <span className="text-ink-500">--------------------------------</span>
+              </div>
+
+              {/* Quick Copy Buttons */}
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(credentialData.tempPassword);
+                      setCopied('password');
+                      setTimeout(() => setCopied(null), 2000);
+                      toast({ title: 'Copied', description: 'Password copied.', variant: 'success' });
+                    } catch {
+                      toast({ title: 'Copy Failed', description: 'Unable to copy.', variant: 'error' });
+                    }
+                  }}
+                >
+                  {copied === 'password' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  Copy Password
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(credentialData.username);
+                      setCopied('username');
+                      setTimeout(() => setCopied(null), 2000);
+                      toast({ title: 'Copied', description: 'Username copied.', variant: 'success' });
+                    } catch {
+                      toast({ title: 'Copy Failed', description: 'Unable to copy.', variant: 'error' });
+                    }
+                  }}
+                >
+                  {copied === 'username' ? <CheckCircle2 className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                  Copy Username
+                </Button>
+              </div>
+
+              {/* Share Options */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-ink-500 uppercase tracking-wider">Share Credentials</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {/* WhatsApp Share */}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      const message = encodeURIComponent(
+                        `Welcome to GRN Fleet Management\n\nName: ${credentialData.fullName}\nUsername: ${credentialData.username}\nTemporary Password: ${credentialData.tempPassword}\nLogin: ${credentialData.loginUrl}\n\nPlease change your password after first login.`
+                      );
+                      window.open(`https://wa.me/?text=${message}`, '_blank');
+                    }}
+                  >
+                    <Smartphone className="h-4 w-4" /> WhatsApp
+                  </Button>
+
+                  {/* Email Share */}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      const subject = encodeURIComponent('Your GRN Fleet Management Account');
+                      const body = encodeURIComponent(
+                        `Welcome to GRN Fleet Management\n\nName: ${credentialData.fullName}\nUsername: ${credentialData.username}\nTemporary Password: ${credentialData.tempPassword}\nRole: ${credentialData.roleName}\nLogin URL: ${credentialData.loginUrl}\n\nPlease change your password after your first login.`
+                      );
+                      window.open(`mailto:${credentialData.email}?subject=${subject}&body=${body}`, '_blank');
+                    }}
+                    disabled={!credentialData.email}
+                    title={!credentialData.email ? 'No email address available' : 'Open email client'}
+                  >
+                    <Mail className="h-4 w-4" /> Email
+                  </Button>
+
+                  {/* Share Link */}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={async () => {
+                      const shareText = `GRN Fleet Management login for ${credentialData.fullName}. Login at ${credentialData.loginUrl}`;
+                      if (navigator.share) {
+                        try {
+                          await navigator.share({
+                            title: 'GRN Fleet Management Account',
+                            text: shareText,
+                            url: credentialData.loginUrl,
+                          });
+                        } catch {
+                          // User cancelled share
+                        }
+                      } else {
+                        await navigator.clipboard.writeText(shareText);
+                        toast({ title: 'Link Copied', description: 'Share link copied to clipboard.', variant: 'success' });
+                      }
+                    }}
+                  >
+                    <ExternalLink className="h-4 w-4" /> Share
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-border">
+                <Button variant="primary" size="sm" onClick={() => setShowCredentials(false)}>
+                  <CheckCircle2 className="h-4 w-4" /> Done
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

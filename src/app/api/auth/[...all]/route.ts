@@ -230,6 +230,41 @@ async function handleSignOut(request: NextRequest) {
     const token = cookies['better-auth.session_token'];
 
     if (token) {
+      // Find user ID before deleting session
+      const [sessionRecord] = await db
+        .select({ userId: session.userId })
+        .from(session)
+        .where(eq(session.token, token))
+        .limit(1);
+
+      // Log audit event
+      if (sessionRecord) {
+        try {
+          const { tenantMemberships, tenants } = await import('@/db/schema/tenants');
+          const { auditEvents } = await import('@/db/schema/audit');
+          const [membership] = await db
+            .select({ tenantId: tenantMemberships.tenantId })
+            .from(tenantMemberships)
+            .where(and(eq(tenantMemberships.userId, sessionRecord.userId), eq(tenantMemberships.status, 'active')))
+            .limit(1);
+
+          if (membership) {
+            await db.insert(auditEvents).values({
+              tenantId: membership.tenantId,
+              tenantSequence: Date.now(),
+              eventType: 'user_logout',
+              actorUserId: sessionRecord.userId,
+              action: 'logout',
+              entityType: 'user',
+              entityId: sessionRecord.userId,
+              summary: 'User signed out',
+            });
+          }
+        } catch {
+          // Non-fatal audit error
+        }
+      }
+
       await db.delete(session).where(eq(session.token, token));
     }
 

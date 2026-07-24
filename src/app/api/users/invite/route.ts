@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await req.json();
-    const { email, name, roleId, employeeId, sendInvite } = body;
+    const { email, name, username: inputUsername, roleId, employeeId, sendInvite } = body;
 
     if (!email?.trim()) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
@@ -81,11 +81,12 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     });
 
+    const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
     await db.insert(userProfiles).values({
       id: userId,
       userId,
       displayName: name || email.split('@')[0],
-      requiresPasswordChange: true,
+      requiresPasswordChange: forcePasswordChange,
       status: 'active',
     });
 
@@ -165,13 +166,37 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Derive username from the form or auto-generate from name/email
+    const username = (inputUsername || name || email.split('@')[0])
+      .toLowerCase()
+      .replace(/\s+/g, '.')
+      .replace(/[^a-z0-9._-]/g, '');
+
+    // Store username in the user record
+    await db
+      .update(user)
+      .set({ username, updatedAt: now })
+      .where(eq(user.id, userId));
+
+    // Build the credential response (always return it regardless of sendInvite)
+    const credentialResponse = {
+      fullName: name || email.split('@')[0],
+      username,
+      email: email.trim().toLowerCase(),
+      tempPassword,
+      roleName: selectedRole?.name || 'No role assigned',
+      loginUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`,
+    };
+
     return NextResponse.json({
       success: true,
       data: {
         id: userId,
         email: email.trim().toLowerCase(),
         name: name || email.split('@')[0],
-        tempPassword: sendInvite ? null : tempPassword, // Only return password if not sending email
+        username,
+        tempPassword, // Always return the temp password
+        credentials: credentialResponse, // Always return credentials
       },
       emailSent: emailResult.success,
       emailError: emailResult.error ?? null,

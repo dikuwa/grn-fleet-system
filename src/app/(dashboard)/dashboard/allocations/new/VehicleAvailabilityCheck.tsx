@@ -26,39 +26,45 @@ export function VehicleAvailabilityCheck({ vehicleId, startDate, endDate }: Prop
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const checkAvailability = useCallback(async () => {
+  useEffect(() => {
     if (!vehicleId || !startDate) {
       setAvailability(null);
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
 
-    try {
-      const params = new URLSearchParams({ start: startDate });
-      if (endDate) params.set('end', endDate);
+    async function check() {
+      setLoading(true);
+      setError(null);
 
-      const res = await fetch(`/api/vehicles/${vehicleId}/availability?${params}`);
-      if (!res.ok) throw new Error('Failed to check availability');
+      try {
+        const params = new URLSearchParams({ start: startDate });
+        if (endDate) params.set('end', endDate);
 
-      const data = await res.json();
-      setAvailability(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Availability check failed');
-      setAvailability(null);
-    } finally {
-      setLoading(false);
+        const res = await fetch(`/api/vehicles/${vehicleId}/availability?${params}`);
+        if (!res.ok) throw new Error('Failed to check availability');
+
+        const data = await res.json();
+        if (!cancelled) {
+          setAvailability(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Availability check failed');
+          setAvailability(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
+
+    check();
+
+    return () => { cancelled = true; };
   }, [vehicleId, startDate, endDate]);
-
-  useEffect(() => {
-    if (vehicleId && startDate) {
-      checkAvailability();
-    } else {
-      setAvailability(null);
-    }
-  }, [vehicleId, startDate, endDate, checkAvailability]);
 
   if (!vehicleId || !startDate) return null;
 

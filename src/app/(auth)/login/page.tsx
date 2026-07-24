@@ -3,11 +3,10 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Eye, EyeOff, LogIn, AlertCircle, Sun, Moon } from 'lucide-react';
+import { Eye, EyeOff, LogIn, AlertCircle, Sun, Moon, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { APP_NAME } from '@/lib/constants';
-import { signIn } from '@/lib/auth-client';
 import { useTheme } from '@/lib/theme-provider';
 
 /** Inner form component that calls useSearchParams */
@@ -18,7 +17,7 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const { theme, toggleTheme } = useTheme();
 
@@ -28,14 +27,22 @@ function LoginForm() {
     setError(null);
 
     try {
-      const result = await signIn.email({
-        email,
-        password,
+      const res = await fetch('/api/auth/custom-sign-in', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password }),
       });
 
-      if (result.error) {
-        setError(result.error.message || 'Invalid email or password');
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error || 'Invalid username or password');
         setLoading(false);
+        return;
+      }
+
+      // Handle force password change redirect
+      if (json.requiresPasswordChange) {
+        router.push('/dashboard/profile');
         return;
       }
 
@@ -80,15 +87,20 @@ function LoginForm() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <FieldWrapper label="Email" required>
-          <Input
-            type="email"
-            placeholder="name@example.gov.na"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            autoComplete="email"
-          />
+        <FieldWrapper label="Username" required>
+          <div className="relative">
+            <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+            <Input
+              type="text"
+              placeholder="Enter your username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              autoComplete="username"
+              className="pl-9"
+            />
+          </div>
+          <p className="mt-1 text-xs text-ink-400">You can also use your email address to sign in.</p>
         </FieldWrapper>
 
         <FieldWrapper label="Password" required>

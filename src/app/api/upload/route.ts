@@ -14,7 +14,7 @@ import { UPLOAD_MAX_SIZE_BYTES, ALLOWED_IMAGE_TYPES, ALLOWED_DOCUMENT_TYPES } fr
 
 const ALLOWED_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_DOCUMENT_TYPES] as string[];
 
-type UploadCategory = 'inspection' | 'document' | 'receipt' | 'signature' | 'vehicle' | 'import';
+type UploadCategory = 'inspection' | 'document' | 'receipt' | 'signature' | 'vehicle' | 'import' | 'avatar';
 
 const CATEGORY_PATHS: Record<UploadCategory, string> = {
   inspection: 'inspections',
@@ -23,6 +23,7 @@ const CATEGORY_PATHS: Record<UploadCategory, string> = {
   signature: 'signatures',
   vehicle: 'vehicles',
   import: 'imports',
+  avatar: 'avatars',
 };
 
 // ---------------------------------------------------------------------------

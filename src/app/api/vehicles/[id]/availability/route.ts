@@ -134,6 +134,7 @@ export async function GET(
       const blockWindow = new Date(startDate.getTime() - 7 * 24 * 60 * 60 * 1000); // 1 week before
 
       // Maintenance events where nextServiceDate falls within our window
+      const blockWindowStr = blockWindow.toISOString().split('T')[0];
       const upcomingMaintenance = await db
         .select()
         .from(maintenanceEvents)
@@ -141,7 +142,7 @@ export async function GET(
           and(
             eq(maintenanceEvents.vehicleId, id),
             // Maintenance scheduled in the window that could be a blocker
-            gte(maintenanceEvents.serviceDate, blockWindow.toISOString().split('T')[0] as any),
+            gte(maintenanceEvents.serviceDate, blockWindowStr),
           ),
         )
         .orderBy(maintenanceEvents.serviceDate)

@@ -65,7 +65,7 @@ function CreateProgrammeDialog({
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Reset form when dialog opens
+  // Reset form when dialog opens — force remount on open
   useEffect(() => {
     if (open) {
       setTitle('');
@@ -76,6 +76,7 @@ function CreateProgrammeDialog({
       setEstimatedKm('');
       setError(null);
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
   }, [open]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
@@ -307,6 +308,7 @@ export default function ProgrammesPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {programmes.map((p) => (
             <Link
+              key={p.id}
               href={`/dashboard/requests/${p.requestId}`}
               className="group rounded-[12px] border border-border bg-surface p-5 hover:border-brand-200 hover:shadow-sm transition-all"
             >

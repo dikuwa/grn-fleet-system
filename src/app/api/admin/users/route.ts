@@ -11,6 +11,7 @@ import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { account } from '@/db/schema/better-auth';
+import { userProfiles } from '@/db/schema/auth';
 import { eq, and, like, desc, count, or, inArray } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -203,7 +204,7 @@ export async function POST(request: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
-    const { email, name, password, roleId, employeeId } = body;
+    const { email, name, password, roleId, employeeId, username: inputUsername } = body;
 
     if (!email?.trim()) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
@@ -238,11 +239,18 @@ export async function POST(request: NextRequest) {
     const userId = crypto.randomUUID?.() || `user-${Date.now()}`;
     const now = new Date();
 
+    // Derive username if not provided
+    const username = (inputUsername || name || email.split('@')[0])
+      .toLowerCase()
+      .replace(/\s+/g, '.')
+      .replace(/[^a-z0-9._-]/g, '');
+
     // Create the user
     await db.insert(user).values({
       id: userId,
       email: email.trim().toLowerCase(),
       name: name || email.split('@')[0],
+      username,
       emailVerified: true,
       createdAt: now,
       updatedAt: now,
@@ -287,6 +295,18 @@ export async function POST(request: NextRequest) {
         });
       }
     }
+
+    // Create user profile record
+    const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
+    await db.insert(userProfiles).values({
+      id: userId,
+      userId,
+      displayName: name || email.split('@')[0],
+      requiresPasswordChange: forcePasswordChange,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoNothing();
 
     await db.update(employees).set({ userId, updatedAt: now }).where(eq(employees.id, employeeId));
 

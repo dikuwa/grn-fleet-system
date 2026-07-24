@@ -123,11 +123,19 @@ export function Topbar({ onMenuClick, tenantName, userId }: TopbarProps) {
                     <Bell className="h-4 w-4" />
                     Notifications
                   </Link>
-                  <button className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors">
+                  <Link
+                    href="/dashboard/profile"
+                    className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors"
+                    onClick={() => setShowProfile(false)}
+                  >
                     <User className="h-4 w-4" />
-                    Profile
-                  </button>
-                  <Link href="/api/auth/sign-out" className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors">
+                    My Profile
+                  </Link>
+                  <Link
+                    href="/logout"
+                    className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors"
+                    onClick={() => setShowProfile(false)}
+                  >
                     <LogOut className="h-4 w-4" />
                     Sign Out
                   </Link>

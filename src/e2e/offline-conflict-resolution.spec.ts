@@ -20,36 +20,27 @@ import { test, expect, Page } from '@playwright/test';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
-async function signIn(page: Page) {
+/**
+ * Sign in by navigating to the login page and filling in credentials.
+ * This sets real session cookies that work with both SSR and client-side hooks.
+ */
+async function signInViaForm(page: Page) {
   const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
-  const res = await page.request.post(`${BASE}/api/auth/sign-in`, {
-    data: { email, password },
-  });
-  expect(res.status()).toBe(200);
-  const body = await res.json();
-  const token = body.token || body.session?.token;
-  expect(token).toBeDefined();
+  await page.goto('/login', { waitUntil: 'load', timeout: 60000 });
+  await page.waitForTimeout(2000);
 
-  await page.context().addCookies([
-    {
-      name: 'better-auth.session_token',
-      value: token,
-      domain: new URL(BASE).hostname,
-      path: '/',
-      httpOnly: false,
-      sameSite: 'Lax',
-    },
-  ]);
+  // Fill in login form
+  await page.locator('input[type="email"]').first().fill(email);
+  await page.locator('input[type="password"]').first().fill(password);
 
-  return { token, user: body.user || body.session?.user };
-}
+  // Click sign-in button
+  await page.locator('button[type="submit"]').first().click();
 
-async function getCookieHeader(page: Page): Promise<string> {
-  const cookies = await page.context().cookies();
-  const token = cookies.find((c) => c.name === 'better-auth.session_token')?.value ?? '';
-  return `better-auth.session_token=${token}`;
+  // Wait for redirect to dashboard (successful login)
+  await page.waitForURL('**/dashboard', { timeout: 30000 });
+  await page.waitForTimeout(1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +49,7 @@ async function getCookieHeader(page: Page): Promise<string> {
 
 test.describe('Offline Conflict Resolution', () => {
   test.beforeEach(async ({ page }) => {
-    await signIn(page);
+    await signInViaForm(page);
   });
 
   // -----------------------------------------------------------------------
@@ -70,7 +61,7 @@ test.describe('Offline Conflict Resolution', () => {
     await page.waitForTimeout(3000);
 
     // Verify the page heading
-    await expect(page.locator('h1:has-text(\"Offline Drafts\")').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('h1:has-text("Offline Drafts")').first()).toBeVisible({ timeout: 10000 });
 
     // Verify summary cards exist
     await expect(page.locator('text=Pending').first()).toBeVisible({ timeout: 5000 });
@@ -79,7 +70,7 @@ test.describe('Offline Conflict Resolution', () => {
     await expect(page.locator('text=Total Unsynced').first()).toBeVisible({ timeout: 5000 });
 
     // Verify the "Sync All" button is present
-    await expect(page.locator('button:has-text(\"Sync All\")').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('button:has-text("Sync All")').first()).toBeVisible({ timeout: 5000 });
 
     // Verify empty state when no drafts
     const emptyState = page.locator('text=No Drafts Found');
@@ -105,7 +96,6 @@ test.describe('Offline Conflict Resolution', () => {
       if (await tabButton.isVisible({ timeout: 2000 }).catch(() => false)) {
         if (await tabButton.isEnabled()) await tabButton.click();
         await page.waitForTimeout(500);
-        // The active tab should have the brand-900 background class
         await expect(tabButton).toBeVisible();
       }
     }
@@ -116,20 +106,26 @@ test.describe('Offline Conflict Resolution', () => {
   // -----------------------------------------------------------------------
 
   test('3. creates an offline draft and verifies it appears on offline page', async ({ page, context }) => {
-    // Navigate to the fuel entry page
+    // Navigate to the fuel entry page and wait for form to fully render
     await page.goto('/dashboard/fuel/new', { waitUntil: 'load', timeout: 60000 });
-    await page.locator('button:has-text(\"Save Draft\")').first().waitFor({ timeout: 15000 });
+    await page.waitForTimeout(3000);
 
-    // Fill in form data
-    await page.locator('input[placeholder*=\"GRN\"]').first().fill('GRN-001');
-    await page.locator('input[placeholder*=\"45\"]').first().fill('50');
-    await page.locator('input[placeholder*=\"850\"]').first().fill('950');
+    // Wait for the form to appear
+    const form = page.locator('form').first();
+    await expect(form).toBeVisible({ timeout: 30000 });
+
+    // Fill in form data — use flexible locators
+    await page.locator('input[placeholder*="GRN"]').first().fill('GRN-001');
+    await page.locator('input[type="number"]').first().fill('50');
+    await page.locator('input[type="number"]').nth(1).fill('950');
 
     // Set offline so the draft gets saved locally
     await context.setOffline(true);
 
-    // Click Save Draft
-    await page.locator('button:has-text(\"Save Draft\")').first().click();
+    // Click Save Draft using robust locator
+    const saveDraft = page.getByRole('button', { name: /Save Draft|Save/i });
+    await expect(saveDraft).toBeVisible({ timeout: 15000 });
+    await saveDraft.click();
 
     // Wait for saved confirmation
     await page.waitForTimeout(2000);
@@ -166,7 +162,7 @@ test.describe('Offline Conflict Resolution', () => {
         if (await modalContent.isVisible({ timeout: 2000 }).catch(() => false)) {
           await expect(modalContent).toBeVisible();
           // Close the modal
-          await page.locator('button:has-text(\"Close\")').first().click();
+          await page.locator('button:has-text("Close")').first().click();
           await page.waitForTimeout(500);
         }
       }
@@ -178,18 +174,24 @@ test.describe('Offline Conflict Resolution', () => {
   // -----------------------------------------------------------------------
 
   test('4. discard button removes a draft from the list', async ({ page, context }) => {
-    // Navigate to the fuel entry page
+    // Navigate to the fuel entry page and wait for form to fully render
     await page.goto('/dashboard/fuel/new', { waitUntil: 'load', timeout: 60000 });
-    await page.locator('button:has-text(\"Save Draft\")').first().waitFor({ timeout: 15000 });
+    await page.waitForTimeout(3000);
 
-    // Fill in form data
-    await page.locator('input[placeholder*=\"GRN\"]').first().fill('GRN-002');
-    await page.locator('input[placeholder*=\"45\"]').first().fill('30');
-    await page.locator('input[placeholder*=\"850\"]').first().fill('500');
+    // Wait for the form to appear
+    const form = page.locator('form').first();
+    await expect(form).toBeVisible({ timeout: 30000 });
+
+    // Fill in form data — use flexible locators
+    await page.locator('input[placeholder*="GRN"]').first().fill('GRN-002');
+    await page.locator('input[type="number"]').first().fill('30');
+    await page.locator('input[type="number"]').nth(1).fill('500');
 
     // Save offline
     await context.setOffline(true);
-    await page.locator('button:has-text(\"Save Draft\")').first().click();
+    const saveDraft = page.getByRole('button', { name: /Save Draft|Save/i });
+    await expect(saveDraft).toBeVisible({ timeout: 15000 });
+    await saveDraft.click();
     await page.waitForTimeout(2000);
     await context.setOffline(false);
 
@@ -198,7 +200,7 @@ test.describe('Offline Conflict Resolution', () => {
     await page.waitForTimeout(3000);
 
     // Find a draft row and click its discard button (the trash icon button)
-    const discardButton = page.locator('button[class*=\"text-status-error-text\"]').first();
+    const discardButton = page.locator('button[class*="text-status-error-text"]').first();
     if (await discardButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await discardButton.click();
       await page.waitForTimeout(1000);
@@ -216,12 +218,19 @@ test.describe('Offline Conflict Resolution', () => {
   test('5. view detail modal shows draft information', async ({ page, context }) => {
     // Save a draft first
     await page.goto('/dashboard/fuel/new', { waitUntil: 'load', timeout: 60000 });
-    await page.locator('button:has-text(\"Save Draft\")').first().waitFor({ timeout: 15000 });
-    await page.locator('input[placeholder*=\"GRN\"]').first().fill('GRN-003');
-    await page.locator('input[placeholder*=\"45\"]').first().fill('60');
-    await page.locator('input[placeholder*=\"850\"]').first().fill('1200');
+    await page.waitForTimeout(3000);
+
+    // Wait for the form to appear
+    const form = page.locator('form').first();
+    await expect(form).toBeVisible({ timeout: 30000 });
+
+    await page.locator('input[placeholder*="GRN"]').first().fill('GRN-003');
+    await page.locator('input[type="number"]').first().fill('60');
+    await page.locator('input[type="number"]').nth(1).fill('1200');
     await context.setOffline(true);
-    await page.locator('button:has-text(\"Save Draft\")').first().click();
+    const saveDraft = page.getByRole('button', { name: /Save Draft|Save/i });
+    await expect(saveDraft).toBeVisible({ timeout: 15000 });
+    await saveDraft.click();
     await page.waitForTimeout(2000);
     await context.setOffline(false);
 
@@ -249,7 +258,7 @@ test.describe('Offline Conflict Resolution', () => {
       }
 
       // Close the modal
-      await page.locator('button:has-text(\"Close\")').first().click();
+      await page.locator('button:has-text("Close")').first().click();
       await page.waitForTimeout(500);
     }
   });
@@ -263,7 +272,7 @@ test.describe('Offline Conflict Resolution', () => {
     await page.waitForTimeout(3000);
 
     // Check breadcrumb navigation
-    await expect(page.locator('a:has-text(\"Dashboard\")').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('a:has-text("Dashboard")').first()).toBeVisible({ timeout: 5000 });
 
     // Check page description
     await expect(page.locator('text=Manage locally stored drafts').first()).toBeVisible({ timeout: 5000 });
@@ -277,7 +286,7 @@ test.describe('Offline Conflict Resolution', () => {
     await page.goto('/dashboard/offline', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    const syncAllButton = page.locator('button:has-text(\"Sync All\")').first();
+    const syncAllButton = page.locator('button:has-text("Sync All")').first();
     await expect(syncAllButton).toBeVisible({ timeout: 5000 });
 
     // If pending + failed = 0, the button should be disabled

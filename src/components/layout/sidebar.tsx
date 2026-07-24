@@ -55,7 +55,10 @@ interface NavGroup {
 const navGroups: NavGroup[] = [
   {
     label: 'Overview',
-    items: [{ label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard }],
+    items: [
+      { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+      { label: 'My Profile', href: '/dashboard/profile', icon: User },
+    ],
   },
   {
     label: 'Driver',

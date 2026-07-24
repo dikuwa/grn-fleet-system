@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -50,7 +50,7 @@ export default function SyncConflictsPage() {
   const [expandedDraft, setExpandedDraft] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'conflict' | 'failed' | 'pending'>('all');
 
-  async function loadDrafts() {
+  const loadDrafts = useCallback(async () => {
     setLoading(true);
     try {
       const filters =
@@ -64,11 +64,11 @@ export default function SyncConflictsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [activeTab]);
 
   useEffect(() => {
     loadDrafts();
-  }, [activeTab]);
+  }, [loadDrafts]);
 
   async function handleSync() {
     setSyncing(true);

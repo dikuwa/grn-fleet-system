@@ -48,8 +48,18 @@ export default async function DepartmentsPage() {
 async function DepartmentsContent({ session }: { session: { tenantId: string } }) {
   const db = getDb();
 
+  let deptRows: Array<{
+    id: string;
+    name: string;
+    code: string | null;
+    headEmployeeId: string | null;
+    isActive: boolean;
+    headName: string | null;
+    staffCount: number | null;
+  }>;
+
   try {
-    const deptRows = await db
+    deptRows = await db
       .select({
         id: departments.id,
         name: departments.name,
@@ -68,98 +78,6 @@ async function DepartmentsContent({ session }: { session: { tenantId: string } }
       .leftJoin(employees, eq(departments.headEmployeeId, employees.id))
       .where(and(eq(departments.tenantId, session.tenantId), eq(departments.isActive, true)))
       .orderBy(asc(departments.name));
-
-    const totalStaff = deptRows.reduce((sum, r) => sum + Number(r.staffCount ?? 0), 0);
-
-    return (
-      <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Departments' },
-        ]} />
-        <PageHeader
-          title="Departments & Directorates"
-          description={`${deptRows.length} departments · ${totalStaff} active staff`}
-        >
-          <DepartmentDialog tenantId={session.tenantId} />
-          <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/offices">
-              <ChevronLeft className="h-4 w-4" />
-              Offices
-            </Link>
-          </Button>
-        </PageHeader>
-
-        {/* Summary */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Card>
-            <CardContent className="pt-4 text-center">
-              <p className="text-2xl font-[650] tabular-nums text-ink-950">{deptRows.length}</p>
-              <p className="text-xs text-ink-500">Total Departments</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-success-text">{totalStaff}</p>
-              <p className="text-xs text-ink-500">Active Staff</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {deptRows.length === 0 ? (
-          <EmptyState
-            icon={<Layers className="h-8 w-8" />}
-            title="No departments"
-            description="Departments help organise your staff into functional groups."
-          />
-        ) : (
-          <Card>
-            <CardContent className="p-0">
-              <div className="divide-y divide-border">
-                {deptRows.map((dept) => (
-                  <div
-                    key={dept.id}
-                    className="flex items-center justify-between px-5 py-4 transition-colors hover:bg-canvas/50"
-                  >
-                    <div className="flex items-center gap-4 min-w-0">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-brand-50">
-                        <Layers className="h-4 w-4 text-brand-700" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-ink-950">{dept.name}</p>
-                          {dept.code && (
-                            <span className="rounded-[4px] bg-muted px-1.5 py-0.5 text-[10px] font-mono text-ink-500">
-                              {dept.code}
-                            </span>
-                          )}
-                        </div>
-                        {dept.headName && (
-                          <p className="mt-0.5 text-xs text-ink-500 truncate max-w-md">
-                            Head: {dept.headName}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 shrink-0">
-                      <span className="flex items-center gap-1.5 text-sm text-ink-500">
-                        <Users className="h-3.5 w-3.5" />
-                        <span className="font-medium tabular-nums">
-                          {dept.staffCount ?? 0}
-                        </span>
-                      </span>
-                      <Badge variant={dept.isActive ? 'success' : 'cancelled'} size="sm">
-                        {dept.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-    );
   } catch (error) {
     console.error('Departments query failed:', error);
     return (
@@ -173,4 +91,96 @@ async function DepartmentsContent({ session }: { session: { tenantId: string } }
       </div>
     );
   }
+
+  const totalStaff = deptRows.reduce((sum, r) => sum + Number(r.staffCount ?? 0), 0);
+
+  return (
+    <div className="space-y-6">
+      <Breadcrumbs items={[
+        { label: 'Dashboard', href: '/dashboard' },
+        { label: 'Departments' },
+      ]} />
+      <PageHeader
+        title="Departments & Directorates"
+        description={`${deptRows.length} departments · ${totalStaff} active staff`}
+      >
+        <DepartmentDialog tenantId={session.tenantId} />
+        <Button variant="secondary" size="sm" asChild>
+          <Link href="/dashboard/offices">
+            <ChevronLeft className="h-4 w-4" />
+            Offices
+          </Link>
+        </Button>
+      </PageHeader>
+
+      {/* Summary */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-2xl font-[650] tabular-nums text-ink-950">{deptRows.length}</p>
+            <p className="text-xs text-ink-500">Total Departments</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-2xl font-[650] tabular-nums text-status-success-text">{totalStaff}</p>
+            <p className="text-xs text-ink-500">Active Staff</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {deptRows.length === 0 ? (
+        <EmptyState
+          icon={<Layers className="h-8 w-8" />}
+          title="No departments"
+          description="Departments help organise your staff into functional groups."
+        />
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <div className="divide-y divide-border">
+              {deptRows.map((dept) => (
+                <div
+                  key={dept.id}
+                  className="flex items-center justify-between px-5 py-4 transition-colors hover:bg-canvas/50"
+                >
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-brand-50">
+                      <Layers className="h-4 w-4 text-brand-700" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-ink-950">{dept.name}</p>
+                        {dept.code && (
+                          <span className="rounded-[4px] bg-muted px-1.5 py-0.5 text-[10px] font-mono text-ink-500">
+                            {dept.code}
+                          </span>
+                        )}
+                      </div>
+                      {dept.headName && (
+                        <p className="mt-0.5 text-xs text-ink-500 truncate max-w-md">
+                          Head: {dept.headName}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0">
+                    <span className="flex items-center gap-1.5 text-sm text-ink-500">
+                      <Users className="h-3.5 w-3.5" />
+                      <span className="font-medium tabular-nums">
+                        {dept.staffCount ?? 0}
+                      </span>
+                    </span>
+                    <Badge variant={dept.isActive ? 'success' : 'cancelled'} size="sm">
+                      {dept.isActive ? 'Active' : 'Inactive'}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
 }
