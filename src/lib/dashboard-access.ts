@@ -15,7 +15,6 @@ export const dashboardAccessRules: DashboardAccessRule[] = [
   { prefix: '/dashboard/share-links', anyOf: [Permissions.FILE_VIEW] },
   { prefix: '/dashboard/driver-mobile', anyOf: [Permissions.DRIVER_LOG_VIEW] },
   { prefix: '/dashboard/driver-self-service', anyOf: [Permissions.DRIVER_LOG_VIEW] },
-  { prefix: '/dashboard/profile', anyOf: [Permissions.REQUEST_VIEW, Permissions.VEHICLE_VIEW, Permissions.STAFF_VIEW] },
   { prefix: '/dashboard/logs', anyOf: [Permissions.DRIVER_LOG_VIEW, Permissions.TRIP_MANAGE] },
   { prefix: '/dashboard/approvals', anyOf: [
     Permissions.REQUEST_APPROVE_SUPERVISOR,
@@ -42,7 +41,7 @@ export const dashboardAccessRules: DashboardAccessRule[] = [
 ];
 
 export function canAccessDashboardPath(pathname: string, permissionCodes: readonly string[]) {
-  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/notifications') || pathname.startsWith('/dashboard/offline')) return true;
+  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/notifications') || pathname.startsWith('/dashboard/offline') || pathname.startsWith('/dashboard/profile')) return true;
   const rule = dashboardAccessRules.find(({ prefix }) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   return Boolean(rule?.anyOf.some((permission) => permissionCodes.includes(permission)));
 }
