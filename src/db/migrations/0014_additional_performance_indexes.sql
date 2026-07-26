@@ -1,12 +1,12 @@
 --> Additional performance indexes for frequently queried tables
 
 -- Notifications: per-user lookup, type filtering, date ordering, read/unread counts
-CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient_user_id ON notifications(recipient_user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type);
 CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read);
-CREATE INDEX IF NOT EXISTS idx_notifications_user_type ON notifications(user_id, type);
-CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient_type ON notifications(recipient_user_id, type);
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient_read ON notifications(recipient_user_id, is_read);
 
 -- Notification deliveries: notification lookup, channel filtering, status
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_notification_id ON notification_deliveries(notification_id);
@@ -19,7 +19,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_event_type ON audit_events(event_typ
 CREATE INDEX IF NOT EXISTS idx_audit_events_entity_type ON audit_events(entity_type);
 CREATE INDEX IF NOT EXISTS idx_audit_events_entity_id ON audit_events(entity_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at);
-CREATE INDEX IF NOT EXISTS idx_audit_events_user_id ON audit_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_actor_user_id ON audit_events(actor_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_tenant_type ON audit_events(tenant_id, event_type);
 
 -- Generated documents: tenant, type, status, expiry lookups
@@ -28,15 +28,13 @@ CREATE INDEX IF NOT EXISTS idx_generated_documents_document_type ON generated_do
 CREATE INDEX IF NOT EXISTS idx_generated_documents_status ON generated_documents(status);
 CREATE INDEX IF NOT EXISTS idx_generated_documents_expires_at ON generated_documents(expires_at);
 
--- Share links: document lookup, status filtering, expiry checks
+-- Share links: document lookup, expiry checks (status replaced by expires_at + is_revoked)
 CREATE INDEX IF NOT EXISTS idx_share_links_document_id ON share_links(document_id);
-CREATE INDEX IF NOT EXISTS idx_share_links_status ON share_links(status);
 CREATE INDEX IF NOT EXISTS idx_share_links_expires_at ON share_links(expires_at);
 
--- Driver profiles: employee lookup, status, licence number searches
+-- Driver profiles: employee lookup, status
 CREATE INDEX IF NOT EXISTS idx_driver_profiles_employee_id ON driver_profiles(employee_id);
-CREATE INDEX IF NOT EXISTS idx_driver_profiles_status ON driver_profiles(status);
-CREATE INDEX IF NOT EXISTS idx_driver_profiles_licence_number ON driver_profiles(licence_number);
+CREATE INDEX IF NOT EXISTS idx_driver_profiles_driver_status ON driver_profiles(driver_status);
 
 -- Driver licences: driver profile lookup, expiry queries
 CREATE INDEX IF NOT EXISTS idx_driver_licences_profile_id ON driver_licences(driver_profile_id);
@@ -50,8 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_workflow_instances_definition_id ON workflow_inst
 
 -- Workflow actions: instance tracking, chronological lookups
 CREATE INDEX IF NOT EXISTS idx_workflow_actions_instance_id ON workflow_actions(instance_id);
-CREATE INDEX IF NOT EXISTS idx_workflow_actions_step_id ON workflow_actions(step_id);
-CREATE INDEX IF NOT EXISTS idx_workflow_actions_created_at ON workflow_actions(created_at);
+CREATE INDEX IF NOT EXISTS idx_workflow_actions_step_order ON workflow_actions(step_order);
 
 -- Import batches: tenant isolation, status, type
 CREATE INDEX IF NOT EXISTS idx_import_batches_tenant_id ON import_batches(tenant_id);
@@ -59,12 +56,8 @@ CREATE INDEX IF NOT EXISTS idx_import_batches_status ON import_batches(status);
 CREATE INDEX IF NOT EXISTS idx_import_batches_import_type ON import_batches(import_type);
 CREATE INDEX IF NOT EXISTS idx_import_batches_created_at ON import_batches(created_at);
 
--- Import rows: batch lookup, status, validation
+-- Import rows: batch lookup (import_rows uses is_committed boolean instead of status)
 CREATE INDEX IF NOT EXISTS idx_import_rows_batch_id ON import_rows(batch_id);
-CREATE INDEX IF NOT EXISTS idx_import_rows_status ON import_rows(status);
-
--- Trip issues: trip lookup
-CREATE INDEX IF NOT EXISTS idx_trip_issues_trip_id ON trip_issues(trip_id);
 
 -- Vehicle status events: vehicle, chronological lookups
 CREATE INDEX IF NOT EXISTS idx_vehicle_status_events_vehicle_id ON vehicle_status_events(vehicle_id);
@@ -83,4 +76,3 @@ CREATE INDEX IF NOT EXISTS idx_employee_documents_expiry_date ON employee_docume
 
 -- Departments: tenant isolation
 CREATE INDEX IF NOT EXISTS idx_departments_tenant_id ON departments(tenant_id);
-
