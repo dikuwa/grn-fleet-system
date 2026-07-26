@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_generated_documents_document_type ON generated_do
 CREATE INDEX IF NOT EXISTS idx_generated_documents_status ON generated_documents(status);
 CREATE INDEX IF NOT EXISTS idx_generated_documents_expires_at ON generated_documents(expires_at);
 
--- Share links: document lookup, expiry checks (status replaced by expires_at + is_revoked)
+-- Share links: document lookup, expiry checks
 CREATE INDEX IF NOT EXISTS idx_share_links_document_id ON share_links(document_id);
 CREATE INDEX IF NOT EXISTS idx_share_links_expires_at ON share_links(expires_at);
 
@@ -49,6 +49,10 @@ CREATE INDEX IF NOT EXISTS idx_workflow_instances_definition_id ON workflow_inst
 -- Workflow actions: instance tracking, chronological lookups
 CREATE INDEX IF NOT EXISTS idx_workflow_actions_instance_id ON workflow_actions(instance_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_actions_step_order ON workflow_actions(step_order);
+CREATE INDEX IF NOT EXISTS idx_workflow_actions_created_at ON workflow_actions(created_at);
+
+-- Trip issues: trip lookup
+CREATE INDEX IF NOT EXISTS idx_trip_issues_trip_id ON trip_issues(trip_id);
 
 -- Import batches: tenant isolation, status, type
 CREATE INDEX IF NOT EXISTS idx_import_batches_tenant_id ON import_batches(tenant_id);
@@ -56,19 +60,16 @@ CREATE INDEX IF NOT EXISTS idx_import_batches_status ON import_batches(status);
 CREATE INDEX IF NOT EXISTS idx_import_batches_import_type ON import_batches(import_type);
 CREATE INDEX IF NOT EXISTS idx_import_batches_created_at ON import_batches(created_at);
 
--- Import rows: batch lookup (import_rows uses is_committed boolean instead of status)
+-- Import rows: batch lookup
 CREATE INDEX IF NOT EXISTS idx_import_rows_batch_id ON import_rows(batch_id);
 
 -- Vehicle status events: vehicle, chronological lookups
 CREATE INDEX IF NOT EXISTS idx_vehicle_status_events_vehicle_id ON vehicle_status_events(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_vehicle_status_events_created_at ON vehicle_status_events(created_at);
 
--- Inspection photos: inspection, checklist item lookups
+-- Inspection photos: inspection, item result lookups
 CREATE INDEX IF NOT EXISTS idx_inspection_photos_inspection_id ON inspection_photos(inspection_id);
-CREATE INDEX IF NOT EXISTS idx_inspection_photos_checklist_item_id ON inspection_photos(checklist_item_id);
-
--- Inspection checklist items: inspection lookup
-CREATE INDEX IF NOT EXISTS idx_inspection_checklist_items_inspection_id ON inspection_checklist_items(inspection_id);
+CREATE INDEX IF NOT EXISTS idx_inspection_photos_item_result_id ON inspection_photos(inspection_item_result_id);
 
 -- Employee documents: employee lookup, expiry
 CREATE INDEX IF NOT EXISTS idx_employee_documents_employee_id ON employee_documents(employee_id);
