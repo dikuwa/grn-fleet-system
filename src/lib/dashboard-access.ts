@@ -15,6 +15,7 @@ export const dashboardAccessRules: DashboardAccessRule[] = [
   { prefix: '/dashboard/share-links', anyOf: [Permissions.FILE_VIEW] },
   { prefix: '/dashboard/driver-mobile', anyOf: [Permissions.DRIVER_LOG_VIEW] },
   { prefix: '/dashboard/driver-self-service', anyOf: [Permissions.DRIVER_LOG_VIEW] },
+  { prefix: '/dashboard/profile', anyOf: [Permissions.REQUEST_VIEW, Permissions.VEHICLE_VIEW, Permissions.STAFF_VIEW] },
   { prefix: '/dashboard/logs', anyOf: [Permissions.DRIVER_LOG_VIEW, Permissions.TRIP_MANAGE] },
   { prefix: '/dashboard/approvals', anyOf: [
     Permissions.REQUEST_APPROVE_SUPERVISOR,
