@@ -32,7 +32,7 @@ async function signInViaForm(page: Page) {
   await page.waitForTimeout(2000);
 
   // Fill in login form
-  await page.locator('input[type="email"]').first().fill(email);
+  await page.locator('input[type="text"], input[type="email"]').first().fill(email);
   await page.locator('input[type="password"]').first().fill(password);
 
   // Click sign-in button

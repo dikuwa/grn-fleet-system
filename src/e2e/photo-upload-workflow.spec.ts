@@ -149,27 +149,46 @@ test.describe('Photo Upload Workflow', () => {
     });
     expect(fleetRes.status()).toBe(200);
     const fleetBody = await fleetRes.json().catch(() => ({}));
-    const vehicles = fleetBody?.data || fleetBody?.vehicles || fleetBody || [];
+    const vehicles = fleetBody?.rows || fleetBody?.data || fleetBody?.vehicles || [];
+    // Only use vehicles in 'available' status (avoids blocking defects from prior tests)
     const vehicle = Array.isArray(vehicles)
-      ? vehicles.find((v: { status?: string }) => v.status !== 'retired' && v.status !== 'scrapped')
+      ? vehicles.find((v: { status?: string }) => v.status === 'available')
       : null;
-    test.skip(!vehicle, 'No vehicle found for inspection test');
+    test.skip(!vehicle, 'No available vehicle found for inspection test (check seed data)');
+
+    // Use the vehicle's current odometer (must be >= currentOdometer)
+    const odometer = Math.max(40000, (vehicle.currentOdometer || 0) + 10);
 
     // Create the inspection with photoKeys
+    // Must match all 16 DEPARTURE_INSPECTION_ITEMS labels exactly
     const inspRes = await page.request.post(`${BASE}/api/inspections`, {
       data: {
         vehicleId: vehicle.id,
         type: 'departure',
-        odometerReading: 10000,
+        odometerReading: odometer,
         fuelLevel: 'full',
         notes: 'E2E test — inspection with photo',
         checklist: [
-          { label: 'Body panels', result: 'pass', isCritical: false },
-          { label: 'Tyres', result: 'pass', isCritical: true },
-          { label: 'Headlights', result: 'pass', isCritical: true },
-          { label: 'Brakes', result: 'pass', isCritical: true },
+          { label: 'Body panels and paint condition', result: 'pass', isCritical: false },
+          { label: 'Windshield and windows (no cracks)', result: 'pass', isCritical: true },
+          { label: 'Mirrors (both sides, rearview)', result: 'pass', isCritical: false },
+          { label: 'Tyre tread depth and pressure', result: 'pass', isCritical: true },
+          { label: 'Spare tyre present and secure', result: 'pass', isCritical: false },
+          { label: 'Headlights (high/low beam)', result: 'pass', isCritical: true },
+          { label: 'Tail lights and brake lights', result: 'pass', isCritical: true },
+          { label: 'Indicators and hazard lights', result: 'pass', isCritical: true },
+          { label: 'Seat belts (all positions)', result: 'pass', isCritical: true },
+          { label: 'Horn working', result: 'pass', isCritical: false },
+          { label: 'Wipers and washer fluid', result: 'pass', isCritical: false },
+          { label: 'Fire extinguisher present', result: 'pass', isCritical: true },
+          { label: 'First aid kit present', result: 'pass', isCritical: false },
+          { label: 'Warning triangle/reflectors', result: 'pass', isCritical: false },
+          { label: 'Vehicle licence disc valid', result: 'pass', isCritical: true },
+          { label: 'Roadworthy certificate valid', result: 'pass', isCritical: true },
         ],
-        photoKeys: [photoKey],
+        inspectorAcknowledged: true,
+        driverAcknowledged: true,
+        photoKeys: [photoKey, photoKey, photoKey],
       },
       headers: { cookie: await getCookieHeader(page) },
     });

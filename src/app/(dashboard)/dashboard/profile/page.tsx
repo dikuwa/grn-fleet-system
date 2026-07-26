@@ -240,11 +240,11 @@ export default function UserProfilePage() {
           <CardContent className="pt-6">
             <div className="flex flex-col items-center text-center">
               <div className="relative mb-4">
-                <div className="flex h-24 w-24 items-center justify-center rounded-full bg-brand-50 text-3xl font-bold text-brand-700">
+                <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-3xl font-bold text-brand-700">
                   {previewUrl ? (
-                    <img src={previewUrl} alt="Preview" className="h-full w-full rounded-full object-cover animate-pulse" />
+                    <img src={previewUrl} alt="Preview" className="h-full w-full object-cover animate-pulse" />
                   ) : profileData.image ? (
-                    <img src={profileData.image} alt="" className="h-full w-full rounded-full object-cover" />
+                    <img src={profileData.image} alt="" className="h-full w-full object-cover" />
                   ) : (
                     (profileData.name || profileData.email)[0].toUpperCase()
                   )}

@@ -19,7 +19,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm build && pnpm start',
+    command: 'pkill -f "next start" 2>/dev/null; pkill -f "next build" 2>/dev/null; sleep 1; pnpm build && pnpm start',
     port: 3000,
     timeout: 600000,
     reuseExistingServer: !process.env.CI,

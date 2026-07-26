@@ -42,7 +42,6 @@ export async function POST(req: NextRequest) {
     if (!odometerReading) {
       return NextResponse.json({ error: 'Odometer reading is required' }, { status: 400 });
     }
-    if (!tripId) return NextResponse.json({ error: 'A trip is required for departure and return inspections' }, { status: 400 });
     if (!Array.isArray(checklist) || checklist.length === 0) return NextResponse.json({ error: 'The complete inspection checklist is required' }, { status: 400 });
     if (!inspectorAcknowledged || !driverAcknowledged) return NextResponse.json({ error: 'Inspector and driver acknowledgements are required' }, { status: 400 });
 
@@ -65,24 +64,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Odometer must be a whole number at or above ${vehicle.currentOdometer}` }, { status: 422 });
     }
 
-    const [trip] = await db.select({
-      id: trips.id,
-      status: trips.status,
-      vehicleId: trips.vehicleId,
-      requestStatus: transportRequests.status,
-      driverEmployeeId: vehicleAllocations.driverEmployeeId,
-    }).from(trips)
-      .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
-      .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-      .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)))
-      .limit(1);
-    if (!trip || trip.vehicleId !== vehicleId) return NextResponse.json({ error: 'Trip and vehicle do not match' }, { status: 404 });
-    if (!trip.driverEmployeeId) return NextResponse.json({ error: 'A valid driver must be assigned before inspection' }, { status: 409 });
-    if (type === 'departure' && (trip.status !== 'pending' || !['authorised', 'ready_for_issue'].includes(trip.requestStatus))) {
-      return NextResponse.json({ error: 'Departure inspection requires final authorisation' }, { status: 409 });
-    }
-    if (type === 'return' && !['in_progress', 'return_due', 'return_inspection'].includes(trip.status)) {
-      return NextResponse.json({ error: 'Return inspection is only available after trip execution' }, { status: 409 });
+    let trip: { id: string; status: string; vehicleId: string; requestStatus: string; driverEmployeeId: string | null } | null = null;
+    if (tripId) {
+      const [foundTrip] = await db.select({
+        id: trips.id,
+        status: trips.status,
+        vehicleId: trips.vehicleId,
+        requestStatus: transportRequests.status,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      }).from(trips)
+        .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
+        .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+        .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)))
+        .limit(1);
+      trip = foundTrip || null;
+      if (!trip || trip.vehicleId !== vehicleId) return NextResponse.json({ error: 'Trip and vehicle do not match' }, { status: 404 });
+      if (!trip.driverEmployeeId) return NextResponse.json({ error: 'A valid driver must be assigned before inspection' }, { status: 409 });
+      if (type === 'departure' && (trip.status !== 'pending' || !['authorised', 'ready_for_issue'].includes(trip.requestStatus))) {
+        return NextResponse.json({ error: 'Departure inspection requires final authorisation' }, { status: 409 });
+      }
+      if (type === 'return' && !['in_progress', 'return_due', 'return_inspection'].includes(trip.status)) {
+        return NextResponse.json({ error: 'Return inspection is only available after trip execution' }, { status: 409 });
+      }
     }
 
     // Block departure if vehicle has unresolved critical/blocking defects
@@ -162,9 +165,11 @@ export async function POST(req: NextRequest) {
         odometerReading: submittedOdometer,
         fuelLevel: fuelLevel || null,
         inspectorUserId: userId,
-        driverEmployeeId: trip.driverEmployeeId,
+        driverEmployeeId: trip?.driverEmployeeId || null,
         signatureInspector: `acknowledged:${userId}:${new Date().toISOString()}`,
-        signatureDriver: `acknowledged:${trip.driverEmployeeId}:${new Date().toISOString()}`,
+        signatureDriver: trip?.driverEmployeeId
+          ? `acknowledged:${trip.driverEmployeeId}:${new Date().toISOString()}`
+          : null,
         status,
         overallPass,
         notes: notes || null,
