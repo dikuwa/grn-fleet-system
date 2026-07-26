@@ -84,7 +84,3 @@ CREATE INDEX IF NOT EXISTS idx_employee_documents_expiry_date ON employee_docume
 -- Departments: tenant isolation
 CREATE INDEX IF NOT EXISTS idx_departments_tenant_id ON departments(tenant_id);
 
--- Tenant memberships: user lookup, tenant lookup, role assignment
-CREATE INDEX IF NOT EXISTS idx_tenant_memberships_user_id ON tenant_memberships(user_id);
-CREATE INDEX IF NOT EXISTS idx_tenant_memberships_tenant_id ON tenant_memberships(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_tenant_memberships_role ON tenant_memberships(role);
