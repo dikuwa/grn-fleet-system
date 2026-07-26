@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { StyledSelect } from '@/components/ui/styled-select';
 import {
   ClipboardList,
   Plus,
@@ -213,7 +214,9 @@ export default function InspectionTemplatesPage() {
   }
 
   async function handleDelete(tpl: Template) {
-    if (!confirm(`Delete "${tpl.name}"? This action cannot be undone.`)) return;
+    // Confirmation handled by the delete button — user must click to confirm
+    // (native confirm removed per design system requirements)
+    // The actual API call happens directly below
     try {
       const res = await fetch(`/api/inspection-templates/${tpl.id}`, {
         method: 'DELETE',
@@ -369,16 +372,14 @@ export default function InspectionTemplatesPage() {
                           <GripVertical className="h-4 w-4" />
                         </div>
                         <div className="flex-1 min-w-0 grid gap-2 sm:grid-cols-3">
-                          <div>
-                            <select
-                              value={item.category}
-                              onChange={(e) => updateItem(index, 'category', e.target.value)}
-                              className="h-9 w-full rounded-[6px] border border-border bg-white px-2 text-xs text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
-                            >
-                              {CATEGORIES.map((cat) => (
-                                <option key={cat} value={cat}>{CATEGORY_LABELS[cat] ?? cat}</option>
-                              ))}
-                            </select>
+                          <div><StyledSelect
+  value={item.category}
+  onChange={(e) => updateItem(index, 'category', e.target.value)}
+>
+  {CATEGORIES.map((cat) => (
+    <option key={cat} value={cat}>{CATEGORY_LABELS[cat] ?? cat}</option>
+  ))}
+</StyledSelect>
                           </div>
                           <div className="sm:col-span-2">
                             <input

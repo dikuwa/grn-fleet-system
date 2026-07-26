@@ -6,13 +6,14 @@ import { employees } from '@/db/schema/people';
 import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Truck, Search, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { StyledSelect } from '@/components/ui/styled-select';
 import Link from 'next/link';
 
 interface PageProps {
@@ -186,12 +187,11 @@ export default async function AllocationsPage({ searchParams }: PageProps) {
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">State</label>
-              <select name="state" defaultValue={result.filters.state ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
-                <option value="">All States</option>
+              <StyledSelect name="state" defaultValue={result.filters.state ?? ''} placeholder="All States">
                 {Object.entries(ALLOCATION_STATE_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
-              </select>
+              </StyledSelect>
             </div>
             <Button variant="primary" size="sm" type="submit"><Search className="h-4 w-4" /> Filter</Button>
           </form>
@@ -218,7 +218,7 @@ export default async function AllocationsPage({ searchParams }: PageProps) {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-[650] text-ink-950">{alloc.make} {alloc.model}</p>
-                        <Badge variant={stateVariant} size="sm">{ALLOCATION_STATE_LABELS[alloc.state] ?? alloc.state}</Badge>
+                        <StatusBadgeWithIcon status={alloc.state} />
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
                         <span className="tabular-nums">{alloc.licenceNumber}</span>

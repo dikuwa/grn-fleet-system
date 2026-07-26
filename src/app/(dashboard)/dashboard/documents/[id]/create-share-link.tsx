@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Link2, Copy, CheckCircle2 } from 'lucide-react';
 
 interface Props {
@@ -83,17 +84,16 @@ export function CreateShareLinkButton({ documentId }: Props) {
           <div className="space-y-4">
             <div className="space-y-2">
               <label className="block text-xs font-medium text-ink-500">Expires After</label>
-              <select
+              <StyledSelect
                 value={expiresInHours}
                 onChange={(e) => setExpiresInHours(Number(e.target.value))}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
               >
                 <option value={1}>1 hour</option>
                 <option value={24}>24 hours</option>
                 <option value={168}>7 days</option>
                 <option value={720}>30 days</option>
                 <option value={8760}>1 year</option>
-              </select>
+              </StyledSelect>
             </div>
 
             <div className="space-y-2">

@@ -6,6 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
+import { StyledDateInput } from '@/components/ui/styled-select';
 import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, CheckCircle2, Truck, Star, AlertTriangle } from 'lucide-react';
 import { VehicleAvailabilityCheck } from './VehicleAvailabilityCheck';
@@ -167,11 +168,11 @@ export default function NewAllocationPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label required>Start Date</Label>
-                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
+                <StyledDateInput type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
               </div>
               <div className="space-y-1.5">
                 <Label>End Date</Label>
-                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                <StyledDateInput type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
               </div>
             </div>
             <div className="space-y-1.5">

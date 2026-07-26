@@ -2,6 +2,7 @@ import { getDb, isDbConnected } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -245,28 +246,26 @@ export default async function RequestsPage({ searchParams }: PageProps) {
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
-              <select
+              <StyledSelect
                 name="status"
                 defaultValue={result.filters.status ?? ''}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                placeholder="All Statuses"
               >
-                <option value="">All Statuses</option>
                 {Object.entries(STATUS_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
-              </select>
+              </StyledSelect>
             </div>
             <div className="w-[140px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Scope</label>
-              <select
+              <StyledSelect
                 name="scope"
                 defaultValue={result.filters.scope ?? ''}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                placeholder="All Scopes"
               >
-                <option value="">All Scopes</option>
                 <option value="regional">Regional</option>
                 <option value="national">National</option>
-              </select>
+              </StyledSelect>
             </div>
             <Button variant="primary" size="sm" type="submit">
               <Search className="h-4 w-4" /> Filter

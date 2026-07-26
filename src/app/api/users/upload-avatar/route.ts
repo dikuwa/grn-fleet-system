@@ -1,8 +1,12 @@
 /**
  * User Avatar Upload API
  *
- * POST /api/users/upload-avatar  — Upload a profile photo for the current user
- * DELETE /api/users/upload-avatar — Remove the profile photo
+ * POST   /api/users/upload-avatar  — Upload a profile photo
+ * DELETE /api/users/upload-avatar  — Remove the profile photo
+ *
+ * Supported formats: JPEG, PNG, WebP
+ * Max size: 2 MB
+ * Cache invalidation: versioned URL via timestamp query parameter
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,8 +14,11 @@ import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { eq } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
-import { UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
+import { UPLOAD_MAX_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants';
 import { uploadFile, buildKey, isStorageConfigured, deleteFile } from '@/lib/storage';
+
+const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2 MB
+const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     if (!isStorageConfigured()) {
       return NextResponse.json(
-        { error: 'File storage is not configured. Set R2 credentials.' },
+        { error: 'File storage is not configured. Contact your administrator.' },
         { status: 503 },
       );
     }
@@ -33,44 +40,103 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No file provided.' }, { status: 400 });
     }
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-      return NextResponse.json({ error: 'Only JPEG, PNG, and WebP images are allowed.' }, { status: 415 });
+    // Validate MIME type
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      return NextResponse.json(
+        { error: 'Unsupported format. Only JPEG, PNG, and WebP images are allowed.' },
+        { status: 415 },
+      );
     }
 
-    if (file.size > 2 * 1024 * 1024) {
-      return NextResponse.json({ error: 'File too large. Maximum size is 2 MB.' }, { status: 413 });
+    // Validate file size
+    if (file.size > MAX_AVATAR_SIZE) {
+      return NextResponse.json(
+        { error: 'Image too large. Maximum size is 2 MB.' },
+        { status: 413 },
+      );
     }
 
-    const ext = file.name.split('.').pop() || 'jpg';
-    const key = buildKey(`avatar-${session.user.id}.${ext}`, 'avatars', `tenant/${session.tenantId}`);
+    const db = getDb();
+
+    // Get current avatar to clean up later
+    const [currentUser] = await db
+      .select({ image: user.image })
+      .from(user)
+      .where(eq(user.id, session.user.id))
+      .limit(1);
+
+    const oldImageKey = currentUser?.image || null;
+
+    // Determine extension from MIME type
+    const extMap: Record<string, string> = {
+      'image/jpeg': 'jpg',
+      'image/jpg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+    };
+    const ext = extMap[file.type] || 'jpg';
+
+    // Build a versioned key so CDN/browser caches are invalidated on each upload
+    const version = Date.now();
+    const filename = `avatar-${session.user.id}-v${version}.${ext}`;
+    const key = buildKey(filename, 'avatars', `tenant/${session.tenantId}`);
+
+    // Read file buffer
     const buffer = Buffer.from(await file.arrayBuffer());
 
+    // Upload new avatar
     const result = await uploadFile(buffer, key, {
       contentType: file.type,
       tenantPrefix: `tenant/${session.tenantId}`,
       isPublic: true,
     });
 
-    // Update user's image field with the public URL
-    const db = getDb();
-    const imageUrl = result.publicUrl || null;
+    if (!result.publicUrl) {
+      throw new Error('Upload completed but no public URL was returned');
+    }
+
+    // Add a cache-busting query parameter to the URL
+    const imageUrl = `${result.publicUrl}?v=${version}`;
+
+    // Update user record — only after successful upload
     await db
       .update(user)
       .set({ image: imageUrl, updatedAt: new Date() })
       .where(eq(user.id, session.user.id));
+
+    // Clean up old avatar — only after new one is saved successfully
+    if (oldImageKey && isStorageConfigured()) {
+      try {
+        // Extract the old key from the URL
+        const oldUrl = oldImageKey.split('?')[0]; // Remove cache buster
+        const urlParts = oldUrl.split('/');
+        const oldFilename = urlParts[urlParts.length - 1];
+
+        // Only delete if it looks like an avatar (not a default/placeholder)
+        if (oldFilename && oldFilename.includes('avatar-') && !oldFilename.includes('default')) {
+          // Try to resolve the old key
+          const oldKey = `tenant/${session.tenantId}/avatars/${oldFilename}`;
+          await deleteFile(oldKey).catch(() => {
+            // Non-fatal — old file may have been deleted already
+          });
+        }
+      } catch {
+        // Non-fatal cleanup error
+      }
+    }
 
     return NextResponse.json({
       success: true,
       data: {
         imageUrl,
         key: result.key,
+        version,
       },
     });
   } catch (error) {
     console.error('[Avatar Upload] Failed:', error);
     return NextResponse.json(
-      { error: 'Failed to upload avatar: ' + (error instanceof Error ? error.message : String(error)) },
+      { error: 'Failed to upload avatar. Please try again.' },
       { status: 500 },
     );
   }
@@ -91,20 +157,22 @@ export async function DELETE(request: NextRequest) {
       .where(eq(user.id, session.user.id))
       .limit(1);
 
+    // Remove image from storage
     if (userRecord?.image && isStorageConfigured()) {
-      // Try to delete the file from storage
       try {
-        const urlParts = userRecord.image.split('/');
+        const cleanUrl = userRecord.image.split('?')[0]; // Remove cache buster
+        const urlParts = cleanUrl.split('/');
         const fileName = urlParts[urlParts.length - 1];
         if (fileName && fileName.includes('avatar-')) {
           const fileKey = `tenant/${session.tenantId}/avatars/${fileName}`;
           await deleteFile(fileKey);
         }
       } catch {
-        // Silently ignore deletion errors
+        // Non-fatal
       }
     }
 
+    // Clear image field in database
     await db
       .update(user)
       .set({ image: null, updatedAt: new Date() })

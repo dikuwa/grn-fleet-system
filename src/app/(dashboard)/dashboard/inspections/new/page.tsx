@@ -7,6 +7,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { ClipboardCheck, ChevronLeft, CheckCircle2, XCircle, Loader2, Camera, Trash2 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
@@ -294,33 +295,31 @@ export default function NewInspectionPage() {
                 <label className="block text-xs font-medium text-ink-500 mb-1.5">
                   Vehicle <span className="text-status-error-text">*</span>
                 </label>
-                <select
+                <StyledSelect
                   value={vehicleId}
                   onChange={(e) => setVehicleId(e.target.value)}
                   required
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  placeholder="Select vehicle..."
                 >
-                  <option value="">Select vehicle...</option>
                   {vehicles.map((v) => (
                     <option key={v.id} value={v.id}>{v.licenceNumber} — {v.make} {v.model}</option>
                   ))}
-                </select>
+                </StyledSelect>
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink-500 mb-1.5">
                   Trip <span className="text-status-error-text">*</span>
                 </label>
-                <select
+                <StyledSelect
                   value={tripId}
                   onChange={(e) => setTripId(e.target.value)}
                   required
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  placeholder="Select trip..."
                 >
-                  <option value="">Select trip...</option>
                   {trips.map((t) => (
                     <option key={t.id} value={t.id}>{t.make} {t.model} ({t.licenceNumber})</option>
                   ))}
-                </select>
+                </StyledSelect>
               </div>
             </CardContent>
           </Card>
@@ -376,18 +375,17 @@ export default function NewInspectionPage() {
                 <label className="block text-xs font-medium text-ink-500 mb-1.5">
                   Fuel Level
                 </label>
-                <select
+                <StyledSelect
                   value={fuelLevel}
                   onChange={(e) => setFuelLevel(e.target.value)}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  placeholder="Select level..."
                 >
-                  <option value="">Select level...</option>
                   <option value="full">Full</option>
                   <option value="three_quarters">¾</option>
                   <option value="half">½</option>
                   <option value="quarter">¼</option>
                   <option value="empty">Empty</option>
-                </select>
+                </StyledSelect>
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink-500 mb-1.5">

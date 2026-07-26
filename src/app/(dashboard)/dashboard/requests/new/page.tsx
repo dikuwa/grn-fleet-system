@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { FileText, ChevronLeft, ChevronRight, Check, Plus, Trash2, MapPin, Users, User, CalendarDays } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
@@ -456,15 +457,15 @@ function PeopleStep({
                     className="h-9 w-full rounded-[6px] border border-border bg-surface px-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
                   />
                 </div>
-                <select
+                <StyledSelect
                   value={d.driverType}
                   onChange={(e) => updateDriver(d.id, { driverType: e.target.value as Driver['driverType'] })}
-                  className="h-9 w-[130px] rounded-[6px] border border-border bg-surface px-2 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-9 w-[130px]"
                 >
                   <option value="nominated">Nominated</option>
                   <option value="assigned">Assigned</option>
                   <option value="additional">Additional</option>
-                </select>
+                </StyledSelect>
                 <button
                   onClick={() => removeDriver(d.id)}
                   className="shrink-0 text-ink-400 hover:text-status-error-text transition-colors"

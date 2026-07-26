@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { ChevronLeft, CheckCircle2, Wrench, CalendarClock } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
@@ -111,12 +112,6 @@ export default function NewMaintenancePage() {
 
   const selectedVehicle = vehicles.find((v) => v.id === formData.vehicleId);
 
-  const SERVICE_TYPE_OPTIONS = [
-    { value: 'scheduled', label: 'Scheduled Service' },
-    { value: 'repair', label: 'Repair' },
-    { value: 'inspection', label: 'Inspection' },
-  ];
-
   return (
     <div className="space-y-6">
       <Breadcrumbs
@@ -146,7 +141,7 @@ export default function NewMaintenancePage() {
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <Label required>Vehicle</Label>
-              <select
+              <StyledSelect
                 value={formData.vehicleId}
                 onChange={(e) => {
                   const v = vehicles.find((veh) => veh.id === e.target.value);
@@ -157,17 +152,14 @@ export default function NewMaintenancePage() {
                 }}
                 required
                 disabled={loadingVehicles}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-50"
+                placeholder={loadingVehicles ? 'Loading vehicles...' : 'Select vehicle...'}
               >
-                <option value="">
-                  {loadingVehicles ? 'Loading vehicles...' : 'Select vehicle...'}
-                </option>
                 {vehicles.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.licenceNumber} — {v.make} {v.model} ({v.currentOdometer?.toLocaleString() || 0} km)
                   </option>
                 ))}
-              </select>
+              </StyledSelect>
               {selectedVehicle && (
                 <div className="mt-1.5 flex items-center gap-2">
                   <Badge variant={selectedVehicle.status === 'available' ? 'success' : 'info'} size="sm">
@@ -192,17 +184,15 @@ export default function NewMaintenancePage() {
               </div>
               <div className="space-y-1.5">
                 <Label required>Service Type</Label>
-                <select
-                  value={formData.serviceType}
-                  onChange={(e) => updateForm({ serviceType: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
-                >
-                  {SERVICE_TYPE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+              <StyledSelect
+                value={formData.serviceType}
+                onChange={(e) => updateForm({ serviceType: e.target.value })}
+                placeholder="Select type"
+              >
+                <option value="scheduled">Scheduled Service</option>
+                <option value="repair">Repair</option>
+                <option value="inspection">Inspection</option>
+              </StyledSelect>
               </div>
             </div>
 

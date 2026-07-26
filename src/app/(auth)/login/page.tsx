@@ -3,7 +3,7 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Eye, EyeOff, LogIn, AlertCircle, Sun, Moon, User } from 'lucide-react';
+import { Eye, EyeOff, LogIn, AlertCircle, User, Sun, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { APP_NAME } from '@/lib/constants';
@@ -40,7 +40,6 @@ function LoginForm() {
         return;
       }
 
-      // Handle force password change redirect
       if (json.requiresPasswordChange) {
         router.push('/dashboard/profile');
         return;
@@ -49,7 +48,6 @@ function LoginForm() {
       router.push(redirectTo);
     } catch (err) {
       setError('Unable to sign in. Please check your connection and try again.');
-      console.error('Sign in failed:', err);
       setLoading(false);
     }
   };
@@ -61,11 +59,12 @@ function LoginForm() {
           onClick={toggleTheme}
           className="absolute -right-1 -top-1 flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-500 hover:bg-muted transition-colors"
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label="Toggle theme"
         >
           {theme === 'dark' ? (
-            <Sun className="h-[18px] w-[18px] theme-icon-enter" />
+            <Sun className="h-[18px] w-[18px]" />
           ) : (
-            <Moon className="h-[18px] w-[18px] theme-icon-enter" key={theme} />
+            <Moon className="h-[18px] w-[18px]" />
           )}
         </button>
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-800 text-lg font-bold text-white">
@@ -87,12 +86,12 @@ function LoginForm() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <FieldWrapper label="Username" required>
+        <FieldWrapper label="Username or email" required>
           <div className="relative">
             <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
             <Input
               type="text"
-              placeholder="Enter your username"
+              placeholder="Enter your username or email"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
@@ -100,7 +99,6 @@ function LoginForm() {
               className="pl-9"
             />
           </div>
-          <p className="mt-1 text-xs text-ink-400">You can also use your email address to sign in.</p>
         </FieldWrapper>
 
         <FieldWrapper label="Password" required>
@@ -117,6 +115,7 @@ function LoginForm() {
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-500 hover:text-ink-700"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
               {showPassword ? (
                 <EyeOff className="h-4 w-4" />

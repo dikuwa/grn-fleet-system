@@ -151,7 +151,7 @@ test.describe('Photo Upload Workflow', () => {
     const fleetBody = await fleetRes.json().catch(() => ({}));
     const vehicles = fleetBody?.data || fleetBody?.vehicles || fleetBody || [];
     const vehicle = Array.isArray(vehicles)
-      ? vehicles.find((v: { status?: string }) => v.status === 'active' || v.status === 'available' || !v.status)
+      ? vehicles.find((v: { status?: string }) => v.status !== 'retired' && v.status !== 'scrapped')
       : null;
     test.skip(!vehicle, 'No vehicle found for inspection test');
 

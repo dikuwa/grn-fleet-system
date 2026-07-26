@@ -14,8 +14,8 @@
  */
 
 import { getDb } from '@/db';
-import { vehicles } from '@/db/schema/fleet';
-import { eq, and, sql } from 'drizzle-orm';
+import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
+import { eq, and, inArray, desc } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -117,20 +117,35 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
   }> = [];
 
   if (vehicleIds.length > 0) {
-    // Get the most recent maintenance event per vehicle
-    const query = sql`
-      SELECT DISTINCT ON (m.vehicle_id)
-        m.vehicle_id AS "vehicleId",
-        m.service_date AS "serviceDate",
-        m.service_odometer AS "serviceOdometer",
-        m.next_service_date AS "nextServiceDate",
-        m.next_service_odometer AS "nextServiceOdometer",
-        m.service_type AS "serviceType"
-      FROM maintenance_events m
-      WHERE m.vehicle_id = ANY(${vehicleIds})
-      ORDER BY m.vehicle_id, m.service_date DESC
-    `;
-    latestMaintenance = await db.execute(query) as unknown as typeof latestMaintenance;
+    // Get the most recent maintenance event per vehicle using Drizzle
+    const rows = await db
+      .select({
+        vehicleId: maintenanceEvents.vehicleId,
+        serviceDate: maintenanceEvents.serviceDate,
+        serviceOdometer: maintenanceEvents.serviceOdometer,
+        nextServiceDate: maintenanceEvents.nextServiceDate,
+        nextServiceOdometer: maintenanceEvents.nextServiceOdometer,
+        serviceType: maintenanceEvents.serviceType,
+      })
+      .from(maintenanceEvents)
+      .where(inArray(maintenanceEvents.vehicleId, vehicleIds))
+      .orderBy(desc(maintenanceEvents.serviceDate));
+
+    // Drizzle doesn't support DISTINCT ON via query builder, so we dedupe post-query
+    const seen = new Set<string>();
+    for (const row of rows) {
+      if (!seen.has(row.vehicleId)) {
+        seen.add(row.vehicleId);
+        latestMaintenance.push({
+          vehicleId: row.vehicleId,
+          serviceDate: row.serviceDate ?? '',
+          serviceOdometer: row.serviceOdometer,
+          nextServiceDate: row.nextServiceDate,
+          nextServiceOdometer: row.nextServiceOdometer,
+          serviceType: row.serviceType,
+        });
+      }
+    }
   }
 
   const maintenanceMap = new Map(latestMaintenance.map((m) => [m.vehicleId, m]));

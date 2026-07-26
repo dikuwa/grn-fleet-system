@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
@@ -322,17 +323,16 @@ export default function NewVehiclePage() {
                 />
               </Field>
               <Field label="Drive Type">
-                <select
+                <StyledSelect
                   value={form.driveType}
                   onChange={(e) => update({ driveType: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   <option value="">Select...</option>
                   <option value="Self-propelled">Self-propelled</option>
                   <option value="4x2">4x2</option>
                   <option value="4x4">4x4</option>
                   <option value="AWD">AWD</option>
-                </select>
+                </StyledSelect>
               </Field>
               <Field label="Colour">
                 <input
@@ -344,26 +344,24 @@ export default function NewVehiclePage() {
                 />
               </Field>
               <Field label="Fuel Type">
-                <select
+                <StyledSelect
                   value={form.fuelType}
                   onChange={(e) => update({ fuelType: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   <option value="petrol">Petrol</option>
                   <option value="diesel">Diesel</option>
                   <option value="electric">Electric</option>
                   <option value="hybrid">Hybrid</option>
-                </select>
+                </StyledSelect>
               </Field>
               <Field label="Transmission">
-                <select
+                <StyledSelect
                   value={form.transmission}
                   onChange={(e) => update({ transmission: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   <option value="manual">Manual</option>
                   <option value="automatic">Automatic</option>
-                </select>
+                </StyledSelect>
               </Field>
             </div>
           </CardContent>
@@ -463,39 +461,36 @@ export default function NewVehiclePage() {
             <h3 className="mb-4 text-sm font-semibold text-ink-950">Fleet Assignment</h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Fleet Category">
-                <select
+                <StyledSelect
                   value={form.categoryId}
                   onChange={(e) => update({ categoryId: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   <option value="">Select category…</option>
                   {categories.map((cat) => (
                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                   ))}
-                </select>
+                </StyledSelect>
               </Field>
               <Field label="Assigned Office">
-                <select
+                <StyledSelect
                   value={form.officeId}
                   onChange={(e) => update({ officeId: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   <option value="">Select office…</option>
                   {officeOptions.map((off) => (
                     <option key={off.id} value={off.id}>{off.name}</option>
                   ))}
-                </select>
+                </StyledSelect>
               </Field>
               <Field label="Initial Status">
-                <select
+                <StyledSelect
                   value={form.status}
                   onChange={(e) => update({ status: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   <option value="available">Available</option>
                   <option value="provisional">Provisional</option>
                   <option value="maintenance">In Maintenance</option>
-                </select>
+                </StyledSelect>
               </Field>
               <Field label="Current Odometer">
                 <input

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input, Label } from '@/components/ui/input';
+import { StyledDateInput } from '@/components/ui/styled-select';
 import { Car, CheckCircle2 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
@@ -48,8 +49,8 @@ export function ConvertToDriver({ employeeId, employeeName }: { employeeId: stri
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5"><Label required>Licence Number</Label><Input value={form.licenceNumber} onChange={(event) => setForm({ ...form, licenceNumber: event.target.value })} /></div>
             <div className="space-y-1.5"><Label required>Licence Class</Label><Input value={form.licenceClass} onChange={(event) => setForm({ ...form, licenceClass: event.target.value })} /></div>
-            <div className="space-y-1.5"><Label required>Issue Date</Label><Input type="date" value={form.issueDate} onChange={(event) => setForm({ ...form, issueDate: event.target.value })} /></div>
-            <div className="space-y-1.5"><Label required>Expiry Date</Label><Input type="date" value={form.expiryDate} onChange={(event) => setForm({ ...form, expiryDate: event.target.value })} /></div>
+            <div className="space-y-1.5"><Label required>Issue Date</Label><StyledDateInput type="date" value={form.issueDate} onChange={(event) => setForm({ ...form, issueDate: event.target.value })} /></div>
+            <div className="space-y-1.5"><Label required>Expiry Date</Label><StyledDateInput type="date" value={form.expiryDate} onChange={(event) => setForm({ ...form, expiryDate: event.target.value })} /></div>
             <div className="space-y-1.5"><Label>Authorisation Reference</Label><Input value={form.internalAuthorisationRef} onChange={(event) => setForm({ ...form, internalAuthorisationRef: event.target.value })} /></div>
             <div className="space-y-1.5"><Label>Vehicle Categories</Label><Input placeholder="Sedan, bakkie" value={form.allowedVehicleCategories} onChange={(event) => setForm({ ...form, allowedVehicleCategories: event.target.value })} /></div>
           </div>

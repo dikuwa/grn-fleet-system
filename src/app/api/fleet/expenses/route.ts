@@ -5,7 +5,7 @@ import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, desc, sql, gte } from 'drizzle-orm';
+import { eq, and, desc, sql, gte, inArray } from 'drizzle-orm';
 
 /**
  * GET /api/fleet/expenses
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
           isVerified: fuelReceipts.isVerified,
         })
         .from(fuelReceipts)
-        .where(sql`${fuelReceipts.transactionId} IN (${transactionIds.join(',')})`);
+        .where(inArray(fuelReceipts.transactionId, transactionIds));
     }
     const receiptSet = new Set(receiptRows.map((r) => r.transactionId));
     const verifiedReceiptSet = new Set(receiptRows.filter((r) => r.isVerified).map((r) => r.transactionId));

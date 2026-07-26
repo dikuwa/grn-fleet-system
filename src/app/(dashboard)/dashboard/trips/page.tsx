@@ -6,7 +6,7 @@ import { employees, driverProfiles } from '@/db/schema/people';
 import { eq, desc, asc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
-import { StatusBadge } from '@/components/ui/badge';
+import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Truck, Search, ChevronRight, ChevronLeft, Download } from 'lucide-react';
@@ -14,13 +14,14 @@ import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { statusConfig } from '@/lib/request-status';
+import { StyledSelect } from '@/components/ui/styled-select';
 import Link from 'next/link';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
-// Trip status labels & variants derived from request-status utility
+// Trip status labels derived from request-status utility
 const TRIP_STATUS_LABELS: Record<string, string> = {
   pending: statusConfig('pending').label,
   in_progress: statusConfig('in_progress').label,
@@ -28,15 +29,6 @@ const TRIP_STATUS_LABELS: Record<string, string> = {
   return_inspection: statusConfig('return_inspection').label,
   closure_review: statusConfig('closure_review').label,
   closed: statusConfig('closed').label,
-};
-
-const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
-  pending: statusConfig('pending').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
-  in_progress: statusConfig('in_progress').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
-  return_due: statusConfig('return_due').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
-  return_inspection: statusConfig('return_inspection').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
-  closure_review: statusConfig('closure_review').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
-  closed: statusConfig('closed').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
 };
 
 async function fetchTrips(sp: Record<string, string | undefined>, tenantId: string) {
@@ -218,13 +210,13 @@ export default async function TripsPage({ searchParams }: PageProps) {
       {/* Quick Status Filters */}
       <div className="flex flex-wrap gap-2">
         {[
-          { label: 'All', value: '' },
-          { label: '🟢 Active', value: 'in_progress' },
-          { label: '🔴 Return Due', value: 'return_due' },
-          { label: '⏳ Return Inspection', value: 'return_inspection' },
-          { label: '📋 Closure Review', value: 'closure_review' },
-          { label: '✅ Closed', value: 'closed' },
-          { label: '⏸️ Pending', value: 'pending' },
+          { label: 'All', value: '', statusCode: null },
+          { label: 'Active', value: 'in_progress', statusCode: 'in_progress' },
+          { label: 'Return Due', value: 'return_due', statusCode: 'return_due' },
+          { label: 'Return Inspection', value: 'return_inspection', statusCode: 'return_inspection' },
+          { label: 'Closure Review', value: 'closure_review', statusCode: 'closure_review' },
+          { label: 'Closed', value: 'closed', statusCode: 'closed' },
+          { label: 'Pending', value: 'pending', statusCode: 'pending' },
         ].map((f) => {
           const isActive = (result.filters.status ?? '') === f.value;
           return (
@@ -237,6 +229,9 @@ export default async function TripsPage({ searchParams }: PageProps) {
                   : 'bg-surface text-ink-600 hover:bg-ink-50 border border-border'
               }`}
             >
+              {f.statusCode ? (
+                <StatusBadgeWithIcon status={f.statusCode} iconOnly iconSize={14} className="[&_svg]:text-current" />
+              ) : null}
               {f.label}
             </Link>
           );
@@ -256,21 +251,19 @@ export default async function TripsPage({ searchParams }: PageProps) {
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
-              <select name="status" defaultValue={result.filters.status ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
-                <option value="">All Statuses</option>
+              <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
                 {Object.entries(TRIP_STATUS_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
-              </select>
+              </StyledSelect>
             </div>
             <div className="w-[220px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Driver</label>
-              <select name="driverId" defaultValue={result.filters.driverId ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
-                <option value="">All Drivers</option>
+              <StyledSelect name="driverId" defaultValue={result.filters.driverId ?? ''} placeholder="All Drivers">
                 {result.driverList.map((d) => (
                   <option key={d.id} value={d.id}>{d.firstName} {d.lastName} ({d.employeeNumber})</option>
                 ))}
-              </select>
+              </StyledSelect>
             </div>
             <Button variant="primary" size="sm" type="submit"><Search className="h-4 w-4" /> Filter</Button>
           </form>
@@ -283,7 +276,6 @@ export default async function TripsPage({ searchParams }: PageProps) {
       ) : (
         <div className="space-y-3">
           {result.rows.map((trip) => {
-            const variant = TRIP_STATUS_VARIANTS[trip.status] ?? 'info';
             const requesterName = trip.requesterFirstName && trip.requesterLastName
               ? `${trip.requesterFirstName} ${trip.requesterLastName}`
               : null;
@@ -297,7 +289,7 @@ export default async function TripsPage({ searchParams }: PageProps) {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-[650] text-ink-950">{trip.make} {trip.model}</p>
-                        <StatusBadge status={variant} label={TRIP_STATUS_LABELS[trip.status] ?? trip.status} />
+                        <StatusBadgeWithIcon status={trip.status} />
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
                         <span className="tabular-nums">{trip.licenceNumber}</span>

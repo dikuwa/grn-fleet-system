@@ -5,6 +5,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Database } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
@@ -284,16 +285,15 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Service Type
               </label>
-              <select
+              <StyledSelect
                 name="service_type"
                 defaultValue={result.filters.serviceType ?? ''}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                placeholder="All Types"
               >
-                <option value="">All Types</option>
                 <option value="scheduled">Scheduled</option>
                 <option value="repair">Repair</option>
                 <option value="inspection">Inspection</option>
-              </select>
+              </StyledSelect>
             </div>
             <Button variant="primary" size="sm" type="submit">
               <Search className="h-4 w-4" />

@@ -21,7 +21,7 @@ export function DashboardShell({ children, tenantName, userId, permissionCodes }
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="min-h-screen overflow-x-hidden">
+    <div className="min-h-screen overflow-x-hidden bg-canvas transition-colors duration-200">
       {/* Desktop sidebar */}
       <Sidebar
         collapsed={sidebarCollapsed}
@@ -36,7 +36,7 @@ export function DashboardShell({ children, tenantName, userId, permissionCodes }
         permissionCodes={permissionCodes}
       />
 
-      {/* Main content */}
+      {/* Main content area */}
       <div
         className={cn(
           'min-w-0 transition-all duration-200',
@@ -53,7 +53,6 @@ export function DashboardShell({ children, tenantName, userId, permissionCodes }
         <OfflineIndicator />
         <OfflineSyncHandler />
         <InstallPwaBanner />
-        <div id="toast-container" className="pointer-events-none fixed bottom-4 right-4 z-[100] flex flex-col gap-2 sm:max-w-[420px]" />
       </div>
     </div>
   );

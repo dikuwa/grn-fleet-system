@@ -6,6 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/lib/use-toast';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { GitBranch, Save } from 'lucide-react';
 
 type Option = { id: string; name: string };
@@ -48,9 +49,9 @@ export default function WorkflowRoutingPage() {
       <CardHeader><CardTitle><GitBranch className="mr-2 inline h-4 w-4" />{definition.name} · v{definition.version}</CardTitle></CardHeader>
       <CardContent className="space-y-5">
         <div className="grid gap-3 md:grid-cols-3">
-          {([['regionId', 'All regions', regions], ['officeId', 'All offices', offices], ['departmentId', 'All departments', departments]] as const).map(([field, empty, options]) => <select key={field} value={definition[field] || ''} onChange={(event) => updateDefinition(definition.id, { [field]: event.target.value || null })} className="h-10 rounded-[8px] border border-border bg-surface px-3 text-sm"><option value="">{empty}</option>{options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select>)}
+          {([['regionId', 'All regions', regions], ['officeId', 'All offices', offices], ['departmentId', 'All departments', departments]] as const).map(([field, empty, options]) => <StyledSelect key={field} value={definition[field] || ''} onChange={(event) => updateDefinition(definition.id, { [field]: event.target.value || null })}><option value="">{empty}</option>{options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</StyledSelect>)}
         </div>
-        <div className="divide-y divide-border rounded-[8px] border border-border">{definition.steps.map((step) => <div key={step.id} className="grid gap-3 p-3 md:grid-cols-[1fr_1fr] md:items-center"><div><p className="text-sm font-medium">{step.stepOrder}. {step.label}</p><p className="text-xs text-ink-500">{step.requiredPermission}</p></div><select value={step.assignedUserId || ''} onChange={(event) => updateStep(definition.id, step.id, event.target.value)} className="h-10 rounded-[8px] border border-border bg-surface px-3 text-sm"><option value="">Permission-based pool</option>{users.map((person) => <option key={person.userId} value={person.userId}>{person.name || person.email} — {person.email}</option>)}</select></div>)}</div>
+        <div className="divide-y divide-border rounded-[8px] border border-border">{definition.steps.map((step) => <div key={step.id} className="grid gap-3 p-3 md:grid-cols-[1fr_1fr] md:items-center"><div><p className="text-sm font-medium">{step.stepOrder}. {step.label}</p><p className="text-xs text-ink-500">{step.requiredPermission}</p></div><StyledSelect value={step.assignedUserId || ''} onChange={(event) => updateStep(definition.id, step.id, event.target.value)}><option value="">Permission-based pool</option>{users.map((person) => <option key={person.userId} value={person.userId}>{person.name || person.email} — {person.email}</option>)}</StyledSelect></div>)}</div>
         <div className="flex justify-end"><Button onClick={() => save(definition)} loading={saving === definition.id}><Save className="h-4 w-4" /> Save Routing</Button></div>
       </CardContent>
     </Card>)}

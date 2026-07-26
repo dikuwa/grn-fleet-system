@@ -9,6 +9,7 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 
 import { saveDraft, listDrafts, deleteDraft, countUnsyncedDrafts } from '@/lib/offline-drafts';
+import { StyledSelect } from '@/components/ui/styled-select';
 import {
   ClipboardList, Save, WifiOff, CheckCircle2, Clock, MapPin,
   Gauge, X,
@@ -271,8 +272,8 @@ export default function DailyLogsPage() {
             {/* Trip Selection */}
             <div className="space-y-1.5">
               <Label required>Trip / Vehicle</Label>
-              <select
-                className="h-11 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200 appearance-none"
+              <StyledSelect
+                className="h-11"
                 value={formData.tripId}
                 onChange={(e) => updateField('tripId', e.target.value)}
               >
@@ -284,7 +285,7 @@ export default function DailyLogsPage() {
                       {trip.make} {trip.model} ({trip.licenceNumber}) — {trip.requestReference || 'No ref'}
                     </option>
                   ))}
-              </select>
+              </StyledSelect>
             </div>
 
             {/* Date */}

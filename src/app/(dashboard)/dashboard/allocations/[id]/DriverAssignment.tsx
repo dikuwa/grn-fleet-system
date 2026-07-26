@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { User, XCircle, UserPlus } from 'lucide-react';
 
 interface LicenceInfo {
@@ -173,12 +174,10 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
             </div>
           ) : (
             <>
-              <div className="relative">
-                <select
-                  value={selectedDriverId}
-                  onChange={(e) => setSelectedDriverId(e.target.value)}
-                  className="w-full rounded-[8px] border border-border bg-white px-3 py-2 text-sm text-ink-950 focus:border-brand-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
-                >
+              <div className="relative"><StyledSelect
+  value={selectedDriverId}
+  onChange={(e) => setSelectedDriverId(e.target.value)}
+>
                   <option value="">Select a driver...</option>
                   {availableDrivers.length > 0 && (
                     <optgroup label={`Available (${availableDrivers.length})`}>
@@ -198,7 +197,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
                       ))}
                     </optgroup>
                   )}
-                </select>
+                </StyledSelect>
               </div>
 
               {selectedDriver && (

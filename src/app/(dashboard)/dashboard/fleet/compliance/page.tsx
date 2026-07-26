@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { StyledSelect } from '@/components/ui/styled-select';
 import {
   ShieldCheck, AlertTriangle, Clock, CalendarClock,
   Car, ChevronRight, Loader2, RefreshCw, Search,
@@ -221,17 +222,16 @@ export default function CompliancePage() {
                 className="h-10 w-full rounded-[8px] border border-border bg-surface pl-9 pr-3 text-sm"
               />
             </div>
-            <select
+            <StyledSelect
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="h-10 rounded-[8px] border border-border bg-surface px-3 text-sm"
             >
               <option value="all">All Status</option>
               <option value="compliant">Compliant</option>
               <option value="attention_needed">Attention Needed</option>
               <option value="non_compliant">Non-Compliant</option>
               <option value="incomplete">Incomplete</option>
-            </select>
+            </StyledSelect>
           </div>
 
           {/* Vehicle Compliance Cards */}

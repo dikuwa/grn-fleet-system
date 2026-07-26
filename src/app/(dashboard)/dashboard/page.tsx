@@ -1,7 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header';
 import { StatCard } from '@/components/ui/card';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
 import {
   FileText,
   Clock,
@@ -481,9 +481,7 @@ export default async function DashboardPage() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <p className="text-sm font-medium text-ink-950">{trip.make} {trip.model}</p>
-                                <Badge variant={trip.status === 'return_due' ? 'emergency' : 'info'} size="sm">
-                                  {trip.status === 'return_due' ? 'RETURN DUE' : trip.status.replace(/_/g, ' ')}
-                                </Badge>
+                                <StatusBadgeWithIcon status={trip.status} />
                               </div>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-ink-500">
                                 <span>{trip.licenceNumber}</span>
@@ -535,7 +533,7 @@ export default async function DashboardPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant="pending" size="sm">REVIEW</Badge>
+                      <StatusBadgeWithIcon status="closure_review" />
                       <ChevronRight className="h-4 w-4 text-ink-300" />
                     </div>
                   </Link>

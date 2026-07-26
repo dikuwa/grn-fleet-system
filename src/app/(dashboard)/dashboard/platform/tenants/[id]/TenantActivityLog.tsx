@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { StyledSelect } from '@/components/ui/styled-select';
 import {
   Activity, Loader2, Database, RefreshCw, Clock, User,
 } from 'lucide-react';
@@ -66,16 +67,16 @@ export function TenantActivityLog({ tenantId }: { tenantId: string }) {
       <CardHeader>
         <CardTitle>Activity Log ({total} events)</CardTitle>
         <div className="flex items-center gap-2">
-          <select
-            className="h-9 rounded-[8px] border border-border bg-surface px-2 text-xs text-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-200"
+          <StyledSelect
             value={filterType}
             onChange={(e) => setFilterType(e.target.value)}
+            className="h-9 text-xs"
           >
             <option value="all">All Types</option>
             {eventTypes.map((t) => (
               <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
             ))}
-          </select>
+          </StyledSelect>
           <Button variant="secondary" size="sm" onClick={fetchActivity} loading={loading}>
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>

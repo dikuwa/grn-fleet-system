@@ -6,7 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Loader2, Save, Bell, Shield, Mail, Smartphone, Palette, Image as ImageIcon, CheckCircle2, AlertCircle, XCircle, Key, LogOut, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
@@ -164,9 +164,9 @@ export default function SettingsPage() {
                   <Input value={address} onChange={(e) => setAddress(e.target.value)} />
                 </FieldWrapper>
                 <FieldWrapper label="Timezone">
-                  <select value={timezone} onChange={(e) => setTimezone(e.target.value)} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                  <StyledSelect value={timezone} onChange={(e) => setTimezone(e.target.value)}>
                     <option value="Africa/Windhoek (CAT, UTC+2)">Africa/Windhoek (CAT, UTC+2)</option>
-                  </select>
+                  </StyledSelect>
                 </FieldWrapper>
               </div>
             </CardContent>

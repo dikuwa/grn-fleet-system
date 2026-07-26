@@ -7,6 +7,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
+import { StyledSelect, StyledDateInput } from '@/components/ui/styled-select';
 import { ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
@@ -168,21 +169,21 @@ export default function NewFuelEntryPage() {
               <div className="space-y-1.5"><Label>Trip Reference</Label><Input placeholder="Optional trip ref" value={formData.tripRef} onChange={(e) => updateForm({ tripRef: e.target.value })} /></div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5"><Label required>Transaction Date</Label><Input type="datetime-local" value={formData.transactionDate} onChange={(e) => updateForm({ transactionDate: e.target.value })} required /></div>
+              <div className="space-y-1.5"><Label required>Transaction Date</Label><StyledDateInput type="datetime-local" value={formData.transactionDate} onChange={(e) => updateForm({ transactionDate: e.target.value })} required /></div>
               <div className="space-y-1.5"><Label>Station Name</Label><Input placeholder="e.g. Total Energies, Rundu" value={formData.stationName} onChange={(e) => updateForm({ stationName: e.target.value })} /></div>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-1.5"><Label required>Fuel Type</Label><select value={formData.fuelType} onChange={(e) => updateForm({ fuelType: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"><option value="diesel">Diesel</option><option value="petrol">Petrol</option><option value="unleaded">Unleaded</option></select></div>
+              <div className="space-y-1.5"><Label required>Fuel Type</Label><StyledSelect value={formData.fuelType} onChange={(e) => updateForm({ fuelType: e.target.value })}><option value="diesel">Diesel</option><option value="petrol">Petrol</option><option value="unleaded">Unleaded</option></StyledSelect></div>
               <div className="space-y-1.5"><Label required>Litres</Label><Input type="number" step="0.01" placeholder="e.g. 45.5" value={formData.litres} onChange={(e) => updateForm({ litres: e.target.value })} required /></div>
               <div className="space-y-1.5"><Label required>Amount (NAD)</Label><Input type="number" step="0.01" placeholder="e.g. 850.00" value={formData.amount} onChange={(e) => updateForm({ amount: e.target.value })} required /></div>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5"><Label>Odometer Reading</Label><Input type="number" placeholder="km" value={formData.odometerReading} onChange={(e) => updateForm({ odometerReading: e.target.value })} /></div>
               <div className="space-y-1.5"><Label>Receipt Reference</Label><Input placeholder="Receipt #" value={formData.referenceNumber} onChange={(e) => updateForm({ referenceNumber: e.target.value })} /></div>
-              <div className="space-y-1.5"><Label required>Payment Method</Label><select value={formData.paymentMethod} onChange={(e) => updateForm({ paymentMethod: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"><option value="fuel_card">Fuel Card</option><option value="cash">Cash</option><option value="personal_reimbursement">Personal Reimbursement</option></select></div>
+              <div className="space-y-1.5"><Label required>Payment Method</Label><StyledSelect value={formData.paymentMethod} onChange={(e) => updateForm({ paymentMethod: e.target.value })}><option value="fuel_card">Fuel Card</option><option value="cash">Cash</option><option value="personal_reimbursement">Personal Reimbursement</option></StyledSelect></div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5"><Label required>Fill Type</Label><select value={formData.fillType} onChange={(e) => updateForm({ fillType: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"><option value="full">Full Tank</option><option value="partial">Partial Fill</option></select></div>
+              <div className="space-y-1.5"><Label required>Fill Type</Label><StyledSelect value={formData.fillType} onChange={(e) => updateForm({ fillType: e.target.value })}><option value="full">Full Tank</option><option value="partial">Partial Fill</option></StyledSelect></div>
               {formData.paymentMethod === 'personal_reimbursement' && (
                 <div className="space-y-1.5"><Label required>Employee Number</Label><Input placeholder="Your employee number for reimbursement" value={formData.employeeNumber} onChange={(e) => updateForm({ employeeNumber: e.target.value })} required={formData.paymentMethod === 'personal_reimbursement'} /></div>
               )}

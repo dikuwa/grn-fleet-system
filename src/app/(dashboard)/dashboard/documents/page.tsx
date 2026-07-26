@@ -4,6 +4,7 @@ import { getDb, isDbConnected } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { eq, desc, and, sql, count } from 'drizzle-orm';
 import Link from 'next/link';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -192,29 +193,27 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink-500 mb-1">Type</label>
-                <select
+                <StyledSelect
                   name="type"
                   defaultValue={type || ''}
-                  className="h-10 rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  placeholder="All Types"
                 >
-                  <option value="">All Types</option>
                   {Object.entries(DOCUMENT_TYPE_LABELS).map(([key, label]) => (
                     <option key={key} value={key}>{label}</option>
                   ))}
-                </select>
+                </StyledSelect>
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
-                <select
+                <StyledSelect
                   name="status"
                   defaultValue={status || ''}
-                  className="h-10 rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  placeholder="All Statuses"
                 >
-                  <option value="">All Statuses</option>
                   <option value="draft">Draft</option>
                   <option value="issued">Issued</option>
                   <option value="superseded">Superseded</option>
-                </select>
+                </StyledSelect>
               </div>
               <Button variant="primary" size="sm" type="submit">Filter</Button>
               {(q || status || type) && (

@@ -1,5 +1,6 @@
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Plus, Upload, Database, Search, ChevronRight, ChevronLeft } from 'lucide-react';
 import Link from 'next/link';
 import { isDbConnected, getDb } from '@/db';
@@ -192,20 +193,17 @@ export default async function StaffDirectoryPage({
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500" />
           <input type="search" name="q" defaultValue={query} placeholder="Search by name, employee number, email..." className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 pl-9 text-sm text-ink-950 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-brand-600" />
         </div>
-        <select name="office" defaultValue={officeFilter} className="h-10 rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-600">
-          <option value="">All Offices</option>
+        <StyledSelect name="office" defaultValue={officeFilter} placeholder="All Offices">
           {allOffices.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
-        </select>
-        <select name="department" defaultValue={departmentFilter} className="h-10 rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-600">
-          <option value="">All Departments</option>
+        </StyledSelect>
+        <StyledSelect name="department" defaultValue={departmentFilter} placeholder="All Departments">
           {allDepartments.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
-        </select>
-        <select name="status" defaultValue={statusFilter} className="h-10 rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-700 focus:outline-none focus:ring-2 focus:ring-brand-600">
-          <option value="">All Status</option>
+        </StyledSelect>
+        <StyledSelect name="status" defaultValue={statusFilter} placeholder="All Status">
           <option value="active">Active</option>
           <option value="suspended">Suspended</option>
           <option value="terminated">Terminated</option>
-        </select>
+        </StyledSelect>
         {(query || officeFilter || departmentFilter || statusFilter) && (
           <Link href="/dashboard/staff" className="h-10 rounded-[8px] border border-border px-3 text-xs text-ink-500 hover:bg-muted transition-colors inline-flex items-center">Clear Filters</Link>
         )}

@@ -6,6 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff, Truck, Camera, Trash2 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
@@ -229,7 +230,7 @@ export default function DepartureInspectionPage() {
             )}
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5"><Label required>Odometer Reading (km)</Label><Input type="number" placeholder="e.g. 45200" value={odometer} onChange={(e) => setOdometer(e.target.value)} required /></div>
-              <div className="space-y-1.5"><Label required>Fuel Level</Label><select value={fuelLevel} onChange={(e) => setFuelLevel(e.target.value)} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"><option value="full">Full</option><option value="three_quarters">¾</option><option value="half">½</option><option value="quarter">¼</option><option value="empty">Empty</option></select></div>
+              <div className="space-y-1.5"><Label required>Fuel Level</Label><StyledSelect value={fuelLevel} onChange={(e) => setFuelLevel(e.target.value)} placeholder="Select fuel level"><option value="full">Full</option><option value="three_quarters">¾</option><option value="half">½</option><option value="quarter">¼</option><option value="empty">Empty</option></StyledSelect></div>
               <input type="hidden" name="tripId" value={tripId} />
               <input type="hidden" name="vehicleId" value={vehicleId} />
             </div>

@@ -9,6 +9,7 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { StyledSelect } from '@/components/ui/styled-select';
 import {
   User, Mail, Shield, CalendarDays, Loader2, ChevronLeft, CheckCircle2, XCircle,
   Plus, Trash2, Database, KeyRound, Copy, CheckCheck, UserPlus,
@@ -425,15 +426,14 @@ export default function AdminUserDetailPage({ params }: PageProps) {
             <div className="space-y-2">
               <Label>Status</Label>
               <div className="flex gap-2">
-                <select
+                <StyledSelect
                   value={selectedStatus}
                   onChange={(e) => setSelectedStatus(e.target.value)}
-                  className="h-10 flex-1 rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   {STATUS_OPTIONS.map((s) => (
                     <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
                   ))}
-                </select>
+                </StyledSelect>
                 <Button
                   variant="primary"
                   size="sm"
@@ -536,16 +536,15 @@ export default function AdminUserDetailPage({ params }: PageProps) {
             <div className="mt-4 pt-4 border-t border-border space-y-3">
               <p className="text-xs font-medium text-ink-500 uppercase tracking-wider">Assign New Role</p>
               <div className="flex items-center gap-2">
-                <select
+                <StyledSelect
                   value={selectedRoleId}
                   onChange={(e) => setSelectedRoleId(e.target.value)}
-                  className="h-10 flex-1 rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   <option value="">Select a role...</option>
                   {rolesNotAssigned.map((r) => (
                     <option key={r.id} value={r.id}>{r.name}</option>
                   ))}
-                </select>
+                </StyledSelect>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -596,10 +595,9 @@ export default function AdminUserDetailPage({ params }: PageProps) {
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label required>Target User</Label>
-              <select
+              <StyledSelect
                 value={delegateUserId}
                 onChange={(e) => setDelegateUserId(e.target.value)}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
               >
                 <option value="">{delegateUsers ? 'Select a user...' : 'Loading users...'}</option>
                 {(delegateUsers || []).map((du) => (
@@ -607,15 +605,14 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                     {du.name || du.email} ({du.tenantStatus === 'pending_activation' ? 'Pending' : 'Active'})
                   </option>
                 ))}
-              </select>
+              </StyledSelect>
               <p className="text-xs text-ink-500">Select the user who will temporarily act in this role.</p>
             </div>
             <div className="space-y-1.5">
               <Label required>Role to Delegate</Label>
-              <select
+              <StyledSelect
                 value={delegateRoleId}
                 onChange={(e) => setDelegateRoleId(e.target.value)}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
               >
                 <option value="">Select a role...</option>
                 {userData.roleAssignments
@@ -623,7 +620,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                   .map((a) => (
                     <option key={a.id} value={a.roleId}>{a.roleName}</option>
                   ))}
-              </select>
+              </StyledSelect>
               <p className="text-xs text-ink-500">Only this user&apos;s permanent roles can be delegated.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">

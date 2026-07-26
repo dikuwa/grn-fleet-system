@@ -92,6 +92,13 @@
       "when": 1784908225315,
       "tag": "0012_add_username_column",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784968700000,
+      "tag": "0013_add_performance_indexes",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,7 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { StyledSelect } from '@/components/ui/styled-select';
 import {
   Users, Search, ChevronRight, Mail, Loader2, Send, CheckCircle2, XCircle,
   RotateCcw, Ban, User, Copy, Download, ExternalLink, Smartphone,
@@ -402,7 +403,7 @@ export default function AdminUsersPage() {
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label required>Staff Member</Label>
-              <select
+              <StyledSelect
                 value={inviteEmployeeId}
                 onChange={(event) => {
                   const employeeId = event.target.value;
@@ -413,7 +414,6 @@ export default function AdminUsersPage() {
                     if (employee.email) setInviteEmail(employee.email);
                   }
                 }}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
               >
                 <option value="">Select an employee...</option>
                 {availableEmployees.map((employee) => (
@@ -421,7 +421,7 @@ export default function AdminUsersPage() {
                     {employee.employeeNumber} — {employee.firstName} {employee.lastName} ({employee.officeName || 'No office'})
                   </option>
                 ))}
-              </select>
+              </StyledSelect>
               <p className="text-xs text-ink-500">Accounts must be linked to an active employee record.</p>
             </div>
             <div className="space-y-1.5">
@@ -452,16 +452,15 @@ export default function AdminUsersPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Role</Label>
-              <select
+              <StyledSelect
                 value={inviteRoleId}
                 onChange={(e) => setInviteRoleId(e.target.value)}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
               >
                 <option value="">No role</option>
                 {roles.map((r) => (
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
-              </select>
+              </StyledSelect>
             </div>
 
             {inviteResult && (

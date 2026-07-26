@@ -4,9 +4,11 @@ import { vehicles } from '@/db/schema/fleet';
 import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
+import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Database, Fuel, Search, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate, formatCurrency } from '@/lib/utils';
@@ -170,22 +172,20 @@ export default async function FuelPage({ searchParams }: PageProps) {
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Payment Method</label>
-              <select name="payment_method" defaultValue={result.filters.paymentMethod ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
-                <option value="">All Methods</option>
+              <StyledSelect name="payment_method" defaultValue={result.filters.paymentMethod ?? ''} placeholder="All Methods">
                 <option value="fuel_card">Fuel Card</option>
                 <option value="cash">Cash</option>
                 <option value="personal_reimbursement">Personal Reimbursement</option>
-              </select>
+              </StyledSelect>
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Anomaly</label>
-              <select name="anomaly_state" defaultValue={result.filters.anomalyState ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
-                <option value="">All States</option>
+              <StyledSelect name="anomaly_state" defaultValue={result.filters.anomalyState ?? ''} placeholder="All States">
                 <option value="none">Normal</option>
                 <option value="flagged">Flagged</option>
                 <option value="verified">Verified</option>
                 <option value="rejected">Rejected</option>
-              </select>
+              </StyledSelect>
             </div>
             <Button variant="primary" size="sm" type="submit"><Search className="h-4 w-4" /> Filter</Button>
           </form>

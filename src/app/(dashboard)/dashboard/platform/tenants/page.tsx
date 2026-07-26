@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import {
   Building2, Search, Plus, ChevronRight, Users, Clock,
@@ -146,8 +147,7 @@ export default function PlatformTenantsPage() {
               </div>
               <div className="space-y-1.5">
                 <Label>Tenant Type</Label>
-                <select
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                <StyledSelect
                   value={formData.type}
                   onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                 >
@@ -155,7 +155,7 @@ export default function PlatformTenantsPage() {
                   <option value="ministry">Ministry / Department</option>
                   <option value="agency">Government Agency</option>
                   <option value="municipality">Municipality</option>
-                </select>
+                </StyledSelect>
               </div>
               {createError && (
                 <p className="text-xs text-status-error-text">{createError}</p>

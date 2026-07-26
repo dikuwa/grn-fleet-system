@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Database } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
@@ -227,31 +228,29 @@ export default async function DefectsPage({ searchParams }: PageProps) {
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Status
               </label>
-              <select
-                name="status"
-                defaultValue={result.filters.status}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
-              >
-                <option value="open">Open</option>
-                <option value="resolved">Resolved</option>
-                <option value="">All</option>
-              </select>
+  <StyledSelect
+    name="status"
+    defaultValue={result.filters.status}
+  >
+    <option value="open">Open</option>
+    <option value="resolved">Resolved</option>
+    <option value="">All</option>
+  </StyledSelect>
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Severity
               </label>
-              <select
+              <StyledSelect
                 name="severity"
                 defaultValue={result.filters.severity ?? ''}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
               >
                 <option value="">All Severities</option>
                 <option value="critical">Critical</option>
                 <option value="major">Major</option>
                 <option value="minor">Minor</option>
                 <option value="informational">Informational</option>
-              </select>
+              </StyledSelect>
             </div>
             <Button variant="primary" size="sm" type="submit">
               <Search className="h-4 w-4" />

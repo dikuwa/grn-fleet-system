@@ -31,6 +31,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  viewportFit: 'cover',
   themeColor: '#1f4e8c',
 };
 
@@ -43,9 +44,24 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Determine initial theme server-side (light is safe default, client will hydrate)
+  const themeScript = `
+    (function() {
+      try {
+        var t = localStorage.getItem('govfleet-theme');
+        var isDark = false;
+        if (t === 'dark') isDark = true;
+        else if (t === 'system' || !t) isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', isDark);
+        document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+      } catch(e) {}
+    })();
+  `;
+
   return (
     <html lang="en" className={cn(onest.variable)} suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <link rel="manifest" href="/manifest.json" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />

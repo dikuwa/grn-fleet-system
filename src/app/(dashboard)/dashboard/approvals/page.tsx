@@ -5,9 +5,11 @@ import { employees } from '@/db/schema/people';
 import { eq, desc, and, sql, type SQL, or, isNull, ne } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
+import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Database, ClipboardCheck, Search, ChevronRight, ChevronLeft, CheckCircle2, XCircle } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
@@ -146,10 +148,9 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
           <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
-              <select name="status" defaultValue={result.filters.status ?? ''} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
-                <option value="">All Statuses</option>
+              <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
                 {Object.entries(WORKFLOW_STATUS_LABELS).map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
-              </select>
+              </StyledSelect>
             </div>
             <Button variant="primary" size="sm" type="submit"><Search className="h-4 w-4" /> Filter</Button>
           </form>
@@ -179,9 +180,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-[650] text-ink-950">{wf.requestReference || 'No Reference'}</p>
-                        <Badge variant={wf.status === 'active' ? 'info' : wf.status === 'completed' ? 'success' : wf.status === 'overridden' ? 'emergency' : 'cancelled'} size="sm">
-                          {WORKFLOW_STATUS_LABELS[wf.status] ?? wf.status}
-                        </Badge>
+                        <StatusBadgeWithIcon status={wf.status} />
                         <Badge variant={wf.requestScope === 'national' ? 'emergency' : 'info'} size="sm">{wf.requestScope ?? 'regional'}</Badge>
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">

@@ -2,6 +2,7 @@ import { getDb, isDbConnected } from '@/db';
 import { vehicles, vehicleCategories, vehicleDefects, maintenanceEvents } from '@/db/schema/fleet';
 import { offices } from '@/db/schema/people';
 import { eq, and, sql, like, or, isNull, type SQL } from 'drizzle-orm';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -281,52 +282,49 @@ export default async function FleetPage({ searchParams }: PageProps) {
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Status
               </label>
-              <select
+              <StyledSelect
                 name="status"
                 defaultValue={result.filters.status ?? ''}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                placeholder="All Statuses"
               >
-                <option value="">All Statuses</option>
                 {Object.entries(VEHICLE_STATUS_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
                 ))}
-              </select>
+              </StyledSelect>
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Category
               </label>
-              <select
+              <StyledSelect
                 name="category_id"
                 defaultValue={result.filters.categoryId ?? ''}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                placeholder="All Categories"
               >
-                <option value="">All Categories</option>
                 {result.categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>
                     {cat.name}
                   </option>
                 ))}
-              </select>
+              </StyledSelect>
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Office
               </label>
-              <select
+              <StyledSelect
                 name="office_id"
                 defaultValue={result.filters.officeId ?? ''}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                placeholder="All Offices"
               >
-                <option value="">All Offices</option>
                 {result.allOffices.map((off) => (
                   <option key={off.id} value={off.id}>
                     {off.name}
                   </option>
                 ))}
-              </select>
+              </StyledSelect>
             </div>
             <Button variant="primary" size="sm" type="submit">
               <Search className="h-4 w-4" />

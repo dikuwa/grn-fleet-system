@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { Plus } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
@@ -65,12 +66,12 @@ export function OfficeDialog({ tenantId }: { tenantId: string }) {
           </div>
           <div className="space-y-1.5">
             <Label required>Type</Label>
-            <select value={type} onChange={(e) => setType(e.target.value)} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200">
+            <StyledSelect value={type} onChange={(e) => setType(e.target.value)}>
               <option value="head_office">Head Office</option>
               <option value="constituency_office">Constituency Office</option>
               <option value="settlement_office">Settlement Office</option>
               <option value="directorate">Directorate</option>
-            </select>
+            </StyledSelect>
           </div>
           <div className="space-y-1.5">
             <Label>Address</Label>

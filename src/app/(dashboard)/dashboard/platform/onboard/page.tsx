@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { StyledSelect } from '@/components/ui/styled-select';
 import {
   Building2, ChevronLeft, ChevronRight, CheckCircle2, Loader2,
   Plus, X, Shield, Users, Mail, Palette, MapPin, Hash,
@@ -301,26 +302,24 @@ export default function OnboardTenantPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Type</Label>
-                <select
-                  className="h-11 w-full rounded-[8px] border border-border bg-surface px-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-200"
+                <StyledSelect
                   value={form.orgType}
                   onChange={(e) => updateField('orgType', e.target.value)}
                 >
                   {ORG_TYPES.map((t) => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
-                </select>
+                </StyledSelect>
               </div>
               <div className="space-y-1.5">
                 <Label>Timezone</Label>
-                <select
-                  className="h-11 w-full rounded-[8px] border border-border bg-surface px-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-200"
+                <StyledSelect
                   value={form.timezone}
                   onChange={(e) => updateField('timezone', e.target.value)}
                 >
                   <option value="Africa/Windhoek">Africa/Windhoek (UTC+2)</option>
                   <option value="Africa/Windhoek">Africa/Windhoek (CAT)</option>
-                </select>
+                </StyledSelect>
               </div>
             </div>
           </div>
@@ -418,8 +417,7 @@ export default function OnboardTenantPage() {
                   <Input placeholder="Code" value={office.code} onChange={(e) => updateOffice(i, 'code', e.target.value.toUpperCase())} className="h-10 font-mono" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <select
-                    className="h-10 rounded-[8px] border border-border bg-surface px-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  <StyledSelect
                     value={office.type}
                     onChange={(e) => updateOffice(i, 'type', e.target.value)}
                   >
@@ -427,7 +425,7 @@ export default function OnboardTenantPage() {
                     <option value="constituency_office">Constituency Office</option>
                     <option value="settlement_office">Settlement Office</option>
                     <option value="depot">Depot / Workshop</option>
-                  </select>
+                  </StyledSelect>
                   <Input placeholder="Address (optional)" value={office.address} onChange={(e) => updateOffice(i, 'address', e.target.value)} className="h-10" />
                 </div>
               </div>

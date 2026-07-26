@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { StyledSelect } from '@/components/ui/styled-select';
 import {
   Building2, Loader2, ChevronLeft, Save, CheckCircle2, Database,
   Globe, Clock, Users, Palette, Mail, Phone, MapPin, Image as ImageIcon,
@@ -285,29 +286,26 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
                 <Input value={tenant.code} disabled className="opacity-60" />
               </FieldWrapper>
               <FieldWrapper label="Status">
-                <select
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                <StyledSelect
                   value={editStatus}
                   onChange={(e) => setEditStatus(e.target.value)}
                 >
                   <option value="active">Active</option>
                   <option value="suspended">Suspended</option>
                   <option value="inactive">Inactive</option>
-                </select>
+                </StyledSelect>
               </FieldWrapper>
               <FieldWrapper label="Timezone">
-                <select
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                <StyledSelect
                   value={editTimezone}
                   onChange={(e) => setEditTimezone(e.target.value)}
                 >
                   <option value="Africa/Windhoek">Africa/Windhoek (CAT, UTC+2)</option>
                   <option value="Africa/Windhoek">Africa/Windhoek</option>
-                </select>
+                </StyledSelect>
               </FieldWrapper>
               <FieldWrapper label="Type">
-                <select
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                <StyledSelect
                   value={tenant.type}
                   disabled
                 >
@@ -315,7 +313,7 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
                   <option value="ministry">Ministry / Department</option>
                   <option value="agency">Government Agency</option>
                   <option value="municipality">Municipality</option>
-                </select>
+                </StyledSelect>
               </FieldWrapper>
               <FieldWrapper label="URL Slug">
                 <Input value={tenant.slug} disabled className="opacity-60" />
