@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-07-26 — Session 48: Profile avatar fix, E2E test repairs, production deployment, performance indexes
+
+### Fixed
+
+- **Profile avatar clipping** — Circular avatar container now has `overflow-hidden` to properly clip the image, preventing users' profile pictures from appearing "covered behind" the circle boundary.
+- **Inspection API UUID error** — `driverEmployeeId` was falling back to `userId` (non-UUID) when no `tripId` provided, causing `invalid input syntax for type uuid` errors. Fixed to use `null` instead.
+- **Production E2E timing** — Switched 24 page-load tests from `waitUntil: 'load'` (fires on initial HTML) to `waitUntil: 'networkidle'` (waits for all JS chunks/API calls) to handle Vercel cold-start latency.
+- **Login form selector regression** — `signInViaForm` in `offline-conflict-resolution.spec.ts` used `input[type="email"]` which broke when login form changed to username/email text field.
+
+### Changed
+
+- **Permissions** — Added `Permissions.REQUEST_CREATE` to `TENANT_ADMIN` role so tenant admins can create transport requests (fixes route-calculation 403).
+- **E2E vehicle selection** — Photo-upload test strictly uses `status === 'available'` vehicles to avoid `409: Departure inspection blocked` from blocking defects on maintenance vehicles.
+- **Role-isolation test** — Changed `expect(available).toBeTruthy()` to `test.skip(!available, ...)` for national routing test to handle sequential test state consumption.
+
+### Added
+
+- **Performance indexes** (migration 0014) — 45 new `CREATE INDEX IF NOT EXISTS` statements across notifications, audit events, generated documents, share links, driver profiles, workflows, imports, inspection photos, employee documents, departments, and tenant memberships tables.
+- **session-48-report.md** — Comprehensive final report documenting all changes.
+
+### Validation
+
+- **TypeScript**: 0 errors ✅
+- **Build**: Production build passes ✅
+- **Seed**: Re-run to sync permission changes ✅
+- **Deploy**: Vercel production deployed and verified ✅
+
+---
+
 ## 2026-07-23 — Session 47: Complete audit P0 — roles, permissions, sidebar filtering, test accounts, idempotent seed
 
 ### Added
