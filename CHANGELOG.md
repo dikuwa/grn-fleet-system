@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-07-27 — Session 50: Complete 13-role functional audit and workflow repair
+
+### Fixed
+
+- **Final authorisation and driver hand-off** — Regional and national final approvals now provision the canonical Trip Authority; driver acknowledgement updates its state.
+- **Fuel review and tenant isolation** — Added permission-checked fuel verification/rejection and review UI, and tenant-scoped fuel detail lookup.
+- **Trip closure with defects** — Completed failed return inspections can proceed to operational closure while a blocking defect keeps the vehicle in maintenance.
+- **Tenant settings and branding** — Added validated, audited settings persistence and private tenant-logo upload, replacement, retrieval, and removal.
+- **Dashboard reliability** — Fixed snapshot report polling, duplicate report navigation, offline hydration/state handling, malformed trip-ID handling, and settings control accessibility.
+- **Local QA safety** — Local PostgreSQL URLs use the supported `postgres-js` Drizzle adapter; hosted Neon URLs retain the Neon HTTP adapter.
+
+### Added
+
+- `src/e2e/tenant-admin-settings.spec.ts` for settings persistence, private logo lifecycle, accessible controls, and non-admin denial.
+- `docs/ROLE_FUNCTIONAL_AUDIT.md` with the 13-role evidence matrix, all 76 dashboard routes, 96 API handlers, workflows, defect register, responsive results, and remaining risks.
+- Tenant Administrator screenshots under `docs/qa-evidence/screenshots/`.
+
+### Validation
+
+- **Migrations and seed:** disposable local PostgreSQL database, 13 accounts and two isolation tenants ✅
+- **TypeScript:** 0 errors ✅
+- **ESLint:** 0 errors (158 existing warnings) ✅
+- **Unit tests:** 82/82 passing ✅
+- **Integration tests:** 42/42 passing ✅
+- **Production build:** passes, 123 pages/data routes generated ✅
+- **Playwright:** 110 passed, 28 existing conditional/superseded skips, 0 failed ✅
+
+---
+
 ## 2026-07-27 — Session 49: Employee-first requests, avatar delivery, unified theming, and live UI
 
 ### Fixed

@@ -9,6 +9,21 @@
 - **Current phase:** Phase 14 — Auth, SMS, CI & Test Completion
 - **Deployment:** Live at https://grn-fleet-system.vercel.app
 - **Database:** Neon Postgres — migrated, seeded, verified
+- **Latest audit:** 13/13 roles, 76 dashboard pages and 96 API handlers reviewed; 82 unit, 42 integration and 110 browser cases passing locally (2026-07-27)
+
+## Latest Functional Audit — Complete (2026-07-27)
+
+- [x] All 13 seeded role accounts authenticate and receive a responsive, permission-filtered dashboard.
+- [x] Regional workflow passes through separate requester, supervisor, transport, release, authoriser, driver, inspector and closure actors.
+- [x] National workflow uses Director release and Chief Regional Officer final authorisation with stage isolation.
+- [x] Tenant Administrator profile avatar and private tenant-logo lifecycle persist across reload and support removal.
+- [x] Tenant settings validate, save, reload and create audit events.
+- [x] Fuel review, return-inspection closure, authority provisioning and malformed-ID handling repaired.
+- [x] Tenant Auditor writes, tenant-to-platform escalation and cross-tenant record access are denied server-side.
+- [x] Production build, TypeScript, lint, unit, integration and complete Playwright runs pass.
+
+See `docs/ROLE_FUNCTIONAL_AUDIT.md` for the evidence, full route matrix, defect register
+and remaining deployment risks.
 
 ## Completed
 

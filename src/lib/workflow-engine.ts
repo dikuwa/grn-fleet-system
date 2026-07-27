@@ -28,6 +28,7 @@ import {
   vehicleAllocations,
   employees,
   trips,
+  tripAuthorities,
   rolePermissions,
   roles,
 } from '@/db/schema';
@@ -40,6 +41,7 @@ import { Permissions } from '@/lib/permissions';
 import { notifications } from '@/db/schema';
 import { workflowStepToStatus, workflowCompletedStatus } from '@/lib/request-status';
 import { resolveRoleHolder } from '@/lib/employee-lifecycle';
+import { provisionTripAuthority, setAuthorityStatus } from '@/lib/trip-authority';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,13 +55,10 @@ export const ADHOC_DEFINITION_ID = '00000000-0000-0000-0000-000000000000';
 // ---------------------------------------------------------------------------
 
 export type WorkflowActionType =
-  | 'supervisor_approve'
-  | 'transport_review'
-  | 'release'
-  | 'authorise'
-  | 'acknowledge';
+  'supervisor_approve' | 'transport_review' | 'release' | 'authorise' | 'acknowledge';
 
-export type WorkflowActionResult = 'approved' | 'rejected' | 'returned' | 'released' | 'authorised' | 'acknowledged' | 'overridden';
+export type WorkflowActionResult =
+  'approved' | 'rejected' | 'returned' | 'released' | 'authorised' | 'acknowledged' | 'overridden';
 
 export type ProcessActionInput = {
   instanceId: string;
@@ -205,13 +204,22 @@ export class WorkflowEngine {
    */
   async initializeForRequest(requestId: string, tenantId: string): Promise<EngineResult> {
     const [request] = await this.db
-      .select({ scope: transportRequests.scope, id: transportRequests.id, officeId: transportRequests.officeId, departmentId: transportRequests.departmentId, regionId: transportRequests.regionId })
+      .select({
+        scope: transportRequests.scope,
+        id: transportRequests.id,
+        officeId: transportRequests.officeId,
+        departmentId: transportRequests.departmentId,
+        regionId: transportRequests.regionId,
+      })
       .from(transportRequests)
       .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, tenantId)))
       .limit(1);
 
     if (!request) {
-      return { ok: false, error: NextResponse.json({ error: 'Transport request not found' }, { status: 404 }) };
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Transport request not found' }, { status: 404 }),
+      };
     }
 
     const scope = request.scope || 'regional';
@@ -229,18 +237,34 @@ export class WorkflowEngine {
       )
       .orderBy(workflowDefinitions.version);
     const definition = definitionCandidates
-      .filter((candidate) =>
-        (!candidate.regionId || candidate.regionId === request.regionId) &&
-        (!candidate.officeId || candidate.officeId === request.officeId) &&
-        (!candidate.departmentId || candidate.departmentId === request.departmentId))
+      .filter(
+        (candidate) =>
+          (!candidate.regionId || candidate.regionId === request.regionId) &&
+          (!candidate.officeId || candidate.officeId === request.officeId) &&
+          (!candidate.departmentId || candidate.departmentId === request.departmentId),
+      )
       .sort((left, right) => {
-        const leftSpecificity = Number(Boolean(left.regionId)) + Number(Boolean(left.officeId)) + Number(Boolean(left.departmentId));
-        const rightSpecificity = Number(Boolean(right.regionId)) + Number(Boolean(right.officeId)) + Number(Boolean(right.departmentId));
+        const leftSpecificity =
+          Number(Boolean(left.regionId)) +
+          Number(Boolean(left.officeId)) +
+          Number(Boolean(left.departmentId));
+        const rightSpecificity =
+          Number(Boolean(right.regionId)) +
+          Number(Boolean(right.officeId)) +
+          Number(Boolean(right.departmentId));
         return rightSpecificity - leftSpecificity || right.version - left.version;
       })[0];
 
     if (!definition) {
-      return { ok: false, error: NextResponse.json({ error: `No active ${scope} approval route is configured for this organisation and request.` }, { status: 409 }) };
+      return {
+        ok: false,
+        error: NextResponse.json(
+          {
+            error: `No active ${scope} approval route is configured for this organisation and request.`,
+          },
+          { status: 409 },
+        ),
+      };
     }
 
     // If no definition exists, we use the built-in defaults
@@ -277,13 +301,16 @@ export class WorkflowEngine {
       });
     }
 
-    await this.logAuditEvent({
-      entityType: 'workflow_instance',
-      entityId: instance.id,
-      action: 'workflow.initialized',
-      actorUserId: 'system',
-      metadata: { requestId, scope, stepCount: resolvedSteps.length },
-    }, tenantId);
+    await this.logAuditEvent(
+      {
+        entityType: 'workflow_instance',
+        entityId: instance.id,
+        action: 'workflow.initialized',
+        actorUserId: 'system',
+        metadata: { requestId, scope, stepCount: resolvedSteps.length },
+      },
+      tenantId,
+    );
 
     return { ok: true, message: `Workflow initialised for ${scope} trip.`, instance };
   }
@@ -304,10 +331,7 @@ export class WorkflowEngine {
    *
    * On success, records the action and advances the workflow.
    */
-  async processAction(
-    input: ProcessActionInput,
-    session: AuthSession,
-  ): Promise<EngineResult> {
+  async processAction(input: ProcessActionInput, session: AuthSession): Promise<EngineResult> {
     const { instanceId, action, result, comment } = input;
 
     const [instance] = await this.db
@@ -317,17 +341,32 @@ export class WorkflowEngine {
       .limit(1);
 
     if (!instance) {
-      return { ok: false, error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }) };
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }),
+      };
     }
 
-    const [tenantRequest] = await this.db.select({ tenantId: transportRequests.tenantId }).from(transportRequests)
-      .where(eq(transportRequests.id, instance.requestId)).limit(1);
+    const [tenantRequest] = await this.db
+      .select({ tenantId: transportRequests.tenantId })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, instance.requestId))
+      .limit(1);
     if (!tenantRequest || tenantRequest.tenantId !== session.tenantId) {
-      return { ok: false, error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }) };
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }),
+      };
     }
 
     if (instance.status !== 'active') {
-      return { ok: false, error: NextResponse.json({ error: `Workflow is already ${instance.status}.` }, { status: 409 }) };
+      return {
+        ok: false,
+        error: NextResponse.json(
+          { error: `Workflow is already ${instance.status}.` },
+          { status: 409 },
+        ),
+      };
     }
 
     // Get the current step definition
@@ -335,18 +374,36 @@ export class WorkflowEngine {
     const currentStep = steps.find((s) => s.stepOrder === instance.currentStepOrder);
 
     if (!currentStep) {
-      return { ok: false, error: NextResponse.json({ error: 'No step found at the current position.' }, { status: 400 }) };
+      return {
+        ok: false,
+        error: NextResponse.json(
+          { error: 'No step found at the current position.' },
+          { status: 400 },
+        ),
+      };
     }
 
     if (currentStep.actionType !== action) {
-      return { ok: false, error: NextResponse.json({
-        error: `Expected action "${currentStep.actionType}" but received "${action}".`,
-      }, { status: 400 }) };
+      return {
+        ok: false,
+        error: NextResponse.json(
+          {
+            error: `Expected action "${currentStep.actionType}" but received "${action}".`,
+          },
+          { status: 400 },
+        ),
+      };
     }
 
     // Validate: comment required
     if (currentStep.requiresComment && !comment?.trim()) {
-      return { ok: false, error: NextResponse.json({ error: 'A comment is required for this action.' }, { status: 400 }) };
+      return {
+        ok: false,
+        error: NextResponse.json(
+          { error: 'A comment is required for this action.' },
+          { status: 400 },
+        ),
+      };
     }
 
     // Validate: permission
@@ -361,7 +418,10 @@ export class WorkflowEngine {
     }
 
     if (currentStep.assignedUserId && currentStep.assignedUserId !== session.user.id) {
-      return { ok: false, error: forbiddenResponse('This workflow step is assigned to another responsible user.') };
+      return {
+        ok: false,
+        error: forbiddenResponse('This workflow step is assigned to another responsible user.'),
+      };
     }
 
     // Validate: separation of duty
@@ -375,34 +435,86 @@ export class WorkflowEngine {
       if (request && request.requesterUserId === session.user.id) {
         return {
           ok: false,
-          error: forbiddenResponse('You cannot approve your own request. Another authorised person must review it.'),
+          error: forbiddenResponse(
+            'You cannot approve your own request. Another authorised person must review it.',
+          ),
         };
       }
     }
     if (currentStep.separationDutyRole === 'release') {
-      const [releaseAction] = await this.db.select({ actorUserId: workflowActions.actorUserId })
+      const [releaseAction] = await this.db
+        .select({ actorUserId: workflowActions.actorUserId })
         .from(workflowActions)
-        .where(and(eq(workflowActions.instanceId, instance.id), eq(workflowActions.actionType, 'release')))
+        .where(
+          and(
+            eq(workflowActions.instanceId, instance.id),
+            eq(workflowActions.actionType, 'release'),
+          ),
+        )
         .limit(1);
       if (releaseAction?.actorUserId === session.user.id) {
-        return { ok: false, error: forbiddenResponse('The release officer cannot also perform final authorisation.') };
+        return {
+          ok: false,
+          error: forbiddenResponse('The release officer cannot also perform final authorisation.'),
+        };
       }
     }
     if (currentStep.actionType === 'acknowledge') {
-      const [assignedDriver] = await this.db.select({ userId: employees.userId })
+      const [assignedDriver] = await this.db
+        .select({ userId: employees.userId })
         .from(vehicleAllocations)
         .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
         .where(eq(vehicleAllocations.requestId, instance.requestId))
         .limit(1);
       if (!assignedDriver?.userId || assignedDriver.userId !== session.user.id) {
-        return { ok: false, error: forbiddenResponse('Only the driver assigned to this request may acknowledge it.') };
+        return {
+          ok: false,
+          error: forbiddenResponse('Only the driver assigned to this request may acknowledge it.'),
+        };
       }
+    }
+    let authorityContext: {
+      allocationId: string;
+      tripId: string;
+      driverEmployeeId: string | null;
+    } | null = null;
+    if (currentStep.actionType === 'authorise') {
+      const [context] = await this.db
+        .select({
+          allocationId: vehicleAllocations.id,
+          tripId: trips.id,
+          driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        })
+        .from(vehicleAllocations)
+        .innerJoin(trips, eq(trips.allocationId, vehicleAllocations.id))
+        .where(
+          and(
+            eq(vehicleAllocations.requestId, instance.requestId),
+            eq(trips.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      if (!context?.driverEmployeeId) {
+        return {
+          ok: false,
+          error: NextResponse.json(
+            {
+              error: 'A vehicle and eligible driver must be allocated before final authorisation.',
+            },
+            { status: 409 },
+          ),
+        };
+      }
+      authorityContext = context;
     }
 
     // Record the action
     try {
-      const [actorEmployee] = await this.db.select({ id: employees.id }).from(employees)
-        .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId))).limit(1);
+      const [actorEmployee] = await this.db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)))
+        .limit(1);
       const resolution = (currentStep.config || {}) as Record<string, unknown>;
       await this.db.insert(workflowActions).values({
         instanceId: instance.id,
@@ -411,7 +523,8 @@ export class WorkflowEngine {
         result,
         actorUserId: session.user.id,
         actorEmployeeId: actorEmployee?.id || null,
-        roleAssignmentId: typeof resolution.delegationId === 'string' ? resolution.delegationId : null,
+        roleAssignmentId:
+          typeof resolution.delegationId === 'string' ? resolution.delegationId : null,
         isActing: resolution.isActing === true,
         comment: comment ?? null,
         metadata: {
@@ -423,31 +536,79 @@ export class WorkflowEngine {
       });
     } catch (error) {
       if ((error as { code?: string }).code === '23505') {
-        return { ok: false, error: NextResponse.json({ error: 'This workflow step has already been completed.' }, { status: 409 }) };
+        return {
+          ok: false,
+          error: NextResponse.json(
+            { error: 'This workflow step has already been completed.' },
+            { status: 409 },
+          ),
+        };
       }
       throw error;
     }
 
+    if (currentStep.actionType === 'authorise' && authorityContext) {
+      await provisionTripAuthority({
+        tripId: authorityContext.tripId,
+        tenantId: session.tenantId,
+        requestId: instance.requestId,
+        allocationId: authorityContext.allocationId,
+        actorUserId: session.user.id,
+      });
+    }
+
     if (currentStep.actionType === 'acknowledge') {
-      const [actorEmployee] = await this.db.select({ id: employees.id }).from(employees)
-        .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId))).limit(1);
+      const [actorEmployee] = await this.db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)))
+        .limit(1);
       if (actorEmployee) {
-        const [allocation] = await this.db.select({ id: vehicleAllocations.id }).from(vehicleAllocations)
-          .where(eq(vehicleAllocations.requestId, instance.requestId)).limit(1);
+        const [allocation] = await this.db
+          .select({
+            id: vehicleAllocations.id,
+            authorityId: tripAuthorities.id,
+            authorityStatus: tripAuthorities.status,
+          })
+          .from(vehicleAllocations)
+          .innerJoin(trips, eq(trips.allocationId, vehicleAllocations.id))
+          .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+          .where(eq(vehicleAllocations.requestId, instance.requestId))
+          .limit(1);
         if (allocation) {
-          await this.db.update(trips).set({ driverAcknowledgedAt: new Date(), driverAcknowledgedByEmployeeId: actorEmployee.id, updatedAt: new Date() })
+          await this.db
+            .update(trips)
+            .set({
+              driverAcknowledgedAt: new Date(),
+              driverAcknowledgedByEmployeeId: actorEmployee.id,
+              updatedAt: new Date(),
+            })
             .where(eq(trips.allocationId, allocation.id));
+          if (allocation.authorityStatus === 'awaiting_driver_acceptance') {
+            await setAuthorityStatus({
+              authorityId: allocation.authorityId,
+              tenantId: session.tenantId,
+              next: 'driver_accepted',
+              patch: {
+                acceptedAt: new Date(),
+                acceptedByEmployeeId: actorEmployee.id,
+              },
+            });
+          }
         }
       }
     }
 
-    await this.logAuditEvent({
-      entityType: 'workflow_action',
-      entityId: instance.id,
-      action: `workflow.${result}`,
-      actorUserId: session.user.id,
-      metadata: { stepOrder: currentStep.stepOrder, actionType: action, comment },
-    }, session.tenantId);
+    await this.logAuditEvent(
+      {
+        entityType: 'workflow_action',
+        entityId: instance.id,
+        action: `workflow.${result}`,
+        actorUserId: session.user.id,
+        metadata: { stepOrder: currentStep.stepOrder, actionType: action, comment },
+      },
+      session.tenantId,
+    );
 
     // Fire-and-forget notification + email
     await this.sendActionNotification(instance, currentStep, result, session).catch(() => {
@@ -484,7 +645,8 @@ export class WorkflowEngine {
       .from(transportRequests)
       .where(eq(transportRequests.id, instance.requestId))
       .limit(1);
-    const scope: 'regional' | 'national' = (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
+    const scope: 'regional' | 'national' =
+      (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
 
     // Advance to the next step
     const nextStepOrder = currentStep.stepOrder + 1;
@@ -495,7 +657,11 @@ export class WorkflowEngine {
       const completedStatus = workflowCompletedStatus();
       await this.db
         .update(workflowInstances)
-        .set({ currentStepOrder: currentStep.stepOrder, status: 'completed', updatedAt: new Date() })
+        .set({
+          currentStepOrder: currentStep.stepOrder,
+          status: 'completed',
+          updatedAt: new Date(),
+        })
         .where(eq(workflowInstances.id, instance.id));
 
       await this.db
@@ -503,13 +669,16 @@ export class WorkflowEngine {
         .set({ status: completedStatus, updatedAt: new Date() })
         .where(eq(transportRequests.id, instance.requestId));
 
-      await this.logAuditEvent({
-        entityType: 'workflow_instance',
-        entityId: instance.id,
-        action: 'workflow.completed',
-        actorUserId: session.user.id,
-        metadata: { finalStep: currentStep.stepOrder },
-      }, session.tenantId);
+      await this.logAuditEvent(
+        {
+          entityType: 'workflow_instance',
+          entityId: instance.id,
+          action: 'workflow.completed',
+          actorUserId: session.user.id,
+          metadata: { finalStep: currentStep.stepOrder },
+        },
+        session.tenantId,
+      );
 
       const [updatedInstance] = await this.db
         .select()
@@ -517,7 +686,11 @@ export class WorkflowEngine {
         .where(eq(workflowInstances.id, instance.id))
         .limit(1);
 
-      return { ok: true, message: 'Workflow completed. Request approved.', instance: updatedInstance };
+      return {
+        ok: true,
+        message: 'Workflow completed. Request approved.',
+        instance: updatedInstance,
+      };
     }
 
     // Advance to the next step with a descriptive business status
@@ -532,13 +705,21 @@ export class WorkflowEngine {
       .set({ status: businessStatus, updatedAt: new Date() })
       .where(eq(transportRequests.id, instance.requestId));
 
-    await this.logAuditEvent({
-      entityType: 'workflow_instance',
-      entityId: instance.id,
-      action: 'workflow.advanced',
-      actorUserId: session.user.id,
-      metadata: { fromStep: currentStep.stepOrder, toStep: nextStepOrder, stepLabel: nextStep.label, businessStatus },
-    }, session.tenantId);
+    await this.logAuditEvent(
+      {
+        entityType: 'workflow_instance',
+        entityId: instance.id,
+        action: 'workflow.advanced',
+        actorUserId: session.user.id,
+        metadata: {
+          fromStep: currentStep.stepOrder,
+          toStep: nextStepOrder,
+          stepLabel: nextStep.label,
+          businessStatus,
+        },
+      },
+      session.tenantId,
+    );
 
     const [updatedInstance] = await this.db
       .select()
@@ -546,7 +727,11 @@ export class WorkflowEngine {
       .where(eq(workflowInstances.id, instance.id))
       .limit(1);
 
-    return { ok: true, message: `${currentStep.label} completed. Moved to: ${nextStep.label}.`, instance: updatedInstance };
+    return {
+      ok: true,
+      message: `${currentStep.label} completed. Moved to: ${nextStep.label}.`,
+      instance: updatedInstance,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -569,13 +754,22 @@ export class WorkflowEngine {
     session: AuthSession,
   ): Promise<EngineResult> {
     // Require emergency override permission
-    const permCheck = await requirePermission(session, Permissions.TRIP_AUTHORIZE_EMERGENCY as PermissionCode);
+    const permCheck = await requirePermission(
+      session,
+      Permissions.TRIP_AUTHORIZE_EMERGENCY as PermissionCode,
+    );
     if (permCheck instanceof NextResponse) {
       return { ok: false, error: permCheck };
     }
 
     if (!reason?.trim()) {
-      return { ok: false, error: NextResponse.json({ error: 'A justification is required for emergency override.' }, { status: 400 }) };
+      return {
+        ok: false,
+        error: NextResponse.json(
+          { error: 'A justification is required for emergency override.' },
+          { status: 400 },
+        ),
+      };
     }
 
     const [instance] = await this.db
@@ -585,17 +779,29 @@ export class WorkflowEngine {
       .limit(1);
 
     if (!instance) {
-      return { ok: false, error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }) };
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }),
+      };
     }
 
-    const [tenantRequest] = await this.db.select({ tenantId: transportRequests.tenantId }).from(transportRequests)
-      .where(eq(transportRequests.id, instance.requestId)).limit(1);
+    const [tenantRequest] = await this.db
+      .select({ tenantId: transportRequests.tenantId })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, instance.requestId))
+      .limit(1);
     if (!tenantRequest || tenantRequest.tenantId !== session.tenantId) {
-      return { ok: false, error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }) };
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }),
+      };
     }
 
     if (instance.status !== 'active') {
-      return { ok: false, error: NextResponse.json({ error: 'Workflow is not active.' }, { status: 409 }) };
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Workflow is not active.' }, { status: 409 }),
+      };
     }
 
     // Get remaining steps (from current step onward) to log as bypassed
@@ -619,7 +825,8 @@ export class WorkflowEngine {
     await this.db.insert(workflowActions).values({
       instanceId,
       stepOrder: instance.currentStepOrder,
-      actionType: steps.find((s) => s.stepOrder === instance.currentStepOrder)?.actionType ?? 'unknown',
+      actionType:
+        steps.find((s) => s.stepOrder === instance.currentStepOrder)?.actionType ?? 'unknown',
       result: 'overridden',
       actorUserId: session.user.id,
       comment: `EMERGENCY OVERRIDE: ${reason}`,
@@ -635,13 +842,15 @@ export class WorkflowEngine {
     // Emergency override sets status to a reasonable business status
     // rather than a generic 'approved_emergency'
     const nextStepOrder = instance.currentStepOrder;
-    const currentStepAction = steps.find((s) => s.stepOrder === nextStepOrder)?.actionType ?? 'release';
+    const currentStepAction =
+      steps.find((s) => s.stepOrder === nextStepOrder)?.actionType ?? 'release';
     const [reqRecord] = await this.db
       .select({ scope: transportRequests.scope })
       .from(transportRequests)
       .where(eq(transportRequests.id, instance.requestId))
       .limit(1);
-    const scope: 'regional' | 'national' = (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
+    const scope: 'regional' | 'national' =
+      (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
     const emergencyStatus = workflowStepToStatus(nextStepOrder, currentStepAction, scope);
 
     await this.db
@@ -649,13 +858,16 @@ export class WorkflowEngine {
       .set({ status: emergencyStatus, updatedAt: new Date() })
       .where(eq(transportRequests.id, instance.requestId));
 
-    await this.logAuditEvent({
-      entityType: 'emergency_override',
-      entityId: instanceId,
-      action: 'workflow.emergency_override',
-      actorUserId: session.user.id,
-      metadata: { reason, bypassedSteps, requiresPostTripReview: true },
-    }, session.tenantId);
+    await this.logAuditEvent(
+      {
+        entityType: 'emergency_override',
+        entityId: instanceId,
+        action: 'workflow.emergency_override',
+        actorUserId: session.user.id,
+        metadata: { reason, bypassedSteps, requiresPostTripReview: true },
+      },
+      session.tenantId,
+    );
 
     const [updatedInstance] = await this.db
       .select()
@@ -663,7 +875,11 @@ export class WorkflowEngine {
       .where(eq(workflowInstances.id, instance.id))
       .limit(1);
 
-    return { ok: true, message: 'Emergency override applied. Workflow completed.', instance: updatedInstance };
+    return {
+      ok: true,
+      message: 'Emergency override applied. Workflow completed.',
+      instance: updatedInstance,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -692,7 +908,9 @@ export class WorkflowEngine {
     const currentStep = steps.find((s) => s.stepOrder === instance.currentStepOrder) ?? null;
 
     const pendingSteps = steps.filter((s) => {
-      return !actions.some((a) => a.stepOrder === s.stepOrder && a.result !== 'rejected' && a.result !== 'returned');
+      return !actions.some(
+        (a) => a.stepOrder === s.stepOrder && a.result !== 'rejected' && a.result !== 'returned',
+      );
     });
 
     return {
@@ -722,11 +940,7 @@ export class WorkflowEngine {
       const steps = await this.db
         .select()
         .from(workflowSteps)
-        .where(
-          and(
-            eq(workflowSteps.definitionId, instance.definitionId),
-          ),
-        )
+        .where(and(eq(workflowSteps.definitionId, instance.definitionId)))
         .orderBy(workflowSteps.stepOrder);
 
       if (steps.length > 0) return this.resolveStepAssignments(steps, instance.requestId);
@@ -740,9 +954,10 @@ export class WorkflowEngine {
       .limit(1);
 
     const scope = request?.scope ?? 'regional';
-    const fallback = scope === 'national'
-      ? NATIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[]
-      : REGIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[];
+    const fallback =
+      scope === 'national'
+        ? (NATIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[])
+        : (REGIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[]);
     return this.resolveStepAssignments(fallback, instance.requestId);
   }
 
@@ -750,48 +965,57 @@ export class WorkflowEngine {
     steps: (typeof workflowSteps.$inferSelect)[],
     requestId: string,
   ) {
-    const requestRows = await this.db.select({ tenantId: transportRequests.tenantId })
-      .from(transportRequests).where(eq(transportRequests.id, requestId)).limit(1);
+    const requestRows = await this.db
+      .select({ tenantId: transportRequests.tenantId })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, requestId))
+      .limit(1);
     if (!Array.isArray(requestRows)) return steps;
     const [request] = requestRows;
     if (!request) return steps;
-    return Promise.all(steps.map(async (step) => {
-      if (!step.requiredPermission || step.actionType === 'acknowledge') return step;
-      const roleQuery = this.db.select({ roleId: roles.id }).from(roles);
-      if (typeof (roleQuery as { innerJoin?: unknown }).innerJoin !== 'function') return step;
-      const roleRows = await roleQuery.innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
-        .where(and(
-          eq(roles.tenantId, request.tenantId),
-          eq(rolePermissions.permissionCode, step.requiredPermission),
-        ));
-      const capability = step.actionType === 'authorise'
-        ? 'sign'
-        : step.actionType === 'release'
-          ? 'allocate'
-          : 'approve';
-      for (const role of roleRows) {
-        const holder = await resolveRoleHolder({
-          tenantId: request.tenantId,
-          roleId: role.roleId,
-          requireCapability: capability,
-        });
-        if (holder?.userId) {
-          return {
-            ...step,
-            assignedUserId: holder.userId,
-            config: {
-              ...(step.config || {}),
-              resolvedRoleId: role.roleId,
-              resolvedEmployeeId: holder.employeeId,
-              resolvedCapacity: holder.capacity,
-              isActing: holder.isActing,
-              delegationId: 'delegationId' in holder ? holder.delegationId : null,
-            },
-          };
+    return Promise.all(
+      steps.map(async (step) => {
+        if (!step.requiredPermission || step.actionType === 'acknowledge') return step;
+        const roleQuery = this.db.select({ roleId: roles.id }).from(roles);
+        if (typeof (roleQuery as { innerJoin?: unknown }).innerJoin !== 'function') return step;
+        const roleRows = await roleQuery
+          .innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
+          .where(
+            and(
+              eq(roles.tenantId, request.tenantId),
+              eq(rolePermissions.permissionCode, step.requiredPermission),
+            ),
+          );
+        const capability =
+          step.actionType === 'authorise'
+            ? 'sign'
+            : step.actionType === 'release'
+              ? 'allocate'
+              : 'approve';
+        for (const role of roleRows) {
+          const holder = await resolveRoleHolder({
+            tenantId: request.tenantId,
+            roleId: role.roleId,
+            requireCapability: capability,
+          });
+          if (holder?.userId) {
+            return {
+              ...step,
+              assignedUserId: holder.userId,
+              config: {
+                ...(step.config || {}),
+                resolvedRoleId: role.roleId,
+                resolvedEmployeeId: holder.employeeId,
+                resolvedCapacity: holder.capacity,
+                isActing: holder.isActing,
+                delegationId: 'delegationId' in holder ? holder.delegationId : null,
+              },
+            };
+          }
         }
-      }
-      return step;
-    }));
+        return step;
+      }),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -810,7 +1034,10 @@ export class WorkflowEngine {
     try {
       // Look up the request for the requester user ID and tenant
       const [request] = await this.db
-        .select({ requesterUserId: transportRequests.requesterUserId, tenantId: transportRequests.tenantId })
+        .select({
+          requesterUserId: transportRequests.requesterUserId,
+          tenantId: transportRequests.tenantId,
+        })
         .from(transportRequests)
         .where(eq(transportRequests.id, instance.requestId))
         .limit(1);
@@ -868,11 +1095,13 @@ export class WorkflowEngine {
       try {
         const { sendNotificationEmail } = await import('@/lib/email');
         const { employees } = await import('@/db/schema/people');
-        const [emp] = request.requesterUserId ? await this.db
-          .select({ email: employees.email, firstName: employees.firstName })
-          .from(employees)
-          .where(eq(employees.userId, request.requesterUserId))
-          .limit(1) : [undefined];
+        const [emp] = request.requesterUserId
+          ? await this.db
+              .select({ email: employees.email, firstName: employees.firstName })
+              .from(employees)
+              .where(eq(employees.userId, request.requesterUserId))
+              .limit(1)
+          : [undefined];
 
         // Map workflow results to email template types
         const emailTypeMap: Record<string, string> = {

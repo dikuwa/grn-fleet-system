@@ -12,6 +12,7 @@ import { notificationPreferences } from '@/db/schema/notifications';
 import { eq, and } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +35,22 @@ export async function GET(request: NextRequest) {
       .from(tenantBranding)
       .where(eq(tenantBranding.tenantId, session.tenantId))
       .limit(1)
-      .then((r) => (r.length > 0 ? r : [{ contactEmail: '', contactPhone: '', address: '', primaryColor: '#1F4E8C', accentColor: '#0F766E', documentFooter: '', senderName: '', senderEmail: '' }]));
+      .then((r) =>
+        r.length > 0
+          ? r
+          : [
+              {
+                contactEmail: '',
+                contactPhone: '',
+                address: '',
+                primaryColor: '#1F4E8C',
+                accentColor: '#0F766E',
+                documentFooter: '',
+                senderName: '',
+                senderEmail: '',
+              },
+            ],
+      );
 
     const [notifPrefs] = await db
       .select()
@@ -46,7 +62,19 @@ export async function GET(request: NextRequest) {
         ),
       )
       .limit(1)
-      .then((r) => (r.length > 0 ? r : [{ emailNotifications: true, inAppNotifications: true, quietHoursStart: '20:00', quietHoursEnd: '07:00', emergencyBypassQuietHours: true }]));
+      .then((r) =>
+        r.length > 0
+          ? r
+          : [
+              {
+                emailNotifications: true,
+                inAppNotifications: true,
+                quietHoursStart: '20:00',
+                quietHoursEnd: '07:00',
+                emergencyBypassQuietHours: true,
+              },
+            ],
+      );
 
     return NextResponse.json({
       success: true,
@@ -69,6 +97,43 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const db = getDb();
+    if (
+      body.tenant?.name !== undefined &&
+      (typeof body.tenant.name !== 'string' ||
+        !body.tenant.name.trim() ||
+        body.tenant.name.length > 200)
+    ) {
+      return NextResponse.json(
+        { error: 'Organisation name is required and must be under 200 characters.' },
+        { status: 422 },
+      );
+    }
+    if (
+      body.branding?.primaryColor !== undefined &&
+      !/^#[0-9a-f]{6}$/i.test(body.branding.primaryColor)
+    ) {
+      return NextResponse.json(
+        { error: 'Primary colour must be a six-digit hex colour.' },
+        { status: 422 },
+      );
+    }
+    if (
+      body.branding?.accentColor !== undefined &&
+      !/^#[0-9a-f]{6}$/i.test(body.branding.accentColor)
+    ) {
+      return NextResponse.json(
+        { error: 'Accent colour must be a six-digit hex colour.' },
+        { status: 422 },
+      );
+    }
+    for (const email of [body.branding?.contactEmail, body.branding?.senderEmail]) {
+      if (email && (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+        return NextResponse.json(
+          { error: 'Enter a valid contact and sender email address.' },
+          { status: 422 },
+        );
+      }
+    }
 
     // Update tenant profile
     if (body.tenant) {
@@ -84,14 +149,21 @@ export async function POST(request: NextRequest) {
     // Update branding
     if (body.branding) {
       const brandingUpdate: Record<string, unknown> = { updatedAt: new Date() };
-      if (body.branding.contactEmail !== undefined) brandingUpdate.contactEmail = body.branding.contactEmail;
-      if (body.branding.contactPhone !== undefined) brandingUpdate.contactPhone = body.branding.contactPhone;
+      if (body.branding.contactEmail !== undefined)
+        brandingUpdate.contactEmail = body.branding.contactEmail;
+      if (body.branding.contactPhone !== undefined)
+        brandingUpdate.contactPhone = body.branding.contactPhone;
       if (body.branding.address !== undefined) brandingUpdate.address = body.branding.address;
-      if (body.branding.primaryColor !== undefined) brandingUpdate.primaryColor = body.branding.primaryColor;
-      if (body.branding.accentColor !== undefined) brandingUpdate.accentColor = body.branding.accentColor;
-      if (body.branding.documentFooter !== undefined) brandingUpdate.documentFooter = body.branding.documentFooter;
-      if (body.branding.senderName !== undefined) brandingUpdate.senderName = body.branding.senderName;
-      if (body.branding.senderEmail !== undefined) brandingUpdate.senderEmail = body.branding.senderEmail;
+      if (body.branding.primaryColor !== undefined)
+        brandingUpdate.primaryColor = body.branding.primaryColor;
+      if (body.branding.accentColor !== undefined)
+        brandingUpdate.accentColor = body.branding.accentColor;
+      if (body.branding.documentFooter !== undefined)
+        brandingUpdate.documentFooter = body.branding.documentFooter;
+      if (body.branding.senderName !== undefined)
+        brandingUpdate.senderName = body.branding.senderName;
+      if (body.branding.senderEmail !== undefined)
+        brandingUpdate.senderEmail = body.branding.senderEmail;
 
       const [existingBranding] = await db
         .select()
@@ -107,7 +179,10 @@ export async function POST(request: NextRequest) {
       } else {
         await db
           .insert(tenantBranding)
-          .values({ tenantId: session.tenantId, ...brandingUpdate } as typeof tenantBranding.$inferInsert);
+          .values({
+            tenantId: session.tenantId,
+            ...brandingUpdate,
+          } as typeof tenantBranding.$inferInsert);
       }
     }
 
@@ -115,11 +190,14 @@ export async function POST(request: NextRequest) {
     if (body.notificationPreferences) {
       const prefs = body.notificationPreferences;
       const prefUpdate: Record<string, unknown> = { updatedAt: new Date() };
-      if (prefs.emailNotifications !== undefined) prefUpdate.emailNotifications = prefs.emailNotifications;
-      if (prefs.inAppNotifications !== undefined) prefUpdate.inAppNotifications = prefs.inAppNotifications;
+      if (prefs.emailNotifications !== undefined)
+        prefUpdate.emailNotifications = prefs.emailNotifications;
+      if (prefs.inAppNotifications !== undefined)
+        prefUpdate.inAppNotifications = prefs.inAppNotifications;
       if (prefs.quietHoursStart !== undefined) prefUpdate.quietHoursStart = prefs.quietHoursStart;
       if (prefs.quietHoursEnd !== undefined) prefUpdate.quietHoursEnd = prefs.quietHoursEnd;
-      if (prefs.emergencyBypassQuietHours !== undefined) prefUpdate.emergencyBypassQuietHours = prefs.emergencyBypassQuietHours;
+      if (prefs.emergencyBypassQuietHours !== undefined)
+        prefUpdate.emergencyBypassQuietHours = prefs.emergencyBypassQuietHours;
 
       const [existingPrefs] = await db
         .select()
@@ -138,15 +216,27 @@ export async function POST(request: NextRequest) {
           .set(prefUpdate)
           .where(eq(notificationPreferences.id, existingPrefs.id));
       } else {
-        await db
-          .insert(notificationPreferences)
-          .values({
-            tenantId: session.tenantId,
-            userId: session.user.id,
-            ...prefUpdate,
-          } as typeof notificationPreferences.$inferInsert);
+        await db.insert(notificationPreferences).values({
+          tenantId: session.tenantId,
+          userId: session.user.id,
+          ...prefUpdate,
+        } as typeof notificationPreferences.$inferInsert);
       }
     }
+
+    await recordAuditEvent({
+      tenantId: session.tenantId,
+      actorUserId: session.user.id,
+      action: 'tenant.settings_updated',
+      entityType: 'tenant',
+      entityId: session.tenantId,
+      summary: 'Tenant settings updated',
+      after: {
+        tenant: body.tenant || null,
+        branding: body.branding || null,
+        notificationPreferences: body.notificationPreferences || null,
+      },
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

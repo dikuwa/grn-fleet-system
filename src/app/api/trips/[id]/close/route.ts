@@ -16,13 +16,10 @@ import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
-import { eq, and, isNull, ne, sql } from 'drizzle-orm';
+import { eq, and, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { setAuthorityStatus } from '@/lib/trip-authority';
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,7 +56,9 @@ export async function POST(
     // Only return_inspection or closure_review trips can be closed
     if (trip.status !== 'return_inspection' && trip.status !== 'closure_review') {
       return NextResponse.json(
-        { error: `Trip status "${trip.status}" must be "return_inspection" or "closure_review" before closing.` },
+        {
+          error: `Trip status "${trip.status}" must be "return_inspection" or "closure_review" before closing.`,
+        },
         { status: 409 },
       );
     }
@@ -69,7 +68,8 @@ export async function POST(
       .from(tripAuthorities)
       .where(and(eq(tripAuthorities.tripId, id), eq(tripAuthorities.tenantId, tenantId)))
       .limit(1);
-    if (!authority) return NextResponse.json({ error: 'Trip Authority not found' }, { status: 409 });
+    if (!authority)
+      return NextResponse.json({ error: 'Trip Authority not found' }, { status: 409 });
 
     if (decision === 'requires_correction' || decision === 'follow_up') {
       const [updatedTrip] = await db
@@ -95,14 +95,19 @@ export async function POST(
     const [arrivalInspection] = await db
       .select({ id: vehicleInspections.id })
       .from(vehicleInspections)
-      .where(and(
-        eq(vehicleInspections.tripId, id),
-        eq(vehicleInspections.type, 'return'),
-        eq(vehicleInspections.status, 'completed'),
-      ))
+      .where(
+        and(
+          eq(vehicleInspections.tripId, id),
+          eq(vehicleInspections.type, 'return'),
+          inArray(vehicleInspections.status, ['completed', 'failed']),
+        ),
+      )
       .limit(1);
     if (!arrivalInspection) {
-      return NextResponse.json({ error: 'A completed arrival inspection is required before reconciliation can close' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'A submitted arrival inspection is required before reconciliation can close' },
+        { status: 409 },
+      );
     }
 
     const [outstandingFuel] = await db
@@ -112,34 +117,39 @@ export async function POST(
     const [outstandingExpenses] = await db
       .select({ count: sql<number>`count(*)` })
       .from(tripExpenses)
-      .where(and(
-        eq(tripExpenses.tripId, id),
-        ne(tripExpenses.verificationStatus, 'verified'),
-      ));
+      .where(and(eq(tripExpenses.tripId, id), ne(tripExpenses.verificationStatus, 'verified')));
     const [unsafeIncident] = await db
       .select({ id: tripIncidents.id })
       .from(tripIncidents)
-      .where(and(
-        eq(tripIncidents.tripId, id),
-        eq(tripIncidents.safeToContinue, false),
-        ne(tripIncidents.status, 'resolved'),
-      ))
+      .where(
+        and(
+          eq(tripIncidents.tripId, id),
+          eq(tripIncidents.safeToContinue, false),
+          ne(tripIncidents.status, 'resolved'),
+        ),
+      )
       .limit(1);
     if (Number(outstandingFuel?.count ?? 0) > 0 || Number(outstandingExpenses?.count ?? 0) > 0) {
-      return NextResponse.json({ error: 'All fuel and expense transactions must be verified before closure' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'All fuel and expense transactions must be verified before closure' },
+        { status: 409 },
+      );
     }
     if (unsafeIncident) {
-      return NextResponse.json({ error: 'A safety-critical incident remains unresolved' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'A safety-critical incident remains unresolved' },
+        { status: 409 },
+      );
     }
     if (!['awaiting_reconciliation', 'completed'].includes(authority.status)) {
-      return NextResponse.json({ error: `Trip Authority is not ready for reconciliation (${authority.status})` }, { status: 409 });
+      return NextResponse.json(
+        { error: `Trip Authority is not ready for reconciliation (${authority.status})` },
+        { status: 409 },
+      );
     }
 
     // Calculate totals from fuel transactions
-    const fuel = await db
-      .select()
-      .from(fuelTransactions)
-      .where(eq(fuelTransactions.tripId, id));
+    const fuel = await db.select().from(fuelTransactions).where(eq(fuelTransactions.tripId, id));
 
     const totalFuelLitres = fuel.reduce((sum, f) => sum + Number(f.litres), 0);
     const totalFuelCost = fuel.reduce((sum, f) => sum + Number(f.amount), 0);
@@ -150,12 +160,16 @@ export async function POST(
       .values({
         tripId: id,
         authorisedKilometres: body.authorisedKm || null,
-        actualKilometres: authority.beginningOdometer !== null && authority.endingOdometer !== null
-          ? authority.endingOdometer - authority.beginningOdometer
-          : body.actualKm || null,
-        kilometreVariance: body.authorisedKm && authority.beginningOdometer !== null && authority.endingOdometer !== null
-          ? authority.endingOdometer - authority.beginningOdometer - Number(body.authorisedKm)
-          : null,
+        actualKilometres:
+          authority.beginningOdometer !== null && authority.endingOdometer !== null
+            ? authority.endingOdometer - authority.beginningOdometer
+            : body.actualKm || null,
+        kilometreVariance:
+          body.authorisedKm &&
+          authority.beginningOdometer !== null &&
+          authority.endingOdometer !== null
+            ? authority.endingOdometer - authority.beginningOdometer - Number(body.authorisedKm)
+            : null,
         totalFuelLitres: totalFuelLitres ? String(totalFuelLitres) : null,
         totalFuelCost: totalFuelCost ? String(totalFuelCost) : null,
         reviewNotes: reviewNotes || null,
@@ -186,11 +200,26 @@ export async function POST(
       })
       .where(eq(trips.id, id))
       .returning();
-    await db.update(transportRequests).set({ status: 'closed', updatedAt: new Date() }).where(eq(transportRequests.id, trip.requestId));
-    await db.update(vehicleAllocations).set({ state: 'released', updatedAt: new Date() }).where(eq(vehicleAllocations.id, trip.allocationId));
+    await db
+      .update(transportRequests)
+      .set({ status: 'closed', updatedAt: new Date() })
+      .where(eq(transportRequests.id, trip.requestId));
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'released', updatedAt: new Date() })
+      .where(eq(vehicleAllocations.id, trip.allocationId));
 
-    const [blockingDefect] = await db.select({ id: vehicleDefects.id }).from(vehicleDefects)
-      .where(and(eq(vehicleDefects.vehicleId, trip.vehicleId), eq(vehicleDefects.isBlocking, true), isNull(vehicleDefects.resolvedAt))).limit(1);
+    const [blockingDefect] = await db
+      .select({ id: vehicleDefects.id })
+      .from(vehicleDefects)
+      .where(
+        and(
+          eq(vehicleDefects.vehicleId, trip.vehicleId),
+          eq(vehicleDefects.isBlocking, true),
+          isNull(vehicleDefects.resolvedAt),
+        ),
+      )
+      .limit(1);
     const resultingVehicleStatus = blockingDefect ? 'maintenance' : 'available';
 
     // Return safe vehicles to the pool; vehicles with blocking defects remain in maintenance.
@@ -203,7 +232,9 @@ export async function POST(
       vehicleId: trip.vehicleId,
       previousStatus: trip.status === 'closure_review' ? 'allocated' : 'allocated',
       newStatus: resultingVehicleStatus,
-      reason: blockingDefect ? 'Trip closed with unresolved blocking defect' : `Trip closed: ${id.slice(0, 8)}...`,
+      reason: blockingDefect
+        ? 'Trip closed with unresolved blocking defect'
+        : `Trip closed: ${id.slice(0, 8)}...`,
       changedByUserId: userId,
       referenceEntityType: 'trip',
       referenceEntityId: id,
@@ -225,12 +256,13 @@ export async function POST(
     // Trigger document generation (trip completion + fuel summary)
     const docs = await onTripClosed(id, tenantId, userId);
 
-    return NextResponse.json({ trip: updatedTrip, closure, documents: docs?.filter(Boolean) || [] });
+    return NextResponse.json({
+      trip: updatedTrip,
+      closure,
+      documents: docs?.filter(Boolean) || [],
+    });
   } catch (error) {
     console.error('[trips/close] POST failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to close trip' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to close trip' }, { status: 500 });
   }
 }

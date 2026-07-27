@@ -24,12 +24,14 @@ import { eq, and } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Invalid trip identifier' }, { status: 400 });
+    }
     const auth = await requireRequestAuth(_req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
@@ -74,39 +76,60 @@ export async function GET(
     const [authority] = await db
       .select()
       .from(tripAuthorities)
-      .where(and(
-        eq(tripAuthorities.tripId, id),
-        eq(tripAuthorities.tenantId, session.tenantId),
-      ))
+      .where(and(eq(tripAuthorities.tripId, id), eq(tripAuthorities.tenantId, session.tenantId)))
       .limit(1);
 
     const [passengers, authorisedDrivers, progress, inspections, fuel, expenses, incidents] =
       authority
         ? await Promise.all([
-            db.select().from(tripAuthorityPassengers)
+            db
+              .select()
+              .from(tripAuthorityPassengers)
               .where(eq(tripAuthorityPassengers.authorityId, authority.id)),
-            db.select({
-              id: tripAuthorisedDrivers.id,
-              employeeId: tripAuthorisedDrivers.employeeId,
-              driverType: tripAuthorisedDrivers.driverType,
-              employeeNumber: tripAuthorisedDrivers.employeeNumber,
-              licenceNumberMasked: tripAuthorisedDrivers.licenceNumberMasked,
-              licenceClass: tripAuthorisedDrivers.licenceClass,
-              licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
-              firstName: employees.firstName,
-              lastName: employees.lastName,
-            }).from(tripAuthorisedDrivers)
+            db
+              .select({
+                id: tripAuthorisedDrivers.id,
+                employeeId: tripAuthorisedDrivers.employeeId,
+                driverType: tripAuthorisedDrivers.driverType,
+                employeeNumber: tripAuthorisedDrivers.employeeNumber,
+                licenceNumberMasked: tripAuthorisedDrivers.licenceNumberMasked,
+                licenceClass: tripAuthorisedDrivers.licenceClass,
+                licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
+                firstName: employees.firstName,
+                lastName: employees.lastName,
+              })
+              .from(tripAuthorisedDrivers)
               .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
               .where(eq(tripAuthorisedDrivers.authorityId, authority.id)),
-            db.select().from(tripProgressEntries)
-              .where(and(eq(tripProgressEntries.tripId, id), eq(tripProgressEntries.tenantId, session.tenantId))),
-            db.select().from(vehicleInspections)
-              .where(and(eq(vehicleInspections.tripId, id), eq(vehicleInspections.tenantId, session.tenantId))),
+            db
+              .select()
+              .from(tripProgressEntries)
+              .where(
+                and(
+                  eq(tripProgressEntries.tripId, id),
+                  eq(tripProgressEntries.tenantId, session.tenantId),
+                ),
+              ),
+            db
+              .select()
+              .from(vehicleInspections)
+              .where(
+                and(
+                  eq(vehicleInspections.tripId, id),
+                  eq(vehicleInspections.tenantId, session.tenantId),
+                ),
+              ),
             db.select().from(fuelTransactions).where(eq(fuelTransactions.tripId, id)),
-            db.select().from(tripExpenses)
+            db
+              .select()
+              .from(tripExpenses)
               .where(and(eq(tripExpenses.tripId, id), eq(tripExpenses.tenantId, session.tenantId))),
-            db.select().from(tripIncidents)
-              .where(and(eq(tripIncidents.tripId, id), eq(tripIncidents.tenantId, session.tenantId))),
+            db
+              .select()
+              .from(tripIncidents)
+              .where(
+                and(eq(tripIncidents.tripId, id), eq(tripIncidents.tenantId, session.tenantId)),
+              ),
           ])
         : [[], [], [], [], [], [], []];
 

@@ -1,25 +1,23 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useSyncExternalStore } from 'react';
 import { WifiOff, RefreshCw, Database } from 'lucide-react';
 import { countUnsyncedDrafts } from '@/lib/offline-drafts';
 
 export function OfflineIndicator() {
-  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const isOnline = useSyncExternalStore(
+    (onStoreChange) => {
+      window.addEventListener('online', onStoreChange);
+      window.addEventListener('offline', onStoreChange);
+      return () => {
+        window.removeEventListener('online', onStoreChange);
+        window.removeEventListener('offline', onStoreChange);
+      };
+    },
+    () => navigator.onLine,
+    () => true,
+  );
   const [unsyncedCount, setUnsyncedCount] = useState(0);
-
-  useEffect(() => {
-    function handleOnline() { setIsOnline(true); }
-    function handleOffline() { setIsOnline(false); }
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
 
   // Poll unsynced count separately
   useEffect(() => {
@@ -29,12 +27,17 @@ export function OfflineIndicator() {
       try {
         const count = await countUnsyncedDrafts();
         if (!cancelled) setUnsyncedCount(count);
-      } catch { /* Dexie not available */ }
+      } catch {
+        /* Dexie not available */
+      }
     }
 
     poll();
     const interval = setInterval(poll, 5000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   if (isOnline && unsyncedCount === 0) return null;
@@ -42,10 +45,8 @@ export function OfflineIndicator() {
   return (
     <div
       data-testid="offline-indicator"
-      className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur-sm transition-all ${
-        isOnline
-          ? 'bg-amber-100 text-amber-800'
-          : 'bg-status-error-bg text-status-error-text'
+      className={`fixed right-4 bottom-4 z-50 flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur-sm transition-all ${
+        isOnline ? 'bg-amber-100 text-amber-800' : 'bg-status-error-bg text-status-error-text'
       }`}
     >
       {isOnline ? (
@@ -69,8 +70,8 @@ export function DraftBanner({ draftCount }: { draftCount: number }) {
   return (
     <div className="flex items-center gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
       <Database className="h-3.5 w-3.5" />
-      {draftCount} offline draft{draftCount !== 1 ? 's' : ''} saved locally.
-      They will sync when you are back online.
+      {draftCount} offline draft{draftCount !== 1 ? 's' : ''} saved locally. They will sync when you
+      are back online.
     </div>
   );
 }

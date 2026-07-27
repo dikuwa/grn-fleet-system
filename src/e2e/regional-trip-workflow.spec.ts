@@ -4,9 +4,11 @@ import { test, expect, Page } from '@playwright/test';
  * Helper: Sign in via API and inject the session cookie so the test browser
  * is authenticated for protected dashboard routes.
  */
-async function signInAndSetCookie(page: Page) {
+async function signInAndSetCookie(
+  page: Page,
+  email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na',
+) {
   const baseURL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
   const res = await page.request.post(`${baseURL}/api/auth/sign-in`, {
@@ -61,6 +63,8 @@ test.describe('Regional Trip Workflow', () => {
   });
 
   test('approvals list page loads', async ({ page }) => {
+    await page.context().clearCookies();
+    await signInAndSetCookie(page, 'supervisor@kavangoeast.test');
     await page.goto('/dashboard/approvals', { waitUntil: 'networkidle', timeout: 90000 });
     // Use auto-retrying assertion for client-rendered page
     await expect(page.locator('h1:has-text("Approvals")').first()).toBeVisible({ timeout: 45000 });
@@ -79,7 +83,9 @@ test.describe('Regional Trip Workflow', () => {
       'Approvals',
     ];
     for (const label of reportButtons) {
-      await expect(page.locator(`button:has-text("${label}")`).first()).toBeVisible({ timeout: 10000 });
+      await expect(page.locator(`button:has-text("${label}")`).first()).toBeVisible({
+        timeout: 10000,
+      });
     }
   });
 
@@ -102,11 +108,16 @@ test.describe('Regional Trip Workflow', () => {
 
   test('reports export buttons are present', async ({ page }) => {
     await page.goto('/dashboard/reports', { waitUntil: 'networkidle', timeout: 90000 });
-    await expect(page.locator('button:has-text("Export CSV")').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('button:has-text("Export CSV")').first()).toBeVisible({
+      timeout: 20000,
+    });
   });
 
   test('inspection pages load', async ({ page }) => {
-    await page.goto('/dashboard/inspections/departure', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/inspections/departure', {
+      waitUntil: 'networkidle',
+      timeout: 90000,
+    });
     await expect(page.locator('h1:has-text("Departure")').first()).toBeVisible({ timeout: 20000 });
 
     await page.goto('/dashboard/inspections/return', { waitUntil: 'networkidle', timeout: 90000 });
@@ -115,12 +126,16 @@ test.describe('Regional Trip Workflow', () => {
 
   test('maintenance list page loads', async ({ page }) => {
     await page.goto('/dashboard/maintenance', { waitUntil: 'networkidle', timeout: 90000 });
-    await expect(page.locator('h1:has-text("Maintenance")').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('h1:has-text("Maintenance")').first()).toBeVisible({
+      timeout: 20000,
+    });
   });
 
   test('reimbursements list page loads', async ({ page }) => {
     await page.goto('/dashboard/reimbursements', { waitUntil: 'networkidle', timeout: 90000 });
-    await expect(page.locator('h1:has-text("Reimbursements")').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('h1:has-text("Reimbursements")').first()).toBeVisible({
+      timeout: 20000,
+    });
   });
 
   test('vehicle defects page loads', async ({ page }) => {
@@ -131,15 +146,21 @@ test.describe('Regional Trip Workflow', () => {
   test('allocations new page has vehicle recommendation button', async ({ page }) => {
     await page.goto('/dashboard/allocations/new', { waitUntil: 'networkidle', timeout: 90000 });
     // Use auto-retrying assertions for client-rendered page
-    await expect(page.locator('h1:has-text("New Vehicle Allocation")').first()).toBeVisible({ timeout: 45000 });
-    await expect(page.locator('button:has-text("Get Vehicle Recommendation")').first()).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('h1:has-text("New Vehicle Allocation")').first()).toBeVisible({
+      timeout: 45000,
+    });
+    await expect(page.locator('button:has-text("Get Vehicle Recommendation")').first()).toBeVisible(
+      { timeout: 30000 },
+    );
   });
 
   test('driver detail page shows licence info', async ({ page }) => {
     // First, get a driver ID from the API
     const baseURL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const res = await page.request.get(`${baseURL}/api/drivers`, {
-      headers: { cookie: `better-auth.session_token=${(await page.context().cookies()).find(c => c.name === 'better-auth.session_token')?.value}` },
+      headers: {
+        cookie: `better-auth.session_token=${(await page.context().cookies()).find((c) => c.name === 'better-auth.session_token')?.value}`,
+      },
     });
 
     if (res.status() === 200) {
@@ -147,10 +168,15 @@ test.describe('Regional Trip Workflow', () => {
       if (body.data?.length > 0) {
         const driverId = body.data[0].employeeId || body.data[0].id;
         if (driverId) {
-          await page.goto(`/dashboard/drivers/${driverId}`, { waitUntil: 'networkidle', timeout: 90000 });
+          await page.goto(`/dashboard/drivers/${driverId}`, {
+            waitUntil: 'networkidle',
+            timeout: 90000,
+          });
           await page.waitForTimeout(2000);
           // Should show driver info
-          await expect(page.locator('h1:has-text("Driver")').first()).toBeVisible({ timeout: 15000 });
+          await expect(page.locator('h1:has-text("Driver")').first()).toBeVisible({
+            timeout: 15000,
+          });
         }
       }
     }

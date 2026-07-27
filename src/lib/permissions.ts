@@ -218,10 +218,7 @@ export const RoleDefinitions = {
   SUPERVISOR: {
     name: 'Immediate Supervisor',
     isSystem: true,
-    permissions: [
-      Permissions.REQUEST_VIEW,
-      Permissions.REQUEST_APPROVE_SUPERVISOR,
-    ],
+    permissions: [Permissions.REQUEST_VIEW, Permissions.REQUEST_APPROVE_SUPERVISOR],
   },
   CONTROL_ADMIN_OFFICER: {
     name: 'Control Administrative Officer',
@@ -376,7 +373,15 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   },
   staff: {
     label: 'Staff Management',
-    permissions: [Permissions.STAFF_IMPORT, Permissions.STAFF_MANAGE, Permissions.STAFF_VIEW],
+    permissions: [
+      Permissions.STAFF_IMPORT,
+      Permissions.STAFF_MANAGE,
+      Permissions.STAFF_VIEW,
+      Permissions.STAFF_LIFECYCLE_MANAGE,
+      Permissions.DELEGATION_MANAGE,
+      Permissions.LICENCE_VERIFY,
+      Permissions.SECURE_REQUEST_ASSIST,
+    ],
   },
   audit: {
     label: 'Audit',
@@ -384,7 +389,12 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   },
   platform: {
     label: 'Platform Administration',
-    permissions: [Permissions.TENANT_MANAGE, Permissions.TENANT_VIEW, Permissions.PLATFORM_ADMIN, Permissions.PLATFORM_SUPPORT],
+    permissions: [
+      Permissions.TENANT_MANAGE,
+      Permissions.TENANT_VIEW,
+      Permissions.PLATFORM_ADMIN,
+      Permissions.PLATFORM_SUPPORT,
+    ],
   },
   reports: {
     label: 'Reports',

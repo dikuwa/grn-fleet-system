@@ -19,7 +19,6 @@ import {
   Building2,
   CarFront,
   FileSpreadsheet,
-  BarChart3,
   FileBarChart,
   Bell,
   Settings,
@@ -97,7 +96,11 @@ const navGroups: NavGroup[] = [
       { label: 'Fleet Map', href: '/dashboard/fleet/map', icon: MapPin },
       { label: 'Compliance', href: '/dashboard/fleet/compliance', icon: Shield },
       { label: 'Expiry Alerts', href: '/dashboard/expiry-alerts', icon: CalendarClock },
-      { label: 'Predictive Maint.', href: '/dashboard/fleet/predictive-maintenance', icon: BrainCircuit },
+      {
+        label: 'Predictive Maint.',
+        href: '/dashboard/fleet/predictive-maintenance',
+        icon: BrainCircuit,
+      },
       { label: 'Expenses', href: '/dashboard/fleet/expenses', icon: Receipt },
       { label: 'Maintenance', href: '/dashboard/maintenance', icon: Wrench },
       { label: 'Inspections', href: '/dashboard/inspections', icon: ClipboardCheck },
@@ -120,7 +123,6 @@ const navGroups: NavGroup[] = [
       { label: 'Documents', href: '/dashboard/documents', icon: FileSpreadsheet },
       { label: 'Share Links', href: '/dashboard/share-links', icon: Link2 },
       { label: 'Reports', href: '/dashboard/reports', icon: FileBarChart },
-      { label: 'Enhanced Analytics', href: '/dashboard/reports', icon: BarChart3 },
     ],
   },
   {
@@ -154,39 +156,41 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
 
   useEffect(() => {
     fetch('/api/reports?type=snapshot&metric=activeTrips')
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d?.data?.activeTrips != null) setActiveTripCount(Number(d.data.activeTrips));
       })
-      .catch(() => {/* silent */});
+      .catch(() => {
+        /* silent */
+      });
   }, []);
 
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 z-40 hidden h-dvh flex-col border-r border-border bg-surface transition-all duration-200 md:flex dark:bg-[#0f0f23]',
+        'border-border bg-surface fixed top-0 left-0 z-40 hidden h-dvh flex-col border-r transition-all duration-200 md:flex dark:bg-[#0f0f23]',
         collapsed ? 'w-[72px]' : 'w-[248px]',
       )}
     >
       {/* Fixed header: branding + collapse toggle */}
       <div
         className={cn(
-          'flex shrink-0 items-center border-b border-border px-4 dark:border-[#2a2a48]',
+          'border-border flex shrink-0 items-center border-b px-4 dark:border-[#2a2a48]',
           collapsed ? 'h-16 justify-center' : 'h-16 gap-3',
         )}
       >
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold text-white">
+        <div className="bg-brand-800 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-white">
           G
         </div>
         {!collapsed && (
-          <span className="text-sm font-semibold text-ink-950 dark:text-ink-100">
+          <span className="text-ink-950 dark:text-ink-100 text-sm font-semibold">
             {APP_SHORT_NAME}
           </span>
         )}
         {!collapsed && (
           <button
             onClick={onToggle}
-            className="ml-auto flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-400 transition-colors hover:bg-muted hover:text-ink-700 dark:hover:bg-white/[0.06] dark:hover:text-ink-200 dark:text-ink-500"
+            className="text-ink-400 hover:bg-muted hover:text-ink-700 dark:hover:text-ink-200 dark:text-ink-500 ml-auto flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors dark:hover:bg-white/[0.06]"
             aria-label="Collapse navigation"
           >
             <PanelLeftClose className="h-4 w-4" />
@@ -195,7 +199,7 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
         {collapsed && (
           <button
             onClick={onToggle}
-            className="flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-400 transition-colors hover:bg-muted hover:text-ink-700 dark:hover:bg-white/[0.06] dark:hover:text-ink-200 dark:text-ink-500"
+            className="text-ink-400 hover:bg-muted hover:text-ink-700 dark:hover:text-ink-200 dark:text-ink-500 flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors dark:hover:bg-white/[0.06]"
             aria-label="Expand navigation"
           >
             <PanelLeftOpen className="h-4 w-4" />
@@ -205,28 +209,25 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
 
       {/* Scrollable navigation area */}
       <nav
-        className="flex-1 overflow-y-auto px-2 py-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
+        className="scrollbar-thumb-border flex-1 scrollbar-thin scrollbar-track-transparent overflow-y-auto px-2 py-4"
         style={{ overscrollBehavior: 'contain' }}
       >
         {navGroups
           .map((group) => ({
             ...group,
-            items: group.items.filter((item) =>
-              canAccessDashboardPath(item.href, permissionCodes),
-            ),
+            items: group.items.filter((item) => canAccessDashboardPath(item.href, permissionCodes)),
           }))
           .filter((group) => group.items.length > 0)
           .map((group) => (
             <div key={group.label} className="mb-4">
               {!collapsed && (
-                <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-widest text-ink-400 dark:text-ink-500">
+                <p className="text-ink-400 dark:text-ink-500 mb-1 px-2 text-[11px] font-medium tracking-widest uppercase">
                   {group.label}
                 </p>
               )}
               <ul className="space-y-0.5">
                 {group.items.map((item) => {
-                  const isActive =
-                    pathname === item.href || pathname.startsWith(item.href + '/');
+                  const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
                   const Icon = item.icon;
                   return (
                     <li key={item.href}>
@@ -259,12 +260,11 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
                                   {activeTripCount > 99 ? '99+' : activeTripCount}
                                 </span>
                               )}
-                            {item.badge !== undefined &&
-                              item.label !== 'Trips' && (
-                                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-600 px-1.5 text-[11px] font-medium text-white">
-                                  {item.badge}
-                                </span>
-                              )}
+                            {item.badge !== undefined && item.label !== 'Trips' && (
+                              <span className="bg-brand-600 flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium text-white">
+                                {item.badge}
+                              </span>
+                            )}
                           </>
                         )}
                       </Link>
@@ -329,7 +329,7 @@ export function MobileSidebar({
       {/* Drawer */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col border-r border-border bg-surface transition-transform duration-200 ease-out md:hidden dark:bg-[#0f0f23] dark:border-[#2a2a48]',
+          'border-border bg-surface fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col border-r transition-transform duration-200 ease-out md:hidden dark:border-[#2a2a48] dark:bg-[#0f0f23]',
           open ? 'translate-x-0' : '-translate-x-full',
         )}
         role="dialog"
@@ -337,16 +337,16 @@ export function MobileSidebar({
         aria-label="Navigation menu"
       >
         {/* Header */}
-        <div className="flex h-16 shrink-0 items-center gap-3 border-b border-border px-4 dark:border-[#2a2a48]">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold text-white">
+        <div className="border-border flex h-16 shrink-0 items-center gap-3 border-b px-4 dark:border-[#2a2a48]">
+          <div className="bg-brand-800 flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold text-white">
             G
           </div>
-          <span className="text-sm font-semibold text-ink-950 dark:text-ink-100">
+          <span className="text-ink-950 dark:text-ink-100 text-sm font-semibold">
             {APP_SHORT_NAME}
           </span>
           <button
             onClick={onClose}
-            className="ml-auto flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-400 transition-colors hover:bg-muted hover:text-ink-700 dark:hover:bg-white/[0.06] dark:hover:text-ink-200"
+            className="text-ink-400 hover:bg-muted hover:text-ink-700 dark:hover:text-ink-200 ml-auto flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors dark:hover:bg-white/[0.06]"
             aria-label="Close navigation"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -355,29 +355,24 @@ export function MobileSidebar({
 
         {/* Navigation */}
         <nav
-          className="flex-1 overflow-y-auto px-2 py-4 pb-safe"
+          className="pb-safe flex-1 overflow-y-auto px-2 py-4"
           style={{ overscrollBehavior: 'contain' }}
         >
           {navGroups
             .filter((group) =>
-              group.items.some((item) =>
-                canAccessDashboardPath(item.href, permissionCodes),
-              ),
+              group.items.some((item) => canAccessDashboardPath(item.href, permissionCodes)),
             )
             .map((group) => (
               <div key={group.label} className="mb-4">
-                <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-widest text-ink-400 dark:text-ink-500">
+                <p className="text-ink-400 dark:text-ink-500 mb-1 px-2 text-[11px] font-medium tracking-widest uppercase">
                   {group.label}
                 </p>
                 <ul className="space-y-0.5">
                   {group.items
-                    .filter((item) =>
-                      canAccessDashboardPath(item.href, permissionCodes),
-                    )
+                    .filter((item) => canAccessDashboardPath(item.href, permissionCodes))
                     .map((item) => {
                       const isActive =
-                        pathname === item.href ||
-                        pathname.startsWith(item.href + '/');
+                        pathname === item.href || pathname.startsWith(item.href + '/');
                       const Icon = item.icon;
                       return (
                         <li key={item.href}>

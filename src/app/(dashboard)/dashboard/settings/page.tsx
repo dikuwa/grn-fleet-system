@@ -7,15 +7,30 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
-import { Loader2, Save, Bell, Shield, Mail, Smartphone, Palette, Image as ImageIcon, CheckCircle2, AlertCircle, XCircle, Key, LogOut, Eye, EyeOff } from 'lucide-react';
+import {
+  Loader2,
+  Save,
+  Bell,
+  Shield,
+  Mail,
+  Palette,
+  Image as ImageIcon,
+  AlertCircle,
+} from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
 export default function SettingsPage() {
   const { data: session } = useSession();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'general' | 'notifications' | 'security' | 'branding'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'notifications' | 'security' | 'branding'>(
+    'general',
+  );
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
   const [error, setError] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [orgName, setOrgName] = useState('');
@@ -47,6 +62,7 @@ export default function SettingsPage() {
           setOrgName(tenant.name || '');
           setTimezone(tenant.timezone || 'Africa/Windhoek (CAT, UTC+2)');
           if (branding) {
+            setLogoUrl(branding.logoUrl ? `/api/settings/logo?v=${Date.now()}` : '');
             setContactEmail(branding.contactEmail || '');
             setContactPhone(branding.contactPhone || '');
             setAddress(branding.address || '');
@@ -68,12 +84,18 @@ export default function SettingsPage() {
         }
       })
       .catch(() => setError('Failed to load settings'))
-      .finally(() => { if (!cancelled) setIsLoading(false); });
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [session]);
 
   const handleSave = useCallback(async () => {
+    if (isSaving) return;
+    setIsSaving(true);
     setError('');
     try {
       const res = await fetch('/api/settings', {
@@ -81,7 +103,16 @@ export default function SettingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenant: { name: orgName, timezone },
-          branding: { contactEmail, contactPhone, address, primaryColor, accentColor, documentFooter, senderName, senderEmail },
+          branding: {
+            contactEmail,
+            contactPhone,
+            address,
+            primaryColor,
+            accentColor,
+            documentFooter,
+            senderName,
+            senderEmail,
+          },
           notificationPreferences: {
             emailNotifications: emailNotifs,
             inAppNotifications: inAppNotifs,
@@ -93,17 +124,89 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save');
-      toast({ title: 'Settings saved', description: 'Your preferences have been updated', variant: 'success' });
+      toast({
+        title: 'Settings saved',
+        description: 'Your preferences have been updated',
+        variant: 'success',
+      });
     } catch (err) {
-      toast({ title: 'Failed to save', description: err instanceof Error ? err.message : 'Failed to save settings', variant: 'error' });
+      toast({
+        title: 'Failed to save',
+        description: err instanceof Error ? err.message : 'Failed to save settings',
+        variant: 'error',
+      });
       setError(err instanceof Error ? err.message : 'Failed to save settings');
+    } finally {
+      setIsSaving(false);
     }
-  }, [orgName, contactEmail, contactPhone, address, timezone, primaryColor, accentColor, documentFooter, senderName, senderEmail, emailNotifs, inAppNotifs, quietStart, quietEnd, emergencyBypass]);
+  }, [
+    orgName,
+    contactEmail,
+    contactPhone,
+    address,
+    timezone,
+    primaryColor,
+    accentColor,
+    documentFooter,
+    senderName,
+    senderEmail,
+    emailNotifs,
+    inAppNotifs,
+    quietStart,
+    quietEnd,
+    emergencyBypass,
+    isSaving,
+    toast,
+  ]);
+
+  const uploadLogo = useCallback(
+    async (file: File) => {
+      setLogoBusy(true);
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        const response = await fetch('/api/settings/logo', { method: 'POST', body: form });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Logo upload failed');
+        setLogoUrl(result.data.logoUrl);
+        toast({ title: 'Tenant logo updated', variant: 'success' });
+      } catch (err) {
+        toast({
+          title: 'Logo upload failed',
+          description: err instanceof Error ? err.message : 'Please try again.',
+          variant: 'error',
+        });
+      } finally {
+        setLogoBusy(false);
+        if (logoInputRef.current) logoInputRef.current.value = '';
+      }
+    },
+    [toast],
+  );
+
+  const removeLogo = useCallback(async () => {
+    setLogoBusy(true);
+    try {
+      const response = await fetch('/api/settings/logo', { method: 'DELETE' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Logo removal failed');
+      setLogoUrl('');
+      toast({ title: 'Tenant logo removed', variant: 'success' });
+    } catch (err) {
+      toast({
+        title: 'Logo removal failed',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        variant: 'error',
+      });
+    } finally {
+      setLogoBusy(false);
+    }
+  }, [toast]);
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
+        <Loader2 className="text-ink-400 h-6 w-6 animate-spin" />
       </div>
     );
   }
@@ -117,15 +220,27 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Settings' }]} />
-      <PageHeader title="Settings" description="Configure application preferences and tenant settings">
-        <Button variant="primary" size="sm" onClick={handleSave}>
+      <PageHeader
+        title="Settings"
+        description="Configure application preferences and tenant settings"
+      >
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleSave}
+          loading={isSaving}
+          disabled={isSaving}
+        >
           <Save className="h-4 w-4" /> Save Changes
         </Button>
       </PageHeader>
 
       {error && (
-        <div className="rounded-[8px] border border-status-error-bg bg-status-error-bg/20 px-4 py-3">
-          <p className="text-sm font-medium text-status-error-text flex items-center gap-2"><AlertCircle className="h-4 w-4" />{error}</p>
+        <div className="border-status-error-bg bg-status-error-bg/20 rounded-[8px] border px-4 py-3">
+          <p className="text-status-error-text flex items-center gap-2 text-sm font-medium">
+            <AlertCircle className="h-4 w-4" />
+            {error}
+          </p>
         </div>
       )}
 
@@ -136,36 +251,71 @@ export default function SettingsPage() {
             key={tab.value}
             onClick={() => setActiveTab(tab.value)}
             className={`inline-flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm font-medium transition-colors ${
-              activeTab === tab.value ? 'bg-brand-800 text-white' : 'bg-muted text-ink-700 hover:bg-border'
+              activeTab === tab.value
+                ? 'bg-brand-800 text-white'
+                : 'bg-muted text-ink-700 hover:bg-border'
             }`}
-          >{tab.icon}{tab.label}</button>
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
         ))}
       </div>
 
       {activeTab === 'general' && (
         <div className="space-y-6">
           <Card>
-            <CardHeader><CardTitle>Tenant Information</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Tenant Information</CardTitle>
+            </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <FieldWrapper label="Organisation Name" required>
-                  <Input value={orgName} onChange={(e) => setOrgName(e.target.value)} />
+                  <Input
+                    aria-label="Organisation Name"
+                    value={orgName}
+                    onChange={(e) => setOrgName(e.target.value)}
+                  />
                 </FieldWrapper>
                 <FieldWrapper label="Tenant Status">
-                  <Input value="Active" disabled className="opacity-60" />
+                  <Input
+                    aria-label="Tenant Status"
+                    value="Active"
+                    disabled
+                    className="opacity-60"
+                  />
                 </FieldWrapper>
                 <FieldWrapper label="Contact Email">
-                  <Input type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} />
+                  <Input
+                    aria-label="Contact Email"
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                  />
                 </FieldWrapper>
                 <FieldWrapper label="Contact Phone">
-                  <Input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
+                  <Input
+                    aria-label="Contact Phone"
+                    value={contactPhone}
+                    onChange={(e) => setContactPhone(e.target.value)}
+                  />
                 </FieldWrapper>
                 <FieldWrapper label="Physical Address" className="sm:col-span-2">
-                  <Input value={address} onChange={(e) => setAddress(e.target.value)} />
+                  <Input
+                    aria-label="Physical Address"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                  />
                 </FieldWrapper>
                 <FieldWrapper label="Timezone">
-                  <StyledSelect value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-                    <option value="Africa/Windhoek (CAT, UTC+2)">Africa/Windhoek (CAT, UTC+2)</option>
+                  <StyledSelect
+                    aria-label="Timezone"
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                  >
+                    <option value="Africa/Windhoek (CAT, UTC+2)">
+                      Africa/Windhoek (CAT, UTC+2)
+                    </option>
                   </StyledSelect>
                 </FieldWrapper>
               </div>
@@ -176,36 +326,77 @@ export default function SettingsPage() {
 
       {activeTab === 'notifications' && (
         <Card>
-          <CardHeader><CardTitle>Notification Preferences</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Notification Preferences</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-4">
-              <h4 className="text-sm font-medium text-ink-950">Delivery Channels</h4>
+              <h4 className="text-ink-950 text-sm font-medium">Delivery Channels</h4>
               <div className="space-y-3">
-                <label className="flex items-center justify-between rounded-[8px] border border-border p-3 hover:bg-muted/50 transition-colors cursor-pointer">
+                <label className="border-border hover:bg-muted/50 flex cursor-pointer items-center justify-between rounded-[8px] border p-3 transition-colors">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-700"><Bell className="h-4 w-4" /></div>
-                    <div><p className="text-sm font-medium text-ink-950">In-App Notifications</p><p className="text-xs text-ink-500">Notifications within the dashboard</p></div>
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-700">
+                      <Bell className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-ink-950 text-sm font-medium">In-App Notifications</p>
+                      <p className="text-ink-500 text-xs">Notifications within the dashboard</p>
+                    </div>
                   </div>
-                  <input type="checkbox" checked={inAppNotifs} onChange={(e) => setInAppNotifs(e.target.checked)} className="h-4 w-4 rounded border-border text-brand-800 focus:ring-brand-600" />
+                  <input
+                    type="checkbox"
+                    checked={inAppNotifs}
+                    onChange={(e) => setInAppNotifs(e.target.checked)}
+                    className="border-border text-brand-800 focus:ring-brand-600 h-4 w-4 rounded"
+                  />
                 </label>
-                <label className="flex items-center justify-between rounded-[8px] border border-border p-3 hover:bg-muted/50 transition-colors cursor-pointer">
+                <label className="border-border hover:bg-muted/50 flex cursor-pointer items-center justify-between rounded-[8px] border p-3 transition-colors">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 text-amber-700"><Mail className="h-4 w-4" /></div>
-                    <div><p className="text-sm font-medium text-ink-950">Email Notifications</p><p className="text-xs text-ink-500">Send notifications via email</p></div>
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+                      <Mail className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-ink-950 text-sm font-medium">Email Notifications</p>
+                      <p className="text-ink-500 text-xs">Send notifications via email</p>
+                    </div>
                   </div>
-                  <input type="checkbox" checked={emailNotifs} onChange={(e) => setEmailNotifs(e.target.checked)} className="h-4 w-4 rounded border-border text-brand-800 focus:ring-brand-600" />
+                  <input
+                    type="checkbox"
+                    checked={emailNotifs}
+                    onChange={(e) => setEmailNotifs(e.target.checked)}
+                    className="border-border text-brand-800 focus:ring-brand-600 h-4 w-4 rounded"
+                  />
                 </label>
               </div>
             </div>
             <div className="space-y-4">
-              <h4 className="text-sm font-medium text-ink-950">Quiet Hours</h4>
+              <h4 className="text-ink-950 text-sm font-medium">Quiet Hours</h4>
               <div className="grid gap-4 sm:grid-cols-2">
-                <FieldWrapper label="Quiet Hours Start"><StyledDateInput type="time" value={quietStart} onChange={(e) => setQuietStart(e.target.value)} /></FieldWrapper>
-                <FieldWrapper label="Quiet Hours End"><StyledDateInput type="time" value={quietEnd} onChange={(e) => setQuietEnd(e.target.value)} /></FieldWrapper>
+                <FieldWrapper label="Quiet Hours Start">
+                  <StyledDateInput
+                    type="time"
+                    value={quietStart}
+                    onChange={(e) => setQuietStart(e.target.value)}
+                  />
+                </FieldWrapper>
+                <FieldWrapper label="Quiet Hours End">
+                  <StyledDateInput
+                    type="time"
+                    value={quietEnd}
+                    onChange={(e) => setQuietEnd(e.target.value)}
+                  />
+                </FieldWrapper>
               </div>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input type="checkbox" checked={emergencyBypass} onChange={(e) => setEmergencyBypass(e.target.checked)} className="h-4 w-4 rounded border-border text-brand-800 focus:ring-brand-600" />
-                <span className="text-sm text-ink-700">Emergency notifications bypass quiet hours</span>
+              <label className="flex cursor-pointer items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={emergencyBypass}
+                  onChange={(e) => setEmergencyBypass(e.target.checked)}
+                  className="border-border text-brand-800 focus:ring-brand-600 h-4 w-4 rounded"
+                />
+                <span className="text-ink-700 text-sm">
+                  Emergency notifications bypass quiet hours
+                </span>
               </label>
             </div>
           </CardContent>
@@ -215,35 +406,112 @@ export default function SettingsPage() {
       {activeTab === 'branding' && (
         <div className="space-y-6">
           <Card>
-            <CardHeader><CardTitle>Tenant Branding</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Tenant Branding</CardTitle>
+            </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <FieldWrapper label="Organisation Logo">
-                  <div className="flex h-32 items-center justify-center rounded-[8px] border-2 border-dashed border-border bg-muted">
-                    <div className="flex flex-col items-center gap-2 text-ink-500">
-                      <ImageIcon className="h-6 w-6" />
-                      <span className="text-xs">Upload logo (PNG, SVG)</span>
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="sr-only"
+                    aria-label="Choose tenant logo"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void uploadLogo(file);
+                    }}
+                  />
+                  <div className="border-border bg-muted flex min-h-32 flex-col items-center justify-center gap-3 rounded-[8px] border-2 border-dashed p-4">
+                    {logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={logoUrl}
+                        alt="Current tenant logo"
+                        className="max-h-20 max-w-full object-contain"
+                      />
+                    ) : (
+                      <div className="text-ink-500 flex flex-col items-center gap-2">
+                        <ImageIcon className="h-6 w-6" />
+                        <span className="text-xs">PNG, JPEG or WebP · max 3 MB</span>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap justify-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        loading={logoBusy}
+                        onClick={() => logoInputRef.current?.click()}
+                      >
+                        {logoUrl ? 'Replace logo' : 'Upload logo'}
+                      </Button>
+                      {logoUrl && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={logoBusy}
+                          onClick={removeLogo}
+                        >
+                          Remove logo
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </FieldWrapper>
                 <div className="space-y-4">
                   <FieldWrapper label="Primary Colour">
                     <div className="flex items-center gap-2">
-                      <div className="h-10 w-10 rounded-[8px] border border-border" style={{ backgroundColor: primaryColor }} />
-                      <Input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} />
+                      <div
+                        className="border-border h-10 w-10 rounded-[8px] border"
+                        style={{ backgroundColor: primaryColor }}
+                      />
+                      <Input
+                        aria-label="Primary Colour"
+                        value={primaryColor}
+                        onChange={(e) => setPrimaryColor(e.target.value)}
+                      />
                     </div>
                   </FieldWrapper>
                   <FieldWrapper label="Accent Colour">
                     <div className="flex items-center gap-2">
-                      <div className="h-10 w-10 rounded-[8px] border border-border" style={{ backgroundColor: accentColor }} />
-                      <Input value={accentColor} onChange={(e) => setAccentColor(e.target.value)} />
+                      <div
+                        className="border-border h-10 w-10 rounded-[8px] border"
+                        style={{ backgroundColor: accentColor }}
+                      />
+                      <Input
+                        aria-label="Accent Colour"
+                        value={accentColor}
+                        onChange={(e) => setAccentColor(e.target.value)}
+                      />
                     </div>
                   </FieldWrapper>
                 </div>
               </div>
-              <FieldWrapper label="Document Footer Text"><Input value={documentFooter} onChange={(e) => setDocumentFooter(e.target.value)} /></FieldWrapper>
-              <FieldWrapper label="Email Sender Name"><Input value={senderName} onChange={(e) => setSenderName(e.target.value)} /></FieldWrapper>
-              <FieldWrapper label="Email Sender Address"><Input type="email" value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Document Footer Text">
+                <Input
+                  aria-label="Document Footer Text"
+                  value={documentFooter}
+                  onChange={(e) => setDocumentFooter(e.target.value)}
+                />
+              </FieldWrapper>
+              <FieldWrapper label="Email Sender Name">
+                <Input
+                  aria-label="Email Sender Name"
+                  value={senderName}
+                  onChange={(e) => setSenderName(e.target.value)}
+                />
+              </FieldWrapper>
+              <FieldWrapper label="Email Sender Address">
+                <Input
+                  aria-label="Email Sender Address"
+                  type="email"
+                  value={senderEmail}
+                  onChange={(e) => setSenderEmail(e.target.value)}
+                />
+              </FieldWrapper>
             </CardContent>
           </Card>
         </div>

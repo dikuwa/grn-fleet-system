@@ -24,6 +24,7 @@ export interface StyledSelectProps {
   placeholder?: string;
   error?: string;
   wrapperClassName?: string;
+  'aria-label'?: string;
 }
 
 interface ParsedOption {
@@ -85,24 +86,29 @@ function parseOptions(children: React.ReactNode) {
 }
 
 const StyledSelect = React.forwardRef<HTMLButtonElement, StyledSelectProps>(
-  ({
-    className,
-    children,
-    placeholder,
-    error,
-    wrapperClassName,
-    value,
-    defaultValue,
-    onChange,
-    name,
-    disabled,
-    required,
-  }, ref) => {
+  (
+    {
+      className,
+      children,
+      placeholder,
+      error,
+      wrapperClassName,
+      value,
+      defaultValue,
+      onChange,
+      name,
+      disabled,
+      required,
+      'aria-label': ariaLabel,
+    },
+    ref,
+  ) => {
     const parsed = React.useMemo(() => parseOptions(children), [children]);
     const resolvedPlaceholder = placeholder || parsed.emptyLabel || 'Select an option';
-    const controlledProps = value !== undefined
-      ? { value: String(value) }
-      : { defaultValue: defaultValue !== undefined ? String(defaultValue) : undefined };
+    const controlledProps =
+      value !== undefined
+        ? { value: String(value) }
+        : { defaultValue: defaultValue !== undefined ? String(defaultValue) : undefined };
 
     return (
       <div className={cn('relative', wrapperClassName)}>
@@ -120,31 +126,32 @@ const StyledSelect = React.forwardRef<HTMLButtonElement, StyledSelectProps>(
         >
           <SelectPrimitive.Trigger
             ref={ref}
-          className={cn(
-            'flex h-10 w-full items-center justify-between rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 outline-none focus:ring-2 focus:ring-brand-600 disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-50',
-            'data-[placeholder]:text-ink-500',
-            error && 'border-status-error-text focus:ring-status-error-text',
-            className,
-          )}
+            aria-label={ariaLabel}
+            className={cn(
+              'border-border bg-surface text-ink-950 focus:ring-brand-600 disabled:bg-muted flex h-10 w-full items-center justify-between rounded-[8px] border px-3 text-sm outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50',
+              'data-[placeholder]:text-ink-500',
+              error && 'border-status-error-text focus:ring-status-error-text',
+              className,
+            )}
           >
             <SelectPrimitive.Value placeholder={resolvedPlaceholder} />
             <SelectPrimitive.Icon asChild>
-              <ChevronDown className="h-4 w-4 shrink-0 text-ink-400" />
+              <ChevronDown className="text-ink-400 h-4 w-4 shrink-0" />
             </SelectPrimitive.Icon>
           </SelectPrimitive.Trigger>
           <SelectPrimitive.Portal>
             <SelectPrimitive.Content
               position="popper"
               sideOffset={4}
-              className="z-[100] max-h-80 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[10px] border border-border bg-surface p-1 shadow-lg"
+              className="border-border bg-surface z-[100] max-h-80 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[10px] border p-1 shadow-lg"
             >
-              <SelectPrimitive.Viewport className="scrollbar-thin max-h-72 overflow-y-auto">
+              <SelectPrimitive.Viewport className="max-h-72 scrollbar-thin overflow-y-auto">
                 {parsed.options.map((option) => (
                   <SelectOption key={option.value} option={option} />
                 ))}
                 {parsed.groups.map((group, index) => (
                   <SelectPrimitive.Group key={index}>
-                    <SelectPrimitive.Label className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-500">
+                    <SelectPrimitive.Label className="text-ink-500 px-3 py-2 text-[11px] font-semibold tracking-wide uppercase">
                       {group.label}
                     </SelectPrimitive.Label>
                     {group.options.map((option) => (
@@ -156,7 +163,7 @@ const StyledSelect = React.forwardRef<HTMLButtonElement, StyledSelectProps>(
             </SelectPrimitive.Content>
           </SelectPrimitive.Portal>
         </SelectPrimitive.Root>
-        {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
+        {error && <p className="text-status-error-text mt-1 text-xs">{error}</p>}
       </div>
     );
   },
@@ -168,10 +175,10 @@ function SelectOption({ option }: { option: ParsedOption }) {
     <SelectPrimitive.Item
       value={option.value}
       disabled={option.disabled}
-      className="relative flex cursor-default select-none items-center rounded-[6px] py-2 pl-8 pr-3 text-sm text-ink-700 outline-none data-[highlighted]:bg-muted data-[highlighted]:text-ink-950 data-[disabled]:opacity-50"
+      className="text-ink-700 data-[highlighted]:bg-muted data-[highlighted]:text-ink-950 relative flex cursor-default items-center rounded-[6px] py-2 pr-3 pl-8 text-sm outline-none select-none data-[disabled]:opacity-50"
     >
       <SelectPrimitive.ItemIndicator className="absolute left-2">
-        <Check className="h-4 w-4 text-brand-700" />
+        <Check className="text-brand-700 h-4 w-4" />
       </SelectPrimitive.ItemIndicator>
       <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
     </SelectPrimitive.Item>
@@ -181,8 +188,7 @@ function SelectOption({ option }: { option: ParsedOption }) {
 /**
  * StyledNativeDate - date input styled to match the Select component.
  */
-export interface StyledDateInputProps
-  extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface StyledDateInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   error?: string;
 }
 
@@ -235,7 +241,7 @@ const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>
             disabled={props.disabled}
             className={className}
           />
-          {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
+          {error && <p className="text-status-error-text mt-1 text-xs">{error}</p>}
         </div>
       );
     }
@@ -258,7 +264,7 @@ const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>
             disabled={props.disabled}
             className={className}
           />
-          {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
+          {error && <p className="text-status-error-text mt-1 text-xs">{error}</p>}
         </div>
       );
     }
@@ -268,7 +274,7 @@ const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>
         ref={ref}
         type={type}
         className={cn(
-          'h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-muted [color-scheme:light] dark:[color-scheme:dark]',
+          'border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 disabled:bg-muted h-10 w-full rounded-[8px] border px-3 text-sm [color-scheme:light] focus:ring-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]',
           error && 'border-status-error-text focus:ring-status-error-text',
           className,
         )}

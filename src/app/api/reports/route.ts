@@ -12,7 +12,10 @@ import { Permissions } from '@/lib/permissions';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildCSV(rows: Record<string, unknown>[], columns: { key: string; label: string }[]): string {
+function buildCSV(
+  rows: Record<string, unknown>[],
+  columns: { key: string; label: string }[],
+): string {
   const header = columns.map((c) => JSON.stringify(c.label)).join(',');
   const body = rows
     .map((row) => columns.map((c) => JSON.stringify(String(row[c.key] ?? ''))).join(','))
@@ -129,11 +132,17 @@ async function buildRequestRows(db: ReturnType<typeof getDb>, tenantId: string, 
       createdAt: transportRequests.createdAt,
     })
     .from(transportRequests)
-    .where(and(eq(transportRequests.tenantId, tenantId), gte(transportRequests.createdAt, startDate)))
+    .where(
+      and(eq(transportRequests.tenantId, tenantId), gte(transportRequests.createdAt, startDate)),
+    )
     .orderBy(sql`transport_requests.created_at DESC`);
 }
 
-async function buildMaintenanceRows(db: ReturnType<typeof getDb>, tenantId: string, startDate: Date) {
+async function buildMaintenanceRows(
+  db: ReturnType<typeof getDb>,
+  tenantId: string,
+  startDate: Date,
+) {
   return db
     .select({
       vehicle: vehicles.licenceNumber,
@@ -164,9 +173,20 @@ export async function GET(request: NextRequest) {
     const reportType = searchParams.get('type') || 'fuel';
     const exportFormat = searchParams.get('export'); // 'csv' | 'excel'
 
-    const supportedReportTypes = new Set(['fuel', 'trips', 'fleet', 'maintenance', 'requests', 'approvals']);
+    const supportedReportTypes = new Set([
+      'snapshot',
+      'fuel',
+      'trips',
+      'fleet',
+      'maintenance',
+      'requests',
+      'approvals',
+    ]);
     if (!supportedReportTypes.has(reportType)) {
-      return NextResponse.json({ error: `Unsupported report type: ${reportType}` }, { status: 400 });
+      return NextResponse.json(
+        { error: `Unsupported report type: ${reportType}` },
+        { status: 400 },
+      );
     }
 
     // Require auth — reports are tenant-scoped
@@ -272,7 +292,12 @@ export async function GET(request: NextRequest) {
             .from(workflowActions)
             .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
             .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-            .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowActions.createdAt, startDate)))
+            .where(
+              and(
+                eq(transportRequests.tenantId, tenantId),
+                gte(workflowActions.createdAt, startDate),
+              ),
+            )
             .orderBy(sql`workflow_actions.created_at DESC`);
           rows = approvalData;
           columns = [
@@ -285,21 +310,34 @@ export async function GET(request: NextRequest) {
           summary = [{ label: 'Total Actions', value: String(approvalData.length) }];
           break;
         }
-        default: break;
+        default:
+          break;
       }
 
-      const [tenant] = await db
+      const [tenant] = (await db
         .select({ name: sql`name` })
         .from(sql`tenants`)
         .where(eq(sql`id`, tenantId))
-        .limit(1) as unknown as { name: string }[];
+        .limit(1)) as unknown as { name: string }[];
 
       const element = React.createElement(ReportDocument as never, {
         data: {
           title,
-          period: period === '7d' ? 'Last 7 Days' : period === '30d' ? 'Last 30 Days' : period === '90d' ? 'Last Quarter' : 'Year to Date',
+          period:
+            period === '7d'
+              ? 'Last 7 Days'
+              : period === '30d'
+                ? 'Last 30 Days'
+                : period === '90d'
+                  ? 'Last Quarter'
+                  : 'Year to Date',
           tenantName: tenant?.name || 'Fleet Management',
-          generatedAt: new Date().toLocaleDateString('en-NA', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }),
+          generatedAt: new Date().toLocaleDateString('en-NA', {
+            weekday: 'short',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          }),
           summary,
           columns,
           rows,
@@ -307,7 +345,9 @@ export async function GET(request: NextRequest) {
         },
       }) as never;
 
-      const stream = await renderToStream(element as unknown as React.ReactElement<Record<string, unknown>>);
+      const stream = await renderToStream(
+        element as unknown as React.ReactElement<Record<string, unknown>>,
+      );
       const chunks: Uint8Array[] = [];
       for await (const chunk of stream) {
         chunks.push(new Uint8Array(chunk as unknown as ArrayBuffer));
@@ -403,7 +443,12 @@ export async function GET(request: NextRequest) {
             .from(workflowActions)
             .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
             .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-            .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowActions.createdAt, startDate)))
+            .where(
+              and(
+                eq(transportRequests.tenantId, tenantId),
+                gte(workflowActions.createdAt, startDate),
+              ),
+            )
             .orderBy(sql`workflow_actions.created_at DESC`);
           columns = [
             { key: 'workflowId', label: 'Workflow ID' },
@@ -496,7 +541,12 @@ export async function GET(request: NextRequest) {
             .from(workflowActions)
             .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
             .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-            .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowActions.createdAt, startDate)))
+            .where(
+              and(
+                eq(transportRequests.tenantId, tenantId),
+                gte(workflowActions.createdAt, startDate),
+              ),
+            )
             .orderBy(sql`workflow_actions.created_at DESC`);
           columns = [
             { key: 'workflowId', label: 'Workflow ID' },
@@ -554,7 +604,10 @@ export async function GET(request: NextRequest) {
           .limit(10);
 
         const reimbursementSummary = await db
-          .select({ totalPending: count(), totalAmount: sql`COALESCE(SUM(reimbursements.amount), 0)`.as('total_amount') })
+          .select({
+            totalPending: count(),
+            totalAmount: sql`COALESCE(SUM(reimbursements.amount), 0)`.as('total_amount'),
+          })
           .from(reimbursements)
           .innerJoin(fuelTransactions, eq(reimbursements.transactionId, fuelTransactions.id))
           .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
@@ -596,7 +649,12 @@ export async function GET(request: NextRequest) {
         const requestStats = await db
           .select({ totalRequests: count(), status: transportRequests.status })
           .from(transportRequests)
-          .where(and(eq(transportRequests.tenantId, tenantId), gte(transportRequests.createdAt, startDate)))
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              gte(transportRequests.createdAt, startDate),
+            ),
+          )
           .groupBy(transportRequests.status);
         return NextResponse.json({ success: true, data: { requestStats } });
       }
@@ -634,7 +692,12 @@ export async function GET(request: NextRequest) {
           .from(workflowActions)
           .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
           .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-          .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowActions.createdAt, startDate)));
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              gte(workflowActions.createdAt, startDate),
+            ),
+          );
 
         // Approval rate by result type
         const approvalRate = await db
@@ -645,7 +708,12 @@ export async function GET(request: NextRequest) {
           .from(workflowActions)
           .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
           .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-          .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowActions.createdAt, startDate)))
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              gte(workflowActions.createdAt, startDate),
+            ),
+          )
           .groupBy(workflowActions.result);
 
         // Steps histogram — how many actions per step order
@@ -657,7 +725,12 @@ export async function GET(request: NextRequest) {
           .from(workflowActions)
           .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
           .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-          .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowActions.createdAt, startDate)))
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              gte(workflowActions.createdAt, startDate),
+            ),
+          )
           .groupBy(workflowActions.stepOrder)
           .orderBy(workflowActions.stepOrder);
 
@@ -666,7 +739,12 @@ export async function GET(request: NextRequest) {
           .select({ count: count() })
           .from(workflowInstances)
           .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-          .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowInstances.createdAt, startDate)));
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              gte(workflowInstances.createdAt, startDate),
+            ),
+          );
 
         return NextResponse.json({
           success: true,
@@ -684,24 +762,44 @@ export async function GET(request: NextRequest) {
         const [activeRequests] = await db
           .select({ count: count() })
           .from(transportRequests)
-          .where(and(eq(transportRequests.tenantId, tenantId), sql`${transportRequests.status} NOT IN ('closed', 'cancelled')`));
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              sql`${transportRequests.status} NOT IN ('closed', 'cancelled')`,
+            ),
+          );
 
         const [activeTrips] = await db
           .select({ count: count() })
           .from(trips)
           .innerJoin(vehicles, eq(trips.vehicleId, vehicles.id))
-          .where(and(eq(vehicles.tenantId, tenantId), sql`${trips.status} IN ('pending', 'in_progress')`));
+          .where(
+            and(
+              eq(vehicles.tenantId, tenantId),
+              sql`${trips.status} IN ('pending', 'in_progress')`,
+            ),
+          );
 
         const [openDefects] = await db
           .select({ count: count() })
           .from(vehicles)
           .where(and(eq(vehicles.tenantId, tenantId), eq(vehicles.status, 'maintenance')));
 
-        return NextResponse.json({ success: true, data: { activeRequests: activeRequests?.count || 0, activeTrips: activeTrips?.count || 0, openDefects: openDefects?.count || 0 } });
+        return NextResponse.json({
+          success: true,
+          data: {
+            activeRequests: activeRequests?.count || 0,
+            activeTrips: activeTrips?.count || 0,
+            openDefects: openDefects?.count || 0,
+          },
+        });
       }
     }
   } catch (error) {
     console.error('Reports API failed:', error);
-    return NextResponse.json({ error: 'Failed to generate report: ' + String(error) }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to generate report: ' + String(error) },
+      { status: 500 },
+    );
   }
 }
