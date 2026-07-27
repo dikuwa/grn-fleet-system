@@ -14,6 +14,8 @@ import { employees, driverProfiles } from '@/db/schema/people';
 import { eq, and, desc, asc, like, or, sql, type SQL } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { provisionTripAuthority } from '@/lib/trip-authority';
+import { auditEvents, notifications } from '@/db/schema';
 
 /**
  * GET /api/trips
@@ -194,7 +196,6 @@ export async function POST(request: NextRequest) {
         allocationId,
         vehicleId,
         status: 'pending',
-        issuedAt: new Date(),
       })
       .returning();
 
@@ -206,7 +207,50 @@ export async function POST(request: NextRequest) {
         .where(eq(vehicleAllocations.id, allocationId));
     }
 
-    return NextResponse.json({ success: true, trip }, { status: 201 });
+    try {
+      const provisioned = await provisionTripAuthority({
+        tripId: trip.id,
+        tenantId: session.tenantId,
+        requestId,
+        allocationId,
+        actorUserId: session.user.id,
+      });
+      const [driver] = await db
+        .select({ userId: employees.userId })
+        .from(vehicleAllocations)
+        .innerJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
+        .where(eq(vehicleAllocations.id, allocationId))
+        .limit(1);
+      if (driver?.userId) {
+        await db.insert(notifications).values({
+          tenantId: session.tenantId,
+          recipientUserId: driver.userId,
+          type: 'driver_acceptance_required',
+          title: `Trip Authority ${provisioned.authority.authorityNumber} requires acceptance`,
+          body: 'Review and accept the official authority before completing the departure inspection.',
+          entityType: 'trip',
+          entityId: trip.id,
+          actionUrl: `/dashboard/trips/${trip.id}`,
+          priority: 'high',
+        });
+      }
+      await db.insert(auditEvents).values({
+        tenantId: session.tenantId,
+        tenantSequence: Date.now(),
+        eventType: 'trip_authority_issued',
+        actorUserId: session.user.id,
+        action: 'issue',
+        entityType: 'trip_authority',
+        entityId: provisioned.authority.id,
+        summary: `Trip Authority ${provisioned.authority.authorityNumber} issued from approved request`,
+        after: { tripId: trip.id, status: provisioned.authority.status },
+        sourceChannel: 'web',
+      });
+      return NextResponse.json({ success: true, trip, authority: provisioned.authority }, { status: 201 });
+    } catch (authorityError) {
+      await db.delete(trips).where(eq(trips.id, trip.id));
+      throw authorityError;
+    }
   } catch (error) {
     console.error('[Trips] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create trip' }, { status: 500 });

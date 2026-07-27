@@ -258,7 +258,9 @@ export const RoleDefinitions = {
       Permissions.DRIVER_FUEL_CREATE,
       Permissions.TRIP_VIEW,
       Permissions.INSPECTION_VIEW,
+      Permissions.INSPECTION_PERFORM,
       Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
     ],
   },
   TENANT_AUDITOR: {

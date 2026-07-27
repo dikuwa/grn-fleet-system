@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, tripIssues, vehicleInspections, vehicleAllocations } from '@/db/schema/trips';
+import { trips, tripAuthorities, tripIssues, vehicleInspections, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
@@ -40,10 +40,13 @@ export async function POST(
         driverAcknowledgedByEmployeeId: trips.driverAcknowledgedByEmployeeId,
         requestStatus: transportRequests.status,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        authorityStatus: tripAuthorities.status,
+        authorityBeginningOdometer: tripAuthorities.beginningOdometer,
       })
       .from(trips)
       .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+      .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
       .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
@@ -65,6 +68,9 @@ export async function POST(
       );
     }
     if (trip.requestStatus !== 'authorised') return NextResponse.json({ error: 'Final authorisation is required before issue' }, { status: 409 });
+    if (trip.authorityStatus !== 'ready_for_departure') {
+      return NextResponse.json({ error: `Trip Authority is not ready for physical issue (${trip.authorityStatus})` }, { status: 409 });
+    }
     if (!trip.driverEmployeeId || !trip.driverAcknowledgedAt || trip.driverAcknowledgedByEmployeeId !== trip.driverEmployeeId) {
       return NextResponse.json({ error: 'The assigned driver must acknowledge the trip before issue' }, { status: 409 });
     }
@@ -86,6 +92,17 @@ export async function POST(
       fuelCardIssued = false,
       notes,
     } = body;
+    if (
+      !Number.isInteger(Number(issueOdometer)) ||
+      Number(issueOdometer) < (trip.authorityBeginningOdometer ?? 0)
+    ) {
+      return NextResponse.json({
+        error: `Issue odometer must be a whole number at or above ${trip.authorityBeginningOdometer ?? 0}`,
+      }, { status: 422 });
+    }
+    if (keysIssued !== true) {
+      return NextResponse.json({ error: 'Vehicle keys must be issued before departure' }, { status: 422 });
+    }
 
     // Check if an issue record already exists for this allocation
     const [existingIssue] = await db

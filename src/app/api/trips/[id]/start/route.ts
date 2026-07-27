@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, vehicleInspections, vehicleAllocations } from '@/db/schema/trips';
-import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
-import { employees } from '@/db/schema/people';
+import { trips, tripAuthorities, vehicleInspections, vehicleAllocations } from '@/db/schema/trips';
+import { vehicles, vehicleDefects, vehicleStatusEvents } from '@/db/schema/fleet';
+import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc, isNull } from 'drizzle-orm';
+import { setAuthorityStatus } from '@/lib/trip-authority';
 
 export async function POST(
   req: NextRequest,
@@ -16,6 +17,24 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+    const body = await req.json().catch(() => ({})) as {
+      beginningOdometer?: number;
+      passengersConfirmed?: boolean;
+      fuelLevel?: string;
+      latitude?: number;
+      longitude?: number;
+      clientSyncId?: string;
+    };
+    if (
+      !Number.isInteger(body.beginningOdometer) ||
+      Number(body.beginningOdometer) < 0 ||
+      body.passengersConfirmed !== true ||
+      !body.fuelLevel
+    ) {
+      return NextResponse.json({
+        error: 'Beginning odometer, fuel level and actual passenger confirmation are required',
+      }, { status: 422 });
+    }
 
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
@@ -27,9 +46,17 @@ export async function POST(
     const db = getDb();
 
     const [trip] = await db
-      .select({ trip: trips, driverEmployeeId: vehicleAllocations.driverEmployeeId })
+      .select({
+        trip: trips,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        authorityId: tripAuthorities.id,
+        authorityStatus: tripAuthorities.status,
+        validFrom: tripAuthorities.validFrom,
+        validUntil: tripAuthorities.validUntil,
+      })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+      .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
       .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
@@ -46,12 +73,59 @@ export async function POST(
       );
     }
     if (!tripRecord.issuedAt) return NextResponse.json({ error: 'Vehicle must be physically issued before the trip starts' }, { status: 409 });
+    if (trip.authorityStatus !== 'ready_for_departure') {
+      return NextResponse.json({ error: `Trip Authority is not ready for departure (${trip.authorityStatus})` }, { status: 409 });
+    }
+    const now = new Date();
+    if ((trip.validFrom && now < trip.validFrom) || (trip.validUntil && now > trip.validUntil)) {
+      return NextResponse.json({ error: 'Trip Authority is outside its approved validity period' }, { status: 409 });
+    }
     const [employee] = await db.select({ id: employees.id }).from(employees)
       .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId))).limit(1);
     if (!employee || employee.id !== trip.driverEmployeeId) return NextResponse.json({ error: 'Only the assigned driver may start this trip' }, { status: 403 });
-    const [inspection] = await db.select({ id: vehicleInspections.id }).from(vehicleInspections)
+    const [licence] = await db
+      .select({
+        expiryDate: driverLicences.expiryDate,
+        verificationStatus: driverLicences.verificationStatus,
+        driverStatus: driverProfiles.driverStatus,
+      })
+      .from(driverProfiles)
+      .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
+      .where(eq(driverProfiles.employeeId, employee.id))
+      .orderBy(desc(driverLicences.expiryDate))
+      .limit(1);
+    if (
+      !licence ||
+      licence.driverStatus !== 'authorised' ||
+      licence.verificationStatus !== 'verified' ||
+      new Date(`${licence.expiryDate}T23:59:59Z`) < now
+    ) {
+      return NextResponse.json({ error: 'Driver licence is not currently valid and verified' }, { status: 409 });
+    }
+    const [blockingDefect] = await db
+      .select({ id: vehicleDefects.id })
+      .from(vehicleDefects)
+      .where(and(
+        eq(vehicleDefects.vehicleId, tripRecord.vehicleId),
+        eq(vehicleDefects.isBlocking, true),
+        isNull(vehicleDefects.resolvedAt),
+      ))
+      .limit(1);
+    if (blockingDefect) {
+      return NextResponse.json({ error: 'Departure is blocked by an unresolved safety-critical defect' }, { status: 409 });
+    }
+    const [inspection] = await db.select({
+      id: vehicleInspections.id,
+      odometerReading: vehicleInspections.odometerReading,
+    }).from(vehicleInspections)
       .where(and(eq(vehicleInspections.tripId, id), eq(vehicleInspections.type, 'departure'), eq(vehicleInspections.overallPass, true))).limit(1);
     if (!inspection) return NextResponse.json({ error: 'Passed pre-departure inspection is required' }, { status: 409 });
+    if (
+      inspection.odometerReading !== null &&
+      Number(body.beginningOdometer) < inspection.odometerReading
+    ) {
+      return NextResponse.json({ error: `Beginning odometer cannot be lower than the inspection reading (${inspection.odometerReading})` }, { status: 422 });
+    }
 
     const [updatedTrip] = await db
       .update(trips)
@@ -62,6 +136,13 @@ export async function POST(
       })
       .where(eq(trips.id, id))
       .returning();
+
+    await setAuthorityStatus({
+      authorityId: trip.authorityId,
+      tenantId: session.tenantId,
+      next: 'in_progress',
+      patch: { beginningOdometer: Number(body.beginningOdometer) },
+    });
 
     // Update vehicle status to allocated + log status event
     await db
@@ -97,6 +178,13 @@ export async function POST(
       entityType: 'trip',
       entityId: id,
       summary: `Trip started: vehicle ${tripRecord.vehicleId?.slice(0, 8) || 'unknown'}`,
+      after: {
+        authorityId: trip.authorityId,
+        beginningOdometer: body.beginningOdometer,
+        fuelLevel: body.fuelLevel,
+        passengersConfirmed: true,
+        location: body.latitude && body.longitude ? { latitude: body.latitude, longitude: body.longitude } : null,
+      },
       sourceChannel: 'web',
     });
 

@@ -16,9 +16,10 @@ interface TripActionsProps {
   canManage: boolean;
   canDrive: boolean;
   canInspect: boolean;
+  currentOdometer?: number;
 }
 
-export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepartureInspection, vehicleId, canManage, canDrive, canInspect }: TripActionsProps) {
+export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepartureInspection, vehicleId, canManage, canDrive, canInspect, currentOdometer }: TripActionsProps) {
   const router = useRouter();
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState('');
@@ -64,7 +65,7 @@ export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepar
       const res = await fetch(`/api/trips/${tripId}/issue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keysIssued: true, fuelCardIssued: true }),
+        body: JSON.stringify({ keysIssued: true, fuelCardIssued: true, issueOdometer: currentOdometer }),
       });
       if (!res.ok) {
         const errData = await res.json();
@@ -76,7 +77,7 @@ export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepar
     } finally {
       setIsWorking(false);
     }
-  }, [tripId, router]);
+  }, [tripId, currentOdometer, router]);
 
   const handleAcknowledge = useCallback(async () => {
     setIsWorking(true);

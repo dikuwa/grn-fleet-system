@@ -17,7 +17,15 @@ import Dexie, { type EntityTable } from 'dexie';
 
 export interface OfflineDraft {
   id: string;
-  draftType: 'fuel' | 'request' | 'trip_log' | 'inspection_departure' | 'inspection_return';
+  draftType:
+    | 'fuel'
+    | 'request'
+    | 'trip_log'
+    | 'trip_progress'
+    | 'trip_incident'
+    | 'trip_expense'
+    | 'inspection_departure'
+    | 'inspection_return';
   /** Serialised form state */
   formData: Record<string, unknown>;
   /** The user who drafted this (from auth session) */

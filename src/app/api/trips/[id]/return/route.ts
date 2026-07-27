@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { trips, tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
+import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
 import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
+import { setAuthorityStatus } from '@/lib/trip-authority';
 
 export async function POST(
   req: NextRequest,
@@ -13,6 +15,26 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+    const body = await req.json().catch(() => ({})) as {
+      endingOdometer?: number;
+      fuelLevel?: string;
+      returnLocation?: string;
+      incidentDeclared?: boolean;
+      outstandingReceiptsDeclared?: boolean;
+      comments?: string;
+    };
+    if (
+      !Number.isInteger(body.endingOdometer) ||
+      Number(body.endingOdometer) < 0 ||
+      !body.fuelLevel ||
+      !body.returnLocation ||
+      typeof body.incidentDeclared !== 'boolean' ||
+      typeof body.outstandingReceiptsDeclared !== 'boolean'
+    ) {
+      return NextResponse.json({
+        error: 'Ending odometer, fuel level, return location, incident and outstanding-receipt declarations are required',
+      }, { status: 422 });
+    }
 
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
@@ -24,9 +46,16 @@ export async function POST(
     const db = getDb();
 
     const [trip] = await db
-      .select({ trip: trips, driverEmployeeId: vehicleAllocations.driverEmployeeId })
+      .select({
+        trip: trips,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        authorityId: tripAuthorities.id,
+        authorityStatus: tripAuthorities.status,
+        beginningOdometer: tripAuthorities.beginningOdometer,
+      })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+      .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
       .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
@@ -44,6 +73,12 @@ export async function POST(
         { status: 409 },
       );
     }
+    if (!['in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported'].includes(trip.authorityStatus)) {
+      return NextResponse.json({ error: `Trip Authority cannot be returned from "${trip.authorityStatus}"` }, { status: 409 });
+    }
+    if (trip.beginningOdometer !== null && Number(body.endingOdometer) < trip.beginningOdometer) {
+      return NextResponse.json({ error: `Ending odometer cannot be lower than ${trip.beginningOdometer}` }, { status: 422 });
+    }
 
     const [updatedTrip] = await db
       .update(trips)
@@ -55,6 +90,31 @@ export async function POST(
       .where(eq(trips.id, id))
       .returning();
 
+    await setAuthorityStatus({
+      authorityId: trip.authorityId,
+      tenantId: session.tenantId,
+      next: 'returned',
+      patch: { endingOdometer: Number(body.endingOdometer) },
+    });
+    await setAuthorityStatus({
+      authorityId: trip.authorityId,
+      tenantId: session.tenantId,
+      next: 'awaiting_arrival_inspection',
+    });
+    await db.insert(vehicleOdometerEvents).values({
+      vehicleId: trip.trip.vehicleId,
+      odometerValue: Number(body.endingOdometer),
+      source: 'trip_return',
+      sourceEntityType: 'trip',
+      sourceEntityId: trip.trip.id,
+      recordedByUserId: session.user.id,
+      notes: body.comments,
+    });
+    await db.update(vehicles).set({
+      currentOdometer: Number(body.endingOdometer),
+      updatedAt: new Date(),
+    }).where(and(eq(vehicles.id, trip.trip.vehicleId), eq(vehicles.tenantId, session.tenantId)));
+
     // Audit log
     await db.insert(auditEvents).values({
       tenantId: session.tenantId,
@@ -65,6 +125,14 @@ export async function POST(
       entityType: 'trip',
       entityId: id,
       summary: `Trip returned: status changed to return_inspection`,
+      after: {
+        authorityId: trip.authorityId,
+        endingOdometer: body.endingOdometer,
+        fuelLevel: body.fuelLevel,
+        returnLocation: body.returnLocation,
+        incidentDeclared: body.incidentDeclared,
+        outstandingReceiptsDeclared: body.outstandingReceiptsDeclared,
+      },
       sourceChannel: 'web',
     });
 

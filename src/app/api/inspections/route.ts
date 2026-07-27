@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, vehicleInspections, inspectionItemResults, inspectionTemplates, inspectionTemplateItems, inspectionPhotos, vehicleAllocations } from '@/db/schema/trips';
+import { trips, tripAuthorities, vehicleInspections, inspectionItemResults, inspectionTemplates, inspectionTemplateItems, inspectionPhotos, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles, vehicleDefects, vehicleStatusEvents, maintenanceEvents, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents, notifications, roleAssignments, roles, tenantMemberships } from '@/db/schema';
@@ -8,6 +8,7 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onInspectionCompleted } from '@/lib/document-generator';
 import { eq, and, isNull, sql } from 'drizzle-orm';
+import { setAuthorityStatus } from '@/lib/trip-authority';
 
 export async function POST(req: NextRequest) {
   try {
@@ -64,7 +65,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Odometer must be a whole number at or above ${vehicle.currentOdometer}` }, { status: 422 });
     }
 
-    let trip: { id: string; status: string; vehicleId: string; requestStatus: string; driverEmployeeId: string | null } | null = null;
+    let trip: {
+      id: string;
+      status: string;
+      vehicleId: string;
+      requestStatus: string;
+      driverEmployeeId: string | null;
+      authorityId: string;
+      authorityStatus: string;
+    } | null = null;
     if (tripId) {
       const [foundTrip] = await db.select({
         id: trips.id,
@@ -72,16 +81,29 @@ export async function POST(req: NextRequest) {
         vehicleId: trips.vehicleId,
         requestStatus: transportRequests.status,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        authorityId: tripAuthorities.id,
+        authorityStatus: tripAuthorities.status,
       }).from(trips)
         .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
         .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+        .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
         .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)))
         .limit(1);
       trip = foundTrip || null;
       if (!trip || trip.vehicleId !== vehicleId) return NextResponse.json({ error: 'Trip and vehicle do not match' }, { status: 404 });
       if (!trip.driverEmployeeId) return NextResponse.json({ error: 'A valid driver must be assigned before inspection' }, { status: 409 });
-      if (type === 'departure' && (trip.status !== 'pending' || !['authorised', 'ready_for_issue'].includes(trip.requestStatus))) {
+      if (
+        type === 'departure' &&
+        (trip.status !== 'pending' ||
+          !['authorised', 'ready_for_issue', 'approved', 'approved_emergency'].includes(trip.requestStatus))
+      ) {
         return NextResponse.json({ error: 'Departure inspection requires final authorisation' }, { status: 409 });
+      }
+      if (
+        type === 'departure' &&
+        !['driver_accepted', 'awaiting_pre_trip_inspection'].includes(trip.authorityStatus)
+      ) {
+        return NextResponse.json({ error: 'The assigned driver must accept the Trip Authority before inspection' }, { status: 409 });
       }
       if (type === 'return' && !['in_progress', 'return_due', 'return_inspection'].includes(trip.status)) {
         return NextResponse.json({ error: 'Return inspection is only available after trip execution' }, { status: 409 });
@@ -235,8 +257,35 @@ export async function POST(req: NextRequest) {
 
     // Advance trip status based on inspection type (only if inspection passed)
     let updatedTrip = null;
+    if (tripId && type === 'departure' && trip) {
+      let authorityStatus = trip.authorityStatus;
+      if (authorityStatus === 'driver_accepted') {
+        await setAuthorityStatus({
+          authorityId: trip.authorityId,
+          tenantId,
+          next: 'awaiting_pre_trip_inspection',
+        });
+        authorityStatus = 'awaiting_pre_trip_inspection';
+      }
+      if (overallPass && authorityStatus === 'awaiting_pre_trip_inspection') {
+        await setAuthorityStatus({
+          authorityId: trip.authorityId,
+          tenantId,
+          next: 'ready_for_departure',
+          patch: { beginningOdometer: submittedOdometer },
+        });
+      }
+    }
     if (tripId && type === 'return') {
       [updatedTrip] = await db.update(trips).set({ status: 'closure_review', returnedAt: new Date(), updatedAt: new Date() }).where(eq(trips.id, tripId)).returning();
+      if (trip?.authorityStatus === 'awaiting_arrival_inspection') {
+        await setAuthorityStatus({
+          authorityId: trip.authorityId,
+          tenantId,
+          next: 'awaiting_reconciliation',
+          patch: { endingOdometer: submittedOdometer },
+        });
+      }
     }
 
     // Link uploaded photos if provided

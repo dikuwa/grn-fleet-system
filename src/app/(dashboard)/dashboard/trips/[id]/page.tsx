@@ -20,6 +20,7 @@ import {
   Truck, ChevronLeft, User, CalendarDays, Clock, Gauge, CheckCircle2, XCircle, AlertTriangle, FileText, UserCheck as UserCheckIcon,
 } from 'lucide-react';
 import { TripActions } from '../components/TripActions';
+import { DriverTripWorkspace } from '../components/DriverTripWorkspace';
 import Link from 'next/link';
 
 interface PageProps {
@@ -184,7 +185,7 @@ export default async function TripDetailPage({ params }: PageProps) {
         description={`${trip.licenceNumber}${trip.vehicleRegisterNumber ? ` · ${trip.vehicleRegisterNumber}` : ''}`}
       >
         <div className="flex items-center gap-2">
-          <TripActions
+          {!permissionCodes.includes(Permissions.DRIVER_LOG_CREATE) && <TripActions
               tripId={trip.id}
               status={trip.status}
               vehicleId={trip.vehicleId}
@@ -194,12 +195,17 @@ export default async function TripDetailPage({ params }: PageProps) {
               canManage={permissionCodes.includes(Permissions.TRIP_MANAGE)}
               canDrive={permissionCodes.includes(Permissions.DRIVER_LOG_CREATE)}
               canInspect={permissionCodes.includes(Permissions.INSPECTION_PERFORM)}
-            />
+              currentOdometer={trip.currentOdometer ?? undefined}
+            />}
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/trips"><ChevronLeft className="h-4 w-4" /> Back to Trips</Link>
           </Button>
         </div>
       </PageHeader>
+
+      {permissionCodes.includes(Permissions.DRIVER_LOG_CREATE) && (
+        <DriverTripWorkspace tripId={trip.id} />
+      )}
 
       {/* Trip Summary */}
       <Card>

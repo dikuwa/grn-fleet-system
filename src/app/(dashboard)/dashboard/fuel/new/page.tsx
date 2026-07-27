@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from '@/lib/auth-client';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { StyledSelect, StyledDateInput } from '@/components/ui/styled-select';
-import { ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
+import { Camera, ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft, deleteDraft } from '@/lib/offline-drafts';
@@ -16,10 +16,11 @@ import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
 export default function NewFuelEntryPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const { toast } = useToast();
   const [formData, setFormData] = useState({
-    vehicleGrn: '',
+    vehicleGrn: searchParams.get('vehicle') || '',
     tripRef: '',
     transactionDate: '',
     stationName: '',
@@ -37,6 +38,8 @@ export default function NewFuelEntryPage() {
   const [draftSaved, setDraftSaved] = useState(false);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const tripId = searchParams.get('tripId') || '';
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -60,7 +63,7 @@ export default function NewFuelEntryPage() {
       const draft = await saveDraft({
         id: draftId || undefined,
         draftType: 'fuel',
-        formData: formData as unknown as Record<string, unknown>,
+        formData: { ...formData, tripId, receiptFile } as unknown as Record<string, unknown>,
         userId: session?.user?.id || null,
         tenantId: DEFAULT_TENANT_ID,
         syncStatus: 'pending',
@@ -71,7 +74,7 @@ export default function NewFuelEntryPage() {
     } catch (err) {
       console.error('Failed to save draft:', err);
     }
-  }, [formData, session, draftId]);
+  }, [formData, session, draftId, receiptFile, tripId]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,7 +86,7 @@ export default function NewFuelEntryPage() {
         await saveDraft({
           id: draftId || undefined,
           draftType: 'fuel',
-          formData: { ...formData, employeeNumber: formData.employeeNumber } as unknown as Record<string, unknown>,
+          formData: { ...formData, tripId, receiptFile, employeeNumber: formData.employeeNumber } as unknown as Record<string, unknown>,
           userId: session?.user?.id || null,
           tenantId: DEFAULT_TENANT_ID,
           syncStatus: 'pending',
@@ -102,6 +105,7 @@ export default function NewFuelEntryPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vehicleGrn: formData.vehicleGrn,
+          tripId: tripId || undefined,
           tripRef: formData.tripRef || null,
           clientSyncId: crypto.randomUUID(),
           transactionAt: formData.transactionDate,
@@ -129,6 +133,21 @@ export default function NewFuelEntryPage() {
         }
         throw new Error(data.error || 'Failed to record transaction');
       }
+      if (receiptFile && data.data?.id) {
+        const receiptForm = new FormData();
+        receiptForm.append('file', receiptFile);
+        receiptForm.append('transactionId', data.data.id);
+        const receiptResponse = await fetch('/api/fuel/receipts', { method: 'POST', body: receiptForm });
+        const receiptData = await receiptResponse.json();
+        if (!receiptResponse.ok) throw new Error(receiptData.error || 'Fuel entry saved, but receipt OCR failed');
+        toast({
+          title: receiptData.manualEntryRequired ? 'Receipt saved — enter details manually' : 'Receipt OCR completed',
+          description: receiptData.flags?.length
+            ? `Review required: ${receiptData.flags.join(', ').replaceAll('_', ' ')}`
+            : 'Extracted receipt fields are ready for confirmation.',
+          variant: receiptData.flags?.length ? 'pending' : 'success',
+        });
+      }
       // Clean up draft if it exists
       if (draftId) await deleteDraft(draftId);
       toast({ title: 'Fuel entry recorded', description: `${formData.litres}L of ${formData.fuelType} for ${formData.vehicleGrn}`, variant: 'success' });
@@ -138,7 +157,7 @@ export default function NewFuelEntryPage() {
       toast({ title: 'Failed to record', description: err instanceof Error ? err.message : 'Transaction could not be saved', variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [router, formData, session, draftId, isOnline]);
+  }, [router, formData, session, draftId, isOnline, receiptFile, toast, tripId]);
 
   return (
     <div className="space-y-6">
@@ -189,17 +208,32 @@ export default function NewFuelEntryPage() {
               )}
             </div>
             <div className="space-y-1.5"><Label>Notes</Label><Textarea placeholder="Any additional notes..." value={formData.notes} onChange={(e) => updateForm({ notes: e.target.value })} /></div>
+            <div className="space-y-1.5">
+              <Label>Fuel receipt</Label>
+              <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-canvas px-4 py-3 text-center hover:border-brand-400">
+                <Camera className="h-6 w-6 text-brand-700" />
+                <span className="text-sm font-medium text-ink-800">{receiptFile ? receiptFile.name : 'Take photo or choose receipt image'}</span>
+                <span className="text-xs text-ink-500">The original is preserved and OCR fields remain editable.</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="sr-only"
+                  onChange={(event) => setReceiptFile(event.target.files?.[0] || null)}
+                />
+              </label>
+            </div>
           </CardContent>
         </Card>
 
         <div className="mt-6 flex items-center justify-end gap-3">
-          <Button variant="secondary" size="sm" onClick={saveDraftLocally}>
+          <Button type="button" variant="secondary" size="sm" onClick={saveDraftLocally}>
             <Save className="h-4 w-4" />
             {draftSaved ? 'Saved!' : 'Save Draft'}
           </Button>
           <Button variant="secondary" size="sm" asChild><Link href="/dashboard/fuel">Cancel</Link></Button>
           <Button variant="primary" size="sm" type="submit" loading={isSubmitting}>
-            {isOnline ? <><CheckCircle2 className="h-4 w-4" /> Record Transaction</> : <><Save className="h-4 w-4" /> Save Offline</>}
+            {isOnline ? <><CheckCircle2 className="h-4 w-4" /> Record Transaction</> : <><Save className="h-4 w-4" /> Queue Offline</>}
           </Button>
         </div>
       </form>

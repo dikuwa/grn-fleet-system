@@ -6,7 +6,17 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips } from '@/db/schema/trips';
+import {
+  fuelTransactions,
+  tripAuthorities,
+  tripAuthorityPassengers,
+  tripAuthorisedDrivers,
+  tripExpenses,
+  tripIncidents,
+  tripProgressEntries,
+  trips,
+  vehicleInspections,
+} from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
@@ -61,7 +71,57 @@ export async function GET(
       return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true, trip });
+    const [authority] = await db
+      .select()
+      .from(tripAuthorities)
+      .where(and(
+        eq(tripAuthorities.tripId, id),
+        eq(tripAuthorities.tenantId, session.tenantId),
+      ))
+      .limit(1);
+
+    const [passengers, authorisedDrivers, progress, inspections, fuel, expenses, incidents] =
+      authority
+        ? await Promise.all([
+            db.select().from(tripAuthorityPassengers)
+              .where(eq(tripAuthorityPassengers.authorityId, authority.id)),
+            db.select({
+              id: tripAuthorisedDrivers.id,
+              employeeId: tripAuthorisedDrivers.employeeId,
+              driverType: tripAuthorisedDrivers.driverType,
+              employeeNumber: tripAuthorisedDrivers.employeeNumber,
+              licenceNumberMasked: tripAuthorisedDrivers.licenceNumberMasked,
+              licenceClass: tripAuthorisedDrivers.licenceClass,
+              licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
+              firstName: employees.firstName,
+              lastName: employees.lastName,
+            }).from(tripAuthorisedDrivers)
+              .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
+              .where(eq(tripAuthorisedDrivers.authorityId, authority.id)),
+            db.select().from(tripProgressEntries)
+              .where(and(eq(tripProgressEntries.tripId, id), eq(tripProgressEntries.tenantId, session.tenantId))),
+            db.select().from(vehicleInspections)
+              .where(and(eq(vehicleInspections.tripId, id), eq(vehicleInspections.tenantId, session.tenantId))),
+            db.select().from(fuelTransactions).where(eq(fuelTransactions.tripId, id)),
+            db.select().from(tripExpenses)
+              .where(and(eq(tripExpenses.tripId, id), eq(tripExpenses.tenantId, session.tenantId))),
+            db.select().from(tripIncidents)
+              .where(and(eq(tripIncidents.tripId, id), eq(tripIncidents.tenantId, session.tenantId))),
+          ])
+        : [[], [], [], [], [], [], []];
+
+    return NextResponse.json({
+      success: true,
+      trip,
+      authority,
+      passengers,
+      authorisedDrivers,
+      progress,
+      inspections,
+      fuel,
+      expenses,
+      incidents,
+    });
   } catch (error) {
     console.error('[Trip Detail] GET failed:', error);
     return NextResponse.json({ error: 'Failed to fetch trip' }, { status: 500 });

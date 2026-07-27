@@ -92,6 +92,24 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
         }),
       };
 
+    case 'trip_progress':
+    case 'trip_incident':
+    case 'trip_expense':
+      return {
+        url: `/api/trips/${encodeURIComponent(fd(draft.formData, 'tripId', ''))}/operations`,
+        method: 'POST',
+        transform: (draft) => ({
+          ...draft.formData,
+          action: draft.draftType === 'trip_progress'
+            ? 'progress'
+            : draft.draftType === 'trip_incident'
+              ? 'incident'
+              : 'expense',
+          clientSyncId: draft.id,
+          offlineCreatedAt: draft.createdAt,
+        }),
+      };
+
     case 'inspection_departure':
     case 'inspection_return':
       return {
@@ -173,6 +191,22 @@ export async function syncSingleDraft(
 
     const responseData = await res.json();
     const entityId = responseData?.data?.id || responseData?.id || null;
+    if (draft.draftType === 'fuel') {
+      const receiptFile = fd<File | null>(draft.formData, 'receiptFile', null);
+      if (receiptFile && entityId) {
+        const receiptForm = new FormData();
+        receiptForm.append('file', receiptFile);
+        receiptForm.append('transactionId', entityId);
+        const receiptResponse = await fetch('/api/fuel/receipts', {
+          method: 'POST',
+          body: receiptForm,
+        });
+        if (!receiptResponse.ok) {
+          const receiptError = await receiptResponse.json().catch(() => ({ error: 'Receipt sync failed' }));
+          throw new Error(receiptError.error || 'Receipt sync failed');
+        }
+      }
+    }
     await markDraftSynced(draft.id, entityId);
     return { synced: true, entityId };
   } catch (err) {

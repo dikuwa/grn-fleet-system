@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions, reimbursements, trips } from '@/db/schema/trips';
+import { fuelTransactions, reimbursements, tripAuthorities, trips } from '@/db/schema/trips';
 import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
@@ -99,14 +99,22 @@ async function buildTripRows(db: ReturnType<typeof getDb>, tenantId: string, sta
   return db
     .select({
       status: trips.status,
+      authorityNumber: tripAuthorities.authorityNumber,
+      authorityStatus: tripAuthorities.status,
       vehicle: vehicles.licenceNumber,
       started: trips.startedAt,
       returned: trips.returnedAt,
       closed: trips.closedAt,
       createdAt: trips.createdAt,
+      purpose: tripAuthorities.purpose,
+      origin: tripAuthorities.origin,
+      destination: tripAuthorities.destination,
+      beginningOdometer: tripAuthorities.beginningOdometer,
+      endingOdometer: tripAuthorities.endingOdometer,
     })
     .from(trips)
     .innerJoin(vehicles, eq(trips.vehicleId, vehicles.id))
+    .leftJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
     .where(and(eq(vehicles.tenantId, tenantId), gte(trips.createdAt, startDate)))
     .orderBy(sql`trips.created_at DESC`);
 }
@@ -213,8 +221,12 @@ export async function GET(request: NextRequest) {
           const tripData = await buildTripRows(db, tenantId, startDate);
           rows = tripData;
           columns = [
+            { key: 'authorityNumber', label: 'Trip Authority' },
+            { key: 'authorityStatus', label: 'Authority Status' },
             { key: 'status', label: 'Status' },
             { key: 'vehicle', label: 'Vehicle' },
+            { key: 'origin', label: 'Origin' },
+            { key: 'destination', label: 'Destination' },
             { key: 'started', label: 'Started' },
             { key: 'returned', label: 'Returned' },
           ];
@@ -341,8 +353,14 @@ export async function GET(request: NextRequest) {
         case 'trips':
           rows = await buildTripRows(db, tenantId, startDate);
           columns = [
+            { key: 'authorityNumber', label: 'Trip Authority' },
+            { key: 'authorityStatus', label: 'Authority Status' },
             { key: 'status', label: 'Status' },
             { key: 'vehicle', label: 'Vehicle' },
+            { key: 'origin', label: 'Origin' },
+            { key: 'destination', label: 'Destination' },
+            { key: 'beginningOdometer', label: 'Beginning Odometer' },
+            { key: 'endingOdometer', label: 'Ending Odometer' },
             { key: 'started', label: 'Started' },
             { key: 'returned', label: 'Returned' },
             { key: 'closed', label: 'Closed' },
@@ -429,8 +447,14 @@ export async function GET(request: NextRequest) {
         case 'trips':
           rows = await buildTripRows(db, tenantId, startDate);
           columns = [
+            { key: 'authorityNumber', label: 'Trip Authority' },
+            { key: 'authorityStatus', label: 'Authority Status' },
             { key: 'status', label: 'Status' },
             { key: 'vehicle', label: 'Vehicle' },
+            { key: 'origin', label: 'Origin' },
+            { key: 'destination', label: 'Destination' },
+            { key: 'beginningOdometer', label: 'Beginning Odometer' },
+            { key: 'endingOdometer', label: 'Ending Odometer' },
             { key: 'started', label: 'Started' },
             { key: 'returned', label: 'Returned' },
             { key: 'closed', label: 'Closed' },
