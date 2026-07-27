@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, asc, eq, ilike, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { departments, driverProfiles, employees, offices } from '@/db/schema/people';
-import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { hasPermission, requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 export async function GET(request: NextRequest) {
@@ -19,18 +19,22 @@ export async function GET(request: NextRequest) {
   if (permission instanceof NextResponse) return permission;
 
   const kind = request.nextUrl.searchParams.get('kind') === 'driver' ? 'driver' : 'employee';
+  const requestedUnavailable = request.nextUrl.searchParams.get('showUnavailable') === 'true';
+  const canViewUnavailable = requestedUnavailable && await hasPermission(session, Permissions.STAFF_VIEW);
   const query = request.nextUrl.searchParams.get('q')?.trim().slice(0, 100) || '';
   const limit = Math.min(30, Math.max(1, Number(request.nextUrl.searchParams.get('limit')) || 20));
   const conditions = [
     eq(employees.tenantId, session.tenantId),
     eq(employees.employmentStatus, 'active'),
   ];
+  if (!canViewUnavailable) conditions.push(eq(employees.availabilityStatus, 'available'));
 
   if (kind === 'driver') {
     conditions.push(
       eq(employees.isDriver, true),
       eq(driverProfiles.driverStatus, 'authorised'),
     );
+    if (!canViewUnavailable) conditions.push(eq(driverProfiles.availabilityStatus, 'available'));
   }
   if (query) {
     conditions.push(
@@ -57,6 +61,7 @@ export async function GET(request: NextRequest) {
       officeName: offices.name,
       driverStatus: driverProfiles.driverStatus,
       availabilityStatus: driverProfiles.availabilityStatus,
+      employeeAvailabilityStatus: employees.availabilityStatus,
     })
     .from(employees)
     .leftJoin(departments, eq(employees.departmentId, departments.id))

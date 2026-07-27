@@ -14,6 +14,7 @@ const publicRoutes = [
   '/manifest.json',
   '/sw.js',
   '/images',
+  '/request',
   '/staff-import-template.csv',
   '/vehicle-import-template.csv',
   '/office-import-template.csv',

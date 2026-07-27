@@ -14,6 +14,7 @@ import {
   type EmployeeSearchOption,
 } from '@/components/ui/employee-combobox';
 import { DatePicker } from '@/components/ui/date-picker';
+import { StyledSelect } from '@/components/ui/styled-select';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +54,9 @@ interface Route {
 }
 
 interface RequestFormData {
+  requesterEmployeeId: string;
+  requesterEmployee: EmployeeSearchOption | null;
+  assistedReason: string;
   purpose: string;
   department: string;
   scope: 'regional' | 'national';
@@ -62,6 +66,7 @@ interface RequestFormData {
   passengers: Passenger[];
   drivers: Driver[];
   routes: Route[];
+  driverPreference: string;
 }
 
 const STEPS = [
@@ -73,6 +78,9 @@ const STEPS = [
 ];
 
 const EMPTY_FORM: RequestFormData = {
+  requesterEmployeeId: '',
+  requesterEmployee: null,
+  assistedReason: '',
   purpose: '',
   department: '',
   scope: 'regional',
@@ -82,6 +90,7 @@ const EMPTY_FORM: RequestFormData = {
   passengers: [],
   drivers: [],
   routes: [],
+  driverPreference: 'transport_admin_assign',
 };
 
 // ---------------------------------------------------------------------------
@@ -114,6 +123,24 @@ function BasicInfoStep({
 }) {
   return (
     <div className="space-y-4">
+      <div className="rounded-[8px] border border-border p-4">
+        <label className="mb-1 block text-xs font-medium text-ink-500">Requesting employee</label>
+        <EmployeeCombobox
+          kind="employee"
+          value={data.requesterEmployeeId}
+          selectedOption={data.requesterEmployee}
+          onSelect={(employee) => onChange({ requesterEmployeeId: employee?.id || '', requesterEmployee: employee })}
+          placeholder="Self, or search employee for an assisted request"
+        />
+        <p className="mt-1 text-xs text-ink-500">Leave blank to use your linked employee profile. Selecting another employee requires assisted-request permission.</p>
+        {data.requesterEmployee && (
+          <div className="mt-3">
+            <label className="mb-1 block text-xs font-medium text-ink-500">Reason for assisted submission *</label>
+            <textarea value={data.assistedReason} onChange={(event) => onChange({ assistedReason: event.target.value })} rows={2} className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          </div>
+        )}
+      </div>
+
       <div>
         <label className="block text-xs font-medium text-ink-500 mb-1">Trip Scope *</label>
         <div className="flex gap-4">
@@ -141,6 +168,17 @@ function BasicInfoStep({
             </label>
           ))}
         </div>
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-ink-500">Driver preference</label>
+        <StyledSelect value={data.driverPreference} onChange={(event) => onChange({ driverPreference: event.target.value })}>
+          <option value="transport_admin_assign">Transport Administrator should assign</option>
+          <option value="requester_qualified_driver">I am a qualified driver and may drive</option>
+          <option value="preferred_driver">I will suggest a preferred driver</option>
+          <option value="no_preference">No preference</option>
+        </StyledSelect>
+        <p className="mt-1 text-xs text-ink-500">A preferred driver is a request only and remains subject to availability and compliance.</p>
       </div>
 
       <div>
@@ -768,7 +806,7 @@ export default function NewRequestPage() {
   }, []);
 
   const canProceed = (): boolean => {
-    if (step === 0) return formData.purpose.trim().length > 0;
+    if (step === 0) return formData.purpose.trim().length > 0 && (!formData.requesterEmployee || formData.assistedReason.trim().length > 0);
     if (step === 1) {
       return formData.activities.every((activity) =>
         Boolean(activity.title.trim() && activity.startDate && activity.endDate),
@@ -801,6 +839,9 @@ export default function NewRequestPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           purpose: formData.purpose,
+          requesterEmployeeNumber: formData.requesterEmployee?.employeeNumber,
+          assistedReason: formData.assistedReason,
+          confirmationMethod: formData.requesterEmployee ? 'pending_employee_confirmation' : 'authenticated_submission',
           department: formData.department,
           scope: formData.scope,
           specialAuthorityRequired: formData.specialAuthorityRequired,
@@ -808,6 +849,8 @@ export default function NewRequestPage() {
           activities: formData.activities,
           passengers: formData.passengers,
           drivers: formData.drivers,
+          driverPreference: formData.driverPreference,
+          preferredDriverEmployeeId: formData.drivers[0]?.employeeId,
           routes: formData.routes,
           clientSubmissionId,
         }),

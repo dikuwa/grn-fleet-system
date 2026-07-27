@@ -38,6 +38,7 @@ export const dashboardAccessRules: DashboardAccessRule[] = [
   { prefix: '/dashboard/inspections', anyOf: [Permissions.INSPECTION_VIEW, Permissions.INSPECTION_PERFORM] },
   { prefix: '/dashboard/drivers', anyOf: [Permissions.STAFF_VIEW, Permissions.DRIVER_MANAGE] },
   { prefix: '/dashboard/staff', anyOf: [Permissions.STAFF_VIEW, Permissions.STAFF_MANAGE] },
+  { prefix: '/dashboard/delegations', anyOf: [Permissions.STAFF_VIEW, Permissions.DELEGATION_MANAGE] },
 ];
 
 export function canAccessDashboardPath(pathname: string, permissionCodes: readonly string[]) {

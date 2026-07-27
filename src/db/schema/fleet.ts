@@ -63,6 +63,11 @@ export const vehicles = pgTable('vehicles', {
   nationalVehicleClassification: text('national_vehicle_classification'),
   roadworthyTestDate: date('roadworthy_test_date'),
   licenceExpiryDate: date('licence_expiry_date'),
+  requiredLicenceClass: text('required_licence_class'),
+  grossVehicleMassCategory: text('gross_vehicle_mass_category'),
+  trailerRequirement: boolean('trailer_requirement').notNull().default(false),
+  professionalAuthorisationRequired: boolean('professional_authorisation_required').notNull().default(false),
+  specialRestriction: text('special_restriction'),
 
   // SECTION E — Fleet assignment
   status: text('status').notNull().default('available'), // available, provisional, allocated, issued, maintenance, out_of_service, written_off

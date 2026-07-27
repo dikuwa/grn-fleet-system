@@ -17,6 +17,7 @@ import {
 import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { tenants } from '@/db/schema/tenants';
 import { vehicles } from '@/db/schema/fleet';
+import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 
 export const tripAuthorityStatuses = [
   'draft',
@@ -169,6 +170,20 @@ export async function provisionTripAuthority(input: {
     .where(eq(requestRoutes.requestId, input.requestId))
     .orderBy(desc(requestRoutes.createdAt))
     .limit(1);
+  const [resolvedAuthoriser] = await db.select({
+    userId: workflowActions.actorUserId,
+    employeeId: workflowActions.actorEmployeeId,
+    isActing: workflowActions.isActing,
+    metadata: workflowActions.metadata,
+    createdAt: workflowActions.createdAt,
+  }).from(workflowActions)
+    .innerJoin(workflowInstances, eq(workflowInstances.id, workflowActions.instanceId))
+    .where(and(
+      eq(workflowInstances.requestId, input.requestId),
+      eq(workflowActions.actionType, 'authorise'),
+    ))
+    .orderBy(desc(workflowActions.createdAt))
+    .limit(1);
 
   const rawToken = randomBytes(32).toString('base64url');
   const year = context.allocation.startAt.getFullYear();
@@ -195,6 +210,15 @@ export async function provisionTripAuthority(input: {
       specialAuthorityGranted: context.request.specialAuthorityApproved === true,
       specialConditions: context.request.specialAuthorityReason,
       issuedAt: new Date(),
+      authorisedAt: resolvedAuthoriser?.createdAt || null,
+      authorisedByUserId: resolvedAuthoriser?.userId || input.actorUserId,
+      authoriserSnapshot: resolvedAuthoriser ? {
+        employeeId: resolvedAuthoriser.employeeId,
+        isActing: resolvedAuthoriser.isActing,
+        capacity: resolvedAuthoriser.metadata?.resolvedCapacity,
+        roleId: resolvedAuthoriser.metadata?.resolvedRoleId,
+        authorisedAt: resolvedAuthoriser.createdAt.toISOString(),
+      } : null,
       documentVersion: 1,
       version: 1,
       data: {

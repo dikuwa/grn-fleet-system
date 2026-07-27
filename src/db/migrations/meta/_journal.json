@@ -120,6 +120,20 @@
       "when": 1785160800000,
       "tag": "0016_backfill_existing_trip_authorities",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785182764000,
+      "tag": "0017_employee_lifecycle_and_secure_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785186000000,
+      "tag": "0018_backfill_licence_codes_and_signatories",
+      "breakpoints": true
     }
   ]
 }

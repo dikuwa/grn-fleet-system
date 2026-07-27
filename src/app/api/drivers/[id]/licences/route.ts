@@ -1,0 +1,235 @@
+import { NextRequest, NextResponse } from 'next/server';
+import sharp from 'sharp';
+import { createWorker } from 'tesseract.js';
+import { getDb } from '@/db';
+import {
+  driverLicenceCodes,
+  driverLicenceCorrections,
+  driverLicences,
+  driverProfiles,
+  employees,
+} from '@/db/schema';
+import { and, desc, eq, sql } from 'drizzle-orm';
+import { hasPermission, requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
+import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
+import { licenceOcrConfidence, parseNamibianLicenceOcr } from '@/lib/driver-licence-ocr';
+import { recordAuditEvent } from '@/lib/audit-event';
+
+const accepted = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const maxBytes = 12 * 1024 * 1024;
+
+async function access(request: NextRequest, employeeId: string) {
+  const auth = await requireRequestAuth(request);
+  if (!auth.ok) return auth;
+  const db = getDb();
+  const [employee] = await db.select({ id: employees.id, userId: employees.userId })
+    .from(employees).where(and(eq(employees.id, employeeId), eq(employees.tenantId, auth.session.tenantId))).limit(1);
+  if (!employee) return { ok: false as const, error: NextResponse.json({ error: 'Driver not found' }, { status: 404 }) };
+  const canManage = await hasPermission(auth.session, Permissions.DRIVER_MANAGE);
+  const isOwn = employee.userId === auth.session.user.id;
+  if (!canManage && !isOwn) return { ok: false as const, error: NextResponse.json({ error: 'You may only access your own licence' }, { status: 403 }) };
+  return { ok: true as const, session: auth.session, employee, canManage };
+}
+
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const auth = await access(request, id);
+  if (!auth.ok) return auth.error;
+  const db = getDb();
+  const rows = await db.select({
+    id: driverLicences.id,
+    licenceNumber: driverLicences.licenceNumber,
+    issueDate: driverLicences.issueDate,
+    expiryDate: driverLicences.expiryDate,
+    issueNumber: driverLicences.issueNumber,
+    verificationStatus: driverLicences.verificationStatus,
+    version: driverLicences.version,
+    isActive: driverLicences.isActive,
+    frontImageKey: driverLicences.frontImageKey,
+    backImageKey: driverLicences.backImageKey,
+    ocrConfidence: driverLicences.ocrConfidence,
+    entryMethod: driverLicences.entryMethod,
+  }).from(driverLicences)
+    .innerJoin(driverProfiles, eq(driverProfiles.id, driverLicences.driverProfileId))
+    .where(eq(driverProfiles.employeeId, id))
+    .orderBy(desc(driverLicences.version));
+  const data = auth.canManage ? rows : rows.map((row) => ({
+    ...row,
+    licenceNumber: row.licenceNumber.length > 4 ? `••••${row.licenceNumber.slice(-4)}` : '••••',
+  }));
+  return NextResponse.json({ data });
+}
+
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const auth = await access(request, id);
+  if (!auth.ok) return auth.error;
+  const permission = await requireAnyPermission(auth.session, [Permissions.FILE_UPLOAD, Permissions.DRIVER_MANAGE]);
+  if (permission instanceof NextResponse) return permission;
+  if (!isStorageConfigured()) return NextResponse.json({ error: 'Secure document storage is not configured.' }, { status: 503 });
+  const form = await request.formData();
+  const front = form.get('front');
+  const back = form.get('back');
+  const sourcePdf = form.get('sourcePdf');
+  const manual = form.get('manual') === 'true';
+  const files = [front, back, sourcePdf].filter((file): file is File => file instanceof File && file.size > 0);
+  if (!manual && (!(front instanceof File) || !(back instanceof File))) {
+    return NextResponse.json({ error: 'Front and back licence images are required.' }, { status: 400 });
+  }
+  if (files.some((file) => !accepted.has(file.type) || file.size > maxBytes)) {
+    return NextResponse.json({ error: 'Use JPEG, PNG, WebP or PDF files up to 12 MB.' }, { status: 400 });
+  }
+  const db = getDb();
+  const [profile] = await db.select().from(driverProfiles).where(eq(driverProfiles.employeeId, id)).limit(1);
+  if (!profile) return NextResponse.json({ error: 'Create a driver profile before uploading a licence.' }, { status: 409 });
+  const [latest] = await db.select({ version: driverLicences.version }).from(driverLicences)
+    .where(eq(driverLicences.driverProfileId, profile.id)).orderBy(desc(driverLicences.version)).limit(1);
+  const version = (latest?.version || 0) + 1;
+  const tenantPrefix = `tenant/${auth.session.tenantId}`;
+  const uploaded: Record<string, string> = {};
+  for (const [side, value] of [['front', front], ['back', back], ['sourcePdf', sourcePdf]] as const) {
+    if (!(value instanceof File) || !value.size) continue;
+    const key = buildKey(value.name, `driver-licences/${id}/v${version}/${side}`, tenantPrefix);
+    await uploadFile(Buffer.from(await value.arrayBuffer()), key, { contentType: value.type });
+    uploaded[side] = key;
+  }
+
+  let rawText = '';
+  let meanConfidence = 0;
+  const qualityWarnings: string[] = [];
+  const images = [front, back].filter((file): file is File => file instanceof File && file.type.startsWith('image/'));
+  if (images.length) {
+    const worker = await createWorker('eng');
+    try {
+      for (const image of images) {
+        const original = Buffer.from(await image.arrayBuffer());
+        const stats = await sharp(original).stats();
+        const brightness = stats.channels.slice(0, 3).reduce((sum, channel) => sum + channel.mean, 0) / 3;
+        if (brightness < 55) qualityWarnings.push('dark_image');
+        if (brightness > 225) qualityWarnings.push('possible_glare');
+        const prepared = await sharp(original).rotate().resize({ width: 1800, withoutEnlargement: true }).grayscale().normalize().sharpen().png().toBuffer();
+        const result = await worker.recognize(prepared);
+        rawText += `\n${result.data.text}`;
+        meanConfidence += result.data.confidence;
+      }
+      meanConfidence /= images.length;
+    } catch {
+      qualityWarnings.push('ocr_failed_manual_entry_required');
+    } finally {
+      await worker.terminate();
+    }
+  }
+  const extracted = parseNamibianLicenceOcr(rawText);
+  const confidence = licenceOcrConfidence(extracted, meanConfidence);
+  const licenceNumber = String(form.get('licenceNumber') || extracted.licenceNumber || `PENDING-${Date.now()}`);
+  const issueDate = String(form.get('issueDate') || extracted.validFrom || new Date().toISOString().slice(0, 10));
+  const expiryDate = String(form.get('expiryDate') || extracted.validUntil || issueDate);
+  await db.update(driverLicences).set({ isActive: false, verificationStatus: sql`CASE WHEN ${driverLicences.verificationStatus} = 'verified' THEN 'superseded' ELSE ${driverLicences.verificationStatus} END` })
+    .where(and(eq(driverLicences.driverProfileId, profile.id), eq(driverLicences.isActive, true)));
+  const [licence] = await db.insert(driverLicences).values({
+    driverProfileId: profile.id,
+    licenceNumber,
+    licenceClass: extracted.licenceCodes.join(',') || String(form.get('licenceClass') || 'PENDING'),
+    issueDate,
+    expiryDate,
+    holderName: extracted.holderName || String(form.get('holderName') || '') || null,
+    dateOfBirth: extracted.dateOfBirth || null,
+    nationalIdNumber: extracted.nationalIdNumber || null,
+    driverRestrictionCode: extracted.driverRestrictionCode || null,
+    issueNumber: extracted.issueNumber || null,
+    frontImageKey: uploaded.front || null,
+    backImageKey: uploaded.back || null,
+    sourcePdfKey: uploaded.sourcePdf || null,
+    rawOcrResult: { text: rawText, extracted, qualityWarnings },
+    ocrConfidence: confidence,
+    ocrProvider: images.length ? 'tesseract.js' : null,
+    entryMethod: rawText ? 'ocr_review' : 'manual',
+    version,
+    verificationStatus: rawText ? 'awaiting_review' : 'needs_correction',
+    isVerified: false,
+  }).returning();
+  const codes = extracted.licenceCodes.length ? extracted.licenceCodes : String(form.get('licenceClass') || '').split(',').map((code) => code.trim()).filter(Boolean);
+  if (codes.length) await db.insert(driverLicenceCodes).values(codes.map((code) => ({ licenceId: licence.id, code })));
+  await recordAuditEvent({
+    tenantId: auth.session.tenantId,
+    actorUserId: auth.session.user.id,
+    actorEmployeeId: id,
+    action: 'driver_licence.uploaded',
+    entityType: 'driver_licence',
+    entityId: licence.id,
+    after: { version, verificationStatus: licence.verificationStatus, qualityWarnings, extractedFields: Object.keys(extracted) },
+    summary: `Driver licence version ${version} uploaded for employee ${id}`,
+  });
+  return NextResponse.json({ data: licence, extracted, confidence, qualityWarnings, manualEntryRequired: !rawText }, { status: 201 });
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const auth = await access(request, id);
+  if (!auth.ok) return auth.error;
+  const body = await request.json() as {
+    licenceId: string;
+    action: 'correct' | 'verify' | 'reject' | 'request_upload';
+    corrections?: Record<string, string>;
+    reason?: string;
+  };
+  const db = getDb();
+  const [licence] = await db.select().from(driverLicences)
+    .innerJoin(driverProfiles, eq(driverProfiles.id, driverLicences.driverProfileId))
+    .where(and(eq(driverLicences.id, body.licenceId), eq(driverProfiles.employeeId, id))).limit(1);
+  if (!licence) return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
+  if (body.action !== 'correct') {
+    const permission = await requireAnyPermission(auth.session, [Permissions.LICENCE_VERIFY, Permissions.DRIVER_MANAGE]);
+    if (permission instanceof NextResponse) return permission;
+  }
+  const current = licence.driver_licences;
+  if (body.action === 'correct') {
+    const allowed = ['licenceNumber', 'licenceClass', 'issueDate', 'expiryDate', 'holderName', 'dateOfBirth', 'nationalIdNumber', 'issueNumber', 'driverRestrictionCode'];
+    const corrections = Object.entries(body.corrections || {}).filter(([field]) => allowed.includes(field));
+    if (!corrections.length) return NextResponse.json({ error: 'No valid corrections supplied' }, { status: 400 });
+    await db.insert(driverLicenceCorrections).values(corrections.map(([fieldName, correctedValue]) => ({
+      licenceId: current.id,
+      fieldName,
+      originalValue: String((current as unknown as Record<string, unknown>)[fieldName] || ''),
+      correctedValue,
+      correctedByUserId: auth.session.user.id,
+      source: 'ocr_review',
+    })));
+    await db.update(driverLicences).set({
+      ...(Object.fromEntries(corrections) as Partial<typeof driverLicences.$inferInsert>),
+      verificationStatus: 'awaiting_review',
+      updatedAt: new Date(),
+    }).where(eq(driverLicences.id, current.id));
+  } else if (body.action === 'verify') {
+    if (!current.frontImageKey || !current.backImageKey) return NextResponse.json({ error: 'Front and back images are required before verification.' }, { status: 409 });
+    await db.update(driverLicences).set({
+      verificationStatus: new Date(`${current.expiryDate}T23:59:59Z`) < new Date() ? 'expired' : 'verified',
+      isVerified: true,
+      verifiedByUserId: auth.session.user.id,
+      verifiedAt: new Date(),
+      rejectionReason: null,
+      updatedAt: new Date(),
+    }).where(eq(driverLicences.id, current.id));
+  } else {
+    if (!body.reason?.trim()) return NextResponse.json({ error: 'A reason is required' }, { status: 400 });
+    await db.update(driverLicences).set({
+      verificationStatus: body.action === 'reject' ? 'rejected' : 'needs_correction',
+      isVerified: false,
+      rejectionReason: body.reason,
+      updatedAt: new Date(),
+    }).where(eq(driverLicences.id, current.id));
+  }
+  await recordAuditEvent({
+    tenantId: auth.session.tenantId,
+    actorUserId: auth.session.user.id,
+    actorEmployeeId: id,
+    action: `driver_licence.${body.action}`,
+    entityType: 'driver_licence',
+    entityId: current.id,
+    before: { verificationStatus: current.verificationStatus },
+    after: body.corrections || { action: body.action },
+    reason: body.reason,
+  });
+  return NextResponse.json({ success: true });
+}

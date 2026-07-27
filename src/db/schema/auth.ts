@@ -10,7 +10,11 @@ export const userProfiles = pgTable('user_profiles', {
   displayName: text('display_name'),
   requiresPasswordChange: boolean('requires_password_change').notNull().default(true),
   status: text('status').notNull().default('active'), // active, suspended
+  passwordStatus: text('password_status').notNull().default('temporary'),
+  mfaStatus: text('mfa_status').notNull().default('not_configured'),
+  accountEnabled: boolean('account_enabled').notNull().default(true),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  disabledAt: timestamp('disabled_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

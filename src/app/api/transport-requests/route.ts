@@ -10,6 +10,7 @@ import { workflowDefinitions } from '@/db/schema/workflows';
 import { onRequestSubmitted } from '@/lib/document-generator';
 import { WorkflowEngine } from '@/lib/workflow-engine';
 import { eq, and, inArray } from 'drizzle-orm';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 export async function POST(req: NextRequest) {
   try {
@@ -33,6 +34,15 @@ export async function POST(req: NextRequest) {
       drivers,
       routes,
       clientSubmissionId: bodySubmissionId,
+      driverPreference,
+      preferredDriverEmployeeId,
+      assistedReason,
+      confirmationMethod,
+      travellerEmployeeId,
+      urgency,
+      overnight,
+      specialRequirements,
+      vehicleRequirements,
     } = body;
     const clientSubmissionId = req.headers.get('idempotency-key') || bodySubmissionId;
 
@@ -179,15 +189,16 @@ export async function POST(req: NextRequest) {
         .select({ id: employees.id, userId: employees.userId, departmentId: employees.departmentId, officeId: employees.officeId, departmentName: departments.name, firstName: employees.firstName })
         .from(employees)
         .leftJoin(departments, eq(employees.departmentId, departments.id))
-        .where(and(eq(employees.employeeNumber, requesterEmployeeNumber), eq(employees.tenantId, tenantId)))
+        .where(and(eq(employees.employeeNumber, requesterEmployeeNumber), eq(employees.tenantId, tenantId), eq(employees.employmentStatus, 'active')))
         .limit(1);
       if (!found) {
         return NextResponse.json({ error: 'Requester employee not found in your organisation' }, { status: 404 });
       }
       requesterEmployee = found;
       if (found.userId !== userId) {
-        const createForOther = await requirePermission(session, Permissions.STAFF_MANAGE);
+        const createForOther = await requirePermission(session, Permissions.SECURE_REQUEST_ASSIST);
         if (createForOther instanceof NextResponse) return NextResponse.json({ error: 'You may only submit a request for your own linked employee record' }, { status: 403 });
+        if (!assistedReason?.trim()) return NextResponse.json({ error: 'A reason is required when submitting on behalf of an employee' }, { status: 400 });
       }
     } else {
       // Fall back to finding employee by linked user ID
@@ -195,7 +206,7 @@ export async function POST(req: NextRequest) {
         .select({ id: employees.id, userId: employees.userId, departmentId: employees.departmentId, officeId: employees.officeId, departmentName: departments.name, firstName: employees.firstName })
         .from(employees)
         .leftJoin(departments, eq(employees.departmentId, departments.id))
-        .where(and(eq(employees.userId, userId), eq(employees.tenantId, tenantId)))
+        .where(and(eq(employees.userId, userId), eq(employees.tenantId, tenantId), eq(employees.employmentStatus, 'active')))
         .limit(1);
       if (!found) {
         return NextResponse.json({ error: 'Could not identify requester. Log in or provide employee number.' }, { status: 400 });
@@ -252,6 +263,8 @@ export async function POST(req: NextRequest) {
     const routeKm = (routes || []).reduce((sum: number, r: { estimatedKm?: number }) => sum + (r.estimatedKm || 0), 0);
     const activityKm = (activities || []).reduce((sum: number, a: { estimatedKilometres?: number }) => sum + (a.estimatedKilometres || 0), 0);
     const totalKm = Math.max(routeKm, activityKm);
+    const isAssisted = requesterEmployee.userId !== userId;
+    const preferredDriverId = preferredDriverEmployeeId || driverEmployeeIds[0] || null;
 
     // Insert the transport request
     const [request] = await db
@@ -264,6 +277,21 @@ export async function POST(req: NextRequest) {
         status: 'submitted',
         requesterEmployeeId: requesterEmployee.id,
         requesterUserId: userId,
+        enteredByUserId: userId,
+        requestSource: isAssisted ? 'assisted_by_administration' : 'logged_in_self_service',
+        requestChannel: 'dashboard',
+        submissionMethod: isAssisted ? 'assisted' : 'logged_in',
+        verificationMethod: 'authenticated_session',
+        assistedReason: isAssisted ? assistedReason.trim() : null,
+        confirmationMethod: isAssisted ? confirmationMethod || null : 'authenticated_submission',
+        employeeConfirmationStatus: isAssisted ? 'pending' : 'confirmed',
+        preferredDriverEmployeeId: preferredDriverId,
+        driverPreference: driverPreference || (preferredDriverId ? 'preferred_driver' : 'transport_admin_assign'),
+        travellerEmployeeId: travellerEmployeeId || requesterEmployee.id,
+        urgency: urgency || 'normal',
+        overnight: overnight || false,
+        specialRequirements: specialRequirements || null,
+        vehicleRequirements: vehicleRequirements || {},
         departmentId: requesterEmployee.departmentId,
         officeId: requesterEmployee.officeId,
         department: requesterEmployee.departmentName || department || null,
@@ -349,6 +377,26 @@ export async function POST(req: NextRequest) {
       console.warn('[transport-requests] Workflow initialisation failed:', wfResult.error);
       // Non-blocking — the request is still created
     }
+
+    await recordAuditEvent({
+      tenantId,
+      actorUserId: userId,
+      actorEmployeeId: requesterEmployee.userId === userId ? requesterEmployee.id : null,
+      action: isAssisted ? 'request.submitted_on_behalf' : 'request.submitted',
+      entityType: 'transport_request',
+      entityId: request.id,
+      sourceChannel: 'dashboard',
+      after: {
+        requestingEmployeeId: requesterEmployee.id,
+        enteredByUserId: userId,
+        submissionMethod: isAssisted ? 'assisted' : 'logged_in',
+        preferredDriverEmployeeId: preferredDriverId,
+      },
+      reason: isAssisted ? assistedReason : undefined,
+      summary: isAssisted
+        ? `${request.reference} requested for employee ${requesterEmployee.id} and entered by ${userId}`
+        : `${request.reference} submitted through logged-in self-service`,
+    });
 
     return NextResponse.json({ request: { ...request, workflowInstanceId: wfResult.ok ? wfResult.instance.id : null }, document: doc, reference: request.reference });
   } catch (error) {

@@ -9,11 +9,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
+import {
+  employees,
+  driverProfiles,
+  driverLicences,
+  driverLicenceCodes,
+  driverProfessionalAuthorisations,
+} from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and, gt, lt, inArray, ne, gte, sql } from 'drizzle-orm';
+import { eq, and, gt, lt, inArray, ne, sql, desc } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { calculateDriverCompliance } from '@/lib/employee-lifecycle';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 export async function PATCH(
   request: NextRequest,
@@ -39,7 +47,15 @@ export async function PATCH(
 
     // Verify allocation exists and belongs to this tenant
     const [allocation] = await db
-      .select({ id: vehicleAllocations.id, state: vehicleAllocations.state, startAt: vehicleAllocations.startAt, endAt: vehicleAllocations.endAt, driverEmployeeId: vehicleAllocations.driverEmployeeId })
+      .select({
+        id: vehicleAllocations.id,
+        state: vehicleAllocations.state,
+        startAt: vehicleAllocations.startAt,
+        endAt: vehicleAllocations.endAt,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        requiredLicenceClass: vehicles.requiredLicenceClass,
+        professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
+      })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .where(and(eq(vehicleAllocations.id, id), eq(vehicles.tenantId, session.tenantId)))
@@ -53,9 +69,18 @@ export async function PATCH(
     }
 
     // Verify the employee exists, is a driver, and belongs to this tenant
-    const requiredLicenceExpiry = allocation.endAt.toISOString().slice(0, 10);
     const [driver] = await db
-      .select({ id: employees.id, profileId: driverProfiles.id })
+      .select({
+        id: employees.id,
+        employeeStatus: employees.employmentStatus,
+        employeeAvailability: employees.availabilityStatus,
+        profileId: driverProfiles.id,
+        driverStatus: driverProfiles.driverStatus,
+        profileAvailability: driverProfiles.availabilityStatus,
+        licenceId: driverLicences.id,
+        licenceStatus: driverLicences.verificationStatus,
+        licenceExpiry: driverLicences.expiryDate,
+      })
       .from(employees)
       .innerJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
       .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
@@ -64,16 +89,13 @@ export async function PATCH(
         eq(employees.tenantId, session.tenantId),
         eq(employees.isDriver, true),
         eq(employees.employmentStatus, 'active'),
-        eq(driverProfiles.driverStatus, 'authorised'),
-        eq(driverProfiles.availabilityStatus, 'available'),
-        eq(driverLicences.verificationStatus, 'verified'),
-        eq(driverLicences.isVerified, true),
-        gte(driverLicences.expiryDate, requiredLicenceExpiry),
+        eq(driverLicences.isActive, true),
       ))
+      .orderBy(desc(driverLicences.version))
       .limit(1);
 
     if (!driver) {
-      return NextResponse.json({ error: 'Driver is inactive, unavailable, unverified, or has no valid licence' }, { status: 409 });
+      return NextResponse.json({ error: 'Driver has no active licence profile.' }, { status: 409 });
     }
 
     const [conflict] = await db.select({ id: vehicleAllocations.id })
@@ -88,23 +110,49 @@ export async function PATCH(
       .limit(1);
     if (conflict) return NextResponse.json({ error: 'Driver is already assigned during this period' }, { status: 409 });
 
+    const [codes, professional] = await Promise.all([
+      db.select({ code: driverLicenceCodes.code }).from(driverLicenceCodes)
+        .where(and(eq(driverLicenceCodes.licenceId, driver.licenceId), eq(driverLicenceCodes.isActive, true))),
+      db.select().from(driverProfessionalAuthorisations)
+        .where(eq(driverProfessionalAuthorisations.driverProfileId, driver.profileId))
+        .orderBy(desc(driverProfessionalAuthorisations.expiryDate)).limit(1),
+    ]);
+    const compliance = calculateDriverCompliance({
+      employeeStatus: driver.employeeStatus,
+      availabilityStatus: driver.employeeAvailability !== 'available' ? driver.employeeAvailability : driver.profileAvailability,
+      driverStatus: driver.driverStatus,
+      licenceStatus: driver.licenceStatus,
+      licenceExpiry: driver.licenceExpiry,
+      licenceCodes: codes.length ? codes.map((row) => row.code) : [],
+      requiredLicenceClass: allocation.requiredLicenceClass,
+      professionalRequired: allocation.professionalAuthorisationRequired,
+      professionalVerified: professional[0]?.isVerified,
+      professionalExpiry: professional[0]?.expiryDate,
+      tripEndAt: allocation.endAt,
+      hasScheduleConflict: false,
+    });
+    if (!['eligible', 'eligible_expiring_soon'].includes(compliance.status)) {
+      return NextResponse.json({
+        error: 'Driver does not meet the compliance requirements for this vehicle and trip period.',
+        compliance,
+      }, { status: 409 });
+    }
+
     // Assign driver
     await db
       .update(vehicleAllocations)
       .set({ driverEmployeeId, version: sql`${vehicleAllocations.version} + 1`, updatedAt: new Date() })
       .where(eq(vehicleAllocations.id, id));
 
-    await db.insert(auditEvents).values({
+    await recordAuditEvent({
       tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: allocation.driverEmployeeId ? 'driver_replaced' : 'driver_assigned',
       actorUserId: session.user.id,
-      action: 'assign',
+      action: allocation.driverEmployeeId ? 'driver.replaced' : 'driver.assigned',
       entityType: 'allocation',
       entityId: id,
       summary: allocation.driverEmployeeId ? `Driver replaced: ${allocation.driverEmployeeId} → ${driverEmployeeId}` : `Driver ${driverEmployeeId} assigned to allocation`,
       before: { driverEmployeeId: allocation.driverEmployeeId },
-      after: { driverEmployeeId },
+      after: { driverEmployeeId, compliance },
     });
 
     return NextResponse.json({ success: true, driverEmployeeId });

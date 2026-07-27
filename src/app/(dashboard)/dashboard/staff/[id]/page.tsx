@@ -11,6 +11,8 @@ import {
   driverProfiles,
   driverLicences,
   employeeDocuments,
+  employeeAssignments,
+  employeeAvailability,
 } from '@/db/schema';
 import { eq, desc, and } from 'drizzle-orm';
 import {
@@ -30,6 +32,8 @@ import { getServerSession } from '@/lib/session';
 import { hasPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { ConvertToDriver } from '@/components/drivers/convert-to-driver';
+import { EmployeeLifecycleActions } from './EmployeeLifecycleActions';
+import { LicenceUploadPanel } from './LicenceUploadPanel';
 
 interface PageParams {
   id: string;
@@ -40,6 +44,8 @@ interface EmployeeDetailData {
   driverProfile: NonNullable<Awaited<ReturnType<typeof fetchDriverProfile>>> | null;
   licences: Awaited<ReturnType<typeof fetchLicences>>;
   docs: Awaited<ReturnType<typeof fetchDocs>>;
+  assignments: Awaited<ReturnType<typeof fetchAssignments>>;
+  availability: Awaited<ReturnType<typeof fetchAvailability>>;
 }
 
 async function fetchEmployee(id: string, tenantId: string) {
@@ -61,6 +67,11 @@ async function fetchEmployee(id: string, tenantId: string) {
       officeId: employees.officeId,
       officeName: offices.name,
       grade: employees.grade,
+      availabilityStatus: employees.availabilityStatus,
+      substantivePosition: employees.substantivePosition,
+      preferredName: employees.preferredName,
+      profilePhotoUrl: employees.profilePhotoUrl,
+      userId: employees.userId,
       createdAt: employees.createdAt,
     })
     .from(employees)
@@ -99,15 +110,27 @@ async function fetchDocs(employeeId: string) {
     .orderBy(desc(employeeDocuments.createdAt));
 }
 
+async function fetchAssignments(employeeId: string) {
+  return getDb().select().from(employeeAssignments).where(eq(employeeAssignments.employeeId, employeeId)).orderBy(desc(employeeAssignments.startDate));
+}
+
+async function fetchAvailability(employeeId: string) {
+  return getDb().select().from(employeeAvailability).where(eq(employeeAvailability.employeeId, employeeId)).orderBy(desc(employeeAvailability.startAt));
+}
+
 async function fetchEmployeeDetail(id: string, tenantId: string): Promise<EmployeeDetailData> {
   const employee = await fetchEmployee(id, tenantId);
   if (!employee) throw new Error('NOT_FOUND');
 
   const driverProfile = employee.isDriver ? await fetchDriverProfile(employee.id) : null;
   const licences = driverProfile ? await fetchLicences(driverProfile.id) : [];
-  const docs = await fetchDocs(employee.id);
+  const [docs, assignments, availability] = await Promise.all([
+    fetchDocs(employee.id),
+    fetchAssignments(employee.id),
+    fetchAvailability(employee.id),
+  ]);
 
-  return { employee, driverProfile, licences, docs };
+  return { employee, driverProfile, licences, docs, assignments, availability };
 }
 
 export const dynamic = 'force-dynamic';
@@ -123,6 +146,7 @@ export default async function EmployeeDetailPage({
   const canView = await hasPermission(session, Permissions.STAFF_VIEW);
   if (!canView) notFound();
   const canManageDrivers = await hasPermission(session, Permissions.DRIVER_MANAGE);
+  const canManageLifecycle = await hasPermission(session, Permissions.STAFF_LIFECYCLE_MANAGE);
 
   if (!isDbConnected()) {
     return (
@@ -149,7 +173,7 @@ export default async function EmployeeDetailPage({
     );
   }
 
-  const { employee, driverProfile, licences, docs } = data;
+  const { employee, driverProfile, licences, docs, assignments, availability } = data;
   const statusVariant = employee.employmentStatus === 'active' ? 'success' : employee.employmentStatus === 'suspended' ? 'pending' : 'error';
 
   return (
@@ -158,6 +182,7 @@ export default async function EmployeeDetailPage({
       <PageHeader title="Employee Detail" description="View employee information and records">
         <div className="flex flex-wrap items-center gap-2">
           {canManageDrivers && !driverProfile && <ConvertToDriver employeeId={employee.id} employeeName={`${employee.firstName} ${employee.lastName}`} />}
+          {canManageLifecycle && <EmployeeLifecycleActions employeeId={employee.id} archived={employee.employmentStatus === 'archived'} />}
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/staff"><ChevronLeft className="h-4 w-4" />Back to Directory</Link>
           </Button>
@@ -179,6 +204,7 @@ export default async function EmployeeDetailPage({
               <div className="flex items-center gap-3 text-sm"><Building2 className="h-4 w-4 text-ink-400" /><span className="text-ink-700">{employee.departmentName || '—'}</span></div>
               <div className="flex items-center gap-3 text-sm"><Building2 className="h-4 w-4 text-ink-400" /><span className="text-ink-700">{employee.officeName || '—'}</span></div>
               <div className="flex items-center gap-3 text-sm"><Calendar className="h-4 w-4 text-ink-400" /><span className="text-ink-700">Employee # {employee.employeeNumber}</span></div>
+              <div className="flex items-center gap-3 text-sm"><Calendar className="h-4 w-4 text-ink-400" /><StatusBadge status={employee.availabilityStatus === 'available' ? 'success' : 'pending'} label={employee.availabilityStatus.replaceAll('_', ' ')} /></div>
               {employee.isDriver && <div className="flex items-center gap-3 text-sm"><Car className="h-4 w-4 text-ink-400" /><StatusBadge status="info" label="Driver" /></div>}
             </div>
           </CardContent>
@@ -187,7 +213,7 @@ export default async function EmployeeDetailPage({
         <div className="space-y-6 lg:col-span-2">
           {driverProfile && (
             <Card>
-              <CardHeader><CardTitle>Driver Profile</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Driver Profile</CardTitle>{canManageDrivers && <LicenceUploadPanel employeeId={employee.id} />}</CardHeader>
               <CardContent>
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div><p className="text-xs text-ink-500">Driver Status</p><StatusBadge status={driverProfile.driverStatus === 'authorised' ? 'success' : 'error'} label={driverProfile.driverStatus.charAt(0).toUpperCase() + driverProfile.driverStatus.slice(1)} /></div>
@@ -197,6 +223,20 @@ export default async function EmployeeDetailPage({
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardHeader><CardTitle>Employment history</CardTitle><Badge variant="default">{assignments.length} assignment{assignments.length === 1 ? '' : 's'}</Badge></CardHeader>
+            <CardContent>
+              {assignments.length ? <div className="divide-y divide-border">{assignments.map((assignment) => <div key={assignment.id} className="py-3 first:pt-0 last:pb-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-medium text-ink-950">{assignment.position || assignment.jobTitle || 'Position not recorded'}</p>{assignment.isCurrent && <StatusBadge status="success" label="Current" />}</div><p className="mt-1 text-xs text-ink-500">{assignment.startDate} – {assignment.endDate || 'Present'}{assignment.reason ? ` · ${assignment.reason}` : ''}</p></div>)}</div> : <p className="text-sm text-ink-500">No assignment history has been recorded.</p>}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Availability history</CardTitle></CardHeader>
+            <CardContent>
+              {availability.length ? <div className="divide-y divide-border">{availability.slice(0, 8).map((entry) => <div key={entry.id} className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"><div><p className="text-sm font-medium capitalize text-ink-950">{entry.status.replaceAll('_', ' ')}</p><p className="text-xs text-ink-500">{entry.startAt.toLocaleString('en-NA')} – {entry.endAt?.toLocaleString('en-NA') || 'Open ended'}{entry.reason ? ` · ${entry.reason}` : ''}</p></div>{entry.isActive && <StatusBadge status={entry.status === 'available' ? 'success' : 'pending'} label="Current" />}</div>)}</div> : <p className="text-sm text-ink-500">No availability changes recorded.</p>}
+            </CardContent>
+          </Card>
 
           {licences.length > 0 && (
             <Card>

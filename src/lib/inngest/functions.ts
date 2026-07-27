@@ -227,7 +227,6 @@ export const vehicleLicenceExpiryAlert = inngest
           const { isBusinessDay } = await import('@/lib/business-day');
 
           const today = new Date();
-
           const thirtyDays = new Date();
           thirtyDays.setDate(thirtyDays.getDate() + 30);
 
@@ -298,9 +297,6 @@ export const driverLicenceExpiryAlert = inngest
           const { isBusinessDay } = await import('@/lib/business-day');
 
           const today = new Date();
-          const thirtyDays = new Date();
-          thirtyDays.setDate(thirtyDays.getDate() + 30);
-
           const [emailModule] = await Promise.all([
             import('@/lib/email'),
           ]);
@@ -317,13 +313,14 @@ export const driverLicenceExpiryAlert = inngest
               firstName: employees.firstName,
               lastName: employees.lastName,
               email: employees.email,
+              userId: employees.userId,
               tenantId: employees.tenantId,
             })
             .from(driverLicences)
             .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
             .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
             .where(
-              lte(driverLicences.expiryDate, thirtyDays.toISOString().split('T')[0]),
+              lte(driverLicences.expiryDate, new Date(Date.now() + 90 * 86_400_000).toISOString().split('T')[0]),
             );
 
           // Track which tenants we've already checked today (cache)
@@ -338,12 +335,23 @@ export const driverLicenceExpiryAlert = inngest
 
             const daysLeft = Math.ceil((new Date(l.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
             const isExpired = daysLeft <= 0;
+            const reminderDay = isExpired ? 0 : [90, 60, 30, 14, 7].find((threshold) => daysLeft === threshold);
+            if (reminderDay === undefined || !l.userId) continue;
+            const reminderTitle = isExpired ? '🚗 Driver Licence Expired' : `🚗 Driver Licence Expiring — ${daysLeft} days`;
+            const { notifications: notificationTable } = await import('@/db/schema/notifications');
+            const [alreadySent] = await db.select({ id: notificationTable.id }).from(notificationTable).where(and(
+              eq(notificationTable.tenantId, l.tenantId),
+              eq(notificationTable.recipientUserId, l.userId),
+              eq(notificationTable.entityId, l.licenceId),
+              eq(notificationTable.title, reminderTitle),
+            )).limit(1);
+            if (alreadySent) continue;
 
             await db.insert(notifications).values({
               tenantId: l.tenantId,
-              recipientUserId: '00000000-0000-0000-0000-000000000000',
+              recipientUserId: l.userId,
               type: 'reminder',
-              title: '🚗 Driver Licence Expiring',
+              title: reminderTitle,
               body: `${l.firstName} ${l.lastName} — ${l.licenceClass} licence expires${daysLeft > 0 ? ` in ${daysLeft} day(s)` : ' today'}.`,
               entityType: 'driver_licence',
               entityId: l.licenceId,

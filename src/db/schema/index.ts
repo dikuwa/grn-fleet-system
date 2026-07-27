@@ -2,6 +2,7 @@ export * from './tenants';
 export * from './auth';
 export * from './better-auth';
 export * from './people';
+export * from './employee-lifecycle';
 export * from './fleet';
 export * from './requests';
 export * from './workflows';

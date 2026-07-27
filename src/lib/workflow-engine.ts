@@ -28,6 +28,8 @@ import {
   vehicleAllocations,
   employees,
   trips,
+  rolePermissions,
+  roles,
 } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -37,6 +39,7 @@ import type { PermissionCode } from '@/lib/permissions';
 import { Permissions } from '@/lib/permissions';
 import { notifications } from '@/db/schema';
 import { workflowStepToStatus, workflowCompletedStatus } from '@/lib/request-status';
+import { resolveRoleHolder } from '@/lib/employee-lifecycle';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -398,13 +401,25 @@ export class WorkflowEngine {
 
     // Record the action
     try {
+      const [actorEmployee] = await this.db.select({ id: employees.id }).from(employees)
+        .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId))).limit(1);
+      const resolution = (currentStep.config || {}) as Record<string, unknown>;
       await this.db.insert(workflowActions).values({
         instanceId: instance.id,
         stepOrder: currentStep.stepOrder,
         actionType: action,
         result,
         actorUserId: session.user.id,
+        actorEmployeeId: actorEmployee?.id || null,
+        roleAssignmentId: typeof resolution.delegationId === 'string' ? resolution.delegationId : null,
+        isActing: resolution.isActing === true,
         comment: comment ?? null,
+        metadata: {
+          resolvedCapacity: resolution.resolvedCapacity,
+          resolvedRoleId: resolution.resolvedRoleId,
+          resolvedEmployeeId: resolution.resolvedEmployeeId,
+          isActing: resolution.isActing === true,
+        },
       });
     } catch (error) {
       if ((error as { code?: string }).code === '23505') {
@@ -714,7 +729,7 @@ export class WorkflowEngine {
         )
         .orderBy(workflowSteps.stepOrder);
 
-      if (steps.length > 0) return steps;
+      if (steps.length > 0) return this.resolveStepAssignments(steps, instance.requestId);
     }
 
     // Fall back to built-in defaults — resolve scope from the request
@@ -725,8 +740,58 @@ export class WorkflowEngine {
       .limit(1);
 
     const scope = request?.scope ?? 'regional';
-    if (scope === 'national') return NATIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[];
-    return REGIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[];
+    const fallback = scope === 'national'
+      ? NATIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[]
+      : REGIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[];
+    return this.resolveStepAssignments(fallback, instance.requestId);
+  }
+
+  private async resolveStepAssignments(
+    steps: (typeof workflowSteps.$inferSelect)[],
+    requestId: string,
+  ) {
+    const requestRows = await this.db.select({ tenantId: transportRequests.tenantId })
+      .from(transportRequests).where(eq(transportRequests.id, requestId)).limit(1);
+    if (!Array.isArray(requestRows)) return steps;
+    const [request] = requestRows;
+    if (!request) return steps;
+    return Promise.all(steps.map(async (step) => {
+      if (!step.requiredPermission || step.actionType === 'acknowledge') return step;
+      const roleQuery = this.db.select({ roleId: roles.id }).from(roles);
+      if (typeof (roleQuery as { innerJoin?: unknown }).innerJoin !== 'function') return step;
+      const roleRows = await roleQuery.innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
+        .where(and(
+          eq(roles.tenantId, request.tenantId),
+          eq(rolePermissions.permissionCode, step.requiredPermission),
+        ));
+      const capability = step.actionType === 'authorise'
+        ? 'sign'
+        : step.actionType === 'release'
+          ? 'allocate'
+          : 'approve';
+      for (const role of roleRows) {
+        const holder = await resolveRoleHolder({
+          tenantId: request.tenantId,
+          roleId: role.roleId,
+          requireCapability: capability,
+        });
+        if (holder?.userId) {
+          return {
+            ...step,
+            assignedUserId: holder.userId,
+            config: {
+              ...(step.config || {}),
+              resolvedRoleId: role.roleId,
+              resolvedEmployeeId: holder.employeeId,
+              resolvedCapacity: holder.capacity,
+              isActing: holder.isActing,
+              delegationId: 'delegationId' in holder ? holder.delegationId : null,
+            },
+          };
+        }
+      }
+      return step;
+    }));
   }
 
   // -------------------------------------------------------------------------
@@ -765,18 +830,21 @@ export class WorkflowEngine {
       const title = titleMap[result] || `Workflow: ${result}`;
       const body = `Step "${currentStep.label}" completed with result: ${result}.`;
 
-      // Create in-app notification for the requester
-      await this.db.insert(notifications).values({
-        tenantId: request.tenantId,
-        recipientUserId: request.requesterUserId,
-        type: 'outcome',
-        title,
-        body,
-        entityType: 'workflow_instance',
-        entityId: instance.id,
-        actionUrl: `/dashboard/requests/${instance.requestId}`,
-        priority: result === 'rejected' ? 'high' : 'normal',
-      });
+      // Secure-link requests have no login account; their outcome is delivered
+      // through the tracking link/email rather than an internal notification.
+      if (request.requesterUserId) {
+        await this.db.insert(notifications).values({
+          tenantId: request.tenantId,
+          recipientUserId: request.requesterUserId,
+          type: 'outcome',
+          title,
+          body,
+          entityType: 'workflow_instance',
+          entityId: instance.id,
+          actionUrl: `/dashboard/requests/${instance.requestId}`,
+          priority: result === 'rejected' ? 'high' : 'normal',
+        });
+      }
 
       if (!['rejected', 'returned'].includes(result)) {
         const steps = await this.getDefinitionSteps(instance);
@@ -800,11 +868,11 @@ export class WorkflowEngine {
       try {
         const { sendNotificationEmail } = await import('@/lib/email');
         const { employees } = await import('@/db/schema/people');
-        const [emp] = await this.db
+        const [emp] = request.requesterUserId ? await this.db
           .select({ email: employees.email, firstName: employees.firstName })
           .from(employees)
           .where(eq(employees.userId, request.requesterUserId))
-          .limit(1);
+          .limit(1) : [undefined];
 
         // Map workflow results to email template types
         const emailTypeMap: Record<string, string> = {
