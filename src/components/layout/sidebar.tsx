@@ -174,7 +174,7 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
           collapsed ? 'h-16 justify-center' : 'h-16 gap-3',
         )}
       >
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold text-white dark:bg-brand-700">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold text-white">
           G
         </div>
         {!collapsed && (
@@ -337,7 +337,7 @@ export function MobileSidebar({
       >
         {/* Header */}
         <div className="flex h-16 shrink-0 items-center gap-3 border-b border-border px-4 dark:border-[#2a2a48]">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold text-white dark:bg-brand-700">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold text-white">
             G
           </div>
           <span className="text-sm font-semibold text-ink-950 dark:text-ink-100">

@@ -30,7 +30,7 @@ export default function HomePage() {
             <PublicThemeToggle />
             <Link
               href="/login"
-              className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 transition-colors"
+              className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] transition-colors"
             >
               Login
             </Link>
@@ -53,7 +53,7 @@ export default function HomePage() {
             <div className="mt-8 flex flex-wrap gap-4">
               <Link
                 href="/login"
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-[8px] bg-white px-6 text-sm font-semibold text-brand-900 hover:bg-brand-50 transition-colors"
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-[8px] bg-white px-6 text-sm font-semibold text-[#0f1f3a] hover:bg-brand-50 transition-colors"
               >
                 Access Dashboard
                 <ArrowRight className="h-4 w-4" />
@@ -144,7 +144,7 @@ export default function HomePage() {
             </p>
             <Link
               href="/contact"
-              className="mt-8 inline-flex h-12 items-center justify-center gap-2 rounded-[8px] bg-brand-800 px-6 text-sm font-medium text-white hover:bg-brand-700 transition-colors"
+              className="mt-8 inline-flex h-12 items-center justify-center gap-2 rounded-[8px] bg-brand-800 px-6 text-sm font-medium text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] transition-colors"
             >
               Request a Demonstration
               <ArrowRight className="h-4 w-4" />

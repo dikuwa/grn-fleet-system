@@ -13,7 +13,6 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   FileText,
   FileSpreadsheet,
-  Search,
   Database,
   ExternalLink,
   Clock,
@@ -21,6 +20,7 @@ import {
 } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
+import { LiveSearchInput } from '@/components/ui/live-search-input';
 
 interface PageProps {
   searchParams: Promise<{ q?: string; type?: string; status?: string; page?: string }>;
@@ -180,16 +180,11 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
             <form method="GET" action="/dashboard/documents" className="flex flex-wrap items-end gap-3">
               <div className="flex-1 min-w-[200px]">
                 <label className="block text-xs font-medium text-ink-500 mb-1">Search</label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-                  <input
-                    name="q"
-                    type="text"
-                    defaultValue={q || ''}
-                    placeholder="Search documents..."
-                    className="h-10 w-full rounded-[8px] border border-border bg-surface pl-9 pr-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
-                  />
-                </div>
+                <LiveSearchInput
+                  name="q"
+                  defaultValue={q || ''}
+                  placeholder="Search documents…"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink-500 mb-1">Type</label>

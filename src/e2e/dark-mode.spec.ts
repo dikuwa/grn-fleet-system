@@ -39,10 +39,22 @@ async function signIn(page: Page) {
   return { token, user: body.user || body.session?.user };
 }
 
+async function selectTheme(page: Page, theme: 'Light' | 'Dark' | 'System') {
+  const trigger = page.getByRole('button', { name: /select theme/i }).first();
+  await expect(trigger).toBeVisible({ timeout: 5000 });
+  await trigger.click();
+  await page.getByRole('menuitemradio', { name: theme }).click();
+}
+
 test.describe('Dark Mode — Public Pages', () => {
   // Reset theme before each test so we start clean
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => localStorage.removeItem('theme'));
+    await page.addInitScript(() => {
+      if (!sessionStorage.getItem('govfleet-theme-test-initialised')) {
+        localStorage.removeItem('govfleet-theme');
+        sessionStorage.setItem('govfleet-theme-test-initialised', 'true');
+      }
+    });
   });
 
   test('landing page has dark mode toggle and switches theme', async ({ page }) => {
@@ -50,16 +62,11 @@ test.describe('Dark Mode — Public Pages', () => {
     await page.waitForTimeout(2000);
 
     // Toggle button should exist (Sun or Moon icon)
-    const toggle = page.locator('button[title*="Switch to"]').first();
-    await expect(toggle).toBeVisible({ timeout: 5000 });
-
-    // Click toggle — verify CSS class applied
-    await toggle.click();
+    await selectTheme(page, 'Dark');
     await page.waitForTimeout(500);
     await expect(page.locator('html')).toHaveClass(/dark/);
 
-    // Click again to revert
-    await toggle.click();
+    await selectTheme(page, 'Light');
     await page.waitForTimeout(500);
     await expect(page.locator('html')).not.toHaveClass(/dark/);
   });
@@ -68,24 +75,28 @@ test.describe('Dark Mode — Public Pages', () => {
     await page.goto('/contact', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(2000);
 
-    const toggle = page.locator('button[title*="Switch to"]').first();
-    await expect(toggle).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: /select theme/i }).first()).toBeVisible({ timeout: 5000 });
   });
 
   test('privacy page has dark mode toggle', async ({ page }) => {
     await page.goto('/privacy', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(2000);
 
-    const toggle = page.locator('button[title*="Switch to"]').first();
-    await expect(toggle).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: /select theme/i }).first()).toBeVisible({ timeout: 5000 });
   });
 
   test('login page has dark mode toggle', async ({ page }) => {
     await page.goto('/login', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(2000);
 
-    const toggle = page.locator('button[title*="Switch to"]').first();
-    await expect(toggle).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: /select theme/i }).first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('about and services pages use the same theme selector', async ({ page }) => {
+    for (const path of ['/about', '/services']) {
+      await page.goto(path, { waitUntil: 'load', timeout: 60000 });
+      await expect(page.getByRole('button', { name: /select theme/i }).first()).toBeVisible({ timeout: 5000 });
+    }
   });
 
   test('dark mode persists across public page navigation', async ({ page }) => {
@@ -93,8 +104,7 @@ test.describe('Dark Mode — Public Pages', () => {
     await page.goto('/', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(2000);
 
-    const toggle = page.locator('button[title*="Switch to"]').first();
-    await toggle.click();
+    await selectTheme(page, 'Dark');
     await page.waitForTimeout(500);
     await expect(page.locator('html')).toHaveClass(/dark/);
 
@@ -112,7 +122,12 @@ test.describe('Dark Mode — Public Pages', () => {
 
 test.describe('Dark Mode — Dashboard', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => localStorage.removeItem('theme'));
+    await page.addInitScript(() => {
+      if (!sessionStorage.getItem('govfleet-theme-test-initialised')) {
+        localStorage.removeItem('govfleet-theme');
+        sessionStorage.setItem('govfleet-theme-test-initialised', 'true');
+      }
+    });
     await signIn(page);
   });
 
@@ -120,16 +135,11 @@ test.describe('Dark Mode — Dashboard', () => {
     await page.goto('/dashboard', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    const toggle = page.locator('button[title*="Switch to"]').first();
-    await expect(toggle).toBeVisible({ timeout: 5000 });
-
-    // Toggle it — verify CSS class applied
-    await toggle.click();
+    await selectTheme(page, 'Dark');
     await page.waitForTimeout(500);
     await expect(page.locator('html')).toHaveClass(/dark/);
 
-    // Toggle back
-    await toggle.click();
+    await selectTheme(page, 'Light');
     await page.waitForTimeout(500);
     await expect(page.locator('html')).not.toHaveClass(/dark/);
   });
@@ -138,11 +148,7 @@ test.describe('Dark Mode — Dashboard', () => {
     await page.goto('/dashboard/trips', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    const toggle = page.locator('button[title*="Switch to"]').first();
-    await expect(toggle).toBeVisible({ timeout: 5000 });
-
-    // Enable dark mode
-    await toggle.click();
+    await selectTheme(page, 'Dark');
     await page.waitForTimeout(500);
     await expect(page.locator('html')).toHaveClass(/dark/);
 

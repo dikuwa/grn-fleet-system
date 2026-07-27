@@ -24,6 +24,7 @@ import {
   Download,
 } from 'lucide-react';
 import Link from 'next/link';
+import { LiveSearchInput } from '@/components/ui/live-search-input';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -268,15 +269,11 @@ export default async function FleetPage({ searchParams }: PageProps) {
               <label className="block text-xs font-medium text-ink-500 mb-1">
                 Search
               </label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-                <input
-                  name="search"
-                  defaultValue={result.filters.search ?? ''}
-                  placeholder="Licence, VIN, make, model..."
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface pl-9 pr-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
-                />
-              </div>
+              <LiveSearchInput
+                name="search"
+                defaultValue={result.filters.search ?? ''}
+                placeholder="Licence, VIN, make, model…"
+              />
             </div>
             <div className="w-[180px]">
               <label className="block text-xs font-medium text-ink-500 mb-1">

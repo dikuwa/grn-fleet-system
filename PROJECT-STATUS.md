@@ -130,8 +130,9 @@ New allocation page now calls the `VehicleRecommender` engine and displays score
 ### Notifications Indicator
 
 Topbar now:
-- Fetches unread notification count on mount
-- Polls every 30 seconds for new notifications
+- Shares one notification feed with the notification centre
+- Refreshes every 5 seconds while active and on focus/reconnect
+- Propagates read-state changes across open tabs
 - Shows live count badge (or 99+ overflow)
 - Links to /dashboard/notifications
 
@@ -211,5 +212,5 @@ Verified end-to-end: `POST /api/approvals/[id]/action` delegates to `WorkflowEng
 ## Known Gaps
 
 - SMS won't send until Twilio credentials are set
-- No E2E workflow integration tests covering the full approval → allocation → trip → inspection lifecycle
+- Full workflow E2E coverage exists, but requires a seeded test database and configured object storage for upload assertions
 - Missing: user invitation flow (back-end API exists, no front-end invite form)

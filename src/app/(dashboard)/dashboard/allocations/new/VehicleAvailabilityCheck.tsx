@@ -27,10 +27,7 @@ export function VehicleAvailabilityCheck({ vehicleId, startDate, endDate }: Prop
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!vehicleId || !startDate) {
-      setAvailability(null);
-      return;
-    }
+    if (!vehicleId || !startDate) return;
 
     let cancelled = false;
 
@@ -61,9 +58,12 @@ export function VehicleAvailabilityCheck({ vehicleId, startDate, endDate }: Prop
       }
     }
 
-    check();
+    const timer = window.setTimeout(() => void check(), 0);
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [vehicleId, startDate, endDate]);
 
   if (!vehicleId || !startDate) return null;

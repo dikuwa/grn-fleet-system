@@ -1,7 +1,8 @@
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { Plus, Upload, Database, Search, ChevronRight, ChevronLeft } from 'lucide-react';
+import { LiveSearchInput } from '@/components/ui/live-search-input';
+import { Plus, Upload, Database, ChevronRight, ChevronLeft } from 'lucide-react';
 import Link from 'next/link';
 import { isDbConnected, getDb } from '@/db';
 import { employees, departments, offices } from '@/db/schema';
@@ -189,10 +190,11 @@ export default async function StaffDirectoryPage({
       </PageHeader>
 
       <form className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border bg-surface p-4" method="GET">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500" />
-          <input type="search" name="q" defaultValue={query} placeholder="Search by name, employee number, email..." className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 pl-9 text-sm text-ink-950 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-brand-600" />
-        </div>
+        <LiveSearchInput
+          name="q"
+          defaultValue={query}
+          placeholder="Search by name, employee number, email…"
+        />
         <StyledSelect name="office" defaultValue={officeFilter} placeholder="All Offices">
           {allOffices.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
         </StyledSelect>

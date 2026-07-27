@@ -13,8 +13,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { eq } from 'drizzle-orm';
+import sharp from 'sharp';
 import { requireRequestAuth } from '@/lib/auth-helpers';
-import { UPLOAD_MAX_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants';
 import { uploadFile, buildKey, isStorageConfigured, deleteFile } from '@/lib/storage';
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2 MB
@@ -65,60 +65,59 @@ export async function POST(request: NextRequest) {
       .where(eq(user.id, session.user.id))
       .limit(1);
 
-    const oldImageKey = currentUser?.image || null;
+    const oldImageValue = currentUser?.image || null;
 
-    // Determine extension from MIME type
-    const extMap: Record<string, string> = {
-      'image/jpeg': 'jpg',
-      'image/jpg': 'jpg',
-      'image/png': 'png',
-      'image/webp': 'webp',
-    };
-    const ext = extMap[file.type] || 'jpg';
+    // Decode the file instead of trusting the browser-provided MIME type,
+    // then normalise it to a small, display-safe WebP avatar.
+    const sourceBuffer = Buffer.from(await file.arrayBuffer());
+    let buffer: Buffer;
+    try {
+      const metadata = await sharp(sourceBuffer).metadata();
+      if (!metadata.format || !['jpeg', 'png', 'webp'].includes(metadata.format)) {
+        throw new Error('Unsupported image encoding');
+      }
+      buffer = await sharp(sourceBuffer)
+        .rotate()
+        .resize(512, 512, { fit: 'cover', position: 'centre', withoutEnlargement: true })
+        .webp({ quality: 84 })
+        .toBuffer();
+    } catch {
+      return NextResponse.json(
+        { error: 'The uploaded file is not a valid JPEG, PNG, or WebP image.' },
+        { status: 415 },
+      );
+    }
 
     // Build a versioned key so CDN/browser caches are invalidated on each upload
     const version = Date.now();
-    const filename = `avatar-${session.user.id}-v${version}.${ext}`;
+    const filename = `avatar-${session.user.id}-v${version}.webp`;
     const key = buildKey(filename, 'avatars', `tenant/${session.tenantId}`);
-
-    // Read file buffer
-    const buffer = Buffer.from(await file.arrayBuffer());
 
     // Upload new avatar
     const result = await uploadFile(buffer, key, {
-      contentType: file.type,
+      contentType: 'image/webp',
       tenantPrefix: `tenant/${session.tenantId}`,
-      isPublic: true,
+      isPublic: false,
     });
-
-    if (!result.publicUrl) {
-      throw new Error('Upload completed but no public URL was returned');
-    }
-
-    // Add a cache-busting query parameter to the URL
-    const imageUrl = `${result.publicUrl}?v=${version}`;
 
     // Update user record — only after successful upload
     await db
       .update(user)
-      .set({ image: imageUrl, updatedAt: new Date() })
+      .set({ image: result.key, updatedAt: new Date(version) })
       .where(eq(user.id, session.user.id));
 
     // Clean up old avatar — only after new one is saved successfully
-    if (oldImageKey && isStorageConfigured()) {
+    if (oldImageValue && isStorageConfigured()) {
       try {
-        // Extract the old key from the URL
-        const oldUrl = oldImageKey.split('?')[0]; // Remove cache buster
-        const urlParts = oldUrl.split('/');
-        const oldFilename = urlParts[urlParts.length - 1];
-
-        // Only delete if it looks like an avatar (not a default/placeholder)
-        if (oldFilename && oldFilename.includes('avatar-') && !oldFilename.includes('default')) {
-          // Try to resolve the old key
-          const oldKey = `tenant/${session.tenantId}/avatars/${oldFilename}`;
-          await deleteFile(oldKey).catch(() => {
-            // Non-fatal — old file may have been deleted already
-          });
+        const prefix = `tenant/${session.tenantId}/avatars/`;
+        let oldKey = oldImageValue.startsWith(prefix) ? oldImageValue : null;
+        if (!oldKey) {
+          const cleanUrl = oldImageValue.split('?')[0];
+          const prefixIndex = cleanUrl.indexOf(prefix);
+          if (prefixIndex >= 0) oldKey = cleanUrl.slice(prefixIndex);
+        }
+        if (oldKey && oldKey !== result.key) {
+          await deleteFile(oldKey).catch(() => {});
         }
       } catch {
         // Non-fatal cleanup error
@@ -128,8 +127,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        imageUrl,
-        key: result.key,
+        imageUrl: `/api/users/avatar?v=${version}`,
         version,
       },
     });
@@ -160,13 +158,15 @@ export async function DELETE(request: NextRequest) {
     // Remove image from storage
     if (userRecord?.image && isStorageConfigured()) {
       try {
-        const cleanUrl = userRecord.image.split('?')[0]; // Remove cache buster
-        const urlParts = cleanUrl.split('/');
-        const fileName = urlParts[urlParts.length - 1];
-        if (fileName && fileName.includes('avatar-')) {
-          const fileKey = `tenant/${session.tenantId}/avatars/${fileName}`;
-          await deleteFile(fileKey);
-        }
+        const prefix = `tenant/${session.tenantId}/avatars/`;
+        const cleanValue = userRecord.image.split('?')[0];
+        const prefixIndex = cleanValue.indexOf(prefix);
+        const key = cleanValue.startsWith(prefix)
+          ? cleanValue
+          : prefixIndex >= 0
+            ? cleanValue.slice(prefixIndex)
+            : null;
+        if (key) await deleteFile(key);
       } catch {
         // Non-fatal
       }

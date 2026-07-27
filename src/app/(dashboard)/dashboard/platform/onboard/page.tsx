@@ -524,7 +524,7 @@ export default function OnboardTenantPage() {
                   onClick={() => toggleRole(role.key)}
                   className={`flex items-center gap-3 rounded-[8px] border p-3 text-left transition-all ${
                     form.selectedRoles.includes(role.key)
-                      ? 'border-brand-300 bg-brand-50 text-brand-900'
+                      ? 'border-brand-300 bg-brand-50 text-brand-900 dark:text-brand-700'
                       : 'border-border text-ink-700 hover:border-ink-300'
                   }`}
                 >

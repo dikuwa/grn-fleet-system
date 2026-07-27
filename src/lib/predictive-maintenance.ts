@@ -107,7 +107,7 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
 
   // Get latest maintenance events per vehicle
   const vehicleIds = vehicleRows.map((v) => v.id);
-  let latestMaintenance: Array<{
+  const latestMaintenance: Array<{
     vehicleId: string;
     serviceDate: string;
     serviceOdometer: number | null;

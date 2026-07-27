@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { useSession } from '@/lib/auth-client';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +28,13 @@ import {
   WifiOff,
 } from 'lucide-react';
 import Link from 'next/link';
+import {
+  broadcastNotificationChange,
+  fetchNotifications,
+  notificationQueryKey,
+  type NotificationFeed,
+  useNotificationBroadcast,
+} from '@/lib/notifications-client';
 
 type NotificationType = 'all' | 'action_required' | 'awareness' | 'reminder' | 'escalation' | 'outcome';
 type NotificationFilter = 'all' | 'unread' | 'read';
@@ -44,27 +51,13 @@ interface Notification {
   actionUrl: string;
 }
 
-// Fallback mock notifications when DB not connected
-const mockNotifications: Notification[] = [
-  { id: '1', type: 'action_required', title: 'Approval Required', body: 'Transport request TR-2026-0142 (Field inspection — Divundu) requires your approval.', time: '2 hours ago', isRead: false, priority: 'high', entityType: 'request', actionUrl: '/dashboard/approvals' },
-  { id: '2', type: 'reminder', title: 'Trip Return Due Today', body: 'Vehicle GRN-005 (TRIP-2026-0092) is due for return. Return inspection must be completed.', time: '3 hours ago', isRead: false, priority: 'high', entityType: 'trip', actionUrl: '/dashboard/trips' },
-  { id: '3', type: 'escalation', title: 'Escalated: Approval Overdue', body: 'Transport request TR-2026-0139 has been escalated to Chief Regional Officer. Action overdue by 6 hours.', time: '5 hours ago', isRead: false, priority: 'high', entityType: 'request', actionUrl: '/dashboard/approvals' },
-  { id: '4', type: 'awareness', title: 'Vehicle Status Update', body: 'GRN-020 has been marked as Out of Service due to critical engine fault.', time: '8 hours ago', isRead: false, priority: 'normal', entityType: 'vehicle', actionUrl: '/dashboard/fleet' },
-  { id: '5', type: 'outcome', title: 'Request Approved', body: 'Transport request TR-2026-0141 (Workshop materials — Rundu) has been approved by E. Hausiku.', time: '1 day ago', isRead: true, priority: 'normal', entityType: 'request', actionUrl: '/dashboard/requests' },
-  { id: '6', type: 'action_required', title: 'Fuel Verification Needed', body: 'Fuel transaction #FT-2026-0452 requires verification. Fuel amount exceeds typical range.', time: '1 day ago', isRead: true, priority: 'normal', entityType: 'fuel', actionUrl: '/dashboard/fuel' },
-  { id: '7', type: 'awareness', title: 'Maintenance Scheduled', body: 'GRN-012 is scheduled for 15,000 km service on 18 Jul 2026 at Rundu Gvt Garage.', time: '2 days ago', isRead: true, priority: 'normal', entityType: 'maintenance', actionUrl: '/dashboard/maintenance' },
-  { id: '8', type: 'outcome', title: 'Trip Closed', body: 'TRIP-2026-0089 (Community outreach — Nkurenkuru) has been closed. All items accounted for.', time: '2 days ago', isRead: true, priority: 'low', entityType: 'trip', actionUrl: '/dashboard/trips' },
-  { id: '9', type: 'reminder', title: 'Licence Expiry Reminder', body: 'Driver licence for T. Sikongo (Class B) expires in 14 days. Renewal required.', time: '3 days ago', isRead: true, priority: 'normal', entityType: 'staff', actionUrl: '/dashboard/staff' },
-  { id: '10', type: 'awareness', title: 'Office Update', body: 'New settlement office registered at Shamvura. Contact details pending verification.', time: '4 days ago', isRead: true, priority: 'low', entityType: 'office', actionUrl: '/dashboard/offices' },
-];
-
 const typeColors: Record<NotificationType, { bg: string; text: string; icon: React.ReactNode }> = {
   all: { bg: 'bg-muted', text: 'text-ink-500', icon: <Inbox className="h-4 w-4" /> },
-  action_required: { bg: 'bg-blue-50', text: 'text-blue-700', icon: <AlertCircle className="h-4 w-4" /> },
-  awareness: { bg: 'bg-amber-50', text: 'text-amber-700', icon: <Info className="h-4 w-4" /> },
-  reminder: { bg: 'bg-purple-50', text: 'text-purple-700', icon: <Clock className="h-4 w-4" /> },
-  escalation: { bg: 'bg-red-50', text: 'text-red-700', icon: <AlertTriangle className="h-4 w-4" /> },
-  outcome: { bg: 'bg-green-50', text: 'text-green-700', icon: <CheckCircle2 className="h-4 w-4" /> },
+  action_required: { bg: 'bg-blue-50 dark:bg-blue-950/50', text: 'text-blue-700 dark:text-blue-300', icon: <AlertCircle className="h-4 w-4" /> },
+  awareness: { bg: 'bg-amber-50 dark:bg-amber-950/50', text: 'text-amber-700 dark:text-amber-300', icon: <Info className="h-4 w-4" /> },
+  reminder: { bg: 'bg-purple-50 dark:bg-purple-950/50', text: 'text-purple-700 dark:text-purple-300', icon: <Clock className="h-4 w-4" /> },
+  escalation: { bg: 'bg-red-50 dark:bg-red-950/50', text: 'text-red-700 dark:text-red-300', icon: <AlertTriangle className="h-4 w-4" /> },
+  outcome: { bg: 'bg-green-50 dark:bg-green-950/50', text: 'text-green-700 dark:text-green-300', icon: <CheckCircle2 className="h-4 w-4" /> },
 };
 
 const typeLabels: Record<NotificationType, string> = {
@@ -87,37 +80,43 @@ const entityIcons: Record<string, React.ReactNode> = {
 };
 
 export default function NotificationsPage() {
-  const { data: session } = useSession();
+  const queryClient = useQueryClient();
+  useNotificationBroadcast();
   const [selectedType, setSelectedType] = useState<NotificationType>('all');
   const [filterMode, setFilterMode] = useState<NotificationFilter>('all');
-  const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
-  const [isLive, setIsLive] = useState(false);
-
-  // Attempt to fetch live notifications on mount
-  useEffect(() => {
-    const uid = session?.user?.id || 'system';
-    fetch(`/api/notifications?userId=${uid}&limit=50`)
-      .then((res) => res.ok ? res.json() : null)
-      .then((json) => {
-        if (!json?.success || !json?.data) return;
-        const apiNotifs = (json.data.notifications || []).map((n: Record<string, string | boolean>) => ({
-          id: n.id as string,
-          type: (n.type as Notification['type']) || 'awareness',
-          title: n.title as string || 'Notification',
-          body: n.body as string || '',
-          time: n.createdAt ? new Date(n.createdAt as string).toLocaleDateString('en-NA', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Recently',
-          isRead: Boolean(n.isRead),
-          priority: (n.priority as Notification['priority']) || 'normal',
-          entityType: (n.entityType as string) || 'request',
-          actionUrl: (n.actionUrl as string) || '/dashboard',
-        }));
-        if (apiNotifs.length > 0) {
-          setNotifications(apiNotifs);
-          setIsLive(true);
-        }
-      })
-      .catch(() => { /* Keep mock data */ });
-  }, [session?.user?.id]);
+  const notificationQuery = useQuery({
+    queryKey: notificationQueryKey,
+    queryFn: ({ signal }) => fetchNotifications(signal),
+    staleTime: 3_000,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
+  const notifications = useMemo<Notification[]>(
+    () => (notificationQuery.data?.notifications || []).map((notification) => ({
+      id: notification.id,
+      type: typeLabels[notification.type as NotificationType]
+        ? notification.type as Notification['type']
+        : 'awareness',
+      title: notification.title || 'Notification',
+      body: notification.body || '',
+      time: new Date(notification.createdAt).toLocaleString('en-NA', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      isRead: notification.isRead,
+      priority: ['high', 'normal', 'low'].includes(notification.priority)
+        ? notification.priority as Notification['priority']
+        : 'normal',
+      entityType: notification.entityType || 'request',
+      actionUrl: notification.actionUrl || '/dashboard',
+    })),
+    [notificationQuery.data],
+  );
 
   const filtered = notifications.filter((n) => {
     const typeMatch = selectedType === 'all' || n.type === selectedType;
@@ -128,21 +127,41 @@ export default function NotificationsPage() {
     return typeMatch && readMatch;
   });
 
-  const unreadCount = notifications.filter((n) => !n.isRead).length;
+  const unreadCount = notificationQuery.data?.unreadCount || 0;
 
   const markAllRead = useCallback(async () => {
-    const userId = session?.user?.id || 'system';
-    try {
-      await fetch('/api/notifications', {
+    const response = await fetch('/api/notifications', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mark_read', userId }),
+        body: JSON.stringify({ action: 'mark_read' }),
       });
-    } catch {
-      console.log('Mark all read - offline');
-    }
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-  }, [session?.user?.id]);
+    if (!response.ok) throw new Error('Unable to mark notifications as read');
+    await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
+    broadcastNotificationChange();
+  }, [queryClient]);
+
+  const markOneRead = useCallback((notificationId: string) => {
+    queryClient.setQueryData<NotificationFeed>(notificationQueryKey, (current) => {
+      if (!current) return current;
+      const wasUnread = current.notifications.some(
+        (notification) => notification.id === notificationId && !notification.isRead,
+      );
+      return {
+        notifications: current.notifications.map((notification) => (
+          notification.id === notificationId
+            ? { ...notification, isRead: true }
+            : notification
+        )),
+        unreadCount: wasUnread ? Math.max(0, current.unreadCount - 1) : current.unreadCount,
+      };
+    });
+    void fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'mark_read', notificationId }),
+      keepalive: true,
+    }).then(() => broadcastNotificationChange());
+  }, [queryClient]);
 
   return (
     <div className="space-y-6">
@@ -156,10 +175,10 @@ export default function NotificationsPage() {
       >
         <div className="flex items-center gap-2">
           <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-            isLive ? 'bg-status-success-bg text-status-success-text' : 'bg-muted text-ink-500'
+            notificationQuery.isError ? 'bg-status-error-bg text-status-error-text' : 'bg-status-success-bg text-status-success-text'
           }`}>
-            {isLive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-            {isLive ? 'Live Data' : 'Sample Data'}
+            {notificationQuery.isError ? <WifiOff className="h-3 w-3" /> : <Wifi className="h-3 w-3" />}
+            {notificationQuery.isError ? 'Connection error' : 'Live'}
           </div>
           <Button variant="secondary" size="sm" onClick={markAllRead} disabled={unreadCount === 0}>
             <CheckCheck className="h-4 w-4" />
@@ -278,6 +297,8 @@ export default function NotificationsPage() {
 
                     <Link
                       href={notification.actionUrl}
+                      onClick={() => markOneRead(notification.id)}
+                      aria-label={`Open ${notification.title}`}
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-400 hover:bg-muted hover:text-ink-700 transition-colors"
                     >
                       <ChevronRight className="h-4 w-4" />

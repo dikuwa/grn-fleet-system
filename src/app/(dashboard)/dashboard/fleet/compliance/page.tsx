@@ -109,7 +109,7 @@ export default function CompliancePage() {
       case 'valid': return 'bg-green-500';
       case 'expiring_soon': return 'bg-amber-500';
       case 'expired': return 'bg-red-500';
-      default: return 'bg-gray-300';
+      default: return 'bg-ink-300';
     }
   };
 
@@ -177,7 +177,7 @@ export default function CompliancePage() {
             </CardContent></Card>
             <Card><CardContent className="pt-4">
               <div className="text-center">
-                <p className="text-2xl font-[650] tabular-nums text-gray-500">{summary.incomplete}</p>
+                <p className="text-2xl font-[650] tabular-nums text-ink-500">{summary.incomplete}</p>
                 <p className="text-xs text-ink-500">Incomplete</p>
               </div>
             </CardContent></Card>
@@ -185,9 +185,9 @@ export default function CompliancePage() {
 
           {/* Upcoming Expiries Alert */}
           {upcoming.filter((u) => u.status === 'expired' || u.status === 'expiring_soon').length > 0 && (
-            <Card className="border-amber-200 bg-amber-50/50">
+            <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/30">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-amber-800">
+                <CardTitle className="flex items-center gap-2 text-amber-800 dark:text-amber-300">
                   <Clock className="h-4 w-4" />
                   Upcoming Expiries
                 </CardTitle>
@@ -195,7 +195,7 @@ export default function CompliancePage() {
               <CardContent>
                 <div className="space-y-2">
                   {upcoming.filter((u) => u.status === 'expired' || u.status === 'expiring_soon').slice(0, 10).map((u) => (
-                    <div key={`${u.vehicleId}-${u.type}`} className="flex items-center justify-between rounded-lg bg-white px-4 py-2 text-sm">
+                    <div key={`${u.vehicleId}-${u.type}`} className="flex items-center justify-between rounded-lg bg-surface px-4 py-2 text-sm">
                       <div className="flex items-center gap-3">
                         <div className={`h-2 w-2 rounded-full ${u.status === 'expired' ? 'bg-red-500' : 'bg-amber-500'}`} />
                         <span className="font-medium text-ink-950">{u.licenceNumber}</span>
@@ -247,7 +247,7 @@ export default function CompliancePage() {
                         v.overallStatus === 'compliant' ? 'bg-green-50 text-green-700' :
                         v.overallStatus === 'non_compliant' ? 'bg-red-50 text-red-700' :
                         v.overallStatus === 'attention_needed' ? 'bg-amber-50 text-amber-700' :
-                        'bg-gray-50 text-gray-500'
+                        'bg-muted text-ink-500'
                       }`}>
                         <ShieldCheck className="h-6 w-6" />
                       </div>

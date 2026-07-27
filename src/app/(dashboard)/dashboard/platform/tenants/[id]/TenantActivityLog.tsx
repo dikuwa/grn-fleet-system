@@ -59,7 +59,8 @@ export function TenantActivityLog({ tenantId }: { tenantId: string }) {
   }, [tenantId, filterType]);
 
   useEffect(() => {
-    fetchActivity();
+    const timer = window.setTimeout(() => void fetchActivity(), 0);
+    return () => window.clearTimeout(timer);
   }, [fetchActivity]);
 
   return (

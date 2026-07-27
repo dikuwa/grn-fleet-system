@@ -55,10 +55,11 @@ test.describe('Mobile Responsive — Public Pages', () => {
     const viewportWidth = await page.evaluate(() => window.innerWidth);
     expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 5); // allow small rounding
 
-    // Theme toggle should be accessible
-    const toggle = page.locator('button[title*="Switch to"]').first();
+    // The shared Light / Dark / System selector should be touch accessible.
+    const toggle = page.getByRole('button', { name: /select theme/i }).first();
     await expect(toggle).toBeVisible({ timeout: 5000 });
     await toggle.click();
+    await page.getByRole('menuitemradio', { name: 'Dark' }).click();
     await page.waitForTimeout(500);
     await expect(page.locator('html')).toHaveClass(/dark/);
   });
@@ -317,12 +318,13 @@ test.describe('Mobile Responsive — Dashboard', () => {
     const formVisible = await form.isVisible({ timeout: 5000 }).catch(() => false);
 
     if (formVisible) {
-      // Check selects are present and usable
-      const selects = page.locator('select');
+      // Check the themed Radix comboboxes are present and usable.
+      const selects = page.getByRole('combobox');
       const selectCount = await selects.count();
       if (selectCount > 0) {
         await expect(selects.first()).toBeVisible({ timeout: 3000 });
-        await selects.first().selectOption({ index: 1 }).catch(() => {});
+        await selects.first().click().catch(() => {});
+        await page.keyboard.press('Escape').catch(() => {});
       }
 
       // Check buttons have minimum touch target

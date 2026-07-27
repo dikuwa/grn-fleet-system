@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
+import { StyledDateInput } from '@/components/ui/styled-select';
 
 interface ProgrammeActivity {
   id: string;
@@ -65,9 +66,8 @@ function CreateProgrammeDialog({
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Reset form when dialog opens — force remount on open
-  useEffect(() => {
-    if (open) {
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) {
       setTitle('');
       setDescription('');
       setVenue('');
@@ -76,8 +76,8 @@ function CreateProgrammeDialog({
       setEstimatedKm('');
       setError(null);
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-  }, [open]);
+    onOpenChange(nextOpen);
+  };
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,7 +123,7 @@ function CreateProgrammeDialog({
   }, [title, description, venue, startDate, endDate, estimatedKm, onOpenChange, onCreated]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>New Programme of Activities</DialogTitle>
@@ -150,20 +150,18 @@ function CreateProgrammeDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label required>Start Date</Label>
-              <Input
+              <StyledDateInput
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="h-11"
               />
             </div>
             <div className="space-y-1.5">
               <Label>End Date</Label>
-              <Input
+              <StyledDateInput
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="h-11"
               />
             </div>
           </div>

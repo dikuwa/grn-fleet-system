@@ -81,7 +81,8 @@ export default function OfflinePage() {
   }, []);
 
   useEffect(() => {
-    loadDrafts();
+    const timer = window.setTimeout(() => void loadDrafts(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadDrafts]);
 
   const handleSyncAll = async () => {
@@ -226,7 +227,7 @@ export default function OfflinePage() {
             onClick={() => setStatusFilter(status)}
             className={`rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors ${
               statusFilter === status
-                ? 'bg-brand-900 text-white'
+                ? 'bg-brand-900 text-white dark:bg-brand-800'
                 : 'bg-surface text-ink-500 hover:bg-muted hover:text-ink-700'
             }`}
           >

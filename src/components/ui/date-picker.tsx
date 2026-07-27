@@ -78,11 +78,6 @@ export function DatePicker({
     }
   };
 
-  // Sync display when value changes externally
-  React.useEffect(() => {
-    setInputValue(displayValue);
-  }, [displayValue]);
-
   const minDate = min ? new Date(min + 'T00:00:00') : undefined;
   const maxDate = max ? new Date(max + 'T00:00:00') : undefined;
 
@@ -94,7 +89,13 @@ export function DatePicker({
           {required && <span className="text-status-error-text ml-0.5">*</span>}
         </label>
       )}
-      <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Root
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (nextOpen) setInputValue(displayValue);
+        }}
+      >
         <Popover.Trigger asChild disabled={disabled}>
           <button
             type="button"
@@ -117,7 +118,7 @@ export function DatePicker({
             align="start"
             sideOffset={4}
             className={cn(
-              'z-50 rounded-[10px] border border-border bg-popover p-0 shadow-lg',
+              'z-50 rounded-[10px] border border-border bg-surface p-0 shadow-lg',
               'data-[state=open]:animate-in data-[state=closed]:animate-out',
               'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
               'data-[side=bottom]:slide-in-from-top-2',

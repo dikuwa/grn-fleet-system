@@ -93,7 +93,7 @@ export function ErrorState({
         className,
       )}
     >
-      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white text-status-error-text">
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-surface text-status-error-text">
         <AlertCircle className="h-6 w-6" />
       </div>
       <h3 className="text-sm font-semibold text-status-error-text">{title}</h3>

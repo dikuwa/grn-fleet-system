@@ -515,7 +515,7 @@ export default async function DashboardPage() {
                   <Link
                     key={trip.id}
                     href={`/dashboard/trips/${trip.id}`}
-                    className="flex items-center justify-between rounded-[8px] border border-purple-100 bg-white p-3 transition-colors hover:border-purple-200 hover:bg-purple-50"
+                    className="flex items-center justify-between rounded-[8px] border border-border bg-surface p-3 transition-colors hover:border-brand-100 hover:bg-muted"
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-purple-50">
@@ -635,7 +635,7 @@ export default async function DashboardPage() {
                         <Link
                           key={v.id}
                           href={`/dashboard/fleet/${v.id}`}
-                          className="flex items-center justify-between rounded-[8px] bg-white px-3 py-2 text-sm transition-colors hover:bg-white/80"
+                          className="flex items-center justify-between rounded-[8px] bg-surface px-3 py-2 text-sm transition-colors hover:bg-muted"
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <div className={`h-2 w-2 shrink-0 rounded-full ${(licenceExpired || rwExpired) ? 'bg-red-500' : 'bg-amber-500'}`} />
@@ -666,7 +666,7 @@ export default async function DashboardPage() {
                       return (
                         <div
                           key={l.id}
-                          className="flex items-center justify-between rounded-[8px] bg-white px-3 py-2 text-sm"
+                          className="flex items-center justify-between rounded-[8px] bg-surface px-3 py-2 text-sm"
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <div className={`h-2 w-2 shrink-0 rounded-full ${expired ? 'bg-red-500' : 'bg-amber-500'}`} />
@@ -722,6 +722,5 @@ export default async function DashboardPage() {
     </div>
   );
 }
-
 
 

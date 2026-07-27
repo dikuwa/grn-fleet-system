@@ -8,6 +8,7 @@ const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
 const accounts = {
+  platformAdmin: 'platform.admin@grnfleet.test',
   tenantAdmin: 'admin@kavangoeast.gov.na',
   transport: 'transport.admin@kavangoeast.test',
   requester: 'requester@kavangoeast.test',
@@ -55,9 +56,14 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
       await api.dispose();
     }
 
+    const platformAdmin = await login(accounts.platformAdmin);
+    expect((await platformAdmin.get('/api/platform/tenants')).status()).toBe(200);
+    await platformAdmin.dispose();
+
     const requester = await login(accounts.requester);
     expect((await requester.get('/api/regions')).status()).toBe(403);
     expect((await requester.get('/api/admin/users')).status()).toBe(403);
+    expect((await requester.get('/api/platform/tenants')).status()).toBe(403);
     await requester.dispose();
 
     const admin = await login(accounts.tenantAdmin);

@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-07-27 — Session 49: Employee-first requests, avatar delivery, unified theming, and live UI
+
+### Fixed
+
+- **Profile photos across dashboard surfaces** — Avatars are stored privately, served through an authenticated current-user endpoint, versioned for cache invalidation, and shared through one TanStack Query profile key. Uploading or deleting a photo now refreshes the profile page, topbar, and account menu together. Invalid image payloads are decoded and rejected; valid images are normalised to a display-safe WebP with initials fallback.
+- **Dark-mode contrast** — Revised dark surface, border, text, interaction, notification, audit, compliance, and status colours. Replaced hard-coded light dashboard surfaces with semantic theme tokens.
+- **Native browser controls** — The shared select now uses Radix Select, while date, time, and date-time fields use the themed calendar and 24-hour controls. Existing controlled forms and named form submission values are preserved.
+- **Misleading sample data** — Removed notification and audit sample fallbacks. Connection failures are identified as errors instead of presenting invented operational records.
+
+### Added
+
+- **One theme selector everywhere** — Public pages, About, Services, login, and the dashboard use the same accessible Light / Dark / System selector and the same stored preference.
+- **Employee and passenger lookup** — Requesters search active tenant employees by name, employee number, email, or job title; external passengers can still be entered manually. Duplicate, inactive, missing, and cross-tenant selections are rejected server-side.
+- **Driver nomination and assignment** — Requesters may nominate an authorised driver by name. Transport administrators retain final responsibility and can replace the driver later using the same name-first search.
+- **Live search** — Added permission-scoped global search for requests, fleet, and employees plus debounced URL-backed list searches with cancellation and preserved filters.
+- **Live notification state** — Five-second focused polling, focus/reconnect refresh, cross-tab BroadcastChannel invalidation, correct unread counts, and optimistic single-notification read state.
+- **Role coverage** — Added responsive dashboard-shell smoke coverage for all 13 seeded accounts, including the platform administrator, with theme, search, notification, account-menu, and horizontal-overflow checks.
+
+### Security and correctness
+
+- Employee/driver lookup and global search are tenant- and permission-scoped.
+- Avatar object keys remain private and are never used as public profile URLs.
+- Driver nominations require an active employee, authorised driver profile, and same-tenant membership.
+- Request creation rejects duplicated employees and incomplete manual passengers.
+- Audit UI describes available hash metadata without claiming an integrity verification the endpoint has not performed.
+
+### Validation
+
+- **TypeScript**: clean compile ✅
+- **Unit tests**: 72/72 passing ✅
+- **Production build**: passes ✅
+- **Browser tests**: 23/23 unified-theme, live-search, people-lookup, and all-role responsive checks passing ✅
+
+---
+
 ## 2026-07-26 — Session 48: Profile avatar fix, E2E test repairs, production deployment, performance indexes
 
 ### Fixed

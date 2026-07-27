@@ -233,7 +233,7 @@ test.describe('Photo Upload Workflow', () => {
 
     // Verify the odometer and fuel fields (required for submission)
     await expect(page.locator('input[type="number"]').first()).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('select').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('combobox').first()).toBeVisible({ timeout: 5000 });
   });
 
   // -----------------------------------------------------------------------

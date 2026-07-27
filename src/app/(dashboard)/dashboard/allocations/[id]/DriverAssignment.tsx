@@ -4,7 +4,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { StyledSelect } from '@/components/ui/styled-select';
+import {
+  EmployeeCombobox,
+  type EmployeeSearchOption,
+} from '@/components/ui/employee-combobox';
 import { User, XCircle, UserPlus } from 'lucide-react';
 
 interface LicenceInfo {
@@ -106,6 +109,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
   }, [allocationId, router]);
 
   const selectedDriver = drivers.find((d) => d.id === selectedDriverId);
+  const currentDriver = drivers.find((d) => d.id === currentDriverId);
 
   // Get the best licence for the selected driver
   const bestLicence = selectedDriver?.licences
@@ -116,15 +120,23 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       return bExpiry - aExpiry;
     })[0];
 
-  // Group by status
-  const availableDrivers = drivers.filter((d) => {
-    const hasValidLicence = d.activeLicenceCount > 0;
-    return d.driverStatus === 'authorised' && hasValidLicence;
-  });
-  const unavailableDrivers = drivers.filter((d) => {
-    const hasValidLicence = d.activeLicenceCount > 0;
-    return !(d.driverStatus === 'authorised' && hasValidLicence);
-  });
+  const currentBestLicence = currentDriver?.licences
+    .filter((licence) => licence.verificationStatus !== 'expired')
+    .sort((a, b) => new Date(b.expiryDate).getTime() - new Date(a.expiryDate).getTime())[0];
+
+  const selectedEmployeeOption: EmployeeSearchOption | null = selectedDriver ? {
+    id: selectedDriver.id,
+    fullName: `${selectedDriver.firstName} ${selectedDriver.lastName}`,
+    firstName: selectedDriver.firstName,
+    lastName: selectedDriver.lastName,
+    employeeNumber: selectedDriver.employeeNumber,
+    email: null,
+    jobTitle: selectedDriver.jobTitle,
+    departmentName: null,
+    officeName: null,
+    driverStatus: selectedDriver.driverStatus,
+    availabilityStatus: null,
+  } : null;
 
   return (
     <div className="space-y-3">
@@ -133,7 +145,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
         <span className="text-sm font-medium text-ink-700">Driver Assignment</span>
       </div>
 
-      {currentDriverId && selectedDriver && (
+      {currentDriverId && currentDriver && (
         <div className="rounded-[8px] border border-status-success-border bg-status-success-bg/30 p-3">
           <div className="flex items-start justify-between">
             <div className="flex items-start gap-3">
@@ -142,18 +154,18 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
               </div>
               <div>
                 <p className="text-sm font-medium text-ink-950">
-                  {selectedDriver.firstName} {selectedDriver.lastName}
+                  {currentDriver.firstName} {currentDriver.lastName}
                 </p>
                 <p className="text-xs text-ink-500">
-                  {selectedDriver.jobTitle || 'Driver'} · {selectedDriver.employeeNumber}
+                  {currentDriver.jobTitle || 'Driver'} · {currentDriver.employeeNumber}
                 </p>
-                {bestLicence && (
+                {currentBestLicence && (
                   <div className="mt-1.5 flex items-center gap-2">
-                    <Badge variant={getLicenceStatus(bestLicence.expiryDate).variant} size="sm">
-                      {getLicenceStatus(bestLicence.expiryDate).label}
+                    <Badge variant={getLicenceStatus(currentBestLicence.expiryDate).variant} size="sm">
+                      {getLicenceStatus(currentBestLicence.expiryDate).label}
                     </Badge>
                     <span className="text-xs text-ink-400">
-                      Class {bestLicence.licenceClass} · {bestLicence.licenceNumber}
+                      Class {currentBestLicence.licenceClass} · {currentBestLicence.licenceNumber}
                     </span>
                   </div>
                 )}
@@ -166,39 +178,20 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
         </div>
       )}
 
-      {!currentDriverId && (
-        <div className="space-y-2">
+      <div className="space-y-2">
           {isLoading ? (
             <div className="animate-pulse rounded-[8px] bg-muted p-3">
               <div className="h-4 w-3/4 rounded bg-ink-200" />
             </div>
           ) : (
             <>
-              <div className="relative"><StyledSelect
-  value={selectedDriverId}
-  onChange={(e) => setSelectedDriverId(e.target.value)}
->
-                  <option value="">Select a driver...</option>
-                  {availableDrivers.length > 0 && (
-                    <optgroup label={`Available (${availableDrivers.length})`}>
-                      {availableDrivers.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.firstName} {d.lastName} · {d.employeeNumber}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {unavailableDrivers.length > 0 && (
-                    <optgroup label={`Unavailable (${unavailableDrivers.length})`}>
-                      {unavailableDrivers.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.firstName} {d.lastName} · {d.employeeNumber} · {d.driverStatus}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </StyledSelect>
-              </div>
+              <EmployeeCombobox
+                kind="driver"
+                value={selectedDriverId}
+                selectedOption={selectedEmployeeOption}
+                onSelect={(employee) => setSelectedDriverId(employee?.id || '')}
+                placeholder={currentDriverId ? 'Search for a replacement driver…' : 'Search available drivers…'}
+              />
 
               {selectedDriver && (
                 <div className="rounded-[8px] border border-border bg-muted/50 p-2.5">
@@ -219,7 +212,8 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
                       )}
                     </div>
                     <Button variant="primary" size="sm" loading={isSaving} onClick={handleAssign}>
-                      <UserPlus className="h-3.5 w-3.5" /> Assign
+                      <UserPlus className="h-3.5 w-3.5" />
+                      {currentDriverId ? 'Replace Driver' : 'Assign'}
                     </Button>
                   </div>
                 </div>
@@ -235,8 +229,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
               )}
             </>
           )}
-        </div>
-      )}
+      </div>
 
       {error && (
         <p className="text-xs text-status-error-text">{error}</p>

@@ -36,15 +36,32 @@ interface ReimbursementItem {
   claimantName: string;
 }
 
+interface MissingReceipt {
+  id: string;
+  transactionAt: string;
+  amount: string;
+  vehicleLicence: string;
+  stationName: string | null;
+}
+
+interface ExpenseSummary {
+  totalFuelCost: number;
+  totalLitres: number;
+  avgCostPerLitre: number;
+  receiptCoverage: number;
+  missingReceiptCount: number;
+  pendingReimbursements: number;
+  flaggedAnomalies: number;
+}
+
 export default function ExpensesPage() {
   const [transactions, setTransactions] = useState<ExpenseTransaction[]>([]);
   const [reimbursements, setReimbursements] = useState<ReimbursementItem[]>([]);
-  const [missingReceipts, setMissingReceipts] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>(null);
+  const [missingReceipts, setMissingReceipts] = useState<MissingReceipt[]>([]);
+  const [summary, setSummary] = useState<ExpenseSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState('90d');
-  const [showScanner, setShowScanner] = useState(false);
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -97,13 +114,12 @@ export default function ExpensesPage() {
         throw new Error(err.error || 'Upload failed');
       }
 
-      const uploadJson = await uploadRes.json();
+      await uploadRes.json();
 
       // Try OCR via Tesseract.js (dynamically loaded)
       let ocrText = '';
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const TesseractMod: any = await import('tesseract.js' as string).catch(() => null);
+        const TesseractMod = await import('tesseract.js').catch(() => null);
         if (TesseractMod && typeof TesseractMod.recognize === 'function') {
           const result = await TesseractMod.recognize(file, 'eng');
           ocrText = result.data?.text || 'No text extracted';
@@ -256,8 +272,8 @@ export default function ExpensesPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-1.5">
-                  {missingReceipts.slice(0, 5).map((mr: any) => (
-                    <div key={mr.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
+                  {missingReceipts.slice(0, 5).map((mr) => (
+                    <div key={mr.id} className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm">
                       <span className="text-ink-700">{mr.vehicleLicence}</span>
                       <span className="text-ink-500">{formatCurrency(Number(mr.amount))}</span>
                       <span className="text-xs text-ink-400">{formatDate(mr.transactionAt)}</span>

@@ -367,8 +367,8 @@ export default function DriverSelfServicePage() {
                             <div className="flex items-center gap-3">
                               <Gauge className={`h-8 w-8 p-1.5 rounded-[6px] ${
                                 t.status === 'in_progress' ? 'bg-green-50 text-green-600' :
-                                t.status === 'closed' ? 'bg-gray-50 text-gray-500' :
-                                'bg-blue-50 text-blue-600'
+                                t.status === 'closed' ? 'bg-muted text-ink-500' :
+                                'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300'
                               }`} />
                               <div>
                                 <div className="flex items-center gap-2">

@@ -9,7 +9,7 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 
 import { saveDraft, listDrafts, deleteDraft, countUnsyncedDrafts } from '@/lib/offline-drafts';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
   ClipboardList, Save, WifiOff, CheckCircle2, Clock, MapPin,
   Gauge, X,
@@ -291,11 +291,10 @@ export default function DailyLogsPage() {
             {/* Date */}
             <div className="space-y-1.5">
               <Label required>Log Date</Label>
-              <Input
+              <StyledDateInput
                 type="date"
                 value={formData.logDate}
                 onChange={(e) => updateField('logDate', e.target.value)}
-                className="h-11"
               />
             </div>
 
@@ -333,27 +332,19 @@ export default function DailyLogsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Departure Time</Label>
-                <div className="relative">
-                  <Clock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-                  <Input
+                  <StyledDateInput
                     type="time"
                     value={formData.departureTime}
                     onChange={(e) => updateField('departureTime', e.target.value)}
-                    className="pl-9 h-11"
                   />
-                </div>
               </div>
               <div className="space-y-1.5">
                 <Label>Arrival Time</Label>
-                <div className="relative">
-                  <Clock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-                  <Input
+                  <StyledDateInput
                     type="time"
                     value={formData.arrivalTime}
                     onChange={(e) => updateField('arrivalTime', e.target.value)}
-                    className="pl-9 h-11"
                   />
-                </div>
               </div>
             </div>
 
@@ -496,7 +487,7 @@ export default function DailyLogsPage() {
               <ClipboardList className="h-4 w-4" />
             </div>
             <div>
-              <p className="text-sm font-medium text-brand-900">Driver Tips</p>
+              <p className="text-sm font-medium text-brand-900 dark:text-brand-700">Driver Tips</p>
               <ul className="mt-1 text-xs text-brand-700 space-y-1">
                 <li>• Record odometer readings at the start and end of each trip leg</li>
                 <li>• Log entries are saved as drafts when you&apos;re offline</li>

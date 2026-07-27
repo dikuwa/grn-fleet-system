@@ -24,7 +24,7 @@ export default defineConfig({
     timeout: 600000,
     reuseExistingServer: !process.env.CI,
     env: {
-      DATABASE_URL: process.env.DATABASE_URL || '',
+      ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
       BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET || 'test-secret-thirty-two-characters-long!',
       BETTER_AUTH_URL: process.env.BETTER_AUTH_URL || 'http://localhost:3000',
       NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',

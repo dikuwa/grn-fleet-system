@@ -59,7 +59,7 @@ export function InstallPwaBanner() {
   if (!deferredPrompt || dismissed) return null;
 
   return (
-    <Card className="fixed bottom-4 right-4 z-50 w-72 shadow-lg border-brand-200 bg-white animate-in slide-in-from-bottom-4 duration-300">
+    <Card className="fixed bottom-4 right-4 z-50 w-72 border-brand-100 bg-surface shadow-lg animate-in slide-in-from-bottom-4 duration-300">
       <CardContent className="pt-4">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">

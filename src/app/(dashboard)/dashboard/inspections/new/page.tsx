@@ -548,7 +548,7 @@ export default function NewInspectionPage() {
                             value={item.comment}
                             onChange={(e) => handleChecklistComment(item.id, e.target.value)}
                             placeholder="Describe the defect..."
-                            className="mt-2 h-8 w-full max-w-md rounded-[6px] border border-border bg-white px-2.5 text-xs text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                            className="mt-2 h-8 w-full max-w-md rounded-[6px] border border-border bg-surface px-2.5 text-xs text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                           />
                         )}
                       </div>

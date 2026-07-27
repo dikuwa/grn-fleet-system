@@ -46,7 +46,7 @@ function Calendar({
         day: cn(
           'h-9 w-9 rounded-md text-sm font-normal text-ink-700',
           'hover:bg-muted transition-colors',
-          'aria-selected:bg-brand-700 aria-selected:text-white aria-selected:hover:bg-brand-800',
+          'aria-selected:bg-brand-700 aria-selected:text-white dark:aria-selected:bg-brand-800 aria-selected:hover:bg-brand-800',
           'aria-selected:font-medium',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
           'disabled:opacity-40 disabled:cursor-not-allowed',

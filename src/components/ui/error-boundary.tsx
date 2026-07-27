@@ -49,7 +49,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     return (
       <div className="flex flex-col items-center justify-center rounded-[10px] border border-status-error-bg bg-status-error-bg px-6 py-12 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white text-status-error-text">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-surface text-status-error-text">
           <AlertTriangle className="h-6 w-6" />
         </div>
         <h3 className="text-sm font-semibold text-status-error-text">
@@ -60,7 +60,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         </p>
         <button
           onClick={this.handleRetry}
-          className="mt-4 inline-flex items-center gap-2 rounded-[8px] bg-white px-4 py-2 text-sm font-medium text-status-error-text shadow-sm transition-colors hover:bg-white/90"
+          className="mt-4 inline-flex items-center gap-2 rounded-[8px] bg-surface px-4 py-2 text-sm font-medium text-status-error-text shadow-sm transition-colors hover:bg-muted"
         >
           <RefreshCw className="h-4 w-4" />
           Try Again

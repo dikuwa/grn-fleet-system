@@ -74,11 +74,18 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         ...userRecord,
+        image: userRecord.image
+          ? `/api/users/avatar?v=${encodeURIComponent(userRecord.updatedAt.toISOString())}`
+          : null,
         profile: profile || null,
         employee: employee || null,
         roles: roleList,
         tenantId: session.tenantId,
         tenantSlug: session.tenantSlug,
+      },
+    }, {
+      headers: {
+        'Cache-Control': 'private, no-store',
       },
     });
   } catch (error) {

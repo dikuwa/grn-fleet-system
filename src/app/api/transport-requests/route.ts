@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { transportRequests, requestActivities, requestPassengers, requestDrivers, requestRoutes } from '@/db/schema/requests';
-import { employees, departments } from '@/db/schema/people';
+import { employees, departments, driverProfiles } from '@/db/schema/people';
 import { tenantMemberships, roleAssignments, rolePermissions } from '@/db/schema/tenants';
 import { notifications } from '@/db/schema/notifications';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
@@ -9,7 +9,7 @@ import { Permissions } from '@/lib/permissions';
 import { workflowDefinitions } from '@/db/schema/workflows';
 import { onRequestSubmitted } from '@/lib/document-generator';
 import { WorkflowEngine } from '@/lib/workflow-engine';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,12 +37,60 @@ export async function POST(req: NextRequest) {
     const clientSubmissionId = req.headers.get('idempotency-key') || bodySubmissionId;
 
     // Validate required fields
-    if (!purpose?.trim()) {
+    if (typeof purpose !== 'string' || !purpose.trim()) {
       return NextResponse.json({ error: 'Purpose is required' }, { status: 400 });
     }
+    if (purpose.trim().length > 2000) {
+      return NextResponse.json({ error: 'Purpose must be 2,000 characters or fewer' }, { status: 400 });
+    }
 
-    if (!scope) {
-      return NextResponse.json({ error: 'Scope is required' }, { status: 400 });
+    if (scope !== 'regional' && scope !== 'national') {
+      return NextResponse.json({ error: 'Scope must be regional or national' }, { status: 400 });
+    }
+    if (activities !== undefined && !Array.isArray(activities)) {
+      return NextResponse.json({ error: 'Activities must be a list' }, { status: 400 });
+    }
+    if (passengers !== undefined && !Array.isArray(passengers)) {
+      return NextResponse.json({ error: 'Passengers must be a list' }, { status: 400 });
+    }
+    if (drivers !== undefined && !Array.isArray(drivers)) {
+      return NextResponse.json({ error: 'Drivers must be a list' }, { status: 400 });
+    }
+    if (routes !== undefined && !Array.isArray(routes)) {
+      return NextResponse.json({ error: 'Routes must be a list' }, { status: 400 });
+    }
+    if ((activities || []).some((activity: {
+      title?: string;
+      startDate?: string;
+      endDate?: string;
+      estimatedKilometres?: number;
+    }) => {
+      const start = activity.startDate ? new Date(activity.startDate) : null;
+      const end = activity.endDate ? new Date(activity.endDate) : null;
+      return !activity.title?.trim() ||
+        !start || Number.isNaN(start.getTime()) ||
+        !end || Number.isNaN(end.getTime()) ||
+        end < start ||
+        (activity.estimatedKilometres !== undefined &&
+          (!Number.isFinite(activity.estimatedKilometres) || activity.estimatedKilometres < 0));
+    })) {
+      return NextResponse.json(
+        { error: 'Each activity needs a title and a valid start/end date range.' },
+        { status: 400 },
+      );
+    }
+    if ((routes || []).some((route: {
+      originName?: string;
+      destinationName?: string;
+      estimatedKm?: number;
+    }) => !route.originName?.trim() ||
+      !route.destinationName?.trim() ||
+      (route.estimatedKm !== undefined &&
+        (!Number.isFinite(route.estimatedKm) || route.estimatedKm < 0)))) {
+      return NextResponse.json(
+        { error: 'Each route needs an origin, destination, and a non-negative distance.' },
+        { status: 400 },
+      );
     }
 
     const db = getDb();
@@ -53,6 +101,75 @@ export async function POST(req: NextRequest) {
       const [existingRequest] = await db.select().from(transportRequests)
         .where(and(eq(transportRequests.tenantId, tenantId), eq(transportRequests.clientSubmissionId, clientSubmissionId))).limit(1);
       if (existingRequest) return NextResponse.json({ request: existingRequest, reference: existingRequest.reference, duplicate: true });
+    }
+
+    const employeePassengers = (passengers || []).filter(
+      (passenger: { type?: string }) => passenger.type === 'employee',
+    );
+    const passengerEmployeeIds = Array.from(new Set(
+      employeePassengers
+        .map((passenger: { employeeId?: string }) => passenger.employeeId)
+        .filter(Boolean),
+    )) as string[];
+    const driverEmployeeIds = Array.from(new Set(
+      (drivers || [])
+        .map((driver: { employeeId?: string }) => driver.employeeId)
+        .filter(Boolean),
+    )) as string[];
+
+    if (passengerEmployeeIds.length !== employeePassengers.length) {
+      return NextResponse.json(
+        { error: 'Each employee passenger must be selected once from the employee directory.' },
+        { status: 400 },
+      );
+    }
+    if (driverEmployeeIds.length !== (drivers || []).length) {
+      return NextResponse.json(
+        { error: 'Each nominated driver must be selected once from the driver directory.' },
+        { status: 400 },
+      );
+    }
+    if ((passengers || []).some(
+      (passenger: { type?: string; externalName?: string }) =>
+        passenger.type === 'external' && !passenger.externalName?.trim(),
+    )) {
+      return NextResponse.json({ error: 'External passenger names are required.' }, { status: 400 });
+    }
+
+    const selectedPersonIds = Array.from(new Set([
+      ...passengerEmployeeIds,
+      ...driverEmployeeIds,
+    ]));
+    if (selectedPersonIds.length > 0) {
+      const selectedPeople = await db
+        .select({
+          id: employees.id,
+          isDriver: employees.isDriver,
+          driverStatus: driverProfiles.driverStatus,
+        })
+        .from(employees)
+        .leftJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
+        .where(and(
+          eq(employees.tenantId, tenantId),
+          eq(employees.employmentStatus, 'active'),
+          inArray(employees.id, selectedPersonIds),
+        ));
+      const selectedPeopleById = new Map(selectedPeople.map((person) => [person.id, person]));
+      if (selectedPersonIds.some((id) => !selectedPeopleById.has(id))) {
+        return NextResponse.json(
+          { error: 'One or more selected employees are inactive or outside your organisation.' },
+          { status: 400 },
+        );
+      }
+      if (driverEmployeeIds.some((id) => {
+        const driver = selectedPeopleById.get(id);
+        return !driver?.isDriver || driver.driverStatus !== 'authorised';
+      })) {
+        return NextResponse.json(
+          { error: 'One or more nominated drivers are not authorised drivers.' },
+          { status: 400 },
+        );
+      }
     }
 
     // Look up the requester employee — accept employeeNumber from form or resolve from session user
@@ -191,7 +308,7 @@ export async function POST(req: NextRequest) {
         drivers.map((d: { employeeId: string; driverType: string; sortOrder: number }, i: number) => ({
           requestId: request.id,
           employeeId: d.employeeId,
-          driverType: d.driverType,
+          driverType: 'nominated',
           sortOrder: d.sortOrder || i + 1,
         })),
       );

@@ -9,7 +9,7 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
   User, Mail, Shield, CalendarDays, Loader2, ChevronLeft, CheckCircle2, XCircle,
   Plus, Trash2, Database, KeyRound, Copy, CheckCheck, UserPlus,
@@ -549,20 +549,18 @@ export default function AdminUserDetailPage({ params }: PageProps) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-ink-500 mb-1">Start Date</label>
-                  <input
+                  <StyledDateInput
                     type="date"
                     value={roleStartDate}
                     onChange={(e) => setRoleStartDate(e.target.value)}
-                    className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-ink-500 mb-1">End Date <span className="text-ink-400 font-normal">(optional)</span></label>
-                  <input
+                  <StyledDateInput
                     type="date"
                     value={roleEndDate}
                     onChange={(e) => setRoleEndDate(e.target.value)}
-                    className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                   />
                 </div>
               </div>
@@ -626,20 +624,18 @@ export default function AdminUserDetailPage({ params }: PageProps) {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Start Date</Label>
-                <input
+                <StyledDateInput
                   type="date"
                   value={delegateStartDate}
                   onChange={(e) => setDelegateStartDate(e.target.value)}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 />
               </div>
               <div className="space-y-1.5">
                 <Label>End Date <span className="text-ink-400 font-normal">(optional)</span></Label>
-                <input
+                <StyledDateInput
                   type="date"
                   value={delegateEndDate}
                   onChange={(e) => setDelegateEndDate(e.target.value)}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 />
               </div>
             </div>

@@ -387,7 +387,7 @@ export default function InspectionTemplatesPage() {
                               value={item.label}
                               onChange={(e) => updateItem(index, 'label', e.target.value)}
                               placeholder="Inspection item label..."
-                              className="h-9 w-full rounded-[6px] border border-border bg-white px-2 text-xs text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                              className="h-9 w-full rounded-[6px] border border-border bg-surface px-2 text-xs text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                             />
                           </div>
                         </div>

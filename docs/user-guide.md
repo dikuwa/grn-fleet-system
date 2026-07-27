@@ -62,7 +62,7 @@ The dashboard sidebar provides access to all modules:
 
 ### Dark Mode
 
-Click the **Sun/Moon icon** in the top-right corner (or on any public page) to toggle between light and dark mode. Your preference is saved automatically.
+Open the **Theme** selector in the top-right corner and choose **Light**, **Dark**, or **System**. The same selector appears on public pages and the dashboard, and your preference is saved automatically.
 
 ---
 
@@ -77,8 +77,8 @@ Click the **Sun/Moon icon** in the top-right corner (or on any public page) to t
    |------|--------|
    | **Trip Details** | Purpose, department, scope (regional/national), programme activity |
    | **Schedule** | Start/end dates, estimated kilometres |
-   | **Passengers** | Add passengers (name, title, department) |
-   | **Drivers** | Preferred driver (optional) |
+   | **Passengers** | Search active employees by name or employee number; manually add an external passenger when needed |
+   | **Drivers** | Nominate an authorised driver by name (optional; the Transport Administrator confirms or replaces the assignment) |
    | **Review** | Review all details and submit |
 
 3. Click **Submit Request**

@@ -5,11 +5,15 @@ import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { StyledSelect } from '@/components/ui/styled-select';
 import { FileText, ChevronLeft, ChevronRight, Check, Plus, Trash2, MapPin, Users, User, CalendarDays } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 import { useToast } from '@/lib/use-toast';
+import {
+  EmployeeCombobox,
+  type EmployeeSearchOption,
+} from '@/components/ui/employee-combobox';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,13 +33,15 @@ interface Passenger {
   id: string;
   type: 'employee' | 'external';
   employeeId: string;
+  employee: EmployeeSearchOption | null;
   externalName: string;
 }
 
 interface Driver {
   id: string;
   employeeId: string;
-  driverType: 'nominated' | 'assigned' | 'additional';
+  employee: EmployeeSearchOption | null;
+  driverType: 'nominated';
   sortOrder: number;
 }
 
@@ -282,20 +288,19 @@ function ActivitiesStep({
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-ink-500 mb-1">Start Date *</label>
-                    <input
-                      type="date"
+                    <DatePicker
                       value={a.startDate}
-                      onChange={(e) => updateActivity(a.id, { startDate: e.target.value })}
-                      className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      onChange={(value) => updateActivity(a.id, { startDate: value })}
+                      placeholder="Select start date…"
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-ink-500 mb-1">End Date *</label>
-                    <input
-                      type="date"
+                    <DatePicker
                       value={a.endDate}
-                      onChange={(e) => updateActivity(a.id, { endDate: e.target.value })}
-                      className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      onChange={(value) => updateActivity(a.id, { endDate: value })}
+                      min={a.startDate || undefined}
+                      placeholder="Select end date…"
                     />
                   </div>
                   <div className="sm:col-span-2">
@@ -332,7 +337,7 @@ function PeopleStep({
   const addPassenger = () => {
     onPassengersChange([
       ...passengers,
-      { id: nextId(), type: 'external', employeeId: '', externalName: '' },
+      { id: nextId(), type: 'external', employeeId: '', employee: null, externalName: '' },
     ]);
   };
 
@@ -350,6 +355,7 @@ function PeopleStep({
       {
         id: nextId(),
         employeeId: '',
+        employee: null,
         driverType: 'nominated',
         sortOrder: drivers.length + 1,
       },
@@ -392,6 +398,7 @@ function PeopleStep({
                         updatePassenger(p.id, {
                           type: p.type === 'employee' ? 'external' : 'employee',
                           employeeId: '',
+                          employee: null,
                           externalName: '',
                         })
                       }
@@ -402,12 +409,14 @@ function PeopleStep({
                 </div>
                 <div className="flex-2">
                   {p.type === 'employee' ? (
-                    <input
-                      type="text"
+                    <EmployeeCombobox
                       value={p.employeeId}
-                      onChange={(e) => updatePassenger(p.id, { employeeId: e.target.value })}
-                      placeholder="Employee ID"
-                      className="h-9 w-full rounded-[6px] border border-border bg-surface px-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      selectedOption={p.employee}
+                      onSelect={(employee) => updatePassenger(p.id, {
+                        employeeId: employee?.id || '',
+                        employee,
+                      })}
+                      placeholder="Search employee passengers…"
                     />
                   ) : (
                     <input
@@ -449,23 +458,20 @@ function PeopleStep({
             {drivers.map((d) => (
               <div key={d.id} className="flex items-center gap-3 rounded-[8px] border border-border p-3">
                 <div className="flex-1">
-                  <input
-                    type="text"
+                  <EmployeeCombobox
+                    kind="driver"
                     value={d.employeeId}
-                    onChange={(e) => updateDriver(d.id, { employeeId: e.target.value })}
-                    placeholder="Driver Employee ID"
-                    className="h-9 w-full rounded-[6px] border border-border bg-surface px-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                    selectedOption={d.employee}
+                    onSelect={(employee) => updateDriver(d.id, {
+                      employeeId: employee?.id || '',
+                      employee,
+                    })}
+                    placeholder="Search authorised drivers…"
                   />
                 </div>
-                <StyledSelect
-                  value={d.driverType}
-                  onChange={(e) => updateDriver(d.id, { driverType: e.target.value as Driver['driverType'] })}
-                  className="h-9 w-[130px]"
-                >
-                  <option value="nominated">Nominated</option>
-                  <option value="assigned">Assigned</option>
-                  <option value="additional">Additional</option>
-                </StyledSelect>
+                <span className="rounded-full bg-status-info-bg px-2.5 py-1 text-xs font-medium text-status-info-text">
+                  Nominated
+                </span>
                 <button
                   onClick={() => removeDriver(d.id)}
                   className="shrink-0 text-ink-400 hover:text-status-error-text transition-colors"
@@ -476,6 +482,9 @@ function PeopleStep({
             ))}
           </div>
         )}
+        <p className="mt-2 text-xs text-ink-500">
+          Driver selections are nominations. The Transport Administrator confirms or changes the final driver during allocation.
+        </p>
       </div>
     </div>
   );
@@ -751,7 +760,7 @@ export default function NewRequestPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clientSubmissionId] = useState(() => crypto.randomUUID());
-  const reference = generateReference();
+  const [reference] = useState(generateReference);
   const { toast } = useToast();
 
   const updateForm = useCallback((patch: Partial<RequestFormData>) => {
@@ -760,6 +769,25 @@ export default function NewRequestPage() {
 
   const canProceed = (): boolean => {
     if (step === 0) return formData.purpose.trim().length > 0;
+    if (step === 1) {
+      return formData.activities.every((activity) =>
+        Boolean(activity.title.trim() && activity.startDate && activity.endDate),
+      );
+    }
+    if (step === 2) {
+      const employeePassengerIds = formData.passengers
+        .filter((passenger) => passenger.type === 'employee')
+        .map((passenger) => passenger.employeeId);
+      const driverIds = formData.drivers.map((driver) => driver.employeeId);
+      return formData.passengers.every((passenger) =>
+        passenger.type === 'employee'
+          ? Boolean(passenger.employeeId)
+          : Boolean(passenger.externalName.trim()),
+      ) &&
+        formData.drivers.every((driver) => Boolean(driver.employeeId)) &&
+        new Set(employeePassengerIds).size === employeePassengerIds.length &&
+        new Set(driverIds).size === driverIds.length;
+    }
     return true;
   };
 
@@ -859,13 +887,17 @@ export default function NewRequestPage() {
           return (
             <div key={s.label} className="flex items-center">
               <button
-                onClick={() => setStep(i)}
+                type="button"
+                onClick={() => {
+                  if (i < step) setStep(i);
+                }}
+                disabled={i > step}
                 className={`flex items-center gap-2 rounded-[8px] px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors ${
                   isActive
-                    ? 'bg-brand-600 text-white'
+                    ? 'bg-brand-800 text-white'
                     : isComplete
                       ? 'bg-brand-50 text-brand-700'
-                      : 'bg-muted text-ink-500 hover:text-ink-700'
+                      : 'bg-muted text-ink-500 disabled:cursor-not-allowed disabled:opacity-70'
                 }`}
               >
                 <Icon className="h-3.5 w-3.5" />

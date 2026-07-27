@@ -51,11 +51,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   // Hydrate on mount
   useEffect(() => {
-    const stored = getStoredTheme();
-    const initial: Theme = stored ?? 'system';
-    setThemeState(initial);
-    setResolvedTheme(resolveTheme(initial));
-    setMounted(true);
+    const timer = window.setTimeout(() => {
+      const stored = getStoredTheme();
+      const initial: Theme = stored ?? 'system';
+      setThemeState(initial);
+      setResolvedTheme(resolveTheme(initial));
+      setMounted(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   // Apply theme class whenever resolved theme changes
@@ -90,21 +93,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [theme, mounted]);
 
   const toggleTheme = useCallback(() => {
-    setThemeState((prev) => {
-      // Cycle: dark ↔ light, skip 'system' for toggle button
-      return prev === 'dark' ? 'light' : 'dark';
-    });
-  }, []);
+    // Cycle: dark ↔ light, skip 'system' for the legacy toggle API.
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setThemeState(next);
+    setResolvedTheme(resolveTheme(next));
+    localStorage.setItem(STORAGE_KEY, next);
+  }, [theme]);
 
   const setTheme = useCallback((t: Theme) => {
     setThemeState(t);
+    setResolvedTheme(resolveTheme(t));
+    localStorage.setItem(STORAGE_KEY, t);
   }, []);
-
-  // Keep resolved theme in sync with theme state (for 'system' mode transitions)
-  useEffect(() => {
-    if (!mounted) return;
-    setResolvedTheme(resolveTheme(theme));
-  }, [theme, mounted]);
 
   const value = useMemo(
     () => ({ resolvedTheme, theme, toggleTheme, setTheme }),

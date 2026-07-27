@@ -1,11 +1,12 @@
 import Link from 'next/link';
 import { APP_NAME } from '@/lib/constants';
 import { Shield, Truck, FileText, BarChart3, ArrowLeft, Users, Globe, Award } from 'lucide-react';
+import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 
 export default function AboutPage() {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-50 border-b border-border bg-white/95 backdrop-blur-sm">
+      <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur-sm">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
           <Link href="/" className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-white text-sm font-bold">G</div>
@@ -17,6 +18,7 @@ export default function AboutPage() {
             <Link href="/" className="flex items-center gap-1 text-sm text-ink-500 hover:text-ink-950 transition-colors">
               <ArrowLeft className="h-4 w-4" /> Back to Home
             </Link>
+            <PublicThemeToggle />
           </div>
         </div>
       </header>
@@ -34,7 +36,7 @@ export default function AboutPage() {
       </section>
 
       {/* Mission */}
-      <section className="bg-white py-20">
+      <section className="bg-surface py-20">
         <div className="mx-auto max-w-[800px] px-6">
           <div className="text-center">
             <h2 className="text-2xl font-[650] tracking-tight text-ink-950">Our Mission</h2>
@@ -67,7 +69,7 @@ export default function AboutPage() {
       </section>
 
       {/* Kavango East Pilot */}
-      <section className="bg-white py-20">
+      <section className="bg-surface py-20">
         <div className="mx-auto max-w-[800px] px-6">
           <div className="rounded-[10px] border border-border bg-surface p-8">
             <div className="flex items-center gap-3">
@@ -85,7 +87,7 @@ export default function AboutPage() {
             <div className="mt-6">
               <Link
                 href="/contact"
-                className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 transition-colors"
+                className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] transition-colors"
               >
                 Enquire About the Pilot
               </Link>

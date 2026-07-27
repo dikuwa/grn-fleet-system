@@ -191,7 +191,7 @@ export default function PredictiveMaintenancePage() {
 
                       {/* Urgency Bar */}
                       <div className="mt-3 flex items-center gap-3">
-                        <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                        <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all ${urgencyBar(p.urgencyScore)}`}
                             style={{ width: `${p.urgencyScore}%` }}

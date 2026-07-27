@@ -67,22 +67,6 @@ interface AuditEvent {
   details: string;
 }
 
-// Mock audit events for fallback when DB not connected
-const mockEvents: AuditEvent[] = [
-  { id: '1', timestamp: '14 Jul 2026, 14:32', eventType: 'request', action: 'Transport request submitted', actor: 'M. Shikongo', entity: 'TR-2026-0142', severity: 'info', details: 'Field inspection — Divundu Constituency. 3 passengers, 1 driver, estimated 180 km.' },
-  { id: '2', timestamp: '14 Jul 2026, 13:15', eventType: 'approval', action: 'Request approved by supervisor', actor: 'E. Hausiku', entity: 'TR-2026-0141', severity: 'info', details: 'Workshop materials transport — Rundu. Approved with comment: "Essential supplies."' },
-  { id: '3', timestamp: '14 Jul 2026, 11:50', eventType: 'fuel', action: 'Fuel transaction recorded', actor: 'System', entity: 'GRN-005', severity: 'info', details: '45.5 L diesel at Total Energies Rundu. N$ 780.00. Fuel card payment.' },
-  { id: '4', timestamp: '14 Jul 2026, 10:22', eventType: 'allocation', action: 'Vehicle allocated to trip', actor: 'P. Ndara', entity: 'TR-2026-0140', severity: 'info', details: 'GRN-012 (Nissan NP300) allocated for community outreach — Nkurenkuru.' },
-  { id: '5', timestamp: '13 Jul 2026, 16:45', eventType: 'maintenance', action: 'Maintenance event recorded', actor: 'T. Sikongo', entity: 'GRN-003', severity: 'warning', details: 'Brake replacement completed at Rundu Gvt Garage. Cost: N$ 2,800.' },
-  { id: '6', timestamp: '13 Jul 2026, 14:00', eventType: 'auth', action: 'User login', actor: 'R. Kasume', entity: 'rkassume@gov.na', severity: 'info', details: 'Successful login from IP 192.168.1.45. Session started.' },
-  { id: '7', timestamp: '13 Jul 2026, 11:30', eventType: 'trip', action: 'Trip closed', actor: 'System', entity: 'TRIP-2026-0089', severity: 'info', details: 'Trip completed. 245 km travelled, 32 L fuel used. Variance: +5 km.' },
-  { id: '8', timestamp: '13 Jul 2026, 09:15', eventType: 'approval', action: 'Approval rejected', actor: 'E. Hausiku', entity: 'TR-2026-0138', severity: 'warning', details: 'Rejected: Insufficient justification for national travel. Requires CRO endorsement.' },
-  { id: '9', timestamp: '12 Jul 2026, 15:00', eventType: 'inspection', action: 'Departure inspection completed', actor: 'J. Namwandi', entity: 'GRN-008', severity: 'info', details: 'All items passed. Odometer: 45,230 km. Fuel level: Full.' },
-  { id: '10', timestamp: '12 Jul 2026, 08:30', eventType: 'maintenance', action: 'Critical defect reported', actor: 'P. Ndara', entity: 'GRN-020', severity: 'critical', details: 'Engine overheating reported. Vehicle taken out of service. Immediate repair required.' },
-  { id: '11', timestamp: '11 Jul 2026, 14:22', eventType: 'staff', action: 'Employee record updated', actor: 'System', entity: 'EMP-0045', severity: 'info', details: 'Employment status changed: active → suspended. Reason: Disciplinary pending.' },
-  { id: '12', timestamp: '11 Jul 2026, 10:00', eventType: 'vehicle', action: 'Vehicle status changed', actor: 'T. Sikongo', entity: 'GRN-015', severity: 'warning', details: 'Status changed: available → maintenance. Reason: Scheduled 15,000 km service.' },
-];
-
 const severityConfig: Record<Severity, { label: string; variant: 'info' | 'error' | 'pending' }> = {
   all: { label: 'All', variant: 'info' },
   info: { label: 'Info', variant: 'info' },
@@ -106,30 +90,30 @@ const eventIcons: Record<EventType, React.ReactNode> = {
 
 const eventBgColors: Record<EventType, string> = {
   all: 'bg-muted',
-  request: 'bg-blue-50',
-  approval: 'bg-green-50',
-  allocation: 'bg-purple-50',
-  trip: 'bg-cyan-50',
-  fuel: 'bg-amber-50',
-  maintenance: 'bg-orange-50',
-  inspection: 'bg-teal-50',
-  vehicle: 'bg-indigo-50',
-  staff: 'bg-rose-50',
-  auth: 'bg-slate-50',
+  request: 'bg-blue-50 dark:bg-blue-950/50',
+  approval: 'bg-green-50 dark:bg-green-950/50',
+  allocation: 'bg-purple-50 dark:bg-purple-950/50',
+  trip: 'bg-cyan-50 dark:bg-cyan-950/50',
+  fuel: 'bg-amber-50 dark:bg-amber-950/50',
+  maintenance: 'bg-orange-50 dark:bg-orange-950/50',
+  inspection: 'bg-teal-50 dark:bg-teal-950/50',
+  vehicle: 'bg-indigo-50 dark:bg-indigo-950/50',
+  staff: 'bg-rose-50 dark:bg-rose-950/50',
+  auth: 'bg-muted',
 };
 
 const eventIconColors: Record<EventType, string> = {
   all: 'text-ink-500',
-  request: 'text-blue-700',
-  approval: 'text-green-700',
-  allocation: 'text-purple-700',
-  trip: 'text-cyan-700',
-  fuel: 'text-amber-700',
-  maintenance: 'text-orange-700',
-  inspection: 'text-teal-700',
-  vehicle: 'text-indigo-700',
-  staff: 'text-rose-700',
-  auth: 'text-slate-700',
+  request: 'text-blue-700 dark:text-blue-300',
+  approval: 'text-green-700 dark:text-green-300',
+  allocation: 'text-purple-700 dark:text-purple-300',
+  trip: 'text-cyan-700 dark:text-cyan-300',
+  fuel: 'text-amber-700 dark:text-amber-300',
+  maintenance: 'text-orange-700 dark:text-orange-300',
+  inspection: 'text-teal-700 dark:text-teal-300',
+  vehicle: 'text-indigo-700 dark:text-indigo-300',
+  staff: 'text-rose-700 dark:text-rose-300',
+  auth: 'text-ink-700',
 };
 
 export default function AuditLogPage() {
@@ -138,12 +122,12 @@ export default function AuditLogPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [showHashChain, setShowHashChain] = useState(false);
-  const [events, setEvents] = useState<AuditEvent[]>(mockEvents);
-  const [isLive, setIsLive] = useState(false);
+  const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [connectionError, setConnectionError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [offset, setOffset] = useState(0);
-  const [total, setTotal] = useState(mockEvents.length);
+  const [total, setTotal] = useState(0);
   const LIMIT = 50;
 
   // Debounce search — wait 300ms after last keystroke before fetching
@@ -164,9 +148,9 @@ export default function AuditLogPage() {
     if (search) params.set('search', search);
 
     const res = await fetch(`/api/audit?${params}`);
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('Unable to load audit events');
     const json = await res.json();
-    if (!json?.success) return;
+    if (!json?.success) throw new Error('Unable to load audit events');
 
     const apiEvents = (json.data?.events || []).map((e: Record<string, string>) => ({
       id: e.id,
@@ -184,7 +168,7 @@ export default function AuditLogPage() {
     } else {
       setEvents(apiEvents);
     }
-    if (apiEvents.length > 0) setIsLive(true);
+    setConnectionError(false);
     setTotal(json.data?.total || 0);
     setOffset((prev) => append ? prev + apiEvents.length : apiEvents.length);
   };
@@ -192,28 +176,47 @@ export default function AuditLogPage() {
   // Fetch on mount and when event type / debounced search changes
   useEffect(() => {
     let cancelled = false;
-    setIsLoading(true);
-    setOffset(0);
-    setEvents([]);
-    fetchEvents({ eventType: selectedType, search: debouncedSearch || undefined }).finally(() => {
-      if (!cancelled) setIsLoading(false);
-    });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setIsLoading(true);
+      setOffset(0);
+      setEvents([]);
+      void fetchEvents({ eventType: selectedType, search: debouncedSearch || undefined })
+      .catch(() => {
+        if (!cancelled) setConnectionError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [selectedType, debouncedSearch]);
 
   const handleLoadMore = async () => {
     setLoadingMore(true);
-    await fetchEvents({ append: true, eventType: selectedType, search: debouncedSearch || undefined });
-    setLoadingMore(false);
+    try {
+      await fetchEvents({ append: true, eventType: selectedType, search: debouncedSearch || undefined });
+    } catch {
+      setConnectionError(true);
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   const handleRefresh = async () => {
     setIsLoading(true);
     setOffset(0);
     setEvents([]);
-    await fetchEvents({ eventType: selectedType, search: debouncedSearch || undefined });
-    setIsLoading(false);
+    try {
+      await fetchEvents({ eventType: selectedType, search: debouncedSearch || undefined });
+    } catch {
+      setConnectionError(true);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Client-side filtering is no longer needed — API does it
@@ -231,10 +234,10 @@ export default function AuditLogPage() {
       >
         <div className="flex items-center gap-2">
           <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-            isLive ? 'bg-status-success-bg text-status-success-text' : 'bg-muted text-ink-500'
+            connectionError ? 'bg-status-error-bg text-status-error-text' : 'bg-status-success-bg text-status-success-text'
           }`}>
-            {isLive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-            {isLive ? 'Live Data' : 'Sample Data'}
+            {connectionError ? <WifiOff className="h-3 w-3" /> : <Wifi className="h-3 w-3" />}
+            {connectionError ? 'Connection error' : 'Live Data'}
           </div>
           <Button
             variant={showHashChain ? 'primary' : 'secondary'}
@@ -260,15 +263,14 @@ export default function AuditLogPage() {
                 <Shield className="h-5 w-5" />
               </div>
               <div className="flex-1">
-                <h3 className="text-sm font-semibold text-brand-900">Hash Chain Integrity: Verified</h3>
+                <h3 className="text-sm font-semibold text-brand-900 dark:text-brand-700">Hash-chain metadata</h3>
                 <p className="mt-1 text-xs text-brand-700">
-                  All {isLive ? events.length : 847} audit events are cryptographically linked. The last verified hash 
-                  matches the expected chain value.
+                  Audit records include the stored previous and event hashes needed for independent integrity verification.
                 </p>
                 <div className="mt-3 flex items-center gap-4 text-xs">
                   <span className="flex items-center gap-1.5 text-green-700">
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    Chain intact
+                    Metadata recorded
                   </span>
                   <span className="text-brand-600">Total events: {events.length}</span>
                 </div>

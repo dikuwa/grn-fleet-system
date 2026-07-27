@@ -67,7 +67,8 @@ export default function SyncConflictsPage() {
   }, [activeTab]);
 
   useEffect(() => {
-    loadDrafts();
+    const timer = window.setTimeout(() => void loadDrafts(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadDrafts]);
 
   async function handleSync() {

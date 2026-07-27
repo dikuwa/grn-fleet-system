@@ -29,13 +29,15 @@ export function ActiveTripDuration({ tripId, startedAt }: { tripId: string; star
     if (!startedAt) return;
 
     // Update every second for live feel
-    setDuration(formatDuration(startedAt));
+    const initialTimer = window.setTimeout(() => setDuration(formatDuration(startedAt)), 0);
     const timer = setInterval(() => {
       setDuration(formatDuration(startedRef.current));
     }, 1_000);
 
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    return () => {
+      window.clearTimeout(initialTimer);
+      clearInterval(timer);
+    };
   }, [startedAt]);
 
   if (!startedAt) return null;

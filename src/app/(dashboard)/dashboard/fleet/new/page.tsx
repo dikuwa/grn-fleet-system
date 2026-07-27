@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
@@ -436,19 +436,17 @@ export default function NewVehiclePage() {
                 />
               </Field>
               <Field label="Roadworthy Test Date">
-                <input
+                <StyledDateInput
                   type="date"
                   value={form.roadworthyTestDate}
                   onChange={(e) => update({ roadworthyTestDate: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 />
               </Field>
               <Field label="Licence Expiry Date">
-                <input
+                <StyledDateInput
                   type="date"
                   value={form.licenceExpiryDate}
                   onChange={(e) => update({ licenceExpiryDate: e.target.value })}
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 />
               </Field>
             </div>

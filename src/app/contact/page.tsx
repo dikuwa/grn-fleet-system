@@ -83,7 +83,7 @@ export default function ContactPage() {
                 <label className="block text-xs font-medium text-ink-500 mb-1">Message</label>
                 <textarea rows={5} className="w-full rounded-[8px] border border-border bg-canvas px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none" placeholder="Your message..." />
               </div>
-              <button type="submit" className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 transition-colors">
+              <button type="submit" className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] transition-colors">
                 Send Message
               </button>
             </form>

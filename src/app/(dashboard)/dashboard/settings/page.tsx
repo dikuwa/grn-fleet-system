@@ -6,7 +6,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import { Loader2, Save, Bell, Shield, Mail, Smartphone, Palette, Image as ImageIcon, CheckCircle2, AlertCircle, XCircle, Key, LogOut, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
@@ -200,8 +200,8 @@ export default function SettingsPage() {
             <div className="space-y-4">
               <h4 className="text-sm font-medium text-ink-950">Quiet Hours</h4>
               <div className="grid gap-4 sm:grid-cols-2">
-                <FieldWrapper label="Quiet Hours Start"><Input type="time" value={quietStart} onChange={(e) => setQuietStart(e.target.value)} /></FieldWrapper>
-                <FieldWrapper label="Quiet Hours End"><Input type="time" value={quietEnd} onChange={(e) => setQuietEnd(e.target.value)} /></FieldWrapper>
+                <FieldWrapper label="Quiet Hours Start"><StyledDateInput type="time" value={quietStart} onChange={(e) => setQuietStart(e.target.value)} /></FieldWrapper>
+                <FieldWrapper label="Quiet Hours End"><StyledDateInput type="time" value={quietEnd} onChange={(e) => setQuietEnd(e.target.value)} /></FieldWrapper>
               </div>
               <label className="flex items-center gap-3 cursor-pointer">
                 <input type="checkbox" checked={emergencyBypass} onChange={(e) => setEmergencyBypass(e.target.checked)} className="h-4 w-4 rounded border-border text-brand-800 focus:ring-brand-600" />

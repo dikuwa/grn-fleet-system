@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,34 +13,15 @@ import {
   Loader2, Save, CheckCircle2, XCircle, KeyRound, Camera,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
-
-interface ProfileData {
-  id: string;
-  email: string;
-  name: string | null;
-  image: string | null;
-  emailVerified: boolean;
-  profile: {
-    displayName: string | null;
-    requiresPasswordChange: boolean;
-    status: string;
-    lastLoginAt: string | null;
-  } | null;
-  employee: {
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-    jobTitle: string | null;
-    departmentId: string | null;
-    officeId: string | null;
-  } | null;
-  roles: Array<{ roleName: string; isActing: boolean }>;
-  tenantId: string;
-  tenantSlug: string;
-}
+import {
+  fetchUserProfile,
+  userProfileQueryKey,
+} from '@/lib/user-profile';
+import { UserAvatar } from '@/components/ui/user-avatar';
 
 export default function UserProfilePage() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [editName, setEditName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -67,22 +48,20 @@ export default function UserProfilePage() {
   const [changingPassword, setChangingPassword] = useState(false);
 
   const { data: profileData, isLoading, error, refetch } = useQuery({
-    queryKey: ['user-profile'],
-    queryFn: async () => {
-      const res = await fetch('/api/users/profile');
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to load profile');
-      return json.data as ProfileData;
-    },
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
   });
 
   // Sync form fields
   useEffect(() => {
-    if (profileData) {
-      if (profileData.name && !editName) setEditName(profileData.name);
-      if (profileData.profile?.displayName && !displayName) setDisplayName(profileData.profile.displayName);
-    }
-  }, [profileData]);
+    const timer = window.setTimeout(() => {
+      if (profileData) {
+        if (profileData.name && !editName) setEditName(profileData.name);
+        if (profileData.profile?.displayName && !displayName) setDisplayName(profileData.profile.displayName);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [displayName, editName, profileData]);
 
   const handlePhotoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -113,8 +92,8 @@ export default function UserProfilePage() {
       .then(async (res) => {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Failed to upload photo');
+        await queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
         toast({ title: 'Photo Updated', description: 'Your profile photo has been uploaded.', variant: 'success' });
-        refetch();
       })
       .catch((err) => {
         toast({ title: 'Upload Failed', description: err instanceof Error ? err.message : 'Failed to upload photo', variant: 'error' });
@@ -133,8 +112,8 @@ export default function UserProfilePage() {
       const res = await fetch('/api/users/upload-avatar', { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to remove photo');
+      await queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
       toast({ title: 'Photo Removed', description: 'Your profile photo has been removed.', variant: 'success' });
-      refetch();
     } catch (err) {
       toast({ title: 'Remove Failed', description: err instanceof Error ? err.message : 'Failed to remove photo', variant: 'error' });
     } finally {
@@ -155,8 +134,8 @@ export default function UserProfilePage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update profile');
+      await queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
       toast({ title: 'Profile Updated', description: 'Your profile has been saved.', variant: 'success' });
-      refetch();
     } catch (err) {
       toast({
         title: 'Update Failed',
@@ -240,15 +219,17 @@ export default function UserProfilePage() {
           <CardContent className="pt-6">
             <div className="flex flex-col items-center text-center">
               <div className="relative mb-4">
-                <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-3xl font-bold text-brand-700">
-                  {previewUrl ? (
-                    <img src={previewUrl} alt="Preview" className="h-full w-full object-cover animate-pulse" />
-                  ) : profileData.image ? (
-                    <img src={profileData.image} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    (profileData.name || profileData.email)[0].toUpperCase()
-                  )}
-                </div>
+                {previewUrl ? (
+                  <div className="h-24 w-24 overflow-hidden rounded-full bg-brand-50">
+                    <img src={previewUrl} alt="New profile photo preview" className="h-full w-full animate-pulse object-cover" />
+                  </div>
+                ) : (
+                  <UserAvatar
+                    src={profileData.image}
+                    name={profileData.name || profileData.email}
+                    className="h-24 w-24 rounded-full text-3xl font-bold"
+                  />
+                )}
                 <input
                   ref={fileInputRef}
                   type="file"

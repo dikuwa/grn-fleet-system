@@ -3,11 +3,11 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Eye, EyeOff, LogIn, AlertCircle, User, Sun, Moon } from 'lucide-react';
+import { Eye, EyeOff, LogIn, AlertCircle, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { APP_NAME } from '@/lib/constants';
-import { useTheme } from '@/lib/theme-provider';
+import { ThemeSelector } from '@/components/layout/theme-selector';
 
 /** Inner form component that calls useSearchParams */
 function LoginForm() {
@@ -19,7 +19,6 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const { theme, toggleTheme } = useTheme();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,18 +54,7 @@ function LoginForm() {
   return (
     <div className="space-y-6">
       <div className="relative text-center">
-        <button
-          onClick={toggleTheme}
-          className="absolute -right-1 -top-1 flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-500 hover:bg-muted transition-colors"
-          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          aria-label="Toggle theme"
-        >
-          {theme === 'dark' ? (
-            <Sun className="h-[18px] w-[18px]" />
-          ) : (
-            <Moon className="h-[18px] w-[18px]" />
-          )}
-        </button>
+        <ThemeSelector className="absolute -right-1 -top-1" />
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-800 text-lg font-bold text-white">
           G
         </div>

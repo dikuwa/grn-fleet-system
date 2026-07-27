@@ -66,18 +66,19 @@ export default async function DocumentDetailPage({ params }: PageProps) {
     );
   }
 
+  const session = await getServerSession();
+  if (!session) {
+    return (
+      <div className="space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Documents', href: '/dashboard/documents' }, { label: 'Document' }]} />
+        <PageHeader title="Document Detail" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" />
+      </div>
+    );
+  }
+
   let data: Awaited<ReturnType<typeof fetchDocumentDetail>>;
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return (
-        <div className="space-y-6">
-          <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Documents', href: '/dashboard/documents' }, { label: 'Document' }]} />
-          <PageHeader title="Document Detail" />
-          <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" />
-        </div>
-      );
-    }
     data = await fetchDocumentDetail(id, session.tenantId);
   } catch (error) {
     console.error('Document detail query failed:', error);

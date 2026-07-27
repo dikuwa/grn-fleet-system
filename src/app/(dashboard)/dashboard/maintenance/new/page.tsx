@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import { ChevronLeft, CheckCircle2, Wrench, CalendarClock } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
@@ -45,11 +45,7 @@ export default function NewMaintenancePage() {
     setFormData((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  useEffect(() => {
-    fetchVehicles();
-  }, []);
-
-  async function fetchVehicles() {
+  const fetchVehicles = useCallback(async () => {
     try {
       const res = await fetch('/api/fleet');
       if (!res.ok) throw new Error('Failed to load vehicles');
@@ -61,7 +57,12 @@ export default function NewMaintenancePage() {
     } finally {
       setLoadingVehicles(false);
     }
-  }
+  }, [toast]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void fetchVehicles(), 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchVehicles]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,7 +109,7 @@ export default function NewMaintenancePage() {
       });
       setIsSubmitting(false);
     }
-  }, [router, formData, vehicles]);
+  }, [router, formData, vehicles, toast]);
 
   const selectedVehicle = vehicles.find((v) => v.id === formData.vehicleId);
 
@@ -175,7 +176,7 @@ export default function NewMaintenancePage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label required>Service Date</Label>
-                <Input
+                <StyledDateInput
                   type="date"
                   value={formData.serviceDate}
                   onChange={(e) => updateForm({ serviceDate: e.target.value })}
@@ -264,7 +265,7 @@ export default function NewMaintenancePage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Next Service Date</Label>
-                <Input
+                <StyledDateInput
                   type="date"
                   value={formData.nextServiceDate}
                   onChange={(e) => updateForm({ nextServiceDate: e.target.value })}
