@@ -84,7 +84,11 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
   }, []);
 
   const displayName = profile?.name || profile?.email?.split('@')[0] || 'User';
-  const jobTitle = profile?.employee?.jobTitle || (profile?.roles?.[0] ? getRoleLabel(profile.roles[0].roleName) : undefined);
+  const roleLabel = profile?.roles?.[0]
+    ? getRoleLabel(profile.roles[0].roleName)
+    : roleNames[0]
+      ? getRoleLabel(roleNames[0])
+      : undefined;
   const avatarSrc = profile?.image;
 
   const handleSignOut = async () => {
@@ -131,22 +135,23 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
         <div className="relative" ref={accountRef}>
           <button
             onClick={() => setShowAccountMenu(!showAccountMenu)}
-            className="flex h-9 items-center gap-2 rounded-[8px] px-2 text-ink-500 hover:bg-muted transition-colors"
+            className="flex min-h-9 items-center gap-2 rounded-[8px] px-2 py-1 text-ink-500 hover:bg-muted transition-colors"
             aria-label="Open account menu"
             aria-expanded={showAccountMenu}
           >
             {/* Avatar */}
             <UserAvatar src={avatarSrc} name={displayName} className="h-7 w-7 rounded-[6px] text-xs" />
-            {/* Name (hidden on small mobile) */}
-            <span className="hidden text-sm text-ink-700 dark:text-ink-300 sm:inline max-w-[120px] truncate">
-              {displayName}
-            </span>
-            {/* Role (hidden on medium-down) */}
-            {jobTitle && (
-              <span className="hidden text-xs text-ink-500 lg:inline max-w-[140px] truncate">
-                {jobTitle}
+            {/* Compact identity block (hidden on small mobile) */}
+            <span className="hidden min-w-0 max-w-[140px] flex-col items-start leading-tight sm:flex">
+              <span className="w-full truncate text-[13px] font-medium text-ink-700 dark:text-ink-300">
+                {displayName}
               </span>
-            )}
+              {roleLabel && (
+                <span className="w-full truncate text-[11px] text-ink-500">
+                  {roleLabel}
+                </span>
+              )}
+            </span>
             <ChevronDown className="hidden h-3.5 w-3.5 text-ink-400 sm:block" />
           </button>
 
@@ -161,8 +166,8 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
                     <p className="truncate text-sm font-medium text-ink-950 dark:text-ink-100">
                       {displayName}
                     </p>
-                    {jobTitle && (
-                      <p className="truncate text-xs text-ink-500">{jobTitle}</p>
+                    {roleLabel && (
+                      <p className="truncate text-xs text-ink-500">{roleLabel}</p>
                     )}
                   </div>
                 </div>
