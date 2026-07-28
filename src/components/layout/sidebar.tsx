@@ -268,11 +268,13 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
                         />
                         {!collapsed && (
                           <>
-                            <span className="flex-1 truncate">{roleAwareLabel(item, roleNames)}</span>
+                            <span className="flex-1 truncate">
+                              {roleAwareLabel(item, roleNames)}
+                            </span>
                             {item.badge !== undefined &&
                               item.label === 'Trips' &&
                               activeTripCount > 0 && (
-                                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-medium text-white">
+                                <span className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white">
                                   {activeTripCount > 99 ? '99+' : activeTripCount}
                                 </span>
                               )}
@@ -410,7 +412,9 @@ export function MobileSidebar({
                                   : 'text-ink-400 dark:text-ink-500',
                               )}
                             />
-                            <span className="flex-1 truncate">{roleAwareLabel(item, roleNames)}</span>
+                            <span className="flex-1 truncate">
+                              {roleAwareLabel(item, roleNames)}
+                            </span>
                           </Link>
                         </li>
                       );

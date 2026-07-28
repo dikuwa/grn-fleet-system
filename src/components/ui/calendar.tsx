@@ -7,55 +7,52 @@ import { cn } from '@/lib/utils';
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker>;
 
-function Calendar({
-  className,
-  classNames,
-  showOutsideDays = true,
-  ...props
-}: CalendarProps) {
+function Calendar({ className, classNames, showOutsideDays = true, ...props }: CalendarProps) {
   return (
     <DayPicker
+      data-slot="calendar"
       showOutsideDays={showOutsideDays}
-      className={cn('p-3', className)}
+      className={cn('relative p-3', className)}
       classNames={{
-        months: 'flex flex-col sm:flex-row gap-4',
-        month: 'space-y-3',
-        caption: 'flex justify-center relative items-center h-9',
+        months: 'flex flex-col gap-4 sm:flex-row',
+        month: 'space-y-2',
+        month_caption: 'flex h-9 items-center justify-start pr-20',
         caption_label: 'text-sm font-medium text-ink-950',
-        nav: 'flex items-center gap-1',
-        nav_button: cn(
-          'inline-flex items-center justify-center h-7 w-7 rounded-md',
+        nav: 'absolute right-3 top-3 flex h-9 items-center gap-1',
+        button_previous: cn(
+          'inline-flex h-8 w-8 items-center justify-center rounded-[7px] border border-transparent',
           'text-ink-500 hover:text-ink-950 hover:bg-muted',
-          'transition-colors',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
+          'disabled:cursor-not-allowed disabled:opacity-40 transition-colors',
         ),
-        nav_button_previous: 'absolute left-1',
-        nav_button_next: 'absolute right-1',
-        table: 'w-full border-collapse',
-        head_row: 'flex',
-        head_cell: cn(
-          'w-9 h-7 text-xs font-medium text-ink-500',
-          'flex items-center justify-center',
+        button_next: cn(
+          'inline-flex h-8 w-8 items-center justify-center rounded-[7px] border border-transparent',
+          'text-ink-500 hover:text-ink-950 hover:bg-muted',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
+          'disabled:cursor-not-allowed disabled:opacity-40 transition-colors',
         ),
-        row: 'flex w-full mt-1',
-        cell: cn(
-          'relative p-0 text-center text-sm',
-          'first:[&:has([aria-selected])]:rounded-l-md',
-          'last:[&:has([aria-selected])]:rounded-r-md',
-          '[&:has([aria-selected])]:bg-brand-50 dark:[&:has([aria-selected])]:bg-brand-950/30',
-        ),
+        month_grid: 'w-full border-collapse',
+        weekdays: 'border-b border-border',
+        weekday: 'h-8 w-9 text-center text-[11px] font-semibold text-ink-500',
+        week: 'mt-1',
         day: cn(
-          'h-9 w-9 rounded-md text-sm font-normal text-ink-700',
+          'relative h-9 w-9 p-0 text-center text-sm',
+          '[&[data-selected]>button]:bg-brand-700 [&[data-selected]>button]:font-semibold',
+          '[&[data-selected]>button]:text-white [&[data-selected]>button:hover]:bg-brand-800',
+          'dark:[&[data-selected]>button]:bg-brand-600 dark:[&[data-selected]>button:hover]:bg-brand-500',
+        ),
+        day_button: cn(
+          'inline-flex h-9 w-9 items-center justify-center rounded-[7px] text-sm font-normal text-ink-700',
           'hover:bg-muted transition-colors',
-          'aria-selected:bg-brand-700 aria-selected:text-white dark:aria-selected:bg-brand-800 aria-selected:hover:bg-brand-800',
-          'aria-selected:font-medium',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400',
           'disabled:opacity-40 disabled:cursor-not-allowed',
         ),
-        day_today: 'font-semibold text-brand-700',
-        day_outside: 'text-ink-300 opacity-50',
-        day_disabled: 'text-ink-300 opacity-40',
-        day_range_middle: '!rounded-none aria-selected:bg-brand-50 dark:aria-selected:bg-brand-950/30 aria-selected:text-ink-900 dark:aria-selected:text-ink-100',
-        day_hidden: 'invisible',
+        today: '[&>button]:font-semibold [&>button]:text-brand-700 dark:[&>button]:text-brand-300',
+        outside: '[&>button]:text-ink-300 [&>button]:opacity-60',
+        disabled: '[&>button]:cursor-not-allowed [&>button]:text-ink-300 [&>button]:opacity-40',
+        range_middle:
+          '[&>button]:rounded-none [&>button]:bg-brand-50 [&>button]:text-ink-900 dark:[&>button]:bg-brand-950/30 dark:[&>button]:text-ink-100',
+        hidden: 'invisible',
         ...classNames,
       }}
       components={{

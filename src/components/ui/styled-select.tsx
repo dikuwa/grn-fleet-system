@@ -194,7 +194,16 @@ export interface StyledDateInputProps extends React.InputHTMLAttributes<HTMLInpu
 
 const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>(
   ({ className, error, type = 'date', ...props }, ref) => {
+    const isControlled = props.value !== undefined;
+    const [internalValue, setInternalValue] = React.useState(() =>
+      String(props.defaultValue ?? ''),
+    );
+    const resolvedValue = isControlled ? String(props.value ?? '') : internalValue;
+
     const emitChange = (nextValue: string) => {
+      if (!isControlled) {
+        setInternalValue(nextValue);
+      }
       props.onChange?.({
         target: { value: nextValue },
         currentTarget: { value: nextValue },
@@ -208,11 +217,11 @@ const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>
             ref={ref}
             type="hidden"
             name={props.name}
-            value={String(props.value ?? props.defaultValue ?? '')}
+            value={resolvedValue}
             disabled={props.disabled}
           />
           <DatePicker
-            value={String(props.value ?? props.defaultValue ?? '')}
+            value={resolvedValue}
             onChange={emitChange}
             min={typeof props.min === 'string' ? props.min : undefined}
             max={typeof props.max === 'string' ? props.max : undefined}
@@ -232,11 +241,11 @@ const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>
             ref={ref}
             type="hidden"
             name={props.name}
-            value={String(props.value ?? props.defaultValue ?? '')}
+            value={resolvedValue}
             disabled={props.disabled}
           />
           <TimePicker
-            value={String(props.value ?? props.defaultValue ?? '')}
+            value={resolvedValue}
             onChange={emitChange}
             disabled={props.disabled}
             className={className}
@@ -253,11 +262,11 @@ const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>
             ref={ref}
             type="hidden"
             name={props.name}
-            value={String(props.value ?? props.defaultValue ?? '')}
+            value={resolvedValue}
             disabled={props.disabled}
           />
           <DateTimePicker
-            value={String(props.value ?? props.defaultValue ?? '')}
+            value={resolvedValue}
             onChange={emitChange}
             min={typeof props.min === 'string' ? props.min : undefined}
             max={typeof props.max === 'string' ? props.max : undefined}

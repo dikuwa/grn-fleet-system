@@ -95,7 +95,9 @@ test('Tenant Branding keeps its existing tabs and uses the compact responsive la
   await fileChooserPromise;
   const logoImage = preview.locator('img');
   if (await logoImage.count()) {
-    await expect.poll(() => logoImage.evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
+    await expect
+      .poll(() => logoImage.evaluate((image: HTMLImageElement) => image.naturalWidth))
+      .toBeGreaterThan(0);
   }
 
   await context.close();

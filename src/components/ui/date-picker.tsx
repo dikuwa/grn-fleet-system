@@ -84,7 +84,7 @@ export function DatePicker({
   return (
     <div className={cn('space-y-1.5', className)}>
       {label && (
-        <label className="block text-xs font-medium text-ink-500">
+        <label className="text-ink-500 block text-xs font-medium">
           {label}
           {required && <span className="text-status-error-text ml-0.5">*</span>}
         </label>
@@ -100,9 +100,9 @@ export function DatePicker({
           <button
             type="button"
             className={cn(
-              'flex h-10 w-full items-center justify-between rounded-[8px] border border-border bg-surface px-3 text-sm',
-              'focus:outline-none focus:ring-2 focus:ring-brand-400 focus:ring-offset-1',
-              'disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-muted',
+              'border-border bg-surface flex h-10 w-full items-center justify-between rounded-[8px] border px-3 text-sm',
+              'focus:ring-brand-400 focus:ring-2 focus:ring-offset-1 focus:outline-none',
+              'disabled:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
               'dark:focus:ring-offset-ink-950',
               !value && 'text-ink-400',
               error && 'border-status-error-text focus:ring-status-error-text',
@@ -110,7 +110,7 @@ export function DatePicker({
             aria-label={label ? `${label} - select date` : 'Select date'}
           >
             <span>{displayValue || placeholder}</span>
-            <CalendarDays className="h-4 w-4 shrink-0 text-ink-400" />
+            <CalendarDays className="text-ink-400 h-4 w-4 shrink-0" />
           </button>
         </Popover.Trigger>
         <Popover.Portal>
@@ -118,7 +118,7 @@ export function DatePicker({
             align="start"
             sideOffset={4}
             className={cn(
-              'z-50 rounded-[10px] border border-border bg-surface p-0 shadow-lg',
+              'border-border bg-surface z-50 max-w-[calc(100vw-2rem)] rounded-[10px] border p-0 shadow-lg',
               'data-[state=open]:animate-in data-[state=closed]:animate-out',
               'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
               'data-[side=bottom]:slide-in-from-top-2',
@@ -128,26 +128,28 @@ export function DatePicker({
               mode="single"
               selected={selectedDate}
               onSelect={handleSelect}
+              defaultMonth={selectedDate}
               initialFocus
               disabled={[
                 ...(minDate ? [{ before: minDate }] : []),
                 ...(maxDate ? [{ after: maxDate }] : []),
               ]}
             />
-            <div className="border-t border-border p-2">
+            <div className="border-border border-t p-2.5">
               <input
                 type="text"
                 value={inputValue}
                 onChange={handleInputChange}
                 placeholder="dd/mm/yyyy"
-                className="h-8 w-full rounded-[6px] border border-border bg-surface px-2 text-xs text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-1 focus:ring-brand-200"
+                inputMode="numeric"
+                className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-400 h-9 w-full rounded-[7px] border px-3 text-sm focus:ring-2 focus:outline-none"
                 aria-label="Type date in dd/mm/yyyy format"
               />
             </div>
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
-      {error && <p className="text-xs text-status-error-text">{error}</p>}
+      {error && <p className="text-status-error-text text-xs">{error}</p>}
     </div>
   );
 }
