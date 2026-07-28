@@ -10,13 +10,25 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { Database, Search, ChevronRight, ChevronLeft, ClipboardCheck, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import {
+  Database,
+  Search,
+  ChevronRight,
+  ChevronLeft,
+  ClipboardCheck,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+} from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
 import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
 import Link from 'next/link';
+import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
+import { numericCount } from '@/lib/statistics';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -37,15 +49,15 @@ async function fetchInspections(
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
-  const type = sp.type?.trim();
-  const status = sp.status?.trim();
-  const search = sp.search?.trim();
+  const type = normalizeOptionalFilter(sp.type);
+  const status = normalizeOptionalFilter(sp.status);
+  const search = normalizeOptionalFilter(sp.search);
 
-  const conditions: SQL[] = [eq(vehicleInspections.tenantId, tenantId)];
+  const baseConditions: SQL[] = [eq(vehicleInspections.tenantId, tenantId)];
   if (recordScope === 'assigned' || recordScope === 'self') {
-    conditions.push(eq(vehicleInspections.inspectorUserId, userId));
+    baseConditions.push(eq(vehicleInspections.inspectorUserId, userId));
   } else if (recordScope === 'related') {
-    conditions.push(sql`(
+    baseConditions.push(sql`(
       exists (
         select 1 from ${vehicleDefects}
         where ${vehicleDefects.vehicleId} = ${vehicleInspections.vehicleId}
@@ -56,6 +68,8 @@ async function fetchInspections(
       )
     )`);
   }
+  const baseWhere = and(...baseConditions);
+  const conditions = [...baseConditions];
 
   if (type) {
     conditions.push(eq(vehicleInspections.type, type));
@@ -109,7 +123,7 @@ async function fetchInspections(
         count: sql<number>`count(*)`,
       })
       .from(vehicleInspections)
-      .where(where)
+      .where(baseWhere)
       .groupBy(vehicleInspections.type, vehicleInspections.status, vehicleInspections.overallPass),
   ]);
 
@@ -117,27 +131,29 @@ async function fetchInspections(
   const totalPages = Math.ceil(totalCount / limit);
 
   // Compute summary stats
-  const totalInspections = summary.reduce((sum, r) => sum + r.count, 0);
-  const departureCount = summary.filter((r) => r.type === 'departure').reduce((sum, r) => sum + r.count, 0);
-  const returnCount = summary.filter((r) => r.type === 'return').reduce((sum, r) => sum + r.count, 0);
-  const passCount = summary.filter((r) => r.pass === true).reduce((sum, r) => sum + r.count, 0);
-  const failCount = summary.filter((r) => r.pass === false).reduce((sum, r) => sum + r.count, 0);
+  const totalInspections = summary.reduce((sum, r) => sum + numericCount(r.count), 0);
+  const departureCount = summary
+    .filter((r) => r.type === 'departure')
+    .reduce((sum, r) => sum + numericCount(r.count), 0);
+  const returnCount = summary
+    .filter((r) => r.type === 'return')
+    .reduce((sum, r) => sum + numericCount(r.count), 0);
+  const passCount = summary
+    .filter((r) => r.pass === true)
+    .reduce((sum, r) => sum + numericCount(r.count), 0);
+  const failCount = summary
+    .filter((r) => r.pass === false)
+    .reduce((sum, r) => sum + numericCount(r.count), 0);
   const passRate = totalInspections > 0 ? Math.round((passCount / totalInspections) * 100) : 0;
 
   return {
-    rows, totalCount, totalPages, page,
+    rows,
+    totalCount,
+    totalPages,
+    page,
     filters: { type, status, search },
     summary: { totalInspections, departureCount, returnCount, passCount, failCount, passRate },
   };
-}
-
-function buildPageUrl(base: string, params: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value) sp.set(key, value);
-  }
-  const qs = sp.toString();
-  return qs ? `${base}?${qs}` : base;
 }
 
 export default async function InspectionsPage({ searchParams }: PageProps) {
@@ -148,9 +164,18 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   if (!session) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-        <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view inspections." />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]}
+        />
+        <PageHeader
+          title="Vehicle Inspections"
+          description="Pre-trip departure and post-trip return inspections"
+        />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Authentication Required"
+          description="Please sign in to view inspections."
+        />
       </div>
     );
   }
@@ -158,8 +183,13 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-        <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections" />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]}
+        />
+        <PageHeader
+          title="Vehicle Inspections"
+          description="Pre-trip departure and post-trip return inspections"
+        />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" />
       </div>
     );
@@ -175,8 +205,13 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
     console.error('Inspections query failed:', error);
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-        <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections" />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]}
+        />
+        <PageHeader
+          title="Vehicle Inspections"
+          description="Pre-trip departure and post-trip return inspections"
+        />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Inspections" />
       </div>
     );
@@ -185,14 +220,21 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-      <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections">
+      <PageHeader
+        title="Vehicle Inspections"
+        description="Pre-trip departure and post-trip return inspections"
+      >
         {canCreate && (
           <>
             <Button variant="secondary" size="sm" asChild>
-              <Link href="/dashboard/inspections/new?type=departure"><ClipboardCheck className="h-4 w-4" /> Departure Inspection</Link>
+              <Link href="/dashboard/inspections/new?type=departure">
+                <ClipboardCheck className="h-4 w-4" /> Departure Inspection
+              </Link>
             </Button>
             <Button variant="secondary" size="sm" asChild>
-              <Link href="/dashboard/inspections/new?type=return"><ClipboardCheck className="h-4 w-4" /> Return Inspection</Link>
+              <Link href="/dashboard/inspections/new?type=return">
+                <ClipboardCheck className="h-4 w-4" /> Return Inspection
+              </Link>
             </Button>
           </>
         )}
@@ -201,18 +243,18 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
       {/* Type Tabs */}
       <Card>
         <CardContent className="pt-4">
-          <div className="flex items-center gap-2 border-b border-border pb-3">
+          <div className="border-border flex items-center gap-2 border-b pb-3">
             <Link
               href="/dashboard/inspections"
-              className={`px-4 py-1.5 text-sm rounded-full transition-colors ${!activeTab ? 'bg-brand-800 text-white' : 'text-ink-500 hover:text-ink-700 hover:bg-muted'}`}
+              className={`rounded-full px-4 py-1.5 text-sm transition-colors ${!activeTab ? 'bg-brand-800 text-white' : 'text-ink-500 hover:text-ink-700 hover:bg-muted'}`}
             >
               All
             </Link>
             {Object.entries(INSPECTION_TYPE_LABELS).map(([value, label]) => (
               <Link
                 key={value}
-                href={`/dashboard/inspections?type=${value}`}
-                className={`px-4 py-1.5 text-sm rounded-full transition-colors ${activeTab === value ? 'bg-brand-800 text-white' : 'text-ink-500 hover:text-ink-700 hover:bg-muted'}`}
+                href={buildFilterUrl('/dashboard/inspections', {}, { type: value })}
+                className={`rounded-full px-4 py-1.5 text-sm transition-colors ${activeTab === value ? 'bg-brand-800 text-white' : 'text-ink-500 hover:text-ink-700 hover:bg-muted'}`}
               >
                 {label}
               </Link>
@@ -223,68 +265,158 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
 
       {/* Summary Stats */}
       <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{result.summary.totalInspections}</p><p className="text-xs text-ink-500">Total</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-brand-700">{result.summary.departureCount}</p><p className="text-xs text-ink-500">Departures</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-brand-700">{result.summary.returnCount}</p><p className="text-xs text-ink-500">Returns</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-success-text">{result.summary.passCount}</p><p className="text-xs text-ink-500">Passed</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-error-text">{result.summary.failCount}</p><p className="text-xs text-ink-500">Failed</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{result.summary.passRate}%</p><p className="text-xs text-ink-500">Pass Rate</p></CardContent></Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+              {result.summary.totalInspections}
+            </p>
+            <p className="text-ink-500 text-xs">Total</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-brand-700 text-2xl font-[650] tabular-nums">
+              {result.summary.departureCount}
+            </p>
+            <p className="text-ink-500 text-xs">Departures</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-brand-700 text-2xl font-[650] tabular-nums">
+              {result.summary.returnCount}
+            </p>
+            <p className="text-ink-500 text-xs">Returns</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-status-success-text text-2xl font-[650] tabular-nums">
+              {result.summary.passCount}
+            </p>
+            <p className="text-ink-500 text-xs">Passed</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-status-error-text text-2xl font-[650] tabular-nums">
+              {result.summary.failCount}
+            </p>
+            <p className="text-ink-500 text-xs">Failed</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+              {result.summary.passRate}%
+            </p>
+            <p className="text-ink-500 text-xs">Pass Rate</p>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
-            <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">Search Vehicle</label>
+          <FilterToolbar
+            resetHref={
+              activeTab ? `/dashboard/inspections?type=${activeTab}` : '/dashboard/inspections'
+            }
+            isFiltered={hasActiveFilters(result.filters, ['page', 'type'])}
+          >
+            <div className="min-w-[200px] flex-1">
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Search Vehicle</label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-                <input name="search" defaultValue={result.filters.search ?? ''} placeholder="Licence, make, model..." className="h-10 w-full rounded-[8px] border border-border bg-surface pl-9 pr-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <Search className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+                <input
+                  name="search"
+                  defaultValue={result.filters.search ?? ''}
+                  placeholder="Licence, make, model..."
+                  className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
+                />
               </div>
             </div>
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
-              <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
+              <StyledSelect
+                name="status"
+                defaultValue={result.filters.status ?? ''}
+                placeholder="All Statuses"
+              >
                 <option value="in_progress">In Progress</option>
                 <option value="completed">Completed</option>
                 <option value="failed">Failed</option>
               </StyledSelect>
             </div>
             <input type="hidden" name="type" value={activeTab} />
-            <Button variant="primary" size="sm" type="submit"><Search className="h-4 w-4" /> Filter</Button>
-          </form>
+          </FilterToolbar>
         </CardContent>
       </Card>
 
       {/* Inspection List */}
       {result.rows.length === 0 ? (
-        <EmptyState icon={<ClipboardCheck className="h-8 w-8" />} title="No inspections found" description={activeTab ? `No ${activeTab} inspections recorded yet.` : 'No vehicle inspections recorded yet.'} />
+        <EmptyState
+          icon={<ClipboardCheck className="h-8 w-8" />}
+          title="No inspections found"
+          description={
+            hasActiveFilters(result.filters, ['page', 'type'])
+              ? 'No matching records found. Clear filters to view all records.'
+              : activeTab
+                ? `No ${activeTab} inspections recorded yet.`
+                : 'No vehicle inspections recorded yet.'
+          }
+        />
       ) : (
         <div className="space-y-3">
           {result.rows.map((insp) => (
-            <Link key={insp.id} href={`/dashboard/inspections/${insp.id}`} className="block rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm">
+            <Link
+              key={insp.id}
+              href={`/dashboard/inspections/${insp.id}`}
+              className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
+            >
               <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] ${insp.overallPass === true ? 'bg-status-success-bg text-status-success-text' : insp.overallPass === false ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}>
+                <div className="flex min-w-0 items-center gap-4">
+                  <div
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] ${insp.overallPass === true ? 'bg-status-success-bg text-status-success-text' : insp.overallPass === false ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}
+                  >
                     <ClipboardCheck className="h-6 w-6" />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-[650] text-ink-950 capitalize">{insp.type} Inspection</p>
-                      <Badge variant={insp.status === 'completed' ? 'success' : insp.status === 'failed' ? 'error' : 'pending'} size="sm">{insp.status?.replace(/_/g, ' ')}</Badge>
+                      <p className="text-ink-950 text-sm font-[650] capitalize">
+                        {insp.type} Inspection
+                      </p>
+                      <Badge
+                        variant={
+                          insp.status === 'completed'
+                            ? 'success'
+                            : insp.status === 'failed'
+                              ? 'error'
+                              : 'pending'
+                        }
+                        size="sm"
+                      >
+                        {insp.status?.replace(/_/g, ' ')}
+                      </Badge>
                       {insp.overallPass != null && (
-                        <Badge variant={insp.overallPass ? 'success' : 'error'} size="sm">{insp.overallPass ? 'Pass' : 'Fail'}</Badge>
+                        <Badge variant={insp.overallPass ? 'success' : 'error'} size="sm">
+                          {insp.overallPass ? 'Pass' : 'Fail'}
+                        </Badge>
                       )}
                     </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
-                      <span>{insp.make} {insp.model}</span>
+                    <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      <span>
+                        {insp.make} {insp.model}
+                      </span>
                       <span className="tabular-nums">{insp.licenceNumber}</span>
-                      {insp.odometerReading && <span>{insp.odometerReading.toLocaleString()} km</span>}
+                      {insp.odometerReading && (
+                        <span>{insp.odometerReading.toLocaleString()} km</span>
+                      )}
                       <span className="tabular-nums">{formatDate(insp.createdAt)}</span>
                     </div>
                   </div>
                 </div>
-                <ChevronRight className="h-4 w-4 text-ink-300 shrink-0" />
+                <ChevronRight className="text-ink-300 h-4 w-4 shrink-0" />
               </div>
             </Link>
           ))}
@@ -293,17 +425,31 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
 
       {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <p className="text-xs text-ink-500">Page {result.page} of {result.totalPages} ({result.totalCount} inspections)</p>
+        <div className="border-border flex items-center justify-between border-t pt-4">
+          <p className="text-ink-500 text-xs">
+            Page {result.page} of {result.totalPages} ({result.totalCount} inspections)
+          </p>
           <div className="flex items-center gap-2">
             {result.page > 1 && (
               <Button variant="secondary" size="sm" asChild>
-                <Link href={buildPageUrl('/dashboard/inspections', { ...sp, page: String(result.page - 1) })}><ChevronLeft className="h-3 w-3" /> Previous</Link>
+                <Link
+                  href={buildFilterUrl('/dashboard/inspections', sp, {
+                    page: String(result.page - 1),
+                  })}
+                >
+                  <ChevronLeft className="h-3 w-3" /> Previous
+                </Link>
               </Button>
             )}
             {result.page < result.totalPages && (
               <Button variant="secondary" size="sm" asChild>
-                <Link href={buildPageUrl('/dashboard/inspections', { ...sp, page: String(result.page + 1) })}>Next <ChevronRight className="h-3 w-3" /></Link>
+                <Link
+                  href={buildFilterUrl('/dashboard/inspections', sp, {
+                    page: String(result.page + 1),
+                  })}
+                >
+                  Next <ChevronRight className="h-3 w-3" />
+                </Link>
               </Button>
             )}
           </div>

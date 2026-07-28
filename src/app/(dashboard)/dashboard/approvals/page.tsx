@@ -1,5 +1,10 @@
 import { getDb, isDbConnected } from '@/db';
-import { workflowActions, workflowInstances, workflowDefinitions, workflowSteps } from '@/db/schema/workflows';
+import {
+  workflowActions,
+  workflowInstances,
+  workflowDefinitions,
+  workflowSteps,
+} from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { eq, desc, and, sql, type SQL, or, inArray, ne } from 'drizzle-orm';
@@ -10,20 +15,33 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { Database, ClipboardCheck, Search, ChevronRight, ChevronLeft, CheckCircle2, XCircle } from 'lucide-react';
+import {
+  Database,
+  ClipboardCheck,
+  ChevronRight,
+  ChevronLeft,
+  CheckCircle2,
+  XCircle,
+} from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { getSessionPermissions } from '@/lib/auth-helpers';
 import type { PermissionCode } from '@/lib/permissions';
 import Link from 'next/link';
+import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
+import { groupedCountMap } from '@/lib/statistics';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
 const WORKFLOW_STATUS_LABELS: Record<string, string> = {
-  active: 'Active', completed: 'Completed', cancelled: 'Cancelled', overridden: 'Overridden',
+  active: 'Active',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  overridden: 'Overridden',
 };
 
 async function fetchApprovals(
@@ -36,9 +54,9 @@ async function fetchApprovals(
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
-  const status = sp.status?.trim();
+  const status = normalizeOptionalFilter(sp.status);
 
-  const conditions: SQL[] = [
+  const baseConditions: SQL[] = [
     eq(transportRequests.tenantId, tenantId),
     or(
       and(
@@ -60,6 +78,8 @@ async function fetchApprovals(
       ),
     )!,
   ];
+  const baseWhere = and(...baseConditions);
+  const conditions = [...baseConditions];
 
   if (status) {
     conditions.push(eq(workflowInstances.status, status));
@@ -67,7 +87,7 @@ async function fetchApprovals(
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, totalResult] = await Promise.all([
+  const [rows, totalResult, statusCounts] = await Promise.all([
     db
       .select({
         id: workflowInstances.id,
@@ -87,7 +107,13 @@ async function fetchApprovals(
       .from(workflowInstances)
       .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
       .leftJoin(workflowDefinitions, eq(workflowInstances.definitionId, workflowDefinitions.id))
-      .leftJoin(workflowSteps, and(eq(workflowSteps.definitionId, workflowInstances.definitionId), eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder)))
+      .leftJoin(
+        workflowSteps,
+        and(
+          eq(workflowSteps.definitionId, workflowInstances.definitionId),
+          eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
+        ),
+      )
       .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
       .where(where)
       .orderBy(desc(workflowInstances.createdAt))
@@ -97,24 +123,45 @@ async function fetchApprovals(
       .select({ count: sql<number>`count(*)` })
       .from(workflowInstances)
       .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-      .leftJoin(workflowSteps, and(eq(workflowSteps.definitionId, workflowInstances.definitionId), eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder)))
+      .leftJoin(
+        workflowSteps,
+        and(
+          eq(workflowSteps.definitionId, workflowInstances.definitionId),
+          eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
+        ),
+      )
       .where(where),
+    db
+      .select({ key: workflowInstances.status, count: sql<number>`count(*)` })
+      .from(workflowInstances)
+      .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
+      .leftJoin(
+        workflowSteps,
+        and(
+          eq(workflowSteps.definitionId, workflowInstances.definitionId),
+          eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
+        ),
+      )
+      .where(baseWhere)
+      .groupBy(workflowInstances.status),
   ]);
 
   const totalCount = Number(totalResult[0]?.count ?? 0);
   const totalPages = Math.ceil(totalCount / limit);
-  const activeCount = rows.filter((r) => r.status === 'active').length;
-  const completedCount = rows.filter((r) => r.status === 'completed').length;
+  const counts = groupedCountMap(statusCounts);
 
-  return { rows, totalCount, totalPages, page, activeCount, completedCount, filters: { status } };
-}
-
-function buildPageUrl(base: string, params: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value) sp.set(key, value);
-  }
-  return sp.toString() ? `${base}?${sp.toString()}` : base;
+  return {
+    rows,
+    totalCount,
+    totalPages,
+    page,
+    metrics: {
+      total: [...counts.values()].reduce((total, count) => total + count, 0),
+      active: counts.get('active') ?? 0,
+      completed: counts.get('completed') ?? 0,
+    },
+    filters: { status },
+  };
 }
 
 export default async function ApprovalsPage({ searchParams }: PageProps) {
@@ -126,7 +173,11 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Approvals' }]} />
         <PageHeader title="Approvals" description="Review and manage workflow approvals" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view approvals." />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Authentication Required"
+          description="Please sign in to view approvals."
+        />
       </div>
     );
   }
@@ -163,53 +214,112 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
 
       {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{result.totalCount}</p><p className="text-xs text-ink-500">Total Workflows</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-info-text">{result.activeCount}</p><p className="text-xs text-ink-500">Active / Awaiting Action</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-success-text">{result.completedCount}</p><p className="text-xs text-ink-500">Completed</p></CardContent></Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-ink-950 text-2xl font-[650] tabular-nums">{result.metrics.total}</p>
+            <p className="text-ink-500 text-xs">Total Workflows</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-status-info-text text-2xl font-[650] tabular-nums">
+              {result.metrics.active}
+            </p>
+            <p className="text-ink-500 text-xs">Active / Awaiting Action</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-status-success-text text-2xl font-[650] tabular-nums">
+              {result.metrics.completed}
+            </p>
+            <p className="text-ink-500 text-xs">Completed</p>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
+          <FilterToolbar
+            resetHref="/dashboard/approvals"
+            isFiltered={hasActiveFilters(result.filters)}
+          >
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
-              <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
-                {Object.entries(WORKFLOW_STATUS_LABELS).map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
+              <StyledSelect
+                name="status"
+                defaultValue={result.filters.status ?? ''}
+                placeholder="All Statuses"
+              >
+                {Object.entries(WORKFLOW_STATUS_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>
+                    {l}
+                  </option>
+                ))}
               </StyledSelect>
             </div>
-            <Button variant="primary" size="sm" type="submit"><Search className="h-4 w-4" /> Filter</Button>
-          </form>
+          </FilterToolbar>
         </CardContent>
       </Card>
 
       {/* Approval List */}
       {result.rows.length === 0 ? (
-        <EmptyState icon={<ClipboardCheck className="h-8 w-8" />} title="No approvals found" description="No workflow instances to review." />
+        <EmptyState
+          icon={<ClipboardCheck className="h-8 w-8" />}
+          title="No approvals found"
+          description={
+            hasActiveFilters(result.filters)
+              ? 'No matching records found. Clear filters to view all records.'
+              : 'No workflow instances to review.'
+          }
+        />
       ) : (
         <div className="space-y-3">
           {result.rows.map((wf) => {
-            const requesterName = wf.requesterFirstName && wf.requesterLastName ? `${wf.requesterFirstName} ${wf.requesterLastName}` : 'Unknown';
+            const requesterName =
+              wf.requesterFirstName && wf.requesterLastName
+                ? `${wf.requesterFirstName} ${wf.requesterLastName}`
+                : 'Unknown';
             return (
-              <Link key={wf.id} href={`/dashboard/approvals/${wf.id}`} className="block rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm">
+              <Link
+                key={wf.id}
+                href={`/dashboard/approvals/${wf.id}`}
+                className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
+              >
                 <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] ${
-                      wf.status === 'completed' ? 'bg-status-success-bg text-status-success-text' :
-                      wf.status === 'cancelled' ? 'bg-status-cancelled-bg text-status-cancelled-text' :
-                      'bg-status-info-bg text-status-info-text'
-                    }`}>
-                      {wf.status === 'completed' ? <CheckCircle2 className="h-6 w-6" /> :
-                       wf.status === 'cancelled' ? <XCircle className="h-6 w-6" /> :
-                       <ClipboardCheck className="h-6 w-6" />}
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div
+                      className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] ${
+                        wf.status === 'completed'
+                          ? 'bg-status-success-bg text-status-success-text'
+                          : wf.status === 'cancelled'
+                            ? 'bg-status-cancelled-bg text-status-cancelled-text'
+                            : 'bg-status-info-bg text-status-info-text'
+                      }`}
+                    >
+                      {wf.status === 'completed' ? (
+                        <CheckCircle2 className="h-6 w-6" />
+                      ) : wf.status === 'cancelled' ? (
+                        <XCircle className="h-6 w-6" />
+                      ) : (
+                        <ClipboardCheck className="h-6 w-6" />
+                      )}
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-[650] text-ink-950">{wf.requestReference || 'No Reference'}</p>
+                        <p className="text-ink-950 text-sm font-[650]">
+                          {wf.requestReference || 'No Reference'}
+                        </p>
                         <StatusBadgeWithIcon status={wf.status} />
-                        <Badge variant={wf.requestScope === 'national' ? 'emergency' : 'info'} size="sm">{wf.requestScope ?? 'regional'}</Badge>
+                        <Badge
+                          variant={wf.requestScope === 'national' ? 'emergency' : 'info'}
+                          size="sm"
+                        >
+                          {wf.requestScope ?? 'regional'}
+                        </Badge>
                       </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
+                      <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                         <span>{requesterName}</span>
                         <span>{wf.definitionName || 'Workflow'}</span>
                         <span>Step {wf.currentStepOrder}</span>
@@ -217,7 +327,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                       </div>
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-ink-300 shrink-0" />
+                  <ChevronRight className="text-ink-300 h-4 w-4 shrink-0" />
                 </div>
               </Link>
             );
@@ -227,11 +337,33 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
 
       {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <p className="text-xs text-ink-500">Page {result.page} of {result.totalPages}</p>
+        <div className="border-border flex items-center justify-between border-t pt-4">
+          <p className="text-ink-500 text-xs">
+            Page {result.page} of {result.totalPages}
+          </p>
           <div className="flex items-center gap-2">
-            {result.page > 1 && <Button variant="secondary" size="sm" asChild><Link href={buildPageUrl('/dashboard/approvals', { ...sp, page: String(result.page - 1) })}><ChevronLeft className="h-3 w-3" /> Previous</Link></Button>}
-            {result.page < result.totalPages && <Button variant="secondary" size="sm" asChild><Link href={buildPageUrl('/dashboard/approvals', { ...sp, page: String(result.page + 1) })}>Next <ChevronRight className="h-3 w-3" /></Link></Button>}
+            {result.page > 1 && (
+              <Button variant="secondary" size="sm" asChild>
+                <Link
+                  href={buildFilterUrl('/dashboard/approvals', sp, {
+                    page: String(result.page - 1),
+                  })}
+                >
+                  <ChevronLeft className="h-3 w-3" /> Previous
+                </Link>
+              </Button>
+            )}
+            {result.page < result.totalPages && (
+              <Button variant="secondary" size="sm" asChild>
+                <Link
+                  href={buildFilterUrl('/dashboard/approvals', sp, {
+                    page: String(result.page + 1),
+                  })}
+                >
+                  Next <ChevronRight className="h-3 w-3" />
+                </Link>
+              </Button>
+            )}
           </div>
         </div>
       )}

@@ -14,7 +14,6 @@ import {
   Wrench,
   ChevronLeft,
   ChevronRight,
-  Search,
   Car,
   Gauge,
   CalendarClock,
@@ -25,6 +24,9 @@ import Link from 'next/link';
 import { getServerSession } from '@/lib/session';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
 import { canAccessDashboardPath, canPerformDashboardAction } from '@/lib/dashboard-access';
+import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
+import { numericCount } from '@/lib/statistics';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -35,23 +37,27 @@ async function fetchMaintenance(sp: Record<string, string | undefined>, tenantId
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
-  const serviceType = sp.service_type?.trim();
+  const serviceType = normalizeOptionalFilter(sp.service_type);
+  const due = normalizeOptionalFilter(sp.due);
 
-  const conditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
+  const baseConditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
+  const baseWhere = and(...baseConditions);
+  const conditions = [...baseConditions];
 
   if (serviceType) {
     conditions.push(eq(maintenanceEvents.serviceType, serviceType));
   }
+  if (due === 'soon') {
+    conditions.push(
+      sql`${maintenanceEvents.nextServiceDate} >= current_date and ${maintenanceEvents.nextServiceDate} <= current_date + interval '7 days'`,
+    );
+  } else if (due === 'overdue') {
+    conditions.push(sql`${maintenanceEvents.nextServiceDate} < current_date`);
+  }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const now = new Date();
-  const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-  // Add dueSoon + overdue filters
-  const spDueFilter = sp.due?.trim();
-
-  const [rows, totalResult] = await Promise.all([
+  const [rows, totalResult, metricResult] = await Promise.all([
     db
       .select({
         id: maintenanceEvents.id,
@@ -80,44 +86,40 @@ async function fetchMaintenance(sp: Record<string, string | undefined>, tenantId
       .from(maintenanceEvents)
       .innerJoin(vehicles, eq(maintenanceEvents.vehicleId, vehicles.id))
       .where(where),
+    db
+      .select({
+        total: sql<number>`count(*)`,
+        cost: sql<string>`coalesce(sum(${maintenanceEvents.cost}), 0)`,
+        upcoming: sql<number>`count(*) filter (where ${maintenanceEvents.nextServiceDate} > current_date)`,
+        dueSoon: sql<number>`count(*) filter (where ${maintenanceEvents.nextServiceDate} >= current_date and ${maintenanceEvents.nextServiceDate} <= current_date + interval '7 days')`,
+        overdue: sql<number>`count(*) filter (where ${maintenanceEvents.nextServiceDate} < current_date)`,
+        scheduled: sql<number>`count(*) filter (where ${maintenanceEvents.serviceType} = 'scheduled')`,
+      })
+      .from(maintenanceEvents)
+      .innerJoin(vehicles, eq(maintenanceEvents.vehicleId, vehicles.id))
+      .where(baseWhere),
   ]);
 
   const totalCount = Number(totalResult[0]?.count ?? 0);
   const totalPages = Math.ceil(totalCount / limit);
 
-  const totalCost = rows.reduce((sum, r) => sum + (r.cost ? Number(r.cost) : 0), 0);
-  const upcomingServices = rows.filter(
-    (r) => r.nextServiceDate && new Date(r.nextServiceDate) > now,
-  ).length;
-  const dueSoonCount = rows.filter(
-    (r) => r.nextServiceDate && new Date(r.nextServiceDate) <= sevenDaysFromNow && new Date(r.nextServiceDate) >= now,
-  ).length;
-  const overdueCount = rows.filter(
-    (r) => r.nextServiceDate && new Date(r.nextServiceDate) < now,
-  ).length;
+  const metrics = metricResult[0];
 
   return {
     rows,
     totalCount,
     totalPages,
     page,
-    totalCost,
-    upcomingServices,
-    dueSoonCount,
-    overdueCount,
-    overdueRows: rows.filter((r) => r.nextServiceDate && new Date(r.nextServiceDate) < now),
-    dueSoonRows: rows.filter((r) => r.nextServiceDate && new Date(r.nextServiceDate) <= sevenDaysFromNow && new Date(r.nextServiceDate) >= now),
-    filters: { serviceType, due: spDueFilter },
+    metrics: {
+      total: numericCount(metrics?.total),
+      cost: numericCount(metrics?.cost),
+      upcoming: numericCount(metrics?.upcoming),
+      dueSoon: numericCount(metrics?.dueSoon),
+      overdue: numericCount(metrics?.overdue),
+      scheduled: numericCount(metrics?.scheduled),
+    },
+    filters: { serviceType, due },
   };
-}
-
-function buildPageUrl(base: string, params: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value) sp.set(key, value);
-  }
-  const qs = sp.toString();
-  return qs ? `${base}?${qs}` : base;
 }
 
 const SERVICE_TYPE_LABELS: Record<string, string> = {
@@ -134,11 +136,13 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Maintenance' },
-        ]} />
-        <PageHeader title="Maintenance" description="Vehicle service and repair history across the fleet" />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Maintenance' }]}
+        />
+        <PageHeader
+          title="Maintenance"
+          description="Vehicle service and repair history across the fleet"
+        />
         <EmptyState
           icon={<Database className="h-6 w-6" />}
           title="Database Not Configured"
@@ -159,11 +163,13 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
     console.error('Maintenance query failed:', error);
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Maintenance' },
-        ]} />
-        <PageHeader title="Maintenance" description="Vehicle service and repair history across the fleet" />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Maintenance' }]}
+        />
+        <PageHeader
+          title="Maintenance"
+          description="Vehicle service and repair history across the fleet"
+        />
         <EmptyState
           icon={<Database className="h-6 w-6" />}
           title="Unable to Load Maintenance Data"
@@ -175,65 +181,75 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Maintenance' },
-        ]}
-      />
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Maintenance' }]} />
       <PageHeader
         title="Maintenance"
         description="Vehicle service and repair history across the fleet"
       >
-        {canCreate && <Button variant="primary" size="sm" asChild>
-          <Link href="/dashboard/maintenance/new">
-            <Wrench className="h-4 w-4" />
-            Schedule Maintenance
-          </Link>
-        </Button>}
-        {canViewFleet && <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/fleet">
-            <Car className="h-4 w-4" />
-            View Fleet
-          </Link>
-        </Button>}
-        {canExport && <Button variant="tertiary" size="sm" asChild>
-          <a href="/api/reports?type=maintenance&export=csv&period=90d">
-            <Download className="h-4 w-4" />
-            Export CSV
-          </a>
-        </Button>}
+        {canCreate && (
+          <Button variant="primary" size="sm" asChild>
+            <Link href="/dashboard/maintenance/new">
+              <Wrench className="h-4 w-4" />
+              Schedule Maintenance
+            </Link>
+          </Button>
+        )}
+        {canViewFleet && (
+          <Button variant="secondary" size="sm" asChild>
+            <Link href="/dashboard/fleet">
+              <Car className="h-4 w-4" />
+              View Fleet
+            </Link>
+          </Button>
+        )}
+        {canExport && (
+          <Button variant="tertiary" size="sm" asChild>
+            <a href="/api/reports?type=maintenance&export=csv&period=90d">
+              <Download className="h-4 w-4" />
+              Export CSV
+            </a>
+          </Button>
+        )}
       </PageHeader>
 
       {/* Due-soon tabs */}
-      {result.overdueCount > 0 || result.dueSoonCount > 0 ? (
+      {result.metrics.overdue > 0 || result.metrics.dueSoon > 0 ? (
         <div className="flex flex-wrap gap-2">
           <Link
-            href="/dashboard/maintenance"
+            href={buildFilterUrl('/dashboard/maintenance', sp, { due: undefined, page: undefined })}
             className={`inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors ${
-              !result.filters.due ? 'bg-brand-50 text-brand-700' : 'bg-surface text-ink-500 hover:text-ink-700'
+              !result.filters.due
+                ? 'bg-brand-50 text-brand-700'
+                : 'bg-surface text-ink-500 hover:text-ink-700'
             }`}
           >
             All
           </Link>
-          {result.dueSoonCount > 0 && (
+          {result.metrics.dueSoon > 0 && (
             <Link
-              href="/dashboard/maintenance?due=soon"
+              href={buildFilterUrl('/dashboard/maintenance', sp, { due: 'soon', page: undefined })}
               className={`inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors ${
-                result.filters.due === 'soon' ? 'bg-status-warning-bg text-status-warning-text' : 'bg-surface text-ink-500 hover:text-ink-700'
+                result.filters.due === 'soon'
+                  ? 'bg-status-warning-bg text-status-warning-text'
+                  : 'bg-surface text-ink-500 hover:text-ink-700'
               }`}
             >
-              Due Soon ({result.dueSoonCount})
+              Due Soon ({result.metrics.dueSoon})
             </Link>
           )}
-          {result.overdueCount > 0 && (
+          {result.metrics.overdue > 0 && (
             <Link
-              href="/dashboard/maintenance?due=overdue"
+              href={buildFilterUrl('/dashboard/maintenance', sp, {
+                due: 'overdue',
+                page: undefined,
+              })}
               className={`inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors ${
-                result.filters.due === 'overdue' ? 'bg-status-error-bg text-status-error-text' : 'bg-surface text-ink-500 hover:text-ink-700'
+                result.filters.due === 'overdue'
+                  ? 'bg-status-error-bg text-status-error-text'
+                  : 'bg-surface text-ink-500 hover:text-ink-700'
               }`}
             >
-              Overdue ({result.overdueCount})
+              Overdue ({result.metrics.overdue})
             </Link>
           )}
         </div>
@@ -244,40 +260,40 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-ink-950">
-                {result.totalCount}
+              <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+                {result.metrics.total}
               </p>
-              <p className="text-xs text-ink-500">Total Events</p>
+              <p className="text-ink-500 text-xs">Total Events</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-ink-950">
-                {formatCurrency(result.totalCost)}
+              <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+                {formatCurrency(result.metrics.cost)}
               </p>
-              <p className="text-xs text-ink-500">Total Cost</p>
+              <p className="text-ink-500 text-xs">Total Cost</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-pending-text">
-                {result.upcomingServices}
+              <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
+                {result.metrics.upcoming}
               </p>
-              <p className="text-xs text-ink-500">Upcoming Services</p>
+              <p className="text-ink-500 text-xs">Upcoming Services</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-info-text">
-                {result.rows.filter((r) => r.serviceType === 'scheduled').length}
+              <p className="text-status-info-text text-2xl font-[650] tabular-nums">
+                {result.metrics.scheduled}
               </p>
-              <p className="text-xs text-ink-500">Scheduled Services</p>
+              <p className="text-ink-500 text-xs">Scheduled Services</p>
             </div>
           </CardContent>
         </Card>
@@ -286,11 +302,12 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
       {/* Filter */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
+          <FilterToolbar
+            resetHref="/dashboard/maintenance"
+            isFiltered={hasActiveFilters(result.filters)}
+          >
             <div className="w-[200px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">
-                Service Type
-              </label>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Service Type</label>
               <StyledSelect
                 name="service_type"
                 defaultValue={result.filters.serviceType ?? ''}
@@ -301,22 +318,13 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
                 <option value="inspection">Inspection</option>
               </StyledSelect>
             </div>
-            <Button variant="primary" size="sm" type="submit">
-              <Search className="h-4 w-4" />
-              Filter
-            </Button>
-          </form>
+          </FilterToolbar>
         </CardContent>
       </Card>
 
       {/* Derive display rows from active filter */}
       {(() => {
-        const displayRows =
-          result.filters.due === 'soon'
-            ? result.dueSoonRows
-            : result.filters.due === 'overdue'
-              ? result.overdueRows
-              : result.rows;
+        const displayRows = result.rows;
 
         return displayRows.length === 0 ? (
           <EmptyState
@@ -327,84 +335,95 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
         ) : (
           <div className="space-y-3">
             {displayRows.map((event) => (
-            <div
-              key={event.id}
-              className="rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-status-info-bg text-status-info-text">
-                      <Wrench className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-ink-950">
-                        {event.description}
-                      </p>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
-                        <span className="flex items-center gap-1">
-                          <Car className="h-3 w-3" />
-                          {event.vehicleMake} {event.vehicleModel} ({event.vehicleGrn})
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <CalendarClock className="h-3 w-3" />
-                          {formatDate(event.serviceDate)}
-                        </span>
-                        {event.serviceOdometer && (
+              <div
+                key={event.id}
+                className="border-border bg-surface hover:border-brand-100 rounded-[10px] border p-4 transition-all hover:shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="bg-status-info-bg text-status-info-text flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]">
+                        <Wrench className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="text-ink-950 text-sm font-medium">{event.description}</p>
+                        <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                           <span className="flex items-center gap-1">
-                            <Gauge className="h-3 w-3" />
-                            {event.serviceOdometer.toLocaleString()} km
+                            <Car className="h-3 w-3" />
+                            {event.vehicleMake} {event.vehicleModel} ({event.vehicleGrn})
                           </span>
-                        )}
+                          <span className="flex items-center gap-1">
+                            <CalendarClock className="h-3 w-3" />
+                            {formatDate(event.serviceDate)}
+                          </span>
+                          {event.serviceOdometer && (
+                            <span className="flex items-center gap-1">
+                              <Gauge className="h-3 w-3" />
+                              {event.serviceOdometer.toLocaleString()} km
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
+                    {event.vendorName && (
+                      <p className="text-ink-500 mt-2 ml-10 text-xs">Vendor: {event.vendorName}</p>
+                    )}
                   </div>
-                  {event.vendorName && (
-                    <p className="mt-2 text-xs text-ink-500 ml-10">
-                      Vendor: {event.vendorName}
-                    </p>
-                  )}
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  <Badge variant="info" size="sm">
-                    {SERVICE_TYPE_LABELS[event.serviceType] ?? event.serviceType}
-                  </Badge>
-                  {event.cost && Number(event.cost) > 0 && (
-                    <span className="flex items-center gap-1 text-xs font-medium text-ink-950">
-                      <DollarSign className="h-3 w-3" />
-                      {formatCurrency(Number(event.cost))}
-                    </span>
-                  )}
-                  {event.nextServiceDate && (() => {
-                    const daysUntil = Math.ceil((new Date(event.nextServiceDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-                    if (daysUntil < 0) {
-                      return <Badge variant="error" size="sm">Overdue {Math.abs(daysUntil)}d</Badge>;
-                    }
-                    if (daysUntil <= 7) {
-                      return <Badge variant="emergency" size="sm">Due in {daysUntil}d</Badge>;
-                    }
-                    return <span className="text-[11px] text-ink-500">Next: {formatDate(event.nextServiceDate)}</span>;
-                  })()}
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <Badge variant="info" size="sm">
+                      {SERVICE_TYPE_LABELS[event.serviceType] ?? event.serviceType}
+                    </Badge>
+                    {event.cost && Number(event.cost) > 0 && (
+                      <span className="text-ink-950 flex items-center gap-1 text-xs font-medium">
+                        <DollarSign className="h-3 w-3" />
+                        {formatCurrency(Number(event.cost))}
+                      </span>
+                    )}
+                    {event.nextServiceDate &&
+                      (() => {
+                        const daysUntil = Math.ceil(
+                          (new Date(event.nextServiceDate).getTime() - Date.now()) /
+                            (1000 * 60 * 60 * 24),
+                        );
+                        if (daysUntil < 0) {
+                          return (
+                            <Badge variant="error" size="sm">
+                              Overdue {Math.abs(daysUntil)}d
+                            </Badge>
+                          );
+                        }
+                        if (daysUntil <= 7) {
+                          return (
+                            <Badge variant="emergency" size="sm">
+                              Due in {daysUntil}d
+                            </Badge>
+                          );
+                        }
+                        return (
+                          <span className="text-ink-500 text-[11px]">
+                            Next: {formatDate(event.nextServiceDate)}
+                          </span>
+                        );
+                      })()}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
-      )()}
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <p className="text-xs text-ink-500">
+        <div className="border-border flex items-center justify-between border-t pt-4">
+          <p className="text-ink-500 text-xs">
             Page {result.page} of {result.totalPages} ({result.totalCount} events)
           </p>
           <div className="flex items-center gap-2">
             {result.page > 1 && (
               <Button variant="secondary" size="sm" asChild>
                 <Link
-                  href={buildPageUrl('/dashboard/maintenance', {
-                    ...sp,
+                  href={buildFilterUrl('/dashboard/maintenance', sp, {
                     page: String(result.page - 1),
                   })}
                 >
@@ -416,8 +435,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
             {result.page < result.totalPages && (
               <Button variant="secondary" size="sm" asChild>
                 <Link
-                  href={buildPageUrl('/dashboard/maintenance', {
-                    ...sp,
+                  href={buildFilterUrl('/dashboard/maintenance', sp, {
                     page: String(result.page + 1),
                   })}
                 >

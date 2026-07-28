@@ -10,11 +10,16 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import {
-  Building2, Search, Plus, ChevronRight, Users, Clock,
-} from 'lucide-react';
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Building2, Search, Plus, ChevronRight, Users, Clock } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
+import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
 interface TenantRow {
   id: string;
@@ -99,11 +104,13 @@ export default function PlatformTenantsPage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Platform', href: '/dashboard' },
-        { label: 'Tenant Management' },
-      ]} />
+      <Breadcrumbs
+        items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Platform', href: '/dashboard' },
+          { label: 'Tenant Management' },
+        ]}
+      />
       <PageHeader
         title="Tenant Management"
         description={`${total} tenant${total !== 1 ? 's' : ''} on the platform`}
@@ -133,7 +140,9 @@ export default function PlatformTenantsPage() {
                   <Input
                     placeholder="e.g. KAV-EAST"
                     value={formData.code}
-                    onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, code: e.target.value.toUpperCase() })
+                    }
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -141,7 +150,9 @@ export default function PlatformTenantsPage() {
                   <Input
                     placeholder="e.g. kavango-east"
                     value={formData.slug}
-                    onChange={(e) => setFormData({ ...formData, slug: e.target.value.toLowerCase() })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, slug: e.target.value.toLowerCase() })
+                    }
                   />
                 </div>
               </div>
@@ -157,11 +168,11 @@ export default function PlatformTenantsPage() {
                   <option value="municipality">Municipality</option>
                 </StyledSelect>
               </div>
-              {createError && (
-                <p className="text-xs text-status-error-text">{createError}</p>
-              )}
+              {createError && <p className="text-status-error-text text-xs">{createError}</p>}
               <div className="flex justify-end gap-2">
-                <Button variant="secondary" size="sm" onClick={() => setShowCreate(false)}>Cancel</Button>
+                <Button variant="secondary" size="sm" onClick={() => setShowCreate(false)}>
+                  Cancel
+                </Button>
                 <Button
                   variant="primary"
                   size="sm"
@@ -179,12 +190,15 @@ export default function PlatformTenantsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+        <div className="relative max-w-sm flex-1">
+          <Search className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
           <Input
             placeholder="Search by name, code, or slug..."
             value={searchQuery}
-            onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1);
+            }}
             className="pl-9"
           />
         </div>
@@ -192,7 +206,10 @@ export default function PlatformTenantsPage() {
           {['', 'active', 'suspended', 'inactive'].map((s) => (
             <button
               key={s}
-              onClick={() => { setStatusFilter(s); setPage(1); }}
+              onClick={() => {
+                setStatusFilter(s);
+                setPage(1);
+              }}
               className={`rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
                 statusFilter === s
                   ? 'bg-brand-800 text-white'
@@ -203,14 +220,26 @@ export default function PlatformTenantsPage() {
             </button>
           ))}
         </div>
+        <ClientFilterReset
+          isFiltered={Boolean(searchQuery || statusFilter)}
+          onClear={() => {
+            setSearchQuery('');
+            setStatusFilter('');
+            setPage(1);
+          }}
+        />
       </div>
 
       {/* Error */}
       {error && (
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-status-error-text">{error instanceof Error ? error.message : 'Failed to load tenants'}</p>
-            <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2">Retry</Button>
+            <p className="text-status-error-text text-sm">
+              {error instanceof Error ? error.message : 'Failed to load tenants'}
+            </p>
+            <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2">
+              Retry
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -219,13 +248,16 @@ export default function PlatformTenantsPage() {
       {isLoading && (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 rounded-[8px] border border-border p-4 animate-pulse">
-              <div className="h-10 w-10 rounded-[8px] bg-muted shrink-0" />
+            <div
+              key={i}
+              className="border-border flex animate-pulse items-center gap-3 rounded-[8px] border p-4"
+            >
+              <div className="bg-muted h-10 w-10 shrink-0 rounded-[8px]" />
               <div className="flex-1 space-y-2">
-                <div className="h-4 w-48 rounded bg-muted" />
-                <div className="h-3 w-32 rounded bg-muted" />
+                <div className="bg-muted h-4 w-48 rounded" />
+                <div className="bg-muted h-3 w-32 rounded" />
               </div>
-              <div className="h-3 w-20 rounded bg-muted" />
+              <div className="bg-muted h-3 w-20 rounded" />
             </div>
           ))}
         </div>
@@ -236,7 +268,9 @@ export default function PlatformTenantsPage() {
         <EmptyState
           icon={<Building2 className="h-6 w-6" />}
           title="No tenants found"
-          description={searchQuery ? 'Try a different search term.' : 'Add your first tenant to get started.'}
+          description={
+            searchQuery ? 'Try a different search term.' : 'Add your first tenant to get started.'
+          }
         />
       )}
 
@@ -244,43 +278,51 @@ export default function PlatformTenantsPage() {
       {!isLoading && tenants.length > 0 && (
         <Card>
           <CardContent className="p-0">
-            <div className="divide-y divide-border">
+            <div className="divide-border divide-y">
               {tenants.map((t) => (
                 <div
                   key={t.id}
-                  className="flex items-center justify-between px-5 py-3.5 hover:bg-muted/50 transition-colors cursor-pointer"
+                  className="hover:bg-muted/50 flex cursor-pointer items-center justify-between px-5 py-3.5 transition-colors"
                   onClick={() => router.push(`/dashboard/platform/tenants/${t.id}`)}
                 >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="bg-brand-50 text-brand-700 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
                       <Building2 className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-ink-950 truncate">{t.name}</span>
-                        <Badge variant={
-                          t.status === 'active' ? 'success' :
-                          t.status === 'suspended' ? 'error' : 'cancelled'
-                        } size="sm">{t.status}</Badge>
+                        <span className="text-ink-950 truncate text-sm font-medium">{t.name}</span>
+                        <Badge
+                          variant={
+                            t.status === 'active'
+                              ? 'success'
+                              : t.status === 'suspended'
+                                ? 'error'
+                                : 'cancelled'
+                          }
+                          size="sm"
+                        >
+                          {t.status}
+                        </Badge>
                       </div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-xs font-mono text-ink-400">{t.code}</span>
-                        <span className="flex items-center gap-1 text-xs text-ink-500">
+                      <div className="mt-0.5 flex items-center gap-3">
+                        <span className="text-ink-400 font-mono text-xs">{t.code}</span>
+                        <span className="text-ink-500 flex items-center gap-1 text-xs">
                           <Users className="h-3 w-3" />
                           {t.memberCount}
                         </span>
                         {t.contactEmail && (
-                          <span className="text-xs text-ink-500">{t.contactEmail}</span>
+                          <span className="text-ink-500 text-xs">{t.contactEmail}</span>
                         )}
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="hidden sm:flex items-center gap-1 text-xs text-ink-500">
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-ink-500 hidden items-center gap-1 text-xs sm:flex">
                       <Clock className="h-3 w-3" />
                       {formatDate(t.createdAt)}
                     </span>
-                    <ChevronRight className="h-4 w-4 text-ink-400" />
+                    <ChevronRight className="text-ink-400 h-4 w-4" />
                   </div>
                 </div>
               ))}
@@ -292,10 +334,26 @@ export default function PlatformTenantsPage() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-xs text-ink-500">Page {page} of {totalPages} ({total} total)</p>
+          <p className="text-ink-500 text-xs">
+            Page {page} of {totalPages} ({total} total)
+          </p>
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
-            <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </Button>
           </div>
         </div>
       )}

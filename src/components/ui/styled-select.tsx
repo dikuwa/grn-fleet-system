@@ -105,22 +105,28 @@ const StyledSelect = React.forwardRef<HTMLButtonElement, StyledSelectProps>(
   ) => {
     const parsed = React.useMemo(() => parseOptions(children), [children]);
     const resolvedPlaceholder = placeholder || parsed.emptyLabel || 'Select an option';
-    const controlledProps =
-      value !== undefined
-        ? { value: String(value) }
-        : { defaultValue: defaultValue !== undefined ? String(defaultValue) : undefined };
+    const isControlled = value !== undefined;
+    const [internalValue, setInternalValue] = React.useState(() =>
+      defaultValue !== undefined ? String(defaultValue) : '',
+    );
+    const resolvedValue = isControlled ? String(value ?? '') : internalValue;
+    const showUnfilteredOption =
+      parsed.emptyLabel !== null ||
+      (typeof resolvedPlaceholder === 'string' && /^all\b/i.test(resolvedPlaceholder));
 
     return (
       <div className={cn('relative', wrapperClassName)}>
+        {name && <input type="hidden" name={name} value={resolvedValue} disabled={disabled} />}
         <SelectPrimitive.Root
-          {...controlledProps}
-          name={name}
+          value={resolvedValue}
           disabled={disabled}
           required={required}
           onValueChange={(nextValue) => {
+            const normalizedValue = nextValue === '__all_filters__' ? '' : nextValue;
+            if (!isControlled) setInternalValue(normalizedValue);
             onChange?.({
-              target: { value: nextValue },
-              currentTarget: { value: nextValue },
+              target: { value: normalizedValue },
+              currentTarget: { value: normalizedValue },
             } as React.ChangeEvent<HTMLSelectElement>);
           }}
         >
@@ -146,6 +152,14 @@ const StyledSelect = React.forwardRef<HTMLButtonElement, StyledSelectProps>(
               className="border-border bg-surface z-[100] max-h-80 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[10px] border p-1 shadow-lg"
             >
               <SelectPrimitive.Viewport className="max-h-72 scrollbar-thin overflow-y-auto">
+                {showUnfilteredOption && (
+                  <SelectPrimitive.Item
+                    value="__all_filters__"
+                    className="text-ink-700 data-[highlighted]:bg-muted data-[highlighted]:text-ink-950 relative flex cursor-default items-center rounded-[6px] py-2 pr-3 pl-8 text-sm outline-none select-none"
+                  >
+                    <SelectPrimitive.ItemText>{resolvedPlaceholder}</SelectPrimitive.ItemText>
+                  </SelectPrimitive.Item>
+                )}
                 {parsed.options.map((option) => (
                   <SelectOption key={option.value} option={option} />
                 ))}

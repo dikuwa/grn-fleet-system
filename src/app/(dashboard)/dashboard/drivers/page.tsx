@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Search, Car, User, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
+import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
 interface DriverListEntry {
   id: string;
@@ -58,14 +59,10 @@ export default function DriversPage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Driver Management' },
-      ]} />
-      <PageHeader
-        title="Driver Management"
-        description="View and manage all registered drivers"
-      >
+      <Breadcrumbs
+        items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Driver Management' }]}
+      />
+      <PageHeader title="Driver Management" description="View and manage all registered drivers">
         <Button variant="secondary" size="sm" onClick={() => fetchDrivers()} loading={isLoading}>
           <RefreshCw className="h-4 w-4" />
           Refresh
@@ -75,19 +72,28 @@ export default function DriversPage() {
       <Card>
         <CardContent className="pt-4">
           <div className="flex items-center gap-2">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+            <div className="relative max-w-md flex-1">
+              <Search className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
               <Input
                 placeholder="Search drivers by name or number..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSearch();
+                }}
                 className="pl-9"
               />
             </div>
             <Button variant="secondary" size="sm" onClick={handleSearch}>
               Search
             </Button>
+            <ClientFilterReset
+              isFiltered={Boolean(search)}
+              onClear={() => {
+                setSearch('');
+                fetchDrivers();
+              }}
+            />
           </div>
         </CardContent>
       </Card>
@@ -95,7 +101,7 @@ export default function DriversPage() {
       {error && (
         <Card>
           <CardContent className="pt-4">
-            <div className="flex items-center gap-2 text-status-error-text">
+            <div className="text-status-error-text flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
               <p className="text-sm">{error}</p>
             </div>
@@ -105,7 +111,7 @@ export default function DriversPage() {
 
       {isLoading && (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
+          <Loader2 className="text-ink-400 h-6 w-6 animate-spin" />
         </div>
       )}
 
@@ -113,10 +119,12 @@ export default function DriversPage() {
         <Card>
           <CardContent className="pt-4">
             <div className="flex flex-col items-center py-12 text-center">
-              <Car className="h-10 w-10 text-ink-300 mb-3" />
-              <p className="text-sm font-medium text-ink-700">No drivers found</p>
-              <p className="text-xs text-ink-500 mt-1">
-                {search ? 'Try adjusting your search term.' : 'Mark staff members as drivers in their employee profile.'}
+              <Car className="text-ink-300 mb-3 h-10 w-10" />
+              <p className="text-ink-700 text-sm font-medium">No drivers found</p>
+              <p className="text-ink-500 mt-1 text-xs">
+                {search
+                  ? 'Try adjusting your search term.'
+                  : 'Mark staff members as drivers in their employee profile.'}
               </p>
             </div>
           </CardContent>
@@ -130,33 +138,45 @@ export default function DriversPage() {
               <Card hover>
                 <CardContent className="py-3.5">
                   <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-50 text-sm font-bold text-brand-700">
-                        {d.firstName.charAt(0)}{d.lastName.charAt(0)}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="bg-brand-50 text-brand-700 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold">
+                        {d.firstName.charAt(0)}
+                        {d.lastName.charAt(0)}
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-ink-950 truncate">
+                          <p className="text-ink-950 truncate text-sm font-medium">
                             {d.firstName} {d.lastName}
                           </p>
                           <StatusBadge
-                            status={d.driverStatus === 'authorised' ? 'success' : d.driverStatus === 'suspended' ? 'pending' : 'error'}
+                            status={
+                              d.driverStatus === 'authorised'
+                                ? 'success'
+                                : d.driverStatus === 'suspended'
+                                  ? 'pending'
+                                  : 'error'
+                            }
                             label={d.driverStatus.charAt(0).toUpperCase() + d.driverStatus.slice(1)}
                           />
                         </div>
-                        <div className="flex items-center gap-3 text-xs text-ink-500 mt-0.5">
-                          <span className="flex items-center gap-1"><User className="h-3 w-3" />{d.employeeNumber}</span>
+                        <div className="text-ink-500 mt-0.5 flex items-center gap-3 text-xs">
+                          <span className="flex items-center gap-1">
+                            <User className="h-3 w-3" />
+                            {d.employeeNumber}
+                          </span>
                           {d.departmentName && <span>{d.departmentName}</span>}
                           {d.officeName && <span>{d.officeName}</span>}
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4 shrink-0">
+                    <div className="flex shrink-0 items-center gap-4">
                       <div className="text-right">
-                        <p className={`text-sm font-bold tabular-nums ${d.activeLicenceCount > 0 ? 'text-status-success-text' : 'text-status-error-text'}`}>
+                        <p
+                          className={`text-sm font-bold tabular-nums ${d.activeLicenceCount > 0 ? 'text-status-success-text' : 'text-status-error-text'}`}
+                        >
                           {d.activeLicenceCount}
                         </p>
-                        <p className="text-[10px] text-ink-400">Active Licences</p>
+                        <p className="text-ink-400 text-[10px]">Active Licences</p>
                       </div>
                       <Badge variant="default" size="sm">
                         {d.licenceCount} total

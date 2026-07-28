@@ -10,12 +10,19 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  CalendarDays, MapPin, Gauge, Plus, Search, Loader2, XCircle,
+  CalendarDays,
+  MapPin,
+  Gauge,
+  Plus,
+  Search,
+  Loader2,
+  XCircle,
   ArrowRight,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { StyledDateInput } from '@/components/ui/styled-select';
+import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
 interface ProgrammeActivity {
   id: string;
@@ -33,13 +40,16 @@ interface ProgrammeActivity {
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('en-NA', {
-    day: 'numeric', month: 'short', year: 'numeric',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
   });
 }
 
 function formatDateShort(d: string) {
   return new Date(d).toLocaleDateString('en-NA', {
-    day: 'numeric', month: 'short',
+    day: 'numeric',
+    month: 'short',
   });
 }
 
@@ -79,48 +89,55 @@ function CreateProgrammeDialog({
     onOpenChange(nextOpen);
   };
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim() || !startDate) return;
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!title.trim() || !startDate) return;
 
-    setIsSubmitting(true);
-    setError(null);
+      setIsSubmitting(true);
+      setError(null);
 
-    try {
-      const res = await fetch('/api/programmes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title.trim(),
-          description: description.trim() || undefined,
-          venue: venue.trim() || undefined,
-          startDate,
-          endDate: endDate || undefined,
-          estimatedKilometres: estimatedKm ? Number(estimatedKm) : undefined,
-        }),
-      });
+      try {
+        const res = await fetch('/api/programmes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: title.trim(),
+            description: description.trim() || undefined,
+            venue: venue.trim() || undefined,
+            startDate,
+            endDate: endDate || undefined,
+            estimatedKilometres: estimatedKm ? Number(estimatedKm) : undefined,
+          }),
+        });
 
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to create programme');
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to create programme');
 
-      // Reset form
-      setTitle('');
-      setDescription('');
-      setVenue('');
-      setStartDate('');
-      setEndDate('');
-      setEstimatedKm('');
-      onOpenChange(false);
-      onCreated();
-      toast({ title: 'Programme Created', description: `${title.trim()} has been added.`, variant: 'success' });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to create programme';
-      setError(msg);
-      toast({ title: 'Creation Failed', description: msg, variant: 'error' });
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [title, description, venue, startDate, endDate, estimatedKm, onOpenChange, onCreated]);
+        // Reset form
+        setTitle('');
+        setDescription('');
+        setVenue('');
+        setStartDate('');
+        setEndDate('');
+        setEstimatedKm('');
+        onOpenChange(false);
+        onCreated();
+        toast({
+          title: 'Programme Created',
+          description: `${title.trim()} has been added.`,
+          variant: 'success',
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to create programme';
+        setError(msg);
+        toast({ title: 'Creation Failed', description: msg, variant: 'error' });
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [title, description, venue, startDate, endDate, estimatedKm, onOpenChange, onCreated],
+  );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -141,7 +158,7 @@ function CreateProgrammeDialog({
           <div className="space-y-1.5">
             <Label>Description</Label>
             <textarea
-              className="min-h-[80px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-y"
+              className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 min-h-[80px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
               placeholder="Describe the activity, objectives, and expected outcomes..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -189,7 +206,7 @@ function CreateProgrammeDialog({
 
           {error && (
             <div className="flex items-start gap-2 rounded-[8px] border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-              <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>
             </div>
           )}
@@ -244,10 +261,9 @@ export default function ProgrammesPage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Programmes of Activities' },
-      ]} />
+      <Breadcrumbs
+        items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Programmes of Activities' }]}
+      />
       <PageHeader
         title="Programmes of Activities"
         description={`${total} programme${total !== 1 ? 's' : ''} across all transport requests`}
@@ -260,17 +276,32 @@ export default function ProgrammesPage() {
       <CreateProgrammeDialog
         open={showCreate}
         onOpenChange={setShowCreate}
-        onCreated={() => { refetch(); setPage(1); }}
+        onCreated={() => {
+          refetch();
+          setPage(1);
+        }}
       />
 
       {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-        <Input
-          placeholder="Search programmes..."
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="pl-9 h-10"
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full max-w-sm">
+          <Search className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+          <Input
+            placeholder="Search programmes..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            className="h-10 pl-9"
+          />
+        </div>
+        <ClientFilterReset
+          isFiltered={Boolean(search)}
+          onClear={() => {
+            setSearch('');
+            setPage(1);
+          }}
         />
       </div>
 
@@ -278,8 +309,12 @@ export default function ProgrammesPage() {
       {error && (
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-status-error-text">{error instanceof Error ? error.message : 'Failed to load'}</p>
-            <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2">Retry</Button>
+            <p className="text-status-error-text text-sm">
+              {error instanceof Error ? error.message : 'Failed to load'}
+            </p>
+            <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2">
+              Retry
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -287,7 +322,7 @@ export default function ProgrammesPage() {
       {/* Loading */}
       {isLoading && (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
+          <Loader2 className="text-ink-400 h-6 w-6 animate-spin" />
         </div>
       )}
 
@@ -296,8 +331,14 @@ export default function ProgrammesPage() {
         <EmptyState
           icon={<CalendarDays className="h-6 w-6" />}
           title={search ? 'No programmes match your search' : 'No programmes yet'}
-          description={search ? 'Try a different search term.' : 'Create your first programme of activities to get started.'}
-          action={search ? undefined : { label: 'New Programme', onClick: () => setShowCreate(true) }}
+          description={
+            search
+              ? 'No matching records found. Clear filters to view all records.'
+              : 'Create your first programme of activities to get started.'
+          }
+          action={
+            search ? undefined : { label: 'New Programme', onClick: () => setShowCreate(true) }
+          }
         />
       )}
 
@@ -308,63 +349,65 @@ export default function ProgrammesPage() {
             <Link
               key={p.id}
               href={`/dashboard/requests/${p.requestId}`}
-              className="group rounded-[12px] border border-border bg-surface p-5 hover:border-brand-200 hover:shadow-sm transition-all"
+              className="group border-border bg-surface hover:border-brand-200 rounded-[12px] border p-5 transition-all hover:shadow-sm"
             >
               {/* Header */}
-              <div className="flex items-start justify-between gap-2 mb-3">
+              <div className="mb-3 flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <h3 className="text-sm font-semibold text-ink-950 group-hover:text-brand-700 transition-colors truncate">
+                  <h3 className="text-ink-950 group-hover:text-brand-700 truncate text-sm font-semibold transition-colors">
                     {p.title}
                   </h3>
-                  <p className="text-xs text-ink-500 mt-0.5">
-                    {p.requestReference}
-                  </p>
+                  <p className="text-ink-500 mt-0.5 text-xs">{p.requestReference}</p>
                 </div>
-                <Badge variant={
-                  p.requestStatus === 'draft' ? 'pending' :
-                  p.requestStatus === 'submitted' ? 'info' :
-                  p.requestStatus === 'closed' ? 'success' : 'info'
-                } size="sm" className="shrink-0">
+                <Badge
+                  variant={
+                    p.requestStatus === 'draft'
+                      ? 'pending'
+                      : p.requestStatus === 'submitted'
+                        ? 'info'
+                        : p.requestStatus === 'closed'
+                          ? 'success'
+                          : 'info'
+                  }
+                  size="sm"
+                  className="shrink-0"
+                >
                   {p.requestStatus.replace(/_/g, ' ')}
                 </Badge>
               </div>
 
               {/* Description */}
               {p.description && (
-                <p className="text-xs text-ink-500 line-clamp-2 mb-3">
-                  {p.description}
-                </p>
+                <p className="text-ink-500 mb-3 line-clamp-2 text-xs">{p.description}</p>
               )}
 
               {/* Details */}
-              <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-ink-500">
+              <div className="text-ink-500 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
                 <span className="flex items-center gap-1">
-                  <CalendarDays className="h-3.5 w-3.5 text-ink-400" />
+                  <CalendarDays className="text-ink-400 h-3.5 w-3.5" />
                   {formatDateShort(p.startDate)}
-                  {p.endDate !== p.startDate && (
-                    <> — {formatDateShort(p.endDate)}</>
-                  )}
+                  {p.endDate !== p.startDate && <> — {formatDateShort(p.endDate)}</>}
                 </span>
                 {p.venue && (
                   <span className="flex items-center gap-1">
-                    <MapPin className="h-3.5 w-3.5 text-ink-400" />
+                    <MapPin className="text-ink-400 h-3.5 w-3.5" />
                     {p.venue}
                   </span>
                 )}
                 {p.estimatedKilometres && (
                   <span className="flex items-center gap-1">
-                    <Gauge className="h-3.5 w-3.5 text-ink-400" />
+                    <Gauge className="text-ink-400 h-3.5 w-3.5" />
                     {p.estimatedKilometres} km
                   </span>
                 )}
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
-                <span className="text-[11px] text-ink-400">
+              <div className="border-border mt-4 flex items-center justify-between border-t pt-3">
+                <span className="text-ink-400 text-[11px]">
                   {p.requestScope === 'regional' ? 'Regional' : 'National'}
                 </span>
-                <span className="flex items-center gap-1 text-xs font-medium text-brand-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                <span className="text-brand-700 flex items-center gap-1 text-xs font-medium opacity-0 transition-opacity group-hover:opacity-100">
                   View Request <ArrowRight className="h-3 w-3" />
                 </span>
               </div>
@@ -376,7 +419,7 @@ export default function ProgrammesPage() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-xs text-ink-500">
+          <p className="text-ink-500 text-xs">
             Page {page} of {totalPages} ({total} total)
           </p>
           <div className="flex gap-2">

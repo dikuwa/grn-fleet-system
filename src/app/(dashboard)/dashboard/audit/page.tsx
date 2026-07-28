@@ -26,6 +26,7 @@ import {
   WifiOff,
   RefreshCw,
 } from 'lucide-react';
+import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
 type EventType =
   | 'all'
@@ -154,7 +155,13 @@ export default function AuditLogPage() {
 
     const apiEvents = (json.data?.events || []).map((e: Record<string, string>) => ({
       id: e.id,
-      timestamp: new Date(e.createdAt).toLocaleString('en-NA', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date(e.createdAt).toLocaleString('en-NA', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
       eventType: (e.eventType || 'request') as EventType,
       action: e.action || 'Event recorded',
       actor: e.actorUserId || 'System',
@@ -170,7 +177,7 @@ export default function AuditLogPage() {
     }
     setConnectionError(false);
     setTotal(json.data?.total || 0);
-    setOffset((prev) => append ? prev + apiEvents.length : apiEvents.length);
+    setOffset((prev) => (append ? prev + apiEvents.length : apiEvents.length));
   };
 
   // Fetch on mount and when event type / debounced search changes
@@ -182,12 +189,12 @@ export default function AuditLogPage() {
       setOffset(0);
       setEvents([]);
       void fetchEvents({ eventType: selectedType, search: debouncedSearch || undefined })
-      .catch(() => {
-        if (!cancelled) setConnectionError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
+        .catch(() => {
+          if (!cancelled) setConnectionError(true);
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoading(false);
+        });
     }, 0);
     return () => {
       cancelled = true;
@@ -198,7 +205,11 @@ export default function AuditLogPage() {
   const handleLoadMore = async () => {
     setLoadingMore(true);
     try {
-      await fetchEvents({ append: true, eventType: selectedType, search: debouncedSearch || undefined });
+      await fetchEvents({
+        append: true,
+        eventType: selectedType,
+        search: debouncedSearch || undefined,
+      });
     } catch {
       setConnectionError(true);
     } finally {
@@ -224,18 +235,19 @@ export default function AuditLogPage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Audit Log' },
-      ]} />
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Audit Log' }]} />
       <PageHeader
         title="Audit Log"
         description="Immutable event trail with cryptographic hash-chain verification"
       >
         <div className="flex items-center gap-2">
-          <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-            connectionError ? 'bg-status-error-bg text-status-error-text' : 'bg-status-success-bg text-status-success-text'
-          }`}>
+          <div
+            className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+              connectionError
+                ? 'bg-status-error-bg text-status-error-text'
+                : 'bg-status-success-bg text-status-success-text'
+            }`}
+          >
             {connectionError ? <WifiOff className="h-3 w-3" /> : <Wifi className="h-3 w-3" />}
             {connectionError ? 'Connection error' : 'Live Data'}
           </div>
@@ -259,20 +271,23 @@ export default function AuditLogPage() {
         <Card className="border-brand-200 bg-brand-50/50">
           <CardContent className="pt-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-100 text-brand-700">
+              <div className="bg-brand-100 text-brand-700 flex h-10 w-10 items-center justify-center rounded-lg">
                 <Shield className="h-5 w-5" />
               </div>
               <div className="flex-1">
-                <h3 className="text-sm font-semibold text-brand-900 dark:text-brand-700">Hash-chain metadata</h3>
-                <p className="mt-1 text-xs text-brand-700">
-                  Audit records include the stored previous and event hashes needed for independent integrity verification.
+                <h3 className="text-brand-900 dark:text-brand-700 text-sm font-semibold">
+                  Hash-chain metadata
+                </h3>
+                <p className="text-brand-700 mt-1 text-xs">
+                  Audit records include the stored previous and event hashes needed for independent
+                  integrity verification.
                 </p>
                 <div className="mt-3 flex items-center gap-4 text-xs">
                   <span className="flex items-center gap-1.5 text-green-700">
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     Metadata recorded
                   </span>
-                  <span className="text-brand-600">Total events: {events.length}</span>
+                  <span className="text-brand-600">Total events: {total}</span>
                 </div>
               </div>
             </div>
@@ -301,13 +316,24 @@ export default function AuditLogPage() {
               ))}
             </div>
 
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500" />
-              <Input
-                placeholder="Search events by action, actor, entity, or details..."
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                className="pl-9"
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[220px] flex-1">
+                <Search className="text-ink-500 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+                <Input
+                  placeholder="Search events by action, actor, entity, or details..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <ClientFilterReset
+                isFiltered={selectedType !== 'all' || Boolean(searchQuery)}
+                onClear={() => {
+                  if (searchTimer.current) clearTimeout(searchTimer.current);
+                  setSelectedType('all');
+                  setSearchQuery('');
+                  setDebouncedSearch('');
+                }}
               />
             </div>
           </div>
@@ -318,7 +344,11 @@ export default function AuditLogPage() {
       {filteredEvents.length === 0 ? (
         <EmptyState
           title="No events found"
-          description="No audit events match your current filters. Try adjusting the search or filter criteria."
+          description={
+            selectedType !== 'all' || searchQuery
+              ? 'No matching records found. Clear filters to view all records.'
+              : 'No audit events have been recorded yet.'
+          }
           icon={<History className="h-6 w-6" />}
         />
       ) : (
@@ -336,15 +366,15 @@ export default function AuditLogPage() {
                         {eventIcons[event.eventType]}
                       </div>
                       {i < filteredEvents.length - 1 && (
-                        <div className="mt-1 h-full w-px bg-border" />
+                        <div className="bg-border mt-1 h-full w-px" />
                       )}
                     </div>
 
                     <div className="min-w-0 flex-1 pb-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-medium text-ink-950">{event.action}</p>
+                        <p className="text-ink-950 text-sm font-medium">{event.action}</p>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-ink-500">{event.timestamp}</span>
+                          <span className="text-ink-500 text-xs">{event.timestamp}</span>
                           <Badge
                             variant={
                               sevLabel === 'critical'
@@ -360,19 +390,19 @@ export default function AuditLogPage() {
                         </div>
                       </div>
 
-                      <p className="mt-1 text-xs text-ink-500">{event.details}</p>
+                      <p className="text-ink-500 mt-1 text-xs">{event.details}</p>
 
                       <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-                        <span className="flex items-center gap-1 text-ink-500">
+                        <span className="text-ink-500 flex items-center gap-1">
                           <UserCheck className="h-3 w-3" />
                           {event.actor}
                         </span>
-                        <span className="flex items-center gap-1 text-ink-500">
+                        <span className="text-ink-500 flex items-center gap-1">
                           <FileText className="h-3 w-3" />
                           {event.entity}
                         </span>
                         {showHashChain && (
-                          <span className="flex items-center gap-1 font-mono text-[10px] text-ink-400">
+                          <span className="text-ink-400 flex items-center gap-1 font-mono text-[10px]">
                             <Hash className="h-3 w-3" />
                             {`evt_${event.id.slice(0, 8)}...`}
                           </span>
@@ -386,13 +416,25 @@ export default function AuditLogPage() {
           })}
 
           <div className="flex items-center justify-center pt-2">
-            <div className="text-xs text-ink-400 mr-3">
+            <div className="text-ink-400 mr-3 text-xs">
               Showing {events.length} of {total} events
             </div>
-            <Button variant="secondary" size="sm" onClick={handleLoadMore} loading={loadingMore} disabled={events.length >= total || loadingMore}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleLoadMore}
+              loading={loadingMore}
+              disabled={events.length >= total || loadingMore}
+            >
               Load More Events
             </Button>
-            <Button variant="secondary" size="sm" onClick={handleRefresh} loading={isLoading} className="ml-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleRefresh}
+              loading={isLoading}
+              className="ml-2"
+            >
               <RefreshCw className="h-3.5 w-3.5" />
             </Button>
           </div>

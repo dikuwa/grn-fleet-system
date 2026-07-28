@@ -33,65 +33,165 @@ export interface StatusConfig {
  */
 export const REQUEST_STATUSES: Record<string, StatusConfig> = {
   // --- Pre-submission ---
-  draft:       { label: 'Draft',                      variant: 'secondary',  order: 1 },
+  draft: { label: 'Draft', variant: 'secondary', order: 1 },
 
   // --- Submission & approval pipeline ---
-  submitted:       { label: 'Submitted',              variant: 'pending',    order: 2,
-    description: 'Awaiting supervisor review' },
-  supervisor_review:       { label: 'Supervisor Review',  variant: 'pending',    order: 3,
-    description: 'Being reviewed by the immediate supervisor' },
-  supervisor_rejected:     { label: 'Supervisor Rejected', variant: 'error',     order: 4,
-    description: 'Returned by supervisor — please revise and resubmit' },
-  transport_review:        { label: 'Transport Review',   variant: 'pending',    order: 5,
-    description: 'Being reviewed by the transport office' },
-  vehicle_allocated:       { label: 'Vehicle Allocated',  variant: 'info',      order: 6,
-    description: 'A vehicle has been assigned' },
-  trip_authority_prepared: { label: 'Trip Authority Prepared', variant: 'info',  order: 7 },
+  submitted: {
+    label: 'Submitted',
+    variant: 'pending',
+    order: 2,
+    description: 'Awaiting supervisor review',
+  },
+  supervisor_review: {
+    label: 'Supervisor Review',
+    variant: 'pending',
+    order: 3,
+    description: 'Being reviewed by the immediate supervisor',
+  },
+  supervisor_rejected: {
+    label: 'Supervisor Rejected',
+    variant: 'error',
+    order: 4,
+    description: 'Returned by supervisor — please revise and resubmit',
+  },
+  transport_review: {
+    label: 'Transport Review',
+    variant: 'pending',
+    order: 5,
+    description: 'Being reviewed by the transport office',
+  },
+  vehicle_allocated: {
+    label: 'Vehicle Allocated',
+    variant: 'info',
+    order: 6,
+    description: 'A vehicle has been assigned',
+  },
+  trip_authority_prepared: { label: 'Trip Authority Prepared', variant: 'info', order: 7 },
 
   // --- Release & authorisation ---
-  release_pending:              { label: 'Release Pending',             variant: 'pending', order: 8,
-    description: 'Awaiting administrative release' },
-  administratively_released:    { label: 'Administratively Released',  variant: 'info',    order: 9 },
-  final_authorisation_pending:  { label: 'Final Authorisation Pending', variant: 'pending', order: 10 },
-  authorised:                   { label: 'Authorised',                  variant: 'success', order: 11,
-    description: 'Trip has been fully authorised' },
-  driver_acknowledgement_pending: { label: 'Driver Acknowledgment Pending', variant: 'pending', order: 12 },
-  ready_for_issue:              { label: 'Ready for Issue',            variant: 'info',    order: 13 },
-  vehicle_issued:               { label: 'Vehicle Issued',              variant: 'info',    order: 14,
-    description: 'Vehicle has been physically issued to the driver' },
+  release_pending: {
+    label: 'Release Pending',
+    variant: 'pending',
+    order: 8,
+    description: 'Awaiting administrative release',
+  },
+  administratively_released: { label: 'Administratively Released', variant: 'info', order: 9 },
+  final_authorisation_pending: {
+    label: 'Final Authorisation Pending',
+    variant: 'pending',
+    order: 10,
+  },
+  authorised: {
+    label: 'Authorised',
+    variant: 'success',
+    order: 11,
+    description: 'Trip has been fully authorised',
+  },
+  driver_acknowledgement_pending: {
+    label: 'Driver Acknowledgment Pending',
+    variant: 'pending',
+    order: 12,
+  },
+  ready_for_issue: { label: 'Ready for Issue', variant: 'info', order: 13 },
+  vehicle_issued: {
+    label: 'Vehicle Issued',
+    variant: 'info',
+    order: 14,
+    description: 'Vehicle has been physically issued to the driver',
+  },
 
   // --- Trip in progress & return ---
-  in_progress:  { label: 'In Progress',               variant: 'pending', order: 15 },
-  return_due:   { label: 'Return Due',                variant: 'warning', order: 16,
-    description: 'Trip should have been returned' },
-  return_inspection:  { label: 'Return Inspection',   variant: 'pending', order: 17,
-    description: 'Awaiting return inspection' },
-  closure_review:     { label: 'Closure Review',      variant: 'pending', order: 18,
-    description: 'Being reviewed for closure' },
-  closed:       { label: 'Closed',                    variant: 'secondary', order: 19,
-    description: 'Trip has been completed and closed' },
-  cancelled:    { label: 'Cancelled',                 variant: 'error',    order: 20 },
+  in_progress: { label: 'In Progress', variant: 'pending', order: 15 },
+  return_due: {
+    label: 'Return Due',
+    variant: 'warning',
+    order: 16,
+    description: 'Trip should have been returned',
+  },
+  return_inspection: {
+    label: 'Return Inspection',
+    variant: 'pending',
+    order: 17,
+    description: 'Awaiting return inspection',
+  },
+  closure_review: {
+    label: 'Closure Review',
+    variant: 'pending',
+    order: 18,
+    description: 'Being reviewed for closure',
+  },
+  closed: {
+    label: 'Closed',
+    variant: 'secondary',
+    order: 19,
+    description: 'Trip has been completed and closed',
+  },
+  cancelled: { label: 'Cancelled', variant: 'error', order: 20 },
 
   // --- Fallback / legacy ---
-  rejected:     { label: 'Rejected',                  variant: 'error',    order: 21, description: 'Request has been rejected' },
-  returned:     { label: 'Returned for Revision',     variant: 'warning',  order: 4.5,
-    description: 'Request has been returned for corrections' },
-  approved:     { label: 'Approved',                  variant: 'success',  order: 11,
-    description: 'Request has been approved' },
+  rejected: {
+    label: 'Rejected',
+    variant: 'error',
+    order: 21,
+    description: 'Request has been rejected',
+  },
+  returned: {
+    label: 'Returned for Revision',
+    variant: 'warning',
+    order: 4.5,
+    description: 'Request has been returned for corrections',
+  },
+  approved: {
+    label: 'Approved',
+    variant: 'success',
+    order: 11,
+    description: 'Request has been approved',
+  },
 };
+
+export const REQUEST_STATUS_GROUPS = {
+  pendingApproval: [
+    'submitted',
+    'supervisor_review',
+    'transport_review',
+    'release_pending',
+    'final_authorisation_pending',
+    'driver_acknowledgement_pending',
+  ],
+  active: [
+    'vehicle_allocated',
+    'trip_authority_prepared',
+    'administratively_released',
+    'authorised',
+    'approved',
+    'ready_for_issue',
+    'vehicle_issued',
+    'in_progress',
+    'return_due',
+    'return_inspection',
+    'closure_review',
+  ],
+  closed: ['closed'],
+} as const;
 
 // ---------------------------------------------------------------------------
 // Trip statuses (operational)
 // ---------------------------------------------------------------------------
 
 export const TRIP_STATUSES: Record<string, StatusConfig> = {
-  pending:             { label: 'Pending',             variant: 'secondary', order: 1 },
-  in_progress:        { label: 'In Progress',          variant: 'pending',  order: 2 },
-  return_due:         { label: 'Return Due',           variant: 'warning',  order: 3 },
-  return_inspection:  { label: 'Return Inspection',    variant: 'pending',  order: 4 },
-  closure_review:     { label: 'Closure Review',       variant: 'pending',  order: 5 },
-  closed:             { label: 'Closed',               variant: 'success',  order: 6 },
+  pending: { label: 'Pending', variant: 'secondary', order: 1 },
+  in_progress: { label: 'In Progress', variant: 'pending', order: 2 },
+  return_due: { label: 'Return Due', variant: 'warning', order: 3 },
+  return_inspection: { label: 'Return Inspection', variant: 'pending', order: 4 },
+  closure_review: { label: 'Closure Review', variant: 'pending', order: 5 },
+  closed: { label: 'Closed', variant: 'success', order: 6 },
 };
+
+export const TRIP_STATUS_GROUPS = {
+  active: ['pending', 'in_progress'],
+  returnDue: ['return_due'],
+  closed: ['closed'],
+} as const;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,7 +203,14 @@ export const TRIP_STATUSES: Record<string, StatusConfig> = {
  */
 export function statusConfig(status: string | null | undefined): StatusConfig {
   if (!status) return { label: 'Unknown', variant: 'secondary', order: 999 };
-  return REQUEST_STATUSES[status] ?? TRIP_STATUSES[status] ?? { label: status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()), variant: 'secondary', order: 999 };
+  return (
+    REQUEST_STATUSES[status] ??
+    TRIP_STATUSES[status] ?? {
+      label: status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      variant: 'secondary',
+      order: 999,
+    }
+  );
 }
 
 /**
@@ -144,8 +251,10 @@ export function workflowStepToStatus(
     5: 'final_authorisation_pending',
     6: 'driver_acknowledgement_pending',
   };
-  return (_scope === 'national' ? NATIONAL_MAP[stepOrder] : REGIONAL_MAP[stepOrder])
-    ?? `step_${stepOrder}`;
+  return (
+    (_scope === 'national' ? NATIONAL_MAP[stepOrder] : REGIONAL_MAP[stepOrder]) ??
+    `step_${stepOrder}`
+  );
 }
 
 /**
@@ -167,11 +276,17 @@ export function vehicleIssuedStatus(): string {
  */
 export function statusColour(variant: StatusConfig['variant']): string {
   switch (variant) {
-    case 'success': return '#065F46';
-    case 'error':   return '#991B1B';
-    case 'warning': return '#92400E';
-    case 'pending': return '#1E40AF';
-    case 'info':    return '#1F4E8C';
-    default:        return '#4B5563';
+    case 'success':
+      return '#065F46';
+    case 'error':
+      return '#991B1B';
+    case 'warning':
+      return '#92400E';
+    case 'pending':
+      return '#1E40AF';
+    case 'info':
+      return '#1F4E8C';
+    default:
+      return '#4B5563';
   }
 }

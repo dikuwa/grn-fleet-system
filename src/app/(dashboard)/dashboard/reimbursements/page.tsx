@@ -9,22 +9,34 @@ import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { Database, CreditCard, Search, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Database, CreditCard, ChevronRight, ChevronLeft } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import Link from 'next/link';
 import { getServerSession } from '@/lib/session';
+import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
+import { numericCount } from '@/lib/statistics';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
 const REIMBURSEMENT_STATE_LABELS: Record<string, string> = {
-  pending: 'Pending', approved: 'Approved', paid: 'Paid', rejected: 'Rejected',
+  pending: 'Pending',
+  approved: 'Approved',
+  paid: 'Paid',
+  rejected: 'Rejected',
 };
 
-const REIMBURSEMENT_STATE_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
-  pending: 'pending', approved: 'info', paid: 'success', rejected: 'error',
+const REIMBURSEMENT_STATE_VARIANTS: Record<
+  string,
+  'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'
+> = {
+  pending: 'pending',
+  approved: 'info',
+  paid: 'success',
+  rejected: 'error',
 };
 
 async function fetchReimbursements(sp: Record<string, string | undefined>, tenantId: string) {
@@ -32,9 +44,11 @@ async function fetchReimbursements(sp: Record<string, string | undefined>, tenan
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
-  const state = sp.state?.trim();
+  const state = normalizeOptionalFilter(sp.state);
 
-  const conditions: SQL[] = [eq(employees.tenantId, tenantId)];
+  const baseConditions: SQL[] = [eq(employees.tenantId, tenantId)];
+  const baseWhere = and(...baseConditions);
+  const conditions = [...baseConditions];
 
   if (state) {
     conditions.push(eq(reimbursements.state, state));
@@ -42,7 +56,7 @@ async function fetchReimbursements(sp: Record<string, string | undefined>, tenan
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, totalResult] = await Promise.all([
+  const [rows, totalResult, metricResult] = await Promise.all([
     db
       .select({
         id: reimbursements.id,
@@ -67,22 +81,33 @@ async function fetchReimbursements(sp: Record<string, string | undefined>, tenan
       .from(reimbursements)
       .innerJoin(employees, eq(reimbursements.claimantEmployeeId, employees.id))
       .where(where),
+    db
+      .select({
+        total: sql<number>`count(*)`,
+        amount: sql<string>`coalesce(sum(${reimbursements.amount}), 0)`,
+        pending: sql<number>`count(*) filter (where ${reimbursements.state} = 'pending')`,
+      })
+      .from(reimbursements)
+      .innerJoin(employees, eq(reimbursements.claimantEmployeeId, employees.id))
+      .where(baseWhere),
   ]);
 
   const totalCount = Number(totalResult[0]?.count ?? 0);
   const totalPages = Math.ceil(totalCount / limit);
-  const totalAmount = rows.reduce((sum, r) => sum + Number(r.amount), 0);
-  const pendingCount = rows.filter((r) => r.state === 'pending').length;
+  const metrics = metricResult[0];
 
-  return { rows, totalCount, totalPages, page, totalAmount, pendingCount, filters: { state } };
-}
-
-function buildPageUrl(base: string, params: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value) sp.set(key, value);
-  }
-  return sp.toString() ? `${base}?${sp.toString()}` : base;
+  return {
+    rows,
+    totalCount,
+    totalPages,
+    page,
+    metrics: {
+      total: numericCount(metrics?.total),
+      amount: numericCount(metrics?.amount),
+      pending: numericCount(metrics?.pending),
+    },
+    filters: { state },
+  };
 }
 
 export default async function ReimbursementsPage({ searchParams }: PageProps) {
@@ -93,7 +118,9 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Reimbursements' }]} />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Reimbursements' }]}
+        />
         <PageHeader title="Reimbursements" description="Manage personal fuel expense claims" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" />
       </div>
@@ -107,7 +134,9 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
     console.error('Reimbursements query failed:', error);
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Reimbursements' }]} />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Reimbursements' }]}
+        />
         <PageHeader title="Reimbursements" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Reimbursements" />
       </div>
@@ -116,55 +145,103 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Reimbursements' }]} />
+      <Breadcrumbs
+        items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Reimbursements' }]}
+      />
       <PageHeader title="Reimbursements" description="Manage personal fuel expense claims" />
 
       {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{result.totalCount}</p><p className="text-xs text-ink-500">Total Claims</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-pending-text">{result.pendingCount}</p><p className="text-xs text-ink-500">Pending</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{formatCurrency(result.totalAmount)}</p><p className="text-xs text-ink-500">Total Amount</p></CardContent></Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-ink-950 text-2xl font-[650] tabular-nums">{result.metrics.total}</p>
+            <p className="text-ink-500 text-xs">Total Claims</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
+              {result.metrics.pending}
+            </p>
+            <p className="text-ink-500 text-xs">Pending</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+              {formatCurrency(result.metrics.amount)}
+            </p>
+            <p className="text-ink-500 text-xs">Total Amount</p>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
+          <FilterToolbar
+            resetHref="/dashboard/reimbursements"
+            isFiltered={hasActiveFilters(result.filters)}
+          >
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
-              <StyledSelect name="state" defaultValue={result.filters.state ?? ''} placeholder="All Statuses">
-                {Object.entries(REIMBURSEMENT_STATE_LABELS).map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
+              <StyledSelect
+                name="state"
+                defaultValue={result.filters.state ?? ''}
+                placeholder="All Statuses"
+              >
+                {Object.entries(REIMBURSEMENT_STATE_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>
+                    {l}
+                  </option>
+                ))}
               </StyledSelect>
             </div>
-            <Button variant="primary" size="sm" type="submit"><Search className="h-4 w-4" /> Filter</Button>
-          </form>
+          </FilterToolbar>
         </CardContent>
       </Card>
 
       {/* Reimbursement List */}
       {result.rows.length === 0 ? (
-        <EmptyState icon={<CreditCard className="h-8 w-8" />} title="No reimbursements found" description="No personal fuel expense claims have been submitted." />
+        <EmptyState
+          icon={<CreditCard className="h-8 w-8" />}
+          title="No reimbursements found"
+          description={
+            hasActiveFilters(result.filters)
+              ? 'No matching records found. Clear filters to view all records.'
+              : 'No personal fuel expense claims have been submitted.'
+          }
+        />
       ) : (
         <div className="space-y-3">
           {result.rows.map((r) => (
-            <Link key={r.id} href={`/dashboard/fuel/${r.id}`} className="block rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm">
+            <Link
+              key={r.id}
+              href={`/dashboard/fuel/${r.id}`}
+              className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
+            >
               <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] bg-status-pending-bg text-status-pending-text">
+                <div className="flex min-w-0 items-center gap-4">
+                  <div className="bg-status-pending-bg text-status-pending-text flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px]">
                     <CreditCard className="h-6 w-6" />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-[650] text-ink-950">{r.claimantFirstName} {r.claimantLastName}</p>                        <StatusBadgeWithIcon status={r.state} />
+                      <p className="text-ink-950 text-sm font-[650]">
+                        {r.claimantFirstName} {r.claimantLastName}
+                      </p>{' '}
+                      <StatusBadgeWithIcon status={r.state} />
                     </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
+                    <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                       {r.licenceNumber && <span className="tabular-nums">{r.licenceNumber}</span>}
                       <span>{formatDate(r.createdAt)}</span>
                     </div>
                   </div>
                 </div>
-                <div className="text-right shrink-0">
-                  <p className="text-sm font-[650] tabular-nums text-ink-950">{formatCurrency(Number(r.amount))}</p>
+                <div className="shrink-0 text-right">
+                  <p className="text-ink-950 text-sm font-[650] tabular-nums">
+                    {formatCurrency(Number(r.amount))}
+                  </p>
                 </div>
               </div>
             </Link>
@@ -174,11 +251,33 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
 
       {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <p className="text-xs text-ink-500">Page {result.page} of {result.totalPages} ({result.totalCount} claims)</p>
+        <div className="border-border flex items-center justify-between border-t pt-4">
+          <p className="text-ink-500 text-xs">
+            Page {result.page} of {result.totalPages} ({result.totalCount} claims)
+          </p>
           <div className="flex items-center gap-2">
-            {result.page > 1 && <Button variant="secondary" size="sm" asChild><Link href={buildPageUrl('/dashboard/reimbursements', { ...sp, page: String(result.page - 1) })}><ChevronLeft className="h-3 w-3" /> Previous</Link></Button>}
-            {result.page < result.totalPages && <Button variant="secondary" size="sm" asChild><Link href={buildPageUrl('/dashboard/reimbursements', { ...sp, page: String(result.page + 1) })}>Next <ChevronRight className="h-3 w-3" /></Link></Button>}
+            {result.page > 1 && (
+              <Button variant="secondary" size="sm" asChild>
+                <Link
+                  href={buildFilterUrl('/dashboard/reimbursements', sp, {
+                    page: String(result.page - 1),
+                  })}
+                >
+                  <ChevronLeft className="h-3 w-3" /> Previous
+                </Link>
+              </Button>
+            )}
+            {result.page < result.totalPages && (
+              <Button variant="secondary" size="sm" asChild>
+                <Link
+                  href={buildFilterUrl('/dashboard/reimbursements', sp, {
+                    page: String(result.page + 1),
+                  })}
+                >
+                  Next <ChevronRight className="h-3 w-3" />
+                </Link>
+              </Button>
+            )}
           </div>
         </div>
       )}

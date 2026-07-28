@@ -10,20 +10,15 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { Database } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
-import {
-  AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  Car,
-  CheckCircle2,
-  Eye,
-} from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Car, CheckCircle2, Eye } from 'lucide-react';
 import Link from 'next/link';
 import { DefectResolveButton } from './DefectResolveButton';
 import { getServerSession } from '@/lib/session';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
 import { canPerformDashboardAction } from '@/lib/dashboard-access';
+import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
+import { numericCount } from '@/lib/statistics';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -48,10 +43,12 @@ async function fetchDefects(sp: Record<string, string | undefined>, tenantId: st
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
-  const severity = sp.severity?.trim();
-  const status = sp.status?.trim();
+  const severity = normalizeOptionalFilter(sp.severity);
+  const status = normalizeOptionalFilter(sp.status);
 
-  const conditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
+  const baseConditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
+  const baseWhere = and(...baseConditions);
+  const conditions = [...baseConditions];
 
   if (status === 'open') {
     conditions.push(isNull(vehicleDefects.resolvedAt));
@@ -65,7 +62,7 @@ async function fetchDefects(sp: Record<string, string | undefined>, tenantId: st
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, totalResult] = await Promise.all([
+  const [rows, totalResult, metricResult] = await Promise.all([
     db
       .select({
         id: vehicleDefects.id,
@@ -93,6 +90,15 @@ async function fetchDefects(sp: Record<string, string | undefined>, tenantId: st
       .from(vehicleDefects)
       .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
       .where(where),
+    db
+      .select({
+        total: sql<number>`count(*)`,
+        open: sql<number>`count(*) filter (where ${vehicleDefects.resolvedAt} is null)`,
+        resolved: sql<number>`count(*) filter (where ${vehicleDefects.resolvedAt} is not null)`,
+      })
+      .from(vehicleDefects)
+      .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+      .where(baseWhere),
   ]);
 
   const totalCount = Number(totalResult[0]?.count ?? 0);
@@ -104,23 +110,20 @@ async function fetchDefects(sp: Record<string, string | undefined>, tenantId: st
     const bOrder = SEVERITY_ORDER[b.severity] ?? 99;
     return aOrder - bOrder;
   });
+  const metrics = metricResult[0];
 
   return {
     rows,
     totalCount,
     totalPages,
     page,
-    filters: { severity, status: status ?? 'open' },
+    metrics: {
+      total: numericCount(metrics?.total),
+      open: numericCount(metrics?.open),
+      resolved: numericCount(metrics?.resolved),
+    },
+    filters: { severity, status },
   };
-}
-
-function buildPageUrl(base: string, params: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value) sp.set(key, value);
-  }
-  const qs = sp.toString();
-  return qs ? `${base}?${qs}` : base;
 }
 
 export default async function DefectsPage({ searchParams }: PageProps) {
@@ -131,12 +134,17 @@ export default async function DefectsPage({ searchParams }: PageProps) {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Fleet', href: '/dashboard/fleet' },
-          { label: 'Defects' },
-        ]} />
-        <PageHeader title="Vehicle Defects" description="Track and manage vehicle issues across the fleet" />
+        <Breadcrumbs
+          items={[
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Fleet', href: '/dashboard/fleet' },
+            { label: 'Defects' },
+          ]}
+        />
+        <PageHeader
+          title="Vehicle Defects"
+          description="Track and manage vehicle issues across the fleet"
+        />
         <EmptyState
           icon={<Database className="h-6 w-6" />}
           title="Database Not Configured"
@@ -155,12 +163,17 @@ export default async function DefectsPage({ searchParams }: PageProps) {
     console.error('Defects query failed:', error);
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Fleet', href: '/dashboard/fleet' },
-          { label: 'Defects' },
-        ]} />
-        <PageHeader title="Vehicle Defects" description="Track and manage vehicle issues across the fleet" />
+        <Breadcrumbs
+          items={[
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Fleet', href: '/dashboard/fleet' },
+            { label: 'Defects' },
+          ]}
+        />
+        <PageHeader
+          title="Vehicle Defects"
+          description="Track and manage vehicle issues across the fleet"
+        />
         <EmptyState
           icon={<Database className="h-6 w-6" />}
           title="Unable to Load Defects"
@@ -169,9 +182,6 @@ export default async function DefectsPage({ searchParams }: PageProps) {
       </div>
     );
   }
-
-  const openCount = result.rows.filter((r) => !r.resolvedAt).length;
-  const resolvedCount = result.rows.filter((r) => r.resolvedAt).length;
 
   return (
     <div className="space-y-6">
@@ -199,30 +209,30 @@ export default async function DefectsPage({ searchParams }: PageProps) {
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-ink-950">
-                {result.totalCount}
+              <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+                {result.metrics.total}
               </p>
-              <p className="text-xs text-ink-500">Total Defects</p>
+              <p className="text-ink-500 text-xs">Total Defects</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-error-text">
-                {openCount}
+              <p className="text-status-error-text text-2xl font-[650] tabular-nums">
+                {result.metrics.open}
               </p>
-              <p className="text-xs text-ink-500">Open</p>
+              <p className="text-ink-500 text-xs">Open</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-success-text">
-                {resolvedCount}
+              <p className="text-status-success-text text-2xl font-[650] tabular-nums">
+                {result.metrics.resolved}
               </p>
-              <p className="text-xs text-ink-500">Resolved</p>
+              <p className="text-ink-500 text-xs">Resolved</p>
             </div>
           </CardContent>
         </Card>
@@ -231,40 +241,35 @@ export default async function DefectsPage({ searchParams }: PageProps) {
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
+          <FilterToolbar
+            resetHref="/dashboard/fleet/defects"
+            isFiltered={hasActiveFilters(result.filters)}
+          >
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">
-                Status
-              </label>
-  <StyledSelect
-    name="status"
-    defaultValue={result.filters.status}
-  >
-    <option value="open">Open</option>
-    <option value="resolved">Resolved</option>
-    <option value="">All</option>
-  </StyledSelect>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
+              <StyledSelect
+                name="status"
+                defaultValue={result.filters.status ?? ''}
+                placeholder="All Statuses"
+              >
+                <option value="open">Open</option>
+                <option value="resolved">Resolved</option>
+              </StyledSelect>
             </div>
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">
-                Severity
-              </label>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Severity</label>
               <StyledSelect
                 name="severity"
                 defaultValue={result.filters.severity ?? ''}
+                placeholder="All Severities"
               >
-                <option value="">All Severities</option>
                 <option value="critical">Critical</option>
                 <option value="major">Major</option>
                 <option value="minor">Minor</option>
                 <option value="informational">Informational</option>
               </StyledSelect>
             </div>
-            <Button variant="primary" size="sm" type="submit">
-              <Search className="h-4 w-4" />
-              Filter
-            </Button>
-          </form>
+          </FilterToolbar>
         </CardContent>
       </Card>
 
@@ -282,83 +287,80 @@ export default async function DefectsPage({ searchParams }: PageProps) {
             return (
               <div
                 key={defect.id}
-                className={`rounded-[10px] border border-border bg-surface p-4 ${
+                className={`border-border bg-surface rounded-[10px] border p-4 ${
                   isOpen && defect.isBlocking
                     ? 'border-status-error-bg/50 bg-status-error-bg/10'
                     : ''
                 }`}
               >
-                <div className="flex items-start justify-between gap-4">                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start gap-2">
-                        <div
-                          className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${
-                            isOpen
-                              ? 'bg-status-error-bg text-status-error-text'
-                              : 'bg-status-success-bg text-status-success-text'
-                          }`}
-                        >
-                          {isOpen ? (
-                            <AlertTriangle className="h-4 w-4" />
-                          ) : (
-                            <CheckCircle2 className="h-4 w-4" />
+                <div className="flex items-start justify-between gap-4">
+                  {' '}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start gap-2">
+                      <div
+                        className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${
+                          isOpen
+                            ? 'bg-status-error-bg text-status-error-text'
+                            : 'bg-status-success-bg text-status-success-text'
+                        }`}
+                      >
+                        {isOpen ? (
+                          <AlertTriangle className="h-4 w-4" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-ink-950 text-sm font-medium">{defect.description}</p>
+                        <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-2 text-xs">
+                          <span className="flex items-center gap-1">
+                            <Car className="h-3 w-3" />
+                            {defect.vehicleMake} {defect.vehicleModel} ({defect.vehicleGrn})
+                          </span>
+                          <span>&middot;</span>
+                          <span>{formatDate(defect.createdAt)}</span>
+                          {defect.inspectionId && (
+                            <>
+                              <span>&middot;</span>
+                              <Link
+                                href={`/dashboard/inspections/${defect.inspectionId}`}
+                                className="text-brand-600 hover:text-brand-700 flex items-center gap-1 underline underline-offset-2"
+                              >
+                                <Eye className="h-3 w-3" /> View Inspection
+                              </Link>
+                            </>
                           )}
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-ink-950">
-                            {defect.description}
-                          </p>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-ink-500">
-                            <span className="flex items-center gap-1">
-                              <Car className="h-3 w-3" />
-                              {defect.vehicleMake} {defect.vehicleModel} ({defect.vehicleGrn})
-                            </span>
-                            <span>&middot;</span>
-                            <span>{formatDate(defect.createdAt)}</span>
-                            {defect.inspectionId && (
-                              <>
-                                <span>&middot;</span>
-                                <Link
-                                  href={`/dashboard/inspections/${defect.inspectionId}`}
-                                  className="flex items-center gap-1 text-brand-600 hover:text-brand-700 underline underline-offset-2"
-                                >
-                                  <Eye className="h-3 w-3" /> View Inspection
-                                </Link>
-                              </>
-                            )}
-                          </div>
-                        </div>
                       </div>
-                      {defect.resolutionNotes && (
-                        <p className="mt-2 text-xs text-ink-500 ml-10">
-                          Resolution: {defect.resolutionNotes}
-                        </p>
-                      )}
-                    </div>                    <div className="flex shrink-0 items-start gap-2">
-                      <Badge
-                        variant={
-                          isOpen && defect.severity === 'critical'
-                            ? 'emergency'
-                            : defect.severity === 'major'
-                              ? 'error'
-                              : defect.severity === 'minor'
-                                ? 'pending'
-                                : 'info'
-                        }
-                        size="sm"
-                      >
-                        {SEVERITY_LABELS[defect.severity] ?? defect.severity}
-                      </Badge>
-                      {defect.isBlocking && (
-                        <StatusBadge status="error" label="Blocking" />
-                      )}
-                      <StatusBadge
-                        status={isOpen ? 'error' : 'success'}
-                        label={isOpen ? 'Open' : 'Resolved'}
-                      />
-                      {isOpen && canResolve && (
-                        <DefectResolveButton defectId={defect.id} />
-                      )}
                     </div>
+                    {defect.resolutionNotes && (
+                      <p className="text-ink-500 mt-2 ml-10 text-xs">
+                        Resolution: {defect.resolutionNotes}
+                      </p>
+                    )}
+                  </div>{' '}
+                  <div className="flex shrink-0 items-start gap-2">
+                    <Badge
+                      variant={
+                        isOpen && defect.severity === 'critical'
+                          ? 'emergency'
+                          : defect.severity === 'major'
+                            ? 'error'
+                            : defect.severity === 'minor'
+                              ? 'pending'
+                              : 'info'
+                      }
+                      size="sm"
+                    >
+                      {SEVERITY_LABELS[defect.severity] ?? defect.severity}
+                    </Badge>
+                    {defect.isBlocking && <StatusBadge status="error" label="Blocking" />}
+                    <StatusBadge
+                      status={isOpen ? 'error' : 'success'}
+                      label={isOpen ? 'Open' : 'Resolved'}
+                    />
+                    {isOpen && canResolve && <DefectResolveButton defectId={defect.id} />}
+                  </div>
                 </div>
               </div>
             );
@@ -368,16 +370,15 @@ export default async function DefectsPage({ searchParams }: PageProps) {
 
       {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <p className="text-xs text-ink-500">
+        <div className="border-border flex items-center justify-between border-t pt-4">
+          <p className="text-ink-500 text-xs">
             Page {result.page} of {result.totalPages}
           </p>
           <div className="flex items-center gap-2">
             {result.page > 1 && (
               <Button variant="secondary" size="sm" asChild>
                 <Link
-                  href={buildPageUrl('/dashboard/fleet/defects', {
-                    ...sp,
+                  href={buildFilterUrl('/dashboard/fleet/defects', sp, {
                     page: String(result.page - 1),
                   })}
                 >
@@ -389,8 +390,7 @@ export default async function DefectsPage({ searchParams }: PageProps) {
             {result.page < result.totalPages && (
               <Button variant="secondary" size="sm" asChild>
                 <Link
-                  href={buildPageUrl('/dashboard/fleet/defects', {
-                    ...sp,
+                  href={buildFilterUrl('/dashboard/fleet/defects', sp, {
                     page: String(result.page + 1),
                   })}
                 >

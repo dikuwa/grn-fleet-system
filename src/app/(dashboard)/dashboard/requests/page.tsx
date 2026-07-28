@@ -8,30 +8,45 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Database, FileText, Search, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
+import { Database, FileText, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE, STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
-import { canPerformDashboardAction, resolveDashboardAccess, SystemRoles } from '@/lib/dashboard-access';
+import {
+  canPerformDashboardAction,
+  resolveDashboardAccess,
+  SystemRoles,
+} from '@/lib/dashboard-access';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
+import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
+import { groupedCountMap, numericCount, sumGroupedCounts } from '@/lib/statistics';
+import { REQUEST_STATUS_GROUPS } from '@/lib/request-status';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
-async function fetchRequests(sp: Record<string, string | undefined>, tenantId: string, userId: string, canViewAll: boolean) {
+async function fetchRequests(
+  sp: Record<string, string | undefined>,
+  tenantId: string,
+  userId: string,
+  canViewAll: boolean,
+) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
-  const search = sp.search?.trim();
-  const status = sp.status?.trim();
-  const scope = sp.scope?.trim();
+  const search = normalizeOptionalFilter(sp.search);
+  const status = normalizeOptionalFilter(sp.status);
+  const scope = normalizeOptionalFilter(sp.scope);
 
-  const conditions: SQL[] = [eq(transportRequests.tenantId, tenantId)];
-  if (!canViewAll) conditions.push(eq(transportRequests.requesterUserId, userId));
+  const baseConditions: SQL[] = [eq(transportRequests.tenantId, tenantId)];
+  if (!canViewAll) baseConditions.push(eq(transportRequests.requesterUserId, userId));
+  const baseWhere = and(...baseConditions);
+  const conditions = [...baseConditions];
 
   if (status) {
     conditions.push(eq(transportRequests.status, status));
@@ -51,7 +66,7 @@ async function fetchRequests(sp: Record<string, string | undefined>, tenantId: s
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, totalResult, statusCounts] = await Promise.all([
+  const [rows, totalResult, metricTotalResult, statusCounts] = await Promise.all([
     db
       .select({
         id: transportRequests.id,
@@ -76,51 +91,38 @@ async function fetchRequests(sp: Record<string, string | undefined>, tenantId: s
       .from(transportRequests)
       .where(where),
     db
+      .select({ count: sql<number>`count(*)` })
+      .from(transportRequests)
+      .where(baseWhere),
+    db
       .select({
         status: transportRequests.status,
         count: sql<number>`count(*)`,
       })
       .from(transportRequests)
-      .where(where)
+      .where(baseWhere)
       .groupBy(transportRequests.status),
   ]);
 
-  const totalCount = Number(totalResult[0]?.count ?? 0);
+  const totalCount = numericCount(totalResult[0]?.count);
   const totalPages = Math.ceil(totalCount / limit);
-
-  const approvalPending = statusCounts
-    .filter((r) => ['submitted', 'supervisor_review', 'transport_review'].includes(r.status))
-    .reduce((sum, r) => sum + r.count, 0);
-  const activeCount = statusCounts
-    .filter((r) => !['draft', 'closed', 'cancelled'].includes(r.status))
-    .reduce((sum, r) => sum + r.count, 0);
-  const closedCount = statusCounts
-    .filter((r) => r.status === 'closed')
-    .reduce((sum, r) => sum + r.count, 0);
-  const draftCount = statusCounts
-    .filter((r) => r.status === 'draft')
-    .reduce((sum, r) => sum + r.count, 0);
+  const counts = groupedCountMap(
+    statusCounts.map((row) => ({ key: row.status, count: row.count })),
+  );
 
   return {
     rows,
     totalCount,
     totalPages,
     page,
-    approvalPending,
-    activeCount,
-    closedCount,
-    draftCount,
+    metrics: {
+      total: numericCount(metricTotalResult[0]?.count),
+      pendingApproval: sumGroupedCounts(counts, REQUEST_STATUS_GROUPS.pendingApproval),
+      active: sumGroupedCounts(counts, REQUEST_STATUS_GROUPS.active),
+      closed: sumGroupedCounts(counts, REQUEST_STATUS_GROUPS.closed),
+    },
     filters: { search, status, scope },
   };
-}
-
-function buildPageUrl(base: string, params: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value) sp.set(key, value);
-  }
-  const qs = sp.toString();
-  return qs ? `${base}?${qs}` : base;
 }
 
 export default async function RequestsPage({ searchParams }: PageProps) {
@@ -133,7 +135,11 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} />
         <PageHeader title="Transport Requests" description="Create and manage transport requests" />
-        <EmptyState icon={<FileText className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view transport requests." />
+        <EmptyState
+          icon={<FileText className="h-6 w-6" />}
+          title="Authentication Required"
+          description="Please sign in to view transport requests."
+        />
       </div>
     );
   }
@@ -181,24 +187,25 @@ export default async function RequestsPage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Requests' },
-        ]}
-      />
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} />
       <PageHeader
         title={pageTitle}
-        description={access.accessMode === 'tenant_read_only' || access.accessMode === 'tenant_read'
-          ? 'Read-only tenant request oversight'
-          : canViewAll ? 'Review and manage transport requests' : 'Create and follow your requests'}
+        description={
+          access.accessMode === 'tenant_read_only' || access.accessMode === 'tenant_read'
+            ? 'Read-only tenant request oversight'
+            : canViewAll
+              ? 'Review and manage transport requests'
+              : 'Create and follow your requests'
+        }
       >
-        {canCreate && <Button variant="primary" size="sm" asChild>
-          <Link href="/dashboard/requests/new">
-            <Plus className="h-4 w-4" />
-            New Request
-          </Link>
-        </Button>}
+        {canCreate && (
+          <Button variant="primary" size="sm" asChild>
+            <Link href="/dashboard/requests/new">
+              <Plus className="h-4 w-4" />
+              New Request
+            </Link>
+          </Button>
+        )}
       </PageHeader>
 
       {/* Summary Cards */}
@@ -206,32 +213,40 @@ export default async function RequestsPage({ searchParams }: PageProps) {
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-ink-950">{result.totalCount}</p>
-              <p className="text-xs text-ink-500">Total Requests</p>
+              <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+                {result.metrics.total}
+              </p>
+              <p className="text-ink-500 text-xs">Total Requests</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-pending-text">{result.approvalPending}</p>
-              <p className="text-xs text-ink-500">Pending Approval</p>
+              <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
+                {result.metrics.pendingApproval}
+              </p>
+              <p className="text-ink-500 text-xs">Pending Approval</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-info-text">{result.activeCount}</p>
-              <p className="text-xs text-ink-500">Active / In Progress</p>
+              <p className="text-status-info-text text-2xl font-[650] tabular-nums">
+                {result.metrics.active}
+              </p>
+              <p className="text-ink-500 text-xs">Active / In Progress</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-success-text">{result.closedCount}</p>
-              <p className="text-xs text-ink-500">Closed</p>
+              <p className="text-status-success-text text-2xl font-[650] tabular-nums">
+                {result.metrics.closed}
+              </p>
+              <p className="text-ink-500 text-xs">Closed</p>
             </div>
           </CardContent>
         </Card>
@@ -240,9 +255,12 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
-            <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">Search</label>
+          <FilterToolbar
+            resetHref="/dashboard/requests"
+            isFiltered={hasActiveFilters(result.filters)}
+          >
+            <div className="min-w-[200px] flex-1">
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Search</label>
               <LiveSearchInput
                 name="search"
                 defaultValue={result.filters.search ?? ''}
@@ -250,19 +268,21 @@ export default async function RequestsPage({ searchParams }: PageProps) {
               />
             </div>
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">Status</label>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
               <StyledSelect
                 name="status"
                 defaultValue={result.filters.status ?? ''}
                 placeholder="All Statuses"
               >
                 {Object.entries(STATUS_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
                 ))}
               </StyledSelect>
             </div>
             <div className="w-[140px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">Scope</label>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Scope</label>
               <StyledSelect
                 name="scope"
                 defaultValue={result.filters.scope ?? ''}
@@ -272,10 +292,7 @@ export default async function RequestsPage({ searchParams }: PageProps) {
                 <option value="national">National</option>
               </StyledSelect>
             </div>
-            <Button variant="primary" size="sm" type="submit">
-              <Search className="h-4 w-4" /> Filter
-            </Button>
-          </form>
+          </FilterToolbar>
         </CardContent>
       </Card>
 
@@ -285,8 +302,8 @@ export default async function RequestsPage({ searchParams }: PageProps) {
           icon={<FileText className="h-8 w-8" />}
           title="No transport requests"
           description={
-            result.filters.search
-              ? 'Try adjusting your search or filter criteria.'
+            hasActiveFilters(result.filters)
+              ? 'No matching records found. Clear filters to view all records.'
               : 'Create your first transport request to get started.'
           }
         />
@@ -303,30 +320,37 @@ export default async function RequestsPage({ searchParams }: PageProps) {
               <Link
                 key={req.id}
                 href={`/dashboard/requests/${req.id}`}
-                className="block rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm"
+                className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
               >
                 <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="bg-brand-50 text-brand-700 flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px]">
                       <FileText className="h-6 w-6" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-[650] text-ink-950">{req.reference}</p>
-                        <StatusBadge status={variant} label={STATUS_LABELS[req.status as keyof typeof STATUS_LABELS] ?? req.status} />
+                        <p className="text-ink-950 text-sm font-[650]">{req.reference}</p>
+                        <StatusBadge
+                          status={variant}
+                          label={
+                            STATUS_LABELS[req.status as keyof typeof STATUS_LABELS] ?? req.status
+                          }
+                        />
                         <Badge variant={req.scope === 'national' ? 'emergency' : 'info'} size="sm">
                           {req.scope === 'national' ? 'National' : 'Regional'}
                         </Badge>
                       </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
+                      <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                         <span>{requesterName}</span>
                         {req.department && <span>{req.department}</span>}
-                        {req.purpose && <span className="truncate max-w-[200px]">{req.purpose}</span>}
+                        {req.purpose && (
+                          <span className="max-w-[200px] truncate">{req.purpose}</span>
+                        )}
                         <span>{formatDate(req.createdAt)}</span>
                       </div>
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-ink-300 shrink-0" />
+                  <ChevronRight className="text-ink-300 h-4 w-4 shrink-0" />
                 </div>
               </Link>
             );
@@ -336,21 +360,29 @@ export default async function RequestsPage({ searchParams }: PageProps) {
 
       {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <p className="text-xs text-ink-500">
+        <div className="border-border flex items-center justify-between border-t pt-4">
+          <p className="text-ink-500 text-xs">
             Page {result.page} of {result.totalPages} ({result.totalCount} requests)
           </p>
           <div className="flex items-center gap-2">
             {result.page > 1 && (
               <Button variant="secondary" size="sm" asChild>
-                <Link href={buildPageUrl('/dashboard/requests', { ...sp, page: String(result.page - 1) })}>
+                <Link
+                  href={buildFilterUrl('/dashboard/requests', sp, {
+                    page: String(result.page - 1),
+                  })}
+                >
                   <ChevronLeft className="h-3 w-3" /> Previous
                 </Link>
               </Button>
             )}
             {result.page < result.totalPages && (
               <Button variant="secondary" size="sm" asChild>
-                <Link href={buildPageUrl('/dashboard/requests', { ...sp, page: String(result.page + 1) })}>
+                <Link
+                  href={buildFilterUrl('/dashboard/requests', sp, {
+                    page: String(result.page + 1),
+                  })}
+                >
                   Next <ChevronRight className="h-3 w-3" />
                 </Link>
               </Button>

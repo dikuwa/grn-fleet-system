@@ -13,7 +13,6 @@ import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { getServerSession } from '@/lib/session';
 import {
   Truck,
-  Search,
   ChevronRight,
   ChevronLeft,
   Car,
@@ -25,8 +24,11 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
+import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
 import { canAccessDashboardPath, canPerformDashboardAction } from '@/lib/dashboard-access';
+import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
+import { groupedCountMap, sumGroupedCounts } from '@/lib/statistics';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -55,26 +57,19 @@ const VEHICLE_STATUS_LABELS: Record<string, string> = {
   written_off: 'Written Off',
 };
 
-function buildPageUrl(base: string, params: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value) sp.set(key, value);
-  }
-  const qs = sp.toString();
-  return qs ? `${base}?${qs}` : base;
-}
-
 async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
-  const search = sp.search?.trim();
-  const status = sp.status?.trim();
-  const categoryId = sp.category_id?.trim();
-  const officeId = sp.office_id?.trim();
+  const search = normalizeOptionalFilter(sp.search);
+  const status = normalizeOptionalFilter(sp.status);
+  const categoryId = normalizeOptionalFilter(sp.category_id);
+  const officeId = normalizeOptionalFilter(sp.office_id);
 
-  const conditions: SQL[] = [eq(vehicles.isActive, true), eq(vehicles.tenantId, tenantId)];
+  const baseConditions: SQL[] = [eq(vehicles.isActive, true), eq(vehicles.tenantId, tenantId)];
+  const baseWhere = and(...baseConditions);
+  const conditions = [...baseConditions];
 
   if (status) {
     conditions.push(eq(vehicles.status, status));
@@ -85,21 +80,22 @@ async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: 
   if (officeId) {
     conditions.push(eq(vehicles.officeId, officeId));
   }
-  if (search) {      conditions.push(
-        or(
-          like(vehicles.licenceNumber, `%${search}%`),
-          like(vehicles.vehicleRegisterNumber, `%${search}%`),
-          like(vehicles.make, `%${search}%`),
-          like(vehicles.model, `%${search}%`),
-          like(vehicles.vin, `%${search}%`),
-          like(vehicles.engineNumber, `%${search}%`),
-        )!,
-      );
+  if (search) {
+    conditions.push(
+      or(
+        like(vehicles.licenceNumber, `%${search}%`),
+        like(vehicles.vehicleRegisterNumber, `%${search}%`),
+        like(vehicles.make, `%${search}%`),
+        like(vehicles.model, `%${search}%`),
+        like(vehicles.vin, `%${search}%`),
+        like(vehicles.engineNumber, `%${search}%`),
+      )!,
+    );
   }
 
   const where = and(...conditions);
 
-  const [rows, totalResult, categories, allOffices] = await Promise.all([
+  const [rows, totalResult, categories, allOffices, statusCounts] = await Promise.all([
     db
       .select({
         id: vehicles.id,
@@ -133,17 +129,23 @@ async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: 
     db
       .select({ id: vehicleCategories.id, name: vehicleCategories.name })
       .from(vehicleCategories)
-      .where(eq(vehicleCategories.isActive, true))
+      .where(and(eq(vehicleCategories.tenantId, tenantId), eq(vehicleCategories.isActive, true)))
       .orderBy(vehicleCategories.name),
     db
       .select({ id: offices.id, name: offices.name })
       .from(offices)
-      .where(eq(offices.isActive, true))
+      .where(and(eq(offices.tenantId, tenantId), eq(offices.isActive, true)))
       .orderBy(offices.name),
+    db
+      .select({ key: vehicles.status, count: sql<number>`count(*)` })
+      .from(vehicles)
+      .where(baseWhere)
+      .groupBy(vehicles.status),
   ]);
 
   const totalCount = Number(totalResult[0]?.count ?? 0);
   const totalPages = Math.ceil(totalCount / limit);
+  const counts = groupedCountMap(statusCounts);
 
   // Fetch defect and maintenance counts per vehicle
   const vehicleIds = rows.map((r) => r.id);
@@ -181,6 +183,12 @@ async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: 
     allOffices,
     defectMap,
     maintenanceMap,
+    metrics: {
+      available: counts.get('available') ?? 0,
+      allocated: sumGroupedCounts(counts, ['issued', 'allocated']),
+      maintenance: counts.get('maintenance') ?? 0,
+      outOfService: counts.get('out_of_service') ?? 0,
+    },
     filters: { search, status, categoryId, officeId },
   };
 }
@@ -193,8 +201,15 @@ export default async function FleetPage({ searchParams }: PageProps) {
     return (
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fleet' }]} />
-        <PageHeader title="Fleet" description="Manage vehicles, view status, defects and maintenance" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view fleet data." />
+        <PageHeader
+          title="Fleet"
+          description="Manage vehicles, view status, defects and maintenance"
+        />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Authentication Required"
+          description="Please sign in to view fleet data."
+        />
       </div>
     );
   }
@@ -203,7 +218,10 @@ export default async function FleetPage({ searchParams }: PageProps) {
     return (
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fleet' }]} />
-        <PageHeader title="Fleet" description="Manage vehicles, view status, defects and maintenance" />
+        <PageHeader
+          title="Fleet"
+          description="Manage vehicles, view status, defects and maintenance"
+        />
         <EmptyState
           icon={<Database className="h-6 w-6" />}
           title="Database Not Configured"
@@ -225,7 +243,10 @@ export default async function FleetPage({ searchParams }: PageProps) {
     return (
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fleet' }]} />
-        <PageHeader title="Fleet" description="Manage vehicles, view status, defects and maintenance" />
+        <PageHeader
+          title="Fleet"
+          description="Manage vehicles, view status, defects and maintenance"
+        />
         <EmptyState
           icon={<Database className="h-6 w-6" />}
           title="Unable to Load Fleet Data"
@@ -237,44 +258,40 @@ export default async function FleetPage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Fleet' },
-        ]}
-      />
-      <PageHeader
-        title="Fleet"
-        description="Manage vehicles, view status, defects and maintenance"
-      >
-        {canViewDefects && <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/fleet/defects">
-            <AlertTriangle className="h-4 w-4" />
-            Defects
-          </Link>
-        </Button>}
-        {canImport && <Button variant="tertiary" size="sm" asChild>
-          <Link href="/dashboard/fleet/import">
-            <Upload className="h-4 w-4" />
-            Import
-          </Link>
-        </Button>}
-        {canExport && <Button variant="tertiary" size="sm" asChild>
-          <a href="/api/reports?type=fuel&export=csv&period=90d">
-            <Download className="h-4 w-4" />
-            Export CSV
-          </a>
-        </Button>}
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fleet' }]} />
+      <PageHeader title="Fleet" description="Manage vehicles, view status, defects and maintenance">
+        {canViewDefects && (
+          <Button variant="secondary" size="sm" asChild>
+            <Link href="/dashboard/fleet/defects">
+              <AlertTriangle className="h-4 w-4" />
+              Defects
+            </Link>
+          </Button>
+        )}
+        {canImport && (
+          <Button variant="tertiary" size="sm" asChild>
+            <Link href="/dashboard/fleet/import">
+              <Upload className="h-4 w-4" />
+              Import
+            </Link>
+          </Button>
+        )}
+        {canExport && (
+          <Button variant="tertiary" size="sm" asChild>
+            <a href="/api/reports?type=fuel&export=csv&period=90d">
+              <Download className="h-4 w-4" />
+              Export CSV
+            </a>
+          </Button>
+        )}
       </PageHeader>
 
       {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <form className="flex flex-wrap items-end gap-4 filter-bar-mobile">
-            <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">
-                Search
-              </label>
+          <FilterToolbar resetHref="/dashboard/fleet" isFiltered={hasActiveFilters(result.filters)}>
+            <div className="min-w-[200px] flex-1">
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Search</label>
               <LiveSearchInput
                 name="search"
                 defaultValue={result.filters.search ?? ''}
@@ -282,9 +299,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
               />
             </div>
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">
-                Status
-              </label>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
               <StyledSelect
                 name="status"
                 defaultValue={result.filters.status ?? ''}
@@ -298,9 +313,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
               </StyledSelect>
             </div>
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">
-                Category
-              </label>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Category</label>
               <StyledSelect
                 name="category_id"
                 defaultValue={result.filters.categoryId ?? ''}
@@ -314,9 +327,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
               </StyledSelect>
             </div>
             <div className="w-[180px]">
-              <label className="block text-xs font-medium text-ink-500 mb-1">
-                Office
-              </label>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Office</label>
               <StyledSelect
                 name="office_id"
                 defaultValue={result.filters.officeId ?? ''}
@@ -329,11 +340,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
                 ))}
               </StyledSelect>
             </div>
-            <Button variant="primary" size="sm" type="submit">
-              <Search className="h-4 w-4" />
-              Filter
-            </Button>
-          </form>
+          </FilterToolbar>
         </CardContent>
       </Card>
 
@@ -342,40 +349,40 @@ export default async function FleetPage({ searchParams }: PageProps) {
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-success-text">
-                {result.rows.filter((r) => r.status === 'available').length}
+              <p className="text-status-success-text text-2xl font-[650] tabular-nums">
+                {result.metrics.available}
               </p>
-              <p className="text-xs text-ink-500">Available</p>
+              <p className="text-ink-500 text-xs">Available</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-ink-950">
-                {result.rows.filter((r) => r.status === 'issued' || r.status === 'allocated').length}
+              <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+                {result.metrics.allocated}
               </p>
-              <p className="text-xs text-ink-500">On Trip / Allocated</p>
+              <p className="text-ink-500 text-xs">On Trip / Allocated</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-pending-text">
-                {result.rows.filter((r) => r.status === 'maintenance').length}
+              <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
+                {result.metrics.maintenance}
               </p>
-              <p className="text-xs text-ink-500">In Maintenance</p>
+              <p className="text-ink-500 text-xs">In Maintenance</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-[650] tabular-nums text-status-error-text">
-                {result.rows.filter((r) => r.status === 'out_of_service').length}
+              <p className="text-status-error-text text-2xl font-[650] tabular-nums">
+                {result.metrics.outOfService}
               </p>
-              <p className="text-xs text-ink-500">Out of Service</p>
+              <p className="text-ink-500 text-xs">Out of Service</p>
             </div>
           </CardContent>
         </Card>
@@ -386,7 +393,11 @@ export default async function FleetPage({ searchParams }: PageProps) {
         <EmptyState
           icon={<Truck className="h-8 w-8" />}
           title="No vehicles found"
-          description={result.filters.search ? 'Try adjusting your search criteria.' : 'No vehicles have been registered yet.'}
+          description={
+            hasActiveFilters(result.filters)
+              ? 'No matching records found. Clear filters to view all records.'
+              : 'No vehicles have been registered yet.'
+          }
         />
       ) : (
         <div className="space-y-3">
@@ -399,23 +410,23 @@ export default async function FleetPage({ searchParams }: PageProps) {
               <Link
                 key={vehicle.id}
                 href={`/dashboard/fleet/${vehicle.id}`}
-                className="block rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm"
+                className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
               >
                 <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="bg-brand-50 text-brand-700 flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px]">
                       <Car className="h-6 w-6" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-[650] text-ink-950">
+                        <p className="text-ink-950 text-sm font-[650]">
                           {vehicle.make} {vehicle.model}
                         </p>
                         {vehicle.manufactureYear && (
-                          <span className="text-xs text-ink-500">({vehicle.manufactureYear})</span>
+                          <span className="text-ink-500 text-xs">({vehicle.manufactureYear})</span>
                         )}
                       </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
+                      <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                         <span className="tabular-nums">{vehicle.licenceNumber}</span>
                         {vehicle.vehicleRegisterNumber && (
                           <span>{vehicle.vehicleRegisterNumber}</span>
@@ -426,20 +437,20 @@ export default async function FleetPage({ searchParams }: PageProps) {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4 shrink-0">
-                    <div className="hidden sm:flex items-center gap-3 text-xs text-ink-500">
+                  <div className="flex shrink-0 items-center gap-4">
+                    <div className="text-ink-500 hidden items-center gap-3 text-xs sm:flex">
                       <span className="flex items-center gap-1">
                         <Gauge className="h-3.5 w-3.5" />
                         {vehicle.currentOdometer.toLocaleString()} km
                       </span>
                       {openDefects > 0 && (
-                        <span className="flex items-center gap-1 text-status-error-text">
+                        <span className="text-status-error-text flex items-center gap-1">
                           <AlertTriangle className="h-3.5 w-3.5" />
                           {openDefects} defect{openDefects !== 1 ? 's' : ''}
                         </span>
                       )}
                       {upcomingMaintenance > 0 && (
-                        <span className="flex items-center gap-1 text-status-pending-text">
+                        <span className="text-status-pending-text flex items-center gap-1">
                           <Wrench className="h-3.5 w-3.5" />
                           {upcomingMaintenance} pending
                         </span>
@@ -448,7 +459,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
                     <Badge variant={statusVariant}>
                       {VEHICLE_STATUS_LABELS[vehicle.status] ?? vehicle.status}
                     </Badge>
-                    <ChevronRight className="h-4 w-4 text-ink-300" />
+                    <ChevronRight className="text-ink-300 h-4 w-4" />
                   </div>
                 </div>
               </Link>
@@ -459,16 +470,15 @@ export default async function FleetPage({ searchParams }: PageProps) {
 
       {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <p className="text-xs text-ink-500">
+        <div className="border-border flex items-center justify-between border-t pt-4">
+          <p className="text-ink-500 text-xs">
             Page {result.page} of {result.totalPages} ({result.totalCount} vehicles)
           </p>
           <div className="flex items-center gap-2">
             {result.page > 1 && (
               <Button variant="secondary" size="sm" asChild>
                 <Link
-                  href={buildPageUrl('/dashboard/fleet', {
-                    ...sp,
+                  href={buildFilterUrl('/dashboard/fleet', sp, {
                     page: String(result.page - 1),
                   })}
                 >
@@ -480,8 +490,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
             {result.page < result.totalPages && (
               <Button variant="secondary" size="sm" asChild>
                 <Link
-                  href={buildPageUrl('/dashboard/fleet', {
-                    ...sp,
+                  href={buildFilterUrl('/dashboard/fleet', sp, {
                     page: String(result.page + 1),
                   })}
                 >

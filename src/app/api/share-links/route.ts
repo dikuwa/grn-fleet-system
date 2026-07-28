@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { shareLinks, generatedDocuments } from '@/db/schema/documents';
-import { eq, and, desc, count, gte } from 'drizzle-orm';
+import { eq, and, desc, count, gte, lt, ilike, sql } from 'drizzle-orm';
 import { generateShareToken } from '@/lib/share-token';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '25', 10);
     const offset = (page - 1) * limit;
     const status = searchParams.get('status') || ''; // active, expired, revoked, all
+    const search = searchParams.get('q')?.trim() || '';
 
     const db = getDb();
 
@@ -32,8 +33,11 @@ export async function GET(request: NextRequest) {
     if (status === 'active') {
       conditions.push(eq(shareLinks.isRevoked, false));
       conditions.push(gte(shareLinks.expiresAt, new Date()));
-    }
-    else if (status === 'revoked') conditions.push(eq(shareLinks.isRevoked, true));
+    } else if (status === 'expired') {
+      conditions.push(eq(shareLinks.isRevoked, false));
+      conditions.push(lt(shareLinks.expiresAt, new Date()));
+    } else if (status === 'revoked') conditions.push(eq(shareLinks.isRevoked, true));
+    if (search) conditions.push(ilike(generatedDocuments.documentType, `%${search}%`));
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -41,32 +45,45 @@ export async function GET(request: NextRequest) {
     const [totalResult] = await db
       .select({ count: count() })
       .from(shareLinks)
+      .innerJoin(generatedDocuments, eq(shareLinks.documentId, generatedDocuments.id))
       .where(whereClause);
     const total = Number(totalResult?.count ?? 0);
 
     // Fetch share links with document info
-    const rows = await db
-      .select({
-        id: shareLinks.id,
-        tokenHash: shareLinks.tokenHash,
-        expiresAt: shareLinks.expiresAt,
-        isRevoked: shareLinks.isRevoked,
-        maxViews: shareLinks.maxViews,
-        currentViews: shareLinks.currentViews,
-        redactionProfile: shareLinks.redactionProfile,
-        lastAccessedAt: shareLinks.lastAccessedAt,
-        createdAt: shareLinks.createdAt,
-        documentId: shareLinks.documentId,
-        documentType: generatedDocuments.documentType,
-        documentVersion: generatedDocuments.documentVersion,
-        documentStatus: generatedDocuments.status,
-      })
-      .from(shareLinks)
-      .innerJoin(generatedDocuments, eq(shareLinks.documentId, generatedDocuments.id))
-      .where(whereClause)
-      .orderBy(desc(shareLinks.createdAt))
-      .limit(limit)
-      .offset(offset);
+    const [rows, [summary]] = await Promise.all([
+      db
+        .select({
+          id: shareLinks.id,
+          tokenHash: shareLinks.tokenHash,
+          expiresAt: shareLinks.expiresAt,
+          isExpired: sql<boolean>`${shareLinks.expiresAt} < now()`,
+          isRevoked: shareLinks.isRevoked,
+          maxViews: shareLinks.maxViews,
+          currentViews: shareLinks.currentViews,
+          redactionProfile: shareLinks.redactionProfile,
+          lastAccessedAt: shareLinks.lastAccessedAt,
+          createdAt: shareLinks.createdAt,
+          documentId: shareLinks.documentId,
+          documentType: generatedDocuments.documentType,
+          documentVersion: generatedDocuments.documentVersion,
+          documentStatus: generatedDocuments.status,
+        })
+        .from(shareLinks)
+        .innerJoin(generatedDocuments, eq(shareLinks.documentId, generatedDocuments.id))
+        .where(whereClause)
+        .orderBy(desc(shareLinks.createdAt))
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({
+          active: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} >= now())`,
+          expired: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} < now())`,
+          revoked: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = true)`,
+          views: sql<number>`coalesce(sum(${shareLinks.currentViews}), 0)`,
+        })
+        .from(shareLinks)
+        .where(eq(shareLinks.tenantId, session.tenantId)),
+    ]);
 
     return NextResponse.json({
       success: true,
@@ -75,11 +92,20 @@ export async function GET(request: NextRequest) {
         total,
         page,
         totalPages: Math.ceil(total / limit),
+        summary: {
+          active: Number(summary?.active ?? 0),
+          expired: Number(summary?.expired ?? 0),
+          revoked: Number(summary?.revoked ?? 0),
+          views: Number(summary?.views ?? 0),
+        },
       },
     });
   } catch (error) {
     console.error('[Share Links] GET failed:', error);
-    return NextResponse.json({ error: 'Failed to list share links: ' + String(error) }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to list share links: ' + String(error) },
+      { status: 500 },
+    );
   }
 }
 
@@ -98,10 +124,7 @@ export async function POST(request: NextRequest) {
     const { documentId, expiresInHours = 168, maxViews, redactionProfile } = body;
 
     if (!documentId) {
-      return NextResponse.json(
-        { error: 'Missing required field: documentId' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Missing required field: documentId' }, { status: 400 });
     }
 
     const db = getDb();
@@ -111,7 +134,10 @@ export async function POST(request: NextRequest) {
       .select()
       .from(generatedDocuments)
       .where(
-        and(eq(generatedDocuments.id, documentId), eq(generatedDocuments.tenantId, session.tenantId))
+        and(
+          eq(generatedDocuments.id, documentId),
+          eq(generatedDocuments.tenantId, session.tenantId),
+        ),
       )
       .limit(1);
 
@@ -172,17 +198,14 @@ export async function DELETE(request: NextRequest) {
     const linkId = searchParams.get('linkId');
 
     if (!linkId) {
-      return NextResponse.json(
-        { error: 'Missing required param: linkId' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Missing required param: linkId' }, { status: 400 });
     }
 
     const db = getDb();
     const [revoked] = await db
       .update(shareLinks)
       .set({ isRevoked: true })
-      .where(eq(shareLinks.id, linkId))
+      .where(and(eq(shareLinks.id, linkId), eq(shareLinks.tenantId, session.tenantId)))
       .returning();
 
     if (!revoked) {
