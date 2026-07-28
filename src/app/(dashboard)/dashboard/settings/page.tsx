@@ -5,7 +5,7 @@ import { useSession } from '@/lib/auth-client';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input, FieldWrapper } from '@/components/ui/input';
+import { Input, FieldWrapper, Label } from '@/components/ui/input';
 import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
   Loader2,
@@ -409,10 +409,15 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle>Tenant Branding</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <FieldWrapper label="Organisation Logo">
+            <CardContent className="space-y-5">
+              <div
+                data-testid="branding-top-layout"
+                className="grid gap-6 lg:grid-cols-[minmax(240px,0.8fr)_minmax(320px,1.2fr)] lg:items-start"
+              >
+                <div className="min-w-0 space-y-1.5">
+                  <Label htmlFor="tenant-logo-input">Organisation Logo</Label>
                   <input
+                    id="tenant-logo-input"
                     ref={logoInputRef}
                     type="file"
                     accept="image/png,image/jpeg,image/webp"
@@ -423,95 +428,114 @@ export default function SettingsPage() {
                       if (file) void uploadLogo(file);
                     }}
                   />
-                  <div className="border-border bg-muted flex min-h-32 flex-col items-center justify-center gap-3 rounded-[8px] border-2 border-dashed p-4">
+                  <div
+                    data-testid="tenant-logo-preview"
+                    className="border-border bg-muted/40 mx-auto flex h-44 w-full max-w-[260px] items-center justify-center rounded-[8px] border p-5 lg:mx-0"
+                  >
                     {logoUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={logoUrl}
                         alt="Current tenant logo"
-                        className="max-h-20 max-w-full object-contain"
+                        className="h-full w-full object-contain"
                       />
                     ) : (
                       <div className="text-ink-500 flex flex-col items-center gap-2">
                         <ImageIcon className="h-6 w-6" />
-                        <span className="text-xs">PNG, JPEG or WebP · max 3 MB</span>
+                        <span className="text-center text-xs">PNG, JPEG or WebP · max 3 MB</span>
                       </div>
                     )}
-                    <div className="flex flex-wrap justify-center gap-2">
+                  </div>
+                  <div className="mx-auto flex w-full max-w-[260px] flex-wrap gap-2 pt-1 lg:mx-0">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      loading={logoBusy}
+                      onClick={() => logoInputRef.current?.click()}
+                    >
+                      {logoUrl ? 'Replace logo' : 'Upload logo'}
+                    </Button>
+                    {logoUrl && (
                       <Button
                         type="button"
                         size="sm"
-                        variant="secondary"
-                        loading={logoBusy}
-                        onClick={() => logoInputRef.current?.click()}
+                        variant="destructive"
+                        disabled={logoBusy}
+                        onClick={removeLogo}
                       >
-                        {logoUrl ? 'Replace logo' : 'Upload logo'}
+                        Remove logo
                       </Button>
-                      {logoUrl && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          disabled={logoBusy}
-                          onClick={removeLogo}
-                        >
-                          Remove logo
-                        </Button>
-                      )}
-                    </div>
+                    )}
                   </div>
-                </FieldWrapper>
-                <div className="space-y-4">
-                  <FieldWrapper label="Primary Colour">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="border-border h-10 w-10 rounded-[8px] border"
-                        style={{ backgroundColor: primaryColor }}
+                </div>
+                <div className="min-w-0 space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="primary-colour">Primary Colour</Label>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <input
+                        type="color"
+                        aria-label="Choose primary colour"
+                        value={primaryColor}
+                        onChange={(event) => setPrimaryColor(event.target.value.toUpperCase())}
+                        className="border-border bg-surface h-10 w-10 shrink-0 cursor-pointer rounded-[8px] border p-1 focus:outline-none focus:ring-2 focus:ring-brand-600"
                       />
                       <Input
+                        id="primary-colour"
                         aria-label="Primary Colour"
                         value={primaryColor}
                         onChange={(e) => setPrimaryColor(e.target.value)}
                       />
                     </div>
-                  </FieldWrapper>
-                  <FieldWrapper label="Accent Colour">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="border-border h-10 w-10 rounded-[8px] border"
-                        style={{ backgroundColor: accentColor }}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="accent-colour">Accent Colour</Label>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <input
+                        type="color"
+                        aria-label="Choose accent colour"
+                        value={accentColor}
+                        onChange={(event) => setAccentColor(event.target.value.toUpperCase())}
+                        className="border-border bg-surface h-10 w-10 shrink-0 cursor-pointer rounded-[8px] border p-1 focus:outline-none focus:ring-2 focus:ring-brand-600"
                       />
                       <Input
+                        id="accent-colour"
                         aria-label="Accent Colour"
                         value={accentColor}
                         onChange={(e) => setAccentColor(e.target.value)}
                       />
                     </div>
-                  </FieldWrapper>
+                  </div>
                 </div>
               </div>
-              <FieldWrapper label="Document Footer Text">
+              <div className="space-y-1.5">
+                <Label htmlFor="document-footer">Document Footer Text</Label>
                 <Input
+                  id="document-footer"
                   aria-label="Document Footer Text"
                   value={documentFooter}
                   onChange={(e) => setDocumentFooter(e.target.value)}
                 />
-              </FieldWrapper>
-              <FieldWrapper label="Email Sender Name">
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="email-sender-name">Email Sender Name</Label>
                 <Input
+                  id="email-sender-name"
                   aria-label="Email Sender Name"
                   value={senderName}
                   onChange={(e) => setSenderName(e.target.value)}
                 />
-              </FieldWrapper>
-              <FieldWrapper label="Email Sender Address">
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="email-sender-address">Email Sender Address</Label>
                 <Input
+                  id="email-sender-address"
                   aria-label="Email Sender Address"
                   type="email"
                   value={senderEmail}
                   onChange={(e) => setSenderEmail(e.target.value)}
                 />
-              </FieldWrapper>
+              </div>
             </CardContent>
           </Card>
         </div>
