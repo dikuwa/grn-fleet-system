@@ -7,11 +7,15 @@
  */
 
 import { getDb } from '@/db';
-import { tenantMemberships, roleAssignments, rolePermissions } from '@/db/schema';
+import { tenantMemberships, roleAssignments, rolePermissions, roles } from '@/db/schema';
 import { getServerSession, getServerSessionFromRequest } from '@/lib/session';
 import type { PermissionCode } from '@/lib/permissions';
 import { eq, and, inArray } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
+import {
+  canPerformDashboardAction,
+  type DashboardAction,
+} from '@/lib/dashboard-access';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -224,6 +228,48 @@ export async function getSessionPermissions(session: AuthSession): Promise<Permi
   return Array.from(new Set(rows
     .filter((row) => row.startDate <= now && (!row.endDate || row.endDate >= now))
     .map((row) => row.permissionCode as PermissionCode)));
+}
+
+/** Resolve every currently active substantive or acting role name. */
+export async function getSessionRoleNames(session: AuthSession): Promise<string[]> {
+  const db = getDb();
+  const now = new Date();
+  const rows = await db
+    .select({
+      roleName: roles.name,
+      startDate: roleAssignments.startDate,
+      endDate: roleAssignments.endDate,
+    })
+    .from(roleAssignments)
+    .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+    .innerJoin(roles, eq(roles.id, roleAssignments.roleId))
+    .where(
+      and(
+        eq(tenantMemberships.userId, session.user.id),
+        eq(tenantMemberships.tenantId, session.tenantId),
+        eq(tenantMemberships.status, 'active'),
+      ),
+    );
+
+  return Array.from(new Set(rows
+    .filter((row) => row.startDate <= now && (!row.endDate || row.endDate >= now))
+    .map((row) => row.roleName)));
+}
+
+/**
+ * Enforce the same role/action policy used by dashboard navigation and layouts.
+ * API routes must call this in addition to any record-level ownership checks.
+ */
+export async function requireDashboardAction(
+  session: AuthSession,
+  dashboardPath: string,
+  action: DashboardAction,
+): Promise<true | NextResponse> {
+  const roleNames = await getSessionRoleNames(session);
+  if (!canPerformDashboardAction(dashboardPath, roleNames, action)) {
+    return forbiddenResponse('Your active role does not allow this action.');
+  }
+  return true;
 }
 
 /**

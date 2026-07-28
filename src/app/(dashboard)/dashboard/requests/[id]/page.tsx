@@ -34,8 +34,8 @@ import Link from 'next/link';
 import { CancelRequestButton } from './CancelRequestButton';
 import { RouteMapWrapper } from './route-map-wrapper';
 import { ResubmitRequestButton } from './ResubmitRequestButton';
-import { getSessionPermissions } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -172,9 +172,10 @@ export default async function RequestDetailPage({ params }: PageProps) {
   }
 
   const { request, activities, passengers, drivers, routes, attachments } = data;
-  const permissionCodes = await getSessionPermissions(session);
-  const canViewAll = permissionCodes.includes(Permissions.TENANT_MANAGE) || permissionCodes.includes(Permissions.REQUEST_REVIEW_TRANSPORT) || permissionCodes.includes(Permissions.REQUEST_APPROVE_SUPERVISOR) || permissionCodes.includes(Permissions.TRIP_AUTHORIZE_REGIONAL) || permissionCodes.includes(Permissions.TRIP_AUTHORIZE_NATIONAL);
-  if (!canViewAll && request.requesterUserId !== session.user.id) notFound();
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/requests', roleNames);
+  if (access.recordScope !== 'tenant' && request.requesterUserId !== session.user.id) notFound();
+  const canModify = access.actions.includes('update');
   const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
   const requesterName = request.requesterFirstName && request.requesterLastName
     ? `${request.requesterFirstName} ${request.requesterLastName}`
@@ -191,8 +192,8 @@ export default async function RequestDetailPage({ params }: PageProps) {
         title={request.reference}
         description={request.purpose || 'Transport request'}
       >
-        {request.requesterUserId === session.user.id && ['returned', 'rejected', 'supervisor_rejected'].includes(request.status) && <ResubmitRequestButton requestId={id} />}
-        <CancelRequestButton requestId={id} currentStatus={request.status} />
+        {canModify && request.requesterUserId === session.user.id && ['returned', 'rejected', 'supervisor_rejected'].includes(request.status) && <ResubmitRequestButton requestId={id} />}
+        {canModify && <CancelRequestButton requestId={id} currentStatus={request.status} />}
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/requests">
             <ChevronLeft className="h-4 w-4" /> Back to Requests

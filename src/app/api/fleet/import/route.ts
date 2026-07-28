@@ -3,7 +3,7 @@ import { getDb } from '@/db';
 import { importBatches, importRows } from '@/db/schema/notifications';
 import { vehicles } from '@/db/schema/fleet';
 import { eq, and, sql } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 interface VehicleImportRow {
@@ -40,6 +40,8 @@ export async function POST(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/fleet/import', 'import');
+    if (roleCheck instanceof NextResponse) return roleCheck;
     const permCheck = await requirePermission(session, Permissions.VEHICLE_CREATE);
     if (permCheck instanceof NextResponse) return permCheck;
 

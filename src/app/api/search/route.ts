@@ -4,8 +4,8 @@ import { getDb } from '@/db';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
-import { getSessionPermissions, requireRequestAuth } from '@/lib/auth-helpers';
-import { Permissions, type PermissionCode } from '@/lib/permissions';
+import { getSessionRoleNames, requireRequestAuth } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 export interface GlobalSearchResult {
   id: string;
@@ -24,13 +24,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, data: [] });
   }
 
-  const permissions = await getSessionPermissions(session);
-  const has = (permission: PermissionCode) => permissions.includes(permission);
+  const roleNames = await getSessionRoleNames(session);
+  const requestAccess = resolveDashboardAccess('/dashboard/requests', roleNames);
+  const vehicleAccess = resolveDashboardAccess('/dashboard/fleet', roleNames);
+  const employeeAccess = resolveDashboardAccess('/dashboard/staff', roleNames);
   const db = getDb();
   const tasks: Array<Promise<GlobalSearchResult[]>> = [];
 
-  if (has(Permissions.REQUEST_VIEW) || has(Permissions.REQUEST_CREATE)) {
-    const canViewAll = has(Permissions.TENANT_MANAGE) || has(Permissions.REQUEST_REVIEW_TRANSPORT);
+  if (requestAccess.allowed) {
+    const canViewAll = requestAccess.recordScope === 'tenant';
     tasks.push(
       db
         .select({
@@ -61,7 +63,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (has(Permissions.VEHICLE_VIEW) || has(Permissions.VEHICLE_MANAGE)) {
+  if (vehicleAccess.allowed) {
     tasks.push(
       db
         .select({
@@ -93,7 +95,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (has(Permissions.STAFF_VIEW) || has(Permissions.STAFF_MANAGE)) {
+  if (employeeAccess.allowed) {
     tasks.push(
       db
         .select({

@@ -17,6 +17,8 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { AllocationActions } from './AllocationActions';
 import { DriverAssignment } from './DriverAssignment';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canPerformDashboardAction } from '@/lib/dashboard-access';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -178,6 +180,8 @@ export default async function AllocationDetailPage({ params }: PageProps) {
   }
 
   const { allocation, relatedTrip, authority, openDefectCount, tripAuthorityDoc, assignedDriver, driverLicenceInfo } = data;
+  const roleNames = await getSessionRoleNames(session);
+  const canManage = canPerformDashboardAction('/dashboard/allocations', roleNames, 'update');
   const stateVariant = ALLOCATION_STATE_VARIANTS[allocation.state] ?? 'info';
 
   // Determine best licence status for display
@@ -207,12 +211,12 @@ export default async function AllocationDetailPage({ params }: PageProps) {
         description={`${allocation.licenceNumber}${allocation.vehicleRegisterNumber ? ` · ${allocation.vehicleRegisterNumber}` : ''} · ${formatDate(allocation.startAt)} – ${formatDate(allocation.endAt)}`}
       >
         <div className="flex items-center gap-2">
-          <AllocationActions
+          {canManage && <AllocationActions
             allocationId={id}
             requestId={allocation.requestId}
             vehicleId={allocation.vehicleId}
             hasTrip={!!relatedTrip}
-          />
+          />}
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/allocations"><ChevronLeft className="h-4 w-4" /> Back</Link>
           </Button>
@@ -286,16 +290,16 @@ export default async function AllocationDetailPage({ params }: PageProps) {
                     }
                   </span>
                 </div>
-                <DriverAssignment
+                {canManage && <DriverAssignment
                   allocationId={id}
                   currentDriverId={allocation.driverEmployeeId}
-                />
+                />}
               </div>
             ) : (
-              <DriverAssignment
+              canManage ? <DriverAssignment
                 allocationId={id}
                 currentDriverId={allocation.driverEmployeeId}
-              />
+              /> : <p className="text-sm text-ink-500">No driver assigned.</p>
             )}
           </CardContent>
         </Card>

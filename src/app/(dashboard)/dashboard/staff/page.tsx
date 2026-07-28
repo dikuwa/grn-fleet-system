@@ -11,6 +11,8 @@ import { StatusBadge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canPerformDashboardAction } from '@/lib/dashboard-access';
 
 interface SearchParams {
   q?: string;
@@ -158,6 +160,9 @@ export default async function StaffDirectoryPage({
   }
 
   const sp = await searchParams;
+  const roleNames = await getSessionRoleNames(session);
+  const canCreate = canPerformDashboardAction('/dashboard/staff/new', roleNames, 'create');
+  const canImport = canPerformDashboardAction('/dashboard/staff/import', roleNames, 'import');
   let data: StaffQueryResult;
   try {
     data = await fetchStaffData(sp, session.tenantId);
@@ -204,10 +209,14 @@ export default async function StaffDirectoryPage({
         title="Staff Directory"
         description={`${totalCount} employee${totalCount !== 1 ? 's' : ''} on record`}
       >
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/staff/import"><Upload className="h-4 w-4" />Import</Link>
-        </Button>
-        <Button variant="primary" size="sm" asChild><Link href="/dashboard/staff/new"><Plus className="h-4 w-4" />Add Employee</Link></Button>
+        {canImport && (
+          <Button variant="secondary" size="sm" asChild>
+            <Link href="/dashboard/staff/import"><Upload className="h-4 w-4" />Import</Link>
+          </Button>
+        )}
+        {canCreate && (
+          <Button variant="primary" size="sm" asChild><Link href="/dashboard/staff/new"><Plus className="h-4 w-4" />Add Employee</Link></Button>
+        )}
       </PageHeader>
 
       <form className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border bg-surface p-4" method="GET">

@@ -1,10 +1,16 @@
 'use client';
 
 import { useState, useEffect, useSyncExternalStore } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { WifiOff, RefreshCw, Database } from 'lucide-react';
 import { countUnsyncedDrafts } from '@/lib/offline-drafts';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 export function OfflineIndicator() {
+  const { data: profile } = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
   const isOnline = useSyncExternalStore(
     (onStoreChange) => {
       window.addEventListener('online', onStoreChange);
@@ -21,11 +27,14 @@ export function OfflineIndicator() {
 
   // Poll unsynced count separately
   useEffect(() => {
+    if (!profile) return;
+    const userId = profile.id;
+    const tenantId = profile.tenantId;
     let cancelled = false;
 
     async function poll() {
       try {
-        const count = await countUnsyncedDrafts();
+        const count = await countUnsyncedDrafts({ userId, tenantId });
         if (!cancelled) setUnsyncedCount(count);
       } catch {
         /* Dexie not available */
@@ -38,7 +47,7 @@ export function OfflineIndicator() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [profile]);
 
   if (isOnline && unsyncedCount === 0) return null;
 

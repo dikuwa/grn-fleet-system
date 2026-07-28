@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transportRequests, requestRevisions, auditEvents } from '@/db/schema';
-import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { WorkflowEngine } from '@/lib/workflow-engine';
 
@@ -11,6 +11,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
   const { session } = auth;
+  const roleCheck = await requireDashboardAction(session, '/dashboard/requests', 'update');
+  if (roleCheck instanceof NextResponse) return roleCheck;
   const permission = await requirePermission(session, Permissions.REQUEST_CREATE);
   if (permission instanceof NextResponse) return permission;
   const body = await request.json().catch(() => ({}));

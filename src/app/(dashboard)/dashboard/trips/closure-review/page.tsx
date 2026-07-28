@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { statusConfig } from '@/lib/request-status';
 import Link from 'next/link';
 import { ClosureReviewActions } from './ClosureReviewActions';
@@ -125,6 +127,11 @@ export default async function ClosureReviewPage() {
       </div>
     );
   }
+  const roleNames = await getSessionRoleNames(session);
+  const canCloseTrips = resolveDashboardAccess(
+    '/dashboard/trips/closure-review',
+    roleNames,
+  ).actions.includes('approve');
 
   if (!isDbConnected()) {
     return (
@@ -269,11 +276,13 @@ export default async function ClosureReviewPage() {
                     </div>
                   </div>
                   <div className="shrink-0 flex items-center gap-2">
-                    <ClosureReviewActions
-                      tripId={trip.id}
-                      tripStatus={trip.status}
-                      hasReturnInspection={trip.hasReturnInspection}
-                    />
+                    {canCloseTrips && (
+                      <ClosureReviewActions
+                        tripId={trip.id}
+                        tripStatus={trip.status}
+                        hasReturnInspection={trip.hasReturnInspection}
+                      />
+                    )}
                     <ChevronRight className="h-4 w-4 text-ink-300" />
                   </div>
                 </div>

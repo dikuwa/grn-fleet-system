@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -21,6 +21,8 @@ import {
   Wrench,
   CheckCircle2,
   Settings,
+  Mail,
+  Save,
   AlertCircle,
   ChevronRight,
   Inbox,
@@ -35,6 +37,16 @@ import {
   type NotificationFeed,
   useNotificationBroadcast,
 } from '@/lib/notifications-client';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { StyledDateInput } from '@/components/ui/styled-select';
+import { FieldWrapper } from '@/components/ui/input';
 
 type NotificationType = 'all' | 'action_required' | 'awareness' | 'reminder' | 'escalation' | 'outcome';
 type NotificationFilter = 'all' | 'unread' | 'read';
@@ -48,7 +60,7 @@ interface Notification {
   isRead: boolean;
   priority: 'high' | 'normal' | 'low';
   entityType: string;
-  actionUrl: string;
+  actionUrl: string | null;
 }
 
 const typeColors: Record<NotificationType, { bg: string; text: string; icon: React.ReactNode }> = {
@@ -84,6 +96,12 @@ export default function NotificationsPage() {
   useNotificationBroadcast();
   const [selectedType, setSelectedType] = useState<NotificationType>('all');
   const [filterMode, setFilterMode] = useState<NotificationFilter>('all');
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [emailNotifications, setEmailNotifications] = useState(true);
+  const [inAppNotifications, setInAppNotifications] = useState(true);
+  const [quietHoursStart, setQuietHoursStart] = useState('20:00');
+  const [quietHoursEnd, setQuietHoursEnd] = useState('07:00');
+  const [savingPreferences, setSavingPreferences] = useState(false);
   const notificationQuery = useQuery({
     queryKey: notificationQueryKey,
     queryFn: ({ signal }) => fetchNotifications(signal),
@@ -113,7 +131,7 @@ export default function NotificationsPage() {
         ? notification.priority as Notification['priority']
         : 'normal',
       entityType: notification.entityType || 'request',
-      actionUrl: notification.actionUrl || '/dashboard',
+      actionUrl: notification.actionUrl,
     })),
     [notificationQuery.data],
   );
@@ -128,6 +146,43 @@ export default function NotificationsPage() {
   });
 
   const unreadCount = notificationQuery.data?.unreadCount || 0;
+  useEffect(() => {
+    const preferences = notificationQuery.data?.preferences;
+    if (!preferences) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setEmailNotifications(preferences.emailNotifications);
+      setInAppNotifications(preferences.inAppNotifications);
+      setQuietHoursStart(preferences.quietHoursStart || '20:00');
+      setQuietHoursEnd(preferences.quietHoursEnd || '07:00');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [notificationQuery.data?.preferences]);
+
+  const savePreferences = useCallback(async () => {
+    setSavingPreferences(true);
+    try {
+      const response = await fetch('/api/notifications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_preferences',
+          emailNotifications,
+          inAppNotifications,
+          quietHoursStart,
+          quietHoursEnd,
+        }),
+      });
+      if (!response.ok) throw new Error('Unable to save notification preferences');
+      await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
+      setPreferencesOpen(false);
+    } finally {
+      setSavingPreferences(false);
+    }
+  }, [emailNotifications, inAppNotifications, queryClient, quietHoursEnd, quietHoursStart]);
 
   const markAllRead = useCallback(async () => {
     const response = await fetch('/api/notifications', {
@@ -147,6 +202,7 @@ export default function NotificationsPage() {
         (notification) => notification.id === notificationId && !notification.isRead,
       );
       return {
+        ...current,
         notifications: current.notifications.map((notification) => (
           notification.id === notificationId
             ? { ...notification, isRead: true }
@@ -184,11 +240,9 @@ export default function NotificationsPage() {
             <CheckCheck className="h-4 w-4" />
             Mark All Read
           </Button>
-          <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/settings">
-              <Settings className="h-4 w-4" />
-              Preferences
-            </Link>
+          <Button variant="secondary" size="sm" onClick={() => setPreferencesOpen(true)}>
+            <Settings className="h-4 w-4" />
+            Preferences
           </Button>
         </div>
       </PageHeader>
@@ -295,14 +349,16 @@ export default function NotificationsPage() {
                       </div>
                     </div>
 
-                    <Link
-                      href={notification.actionUrl}
-                      onClick={() => markOneRead(notification.id)}
-                      aria-label={`Open ${notification.title}`}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-400 hover:bg-muted hover:text-ink-700 transition-colors"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Link>
+                    {notification.actionUrl && (
+                      <Link
+                        href={notification.actionUrl}
+                        onClick={() => markOneRead(notification.id)}
+                        aria-label={`Open ${notification.title}`}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-400 hover:bg-muted hover:text-ink-700 transition-colors"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Link>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -310,6 +366,36 @@ export default function NotificationsPage() {
           })}
         </div>
       )}
+      <Dialog open={preferencesOpen} onOpenChange={setPreferencesOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Notification preferences</DialogTitle>
+            <DialogDescription>Choose personal delivery channels and quiet hours.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <label className="flex items-center justify-between rounded-[8px] border border-border p-3">
+              <span className="flex items-center gap-2 text-sm text-ink-950"><Bell className="h-4 w-4" /> In-app notifications</span>
+              <input type="checkbox" checked={inAppNotifications} onChange={(event) => setInAppNotifications(event.target.checked)} className="h-4 w-4 accent-brand-800" />
+            </label>
+            <label className="flex items-center justify-between rounded-[8px] border border-border p-3">
+              <span className="flex items-center gap-2 text-sm text-ink-950"><Mail className="h-4 w-4" /> Email notifications</span>
+              <input type="checkbox" checked={emailNotifications} onChange={(event) => setEmailNotifications(event.target.checked)} className="h-4 w-4 accent-brand-800" />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FieldWrapper label="Quiet hours start">
+                <StyledDateInput type="time" value={quietHoursStart} onChange={(event) => setQuietHoursStart(event.target.value)} />
+              </FieldWrapper>
+              <FieldWrapper label="Quiet hours end">
+                <StyledDateInput type="time" value={quietHoursEnd} onChange={(event) => setQuietHoursEnd(event.target.value)} />
+              </FieldWrapper>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPreferencesOpen(false)}>Cancel</Button>
+            <Button loading={savingPreferences} onClick={savePreferences}><Save className="h-4 w-4" /> Save preferences</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

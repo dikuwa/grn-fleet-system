@@ -5,7 +5,7 @@ import {
   inspectionTemplateItems,
   inspectionPhotos,
 } from '@/db/schema/trips';
-import { vehicles, vehicleDefects } from '@/db/schema/fleet';
+import { maintenanceEvents, vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { trips } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
 import { getServerSession } from '@/lib/session';
@@ -33,6 +33,8 @@ import {
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 import { getSignedFileUrl, isStorageConfigured } from '@/lib/storage';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -154,6 +156,11 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
     .from(vehicleDefects)
     .where(eq(vehicleDefects.inspectionId, id))
     .orderBy(desc(vehicleDefects.createdAt));
+  const [maintenance] = await db
+    .select({ id: maintenanceEvents.id })
+    .from(maintenanceEvents)
+    .where(eq(maintenanceEvents.vehicleId, inspection.vehicleId))
+    .limit(1);
 
   // Fetch trip info if linked
   let tripInfo: { id: string; status: string; startedAt: Date | null; returnedAt: Date | null } | null = null;
@@ -199,6 +206,7 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
     failCount,
     naCount,
     criticalFails,
+    hasMaintenance: !!maintenance,
   };
 }
 
@@ -238,6 +246,13 @@ export default async function InspectionDetailPage({ params }: PageProps) {
   }
 
   if (!data) notFound();
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
+  if (
+    (access.recordScope === 'assigned' || access.recordScope === 'self') &&
+    data.inspection.inspectorUserId !== session.user.id
+  ) notFound();
+  if (access.recordScope === 'related' && data.defects.length === 0 && !data.hasMaintenance) notFound();
 
   const { inspection, groupedResults, photos, defects, tripInfo, passCount, failCount, naCount, criticalFails } = data;
 

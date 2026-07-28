@@ -2,7 +2,7 @@ import { getDb, isDbConnected } from '@/db';
 import { workflowInstances, workflowDefinitions, workflowSteps, workflowActions, emergencyOverrides } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, and } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -12,12 +12,20 @@ import { Database, ChevronLeft, FileText, User, CalendarDays, CheckCircle2, XCir
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { getServerSession } from '@/lib/session';
+import { getSessionPermissions } from '@/lib/auth-helpers';
+import type { PermissionCode } from '@/lib/permissions';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-async function fetchApprovalDetail(id: string) {
+async function fetchApprovalDetail(
+  id: string,
+  tenantId: string,
+  userId: string,
+  permissionCodes: PermissionCode[],
+) {
   const db = getDb();
 
   const instance = await db
@@ -41,7 +49,7 @@ async function fetchApprovalDetail(id: string) {
     .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
     .leftJoin(workflowDefinitions, eq(workflowInstances.definitionId, workflowDefinitions.id))
     .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
-    .where(eq(workflowInstances.id, id))
+    .where(and(eq(workflowInstances.id, id), eq(transportRequests.tenantId, tenantId)))
     .then((r) => r[0] ?? null);
 
   if (!instance) notFound();
@@ -60,6 +68,7 @@ async function fetchApprovalDetail(id: string) {
         result: workflowActions.result,
         comment: workflowActions.comment,
         isActing: workflowActions.isActing,
+        actorUserId: workflowActions.actorUserId,
         createdAt: workflowActions.createdAt,
       })
       .from(workflowActions)
@@ -72,11 +81,21 @@ async function fetchApprovalDetail(id: string) {
       .then((r) => r[0] ?? null),
   ]);
 
+  const currentStep = steps.find((step) => step.stepOrder === instance.currentStepOrder);
+  const assignedToUser = instance.status === 'active' && (
+    currentStep?.assignedUserId === userId ||
+    (!!currentStep?.requiredPermission && permissionCodes.includes(currentStep.requiredPermission as PermissionCode))
+  );
+  const actedPreviously = instance.status !== 'active' && actions.some((action) => action.actorUserId === userId);
+  if (!assignedToUser && !actedPreviously) notFound();
+
   return { instance, steps, actions, overrides };
 }
 
 export default async function ApprovalDetailPage({ params }: PageProps) {
   const { id } = await params;
+  const session = await getServerSession();
+  if (!session) notFound();
 
   if (!isDbConnected()) {
     return (
@@ -90,7 +109,8 @@ export default async function ApprovalDetailPage({ params }: PageProps) {
 
   let data: Awaited<ReturnType<typeof fetchApprovalDetail>>;
   try {
-    data = await fetchApprovalDetail(id);
+    const permissions = await getSessionPermissions(session);
+    data = await fetchApprovalDetail(id, session.tenantId, session.user.id, permissions);
   } catch (error) {
     console.error('Approval detail query failed:', error);
     return (

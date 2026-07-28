@@ -21,6 +21,9 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { DefectResolveButton } from './DefectResolveButton';
+import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canPerformDashboardAction } from '@/lib/dashboard-access';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -40,7 +43,7 @@ const SEVERITY_LABELS: Record<string, string> = {
   critical: 'Critical',
 };
 
-async function fetchDefects(sp: Record<string, string | undefined>) {
+async function fetchDefects(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -48,7 +51,7 @@ async function fetchDefects(sp: Record<string, string | undefined>) {
   const severity = sp.severity?.trim();
   const status = sp.status?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
 
   if (status === 'open') {
     conditions.push(isNull(vehicleDefects.resolvedAt));
@@ -88,6 +91,7 @@ async function fetchDefects(sp: Record<string, string | undefined>) {
     db
       .select({ count: sql<number>`count(*)` })
       .from(vehicleDefects)
+      .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
       .where(where),
   ]);
 
@@ -121,6 +125,8 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
 
 export default async function DefectsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
+  const session = await getServerSession();
+  if (!session) return null;
 
   if (!isDbConnected()) {
     return (
@@ -141,8 +147,10 @@ export default async function DefectsPage({ searchParams }: PageProps) {
   }
 
   let result: Awaited<ReturnType<typeof fetchDefects>>;
+  const roleNames = await getSessionRoleNames(session);
+  const canResolve = canPerformDashboardAction('/dashboard/fleet/defects', roleNames, 'update');
   try {
-    result = await fetchDefects(sp);
+    result = await fetchDefects(sp, session.tenantId);
   } catch (error) {
     console.error('Defects query failed:', error);
     return (
@@ -347,7 +355,7 @@ export default async function DefectsPage({ searchParams }: PageProps) {
                         status={isOpen ? 'error' : 'success'}
                         label={isOpen ? 'Open' : 'Resolved'}
                       />
-                      {isOpen && (
+                      {isOpen && canResolve && (
                         <DefectResolveButton defectId={defect.id} />
                       )}
                     </div>

@@ -13,6 +13,7 @@ import { Database, CreditCard, Search, ChevronRight, ChevronLeft } from 'lucide-
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import Link from 'next/link';
+import { getServerSession } from '@/lib/session';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -26,14 +27,14 @@ const REIMBURSEMENT_STATE_VARIANTS: Record<string, 'success' | 'pending' | 'info
   pending: 'pending', approved: 'info', paid: 'success', rejected: 'error',
 };
 
-async function fetchReimbursements(sp: Record<string, string | undefined>) {
+async function fetchReimbursements(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
   const state = sp.state?.trim();
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(employees.tenantId, tenantId)];
 
   if (state) {
     conditions.push(eq(reimbursements.state, state));
@@ -64,6 +65,7 @@ async function fetchReimbursements(sp: Record<string, string | undefined>) {
     db
       .select({ count: sql<number>`count(*)` })
       .from(reimbursements)
+      .innerJoin(employees, eq(reimbursements.claimantEmployeeId, employees.id))
       .where(where),
   ]);
 
@@ -85,6 +87,8 @@ function buildPageUrl(base: string, params: Record<string, string | undefined>):
 
 export default async function ReimbursementsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
+  const session = await getServerSession();
+  if (!session) return null;
 
   if (!isDbConnected()) {
     return (
@@ -98,7 +102,7 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchReimbursements>>;
   try {
-    result = await fetchReimbursements(sp);
+    result = await fetchReimbursements(sp, session.tenantId);
   } catch (error) {
     console.error('Reimbursements query failed:', error);
     return (

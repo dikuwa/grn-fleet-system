@@ -9,7 +9,7 @@ import { getDb } from '@/db';
 import { trips, tripAuthorities, tripIssues, vehicleInspections, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 
@@ -23,6 +23,8 @@ export async function POST(
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/trips', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requirePermission(session, Permissions.TRIP_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;

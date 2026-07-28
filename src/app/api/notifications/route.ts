@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { notifications, notificationPreferences, notificationDeliveries } from '@/db/schema/notifications';
-import { eq, and, desc, count } from 'drizzle-orm';
+import { notifications, notificationPreferences, notificationDeliveries, notificationReads } from '@/db/schema/notifications';
+import { eq, and, desc, or, inArray } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { requirePermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { tenantMemberships } from '@/db/schema/tenants';
 import { sendNotificationEmail } from '@/lib/email';
 import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
+import { canAccessDashboardPath, SystemRoles } from '@/lib/dashboard-access';
+import { employees } from '@/db/schema/people';
 
 export async function GET(request: NextRequest) {
   try {
@@ -26,10 +29,31 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
 
-    const conditions = [
-      eq(notifications.recipientUserId, userId),
-      eq(notifications.tenantId, tenantId),
+    const roleNames = await getSessionRoleNames(session);
+    const isPlatformAdministrator = roleNames.includes(SystemRoles.PLATFORM_ADMIN);
+    const [employee] = await db.select({
+      departmentId: employees.departmentId,
+      officeId: employees.officeId,
+    }).from(employees)
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, userId)))
+      .limit(1);
+    const scopedAudiences = [
+      eq(notifications.audience, 'tenant'),
+      ...(roleNames.includes(SystemRoles.TENANT_ADMIN) ? [eq(notifications.audience, 'tenant_admin')] : []),
+      ...(roleNames.length ? [and(eq(notifications.audience, 'role'), inArray(notifications.audienceTarget, roleNames))!] : []),
+      ...(employee?.departmentId ? [and(eq(notifications.audience, 'department'), eq(notifications.audienceTarget, employee.departmentId))!] : []),
+      ...(employee?.officeId ? [and(eq(notifications.audience, 'office'), eq(notifications.audienceTarget, employee.officeId))!] : []),
     ];
+    const audienceCondition = isPlatformAdministrator
+      ? or(
+          and(eq(notifications.audience, 'user'), eq(notifications.recipientUserId, userId)),
+          eq(notifications.audience, 'platform'),
+        )
+      : or(
+          and(eq(notifications.audience, 'user'), eq(notifications.recipientUserId, userId)),
+          ...scopedAudiences,
+        );
+    const conditions = [eq(notifications.tenantId, tenantId), audienceCondition!];
 
     if (type && type !== 'all') {
       conditions.push(eq(notifications.type, type));
@@ -41,29 +65,55 @@ export async function GET(request: NextRequest) {
 
     const whereClause = and(...conditions);
 
-    const [unreadCount] = await db
-      .select({ count: count() })
-      .from(notifications)
-      .where(
-        and(
-          eq(notifications.recipientUserId, userId),
-          eq(notifications.tenantId, tenantId),
-          eq(notifications.isRead, false),
-        ),
-      );
-
-    const items = await db
+    const visibleItems = await db
       .select()
       .from(notifications)
       .where(whereClause)
       .orderBy(desc(notifications.createdAt))
-      .limit(limit);
+      .limit(Math.max(limit, 200));
+    const sharedIds = visibleItems.filter((item) => item.audience !== 'user').map((item) => item.id);
+    const readRows = sharedIds.length
+      ? await db.select({ notificationId: notificationReads.notificationId })
+          .from(notificationReads)
+          .where(and(eq(notificationReads.userId, userId), inArray(notificationReads.notificationId, sharedIds)))
+      : [];
+    const readIds = new Set(readRows.map((row) => row.notificationId));
+    const normalized = visibleItems.map((item) => {
+      const isRead = item.audience === 'user' ? item.isRead : readIds.has(item.id);
+      const actionAllowed = item.actionUrl
+        ? canAccessDashboardPath(item.actionUrl, roleNames) &&
+          (!item.requiredRole || roleNames.includes(item.requiredRole))
+        : false;
+      return { ...item, isRead, actionUrl: actionAllowed ? item.actionUrl : null };
+    });
+    const filtered = unreadOnly ? normalized.filter((item) => !item.isRead) : normalized;
+    const items = filtered.slice(0, limit);
+    const unreadCount = normalized.filter((item) => !item.isRead).length;
+    const [preferences] = await db
+      .select({
+        emailNotifications: notificationPreferences.emailNotifications,
+        inAppNotifications: notificationPreferences.inAppNotifications,
+        quietHoursStart: notificationPreferences.quietHoursStart,
+        quietHoursEnd: notificationPreferences.quietHoursEnd,
+      })
+      .from(notificationPreferences)
+      .where(and(
+        eq(notificationPreferences.userId, userId),
+        eq(notificationPreferences.tenantId, tenantId),
+      ))
+      .limit(1);
 
     return NextResponse.json({
       success: true,
       data: {
         notifications: items,
-        unreadCount: unreadCount?.count || 0,
+        unreadCount,
+        preferences: preferences || {
+          emailNotifications: true,
+          inAppNotifications: true,
+          quietHoursStart: '20:00',
+          quietHoursEnd: '07:00',
+        },
       },
     });
   } catch (error) {
@@ -101,9 +151,12 @@ export async function POST(request: NextRequest) {
       actionUrl,
       priority = 'normal',
       tenantName,
+      audience = 'user',
+      audienceTarget,
+      requiredRole,
     } = body;
 
-    if (!recipientUserId || !type || !title) {
+    if ((audience === 'user' && !recipientUserId) || !type || !title) {
       return NextResponse.json(
         {
           error:
@@ -116,15 +169,31 @@ export async function POST(request: NextRequest) {
     const db = getDb();
     const tenantId = session.tenantId;
     if (requestedTenantId && requestedTenantId !== tenantId) return NextResponse.json({ error: 'Cross-tenant notification denied' }, { status: 403 });
-    const [recipientMembership] = await db.select({ id: tenantMemberships.id }).from(tenantMemberships).where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.userId, recipientUserId), eq(tenantMemberships.status, 'active'))).limit(1);
-    if (!recipientMembership) return NextResponse.json({ error: 'Recipient is not an active tenant member' }, { status: 404 });
+    if (!['user', 'role', 'department', 'office', 'tenant_admin', 'tenant', 'platform'].includes(audience)) {
+      return NextResponse.json({ error: 'Invalid notification audience' }, { status: 400 });
+    }
+    if (audience === 'platform') {
+      const roleNames = await getSessionRoleNames(session);
+      if (!roleNames.includes(SystemRoles.PLATFORM_ADMIN)) {
+        return NextResponse.json({ error: 'Only Platform Administrators may publish platform events' }, { status: 403 });
+      }
+    }
+    if (['role', 'department', 'office'].includes(audience) && !audienceTarget) {
+      return NextResponse.json({ error: 'The selected audience requires a target' }, { status: 400 });
+    }
+    if (audience === 'user') {
+      const [recipientMembership] = await db.select({ id: tenantMemberships.id }).from(tenantMemberships).where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.userId, recipientUserId), eq(tenantMemberships.status, 'active'))).limit(1);
+      if (!recipientMembership) return NextResponse.json({ error: 'Recipient is not an active tenant member' }, { status: 404 });
+    }
 
     // 1. Create in-app notification
     const [notification] = await db
       .insert(notifications)
       .values({
         tenantId,
-        recipientUserId,
+        recipientUserId: audience === 'user' ? recipientUserId : null,
+        audience,
+        audienceTarget: audienceTarget || null,
         type,
         title,
         body: notificationBody || null,
@@ -132,22 +201,26 @@ export async function POST(request: NextRequest) {
         entityId: entityId || null,
         actionUrl: actionUrl || null,
         priority: priority || 'normal',
+        requiredRole: requiredRole || null,
       })
       .returning();
 
     // 2. Check delivery preferences and send email + SMS if configured
-    const [prefs] = await db
-      .select()
-      .from(notificationPreferences)
-      .where(
-        and(
-          eq(notificationPreferences.userId, recipientUserId),
-          eq(notificationPreferences.tenantId, tenantId),
-        ),
-      )
-      .limit(1);
+    const [prefs] = audience === 'user'
+      ? await db
+          .select()
+          .from(notificationPreferences)
+          .where(
+            and(
+              eq(notificationPreferences.userId, String(recipientUserId)),
+              eq(notificationPreferences.tenantId, tenantId),
+            ),
+          )
+          .limit(1)
+      : [];
 
     const shouldSendEmail =
+      audience === 'user' &&
       prefs?.emailNotifications !== false && // default true
       recipientEmail;
 
@@ -187,7 +260,9 @@ export async function POST(request: NextRequest) {
           channel: 'email',
           attempt: 1,
           status: 'skipped',
-          errorSummary: prefs?.emailNotifications === false
+          errorSummary: audience !== 'user'
+            ? 'Shared activity events are in-app only'
+            : prefs?.emailNotifications === false
             ? 'Email notifications disabled by user preference'
             : recipientEmail
               ? null
@@ -200,7 +275,7 @@ export async function POST(request: NextRequest) {
     // SMS delivery — only for high-priority notifications or if explicitly configured
     const recipientPhone = body.recipientPhone;
     const smsEnabled = isSmsEnabled();
-    const shouldSendSms = smsEnabled && (isHighPriority || body.forceSms) && recipientPhone;
+    const shouldSendSms = audience === 'user' && smsEnabled && (isHighPriority || body.forceSms) && recipientPhone;
 
     if (shouldSendSms) {
       const smsResult = await sendNotificationSms(
@@ -265,15 +340,53 @@ export async function PATCH(request: NextRequest) {
     const db = getDb();
     const body = await request.json();
     const { notificationId, action } = body;
+    const roleNames = await getSessionRoleNames(session);
+    const isPlatformAdministrator = roleNames.includes(SystemRoles.PLATFORM_ADMIN);
+    const [employee] = await db.select({
+      departmentId: employees.departmentId,
+      officeId: employees.officeId,
+    }).from(employees)
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, userId)))
+      .limit(1);
+    const sharedAudienceCondition = isPlatformAdministrator
+      ? eq(notifications.audience, 'platform')
+      : or(
+          eq(notifications.audience, 'tenant'),
+          ...(roleNames.includes(SystemRoles.TENANT_ADMIN) ? [eq(notifications.audience, 'tenant_admin')] : []),
+          ...(roleNames.length ? [and(eq(notifications.audience, 'role'), inArray(notifications.audienceTarget, roleNames))!] : []),
+          ...(employee?.departmentId ? [and(eq(notifications.audience, 'department'), eq(notifications.audienceTarget, employee.departmentId))!] : []),
+          ...(employee?.officeId ? [and(eq(notifications.audience, 'office'), eq(notifications.audienceTarget, employee.officeId))!] : []),
+        );
 
     if (action === 'mark_read') {
       if (notificationId) {
-        await db
+        const [item] = await db
+          .select({ id: notifications.id, audience: notifications.audience })
+          .from(notifications)
+          .where(
+            and(
+              eq(notifications.id, notificationId),
+              eq(notifications.tenantId, tenantId),
+              or(
+                and(eq(notifications.audience, 'user'), eq(notifications.recipientUserId, userId)),
+                sharedAudienceCondition,
+              ),
+            ),
+          )
+          .limit(1);
+        if (!item) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
+        if (item.audience === 'user') {
+          await db
           .update(notifications)
           .set({ isRead: true, readAt: new Date() })
           .where(and(eq(notifications.id, notificationId), eq(notifications.recipientUserId, userId), eq(notifications.tenantId, tenantId)));
+        } else {
+          await db.insert(notificationReads)
+            .values({ notificationId: item.id, userId })
+            .onConflictDoNothing();
+        }
       } else if (userId && tenantId) {
-        // Mark all as read
+        // Mark all personal notifications as read.
         await db
           .update(notifications)
           .set({ isRead: true, readAt: new Date() })
@@ -284,6 +397,14 @@ export async function PATCH(request: NextRequest) {
               eq(notifications.isRead, false),
             ),
           );
+        const shared = await db.select({ id: notifications.id })
+          .from(notifications)
+          .where(and(eq(notifications.tenantId, tenantId), sharedAudienceCondition));
+        if (shared.length) {
+          await db.insert(notificationReads)
+            .values(shared.map((item) => ({ notificationId: item.id, userId })))
+            .onConflictDoNothing();
+        }
       }
     }
 
@@ -294,7 +415,7 @@ export async function PATCH(request: NextRequest) {
         emailNotifications,
         inAppNotifications,
       } = body;
-      await db
+      const updated = await db
         .update(notificationPreferences)
         .set({
           quietHoursStart: quietHoursStart || null,
@@ -308,7 +429,18 @@ export async function PATCH(request: NextRequest) {
             eq(notificationPreferences.userId, userId),
             eq(notificationPreferences.tenantId, tenantId),
           ),
-        );
+        )
+        .returning({ id: notificationPreferences.id });
+      if (updated.length === 0) {
+        await db.insert(notificationPreferences).values({
+          tenantId,
+          userId,
+          quietHoursStart: quietHoursStart || null,
+          quietHoursEnd: quietHoursEnd || null,
+          emailNotifications: emailNotifications ?? true,
+          inAppNotifications: inAppNotifications ?? true,
+        });
+      }
     }
 
     return NextResponse.json({ success: true });

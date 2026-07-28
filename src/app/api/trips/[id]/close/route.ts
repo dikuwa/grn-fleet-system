@@ -13,11 +13,12 @@ import {
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles, vehicleStatusEvents, vehicleDefects } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
 import { eq, and, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { setAuthorityStatus } from '@/lib/trip-authority';
+import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -29,6 +30,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/trips/closure-review', 'approve');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     // Require trip close permission
     const permCheck = await requirePermission(session, Permissions.TRIP_CLOSE);
@@ -252,6 +255,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       summary: `Trip closed: ${totalFuelLitres}L fuel used, ${totalFuelCost} total cost`,
       sourceChannel: 'web',
     });
+    const [requestRecord] = await db.select({ reference: transportRequests.reference })
+      .from(transportRequests)
+      .where(and(eq(transportRequests.id, trip.requestId), eq(transportRequests.tenantId, tenantId)))
+      .limit(1);
+    if (requestRecord) {
+      await recordTenantRequestActivity({
+        tenantId,
+        requestId: trip.requestId,
+        reference: requestRecord.reference,
+        stage: 'closed',
+        officeLabel: 'Transport reconciliation',
+      });
+    }
 
     // Trigger document generation (trip completion + fuel summary)
     const docs = await onTripClosed(id, tenantId, userId);

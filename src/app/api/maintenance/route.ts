@@ -4,7 +4,7 @@ import { maintenanceEvents } from '@/db/schema/fleet';
 import { vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
 import { notifications } from '@/db/schema/notifications';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 
@@ -17,6 +17,8 @@ export async function POST(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/maintenance/new', 'create');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requirePermission(session, Permissions.MAINTENANCE_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;

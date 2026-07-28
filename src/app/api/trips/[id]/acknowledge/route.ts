@@ -10,7 +10,7 @@ import { trips, tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { eq, and, desc } from 'drizzle-orm';
 import { setAuthorityStatus } from '@/lib/trip-authority';
 
@@ -37,6 +37,8 @@ export async function POST(
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/driver-mobile', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const db = getDb();
 

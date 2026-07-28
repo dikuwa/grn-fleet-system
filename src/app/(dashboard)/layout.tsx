@@ -1,8 +1,8 @@
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session';
 import { DashboardShell } from '@/components/layout/dashboard-shell';
-import { getSessionPermissions } from '@/lib/auth-helpers';
-import { canAccessDashboardPath } from '@/lib/dashboard-access';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { headers } from 'next/headers';
 
 export default async function DashboardLayout({
@@ -23,11 +23,13 @@ export default async function DashboardLayout({
     redirect('/login?redirect=/dashboard&error=tenant');
   }
 
-  const permissionCodes = await getSessionPermissions(session);
+  const roleNames = await getSessionRoleNames(session);
   const pathname = (await headers()).get('x-grn-pathname') || '/dashboard';
-  if (!canAccessDashboardPath(pathname, permissionCodes)) {
-    redirect('/dashboard?error=forbidden');
+  const access = resolveDashboardAccess(pathname, roleNames);
+  if (!access.allowed) {
+    if (access.directUrlBehaviour === '404') notFound();
+    redirect(`/forbidden?from=${encodeURIComponent(pathname)}`);
   }
 
-  return <DashboardShell tenantName={session.tenantSlug} userId={session.user.id} permissionCodes={permissionCodes}>{children}</DashboardShell>;
+  return <DashboardShell tenantName={session.tenantSlug} userId={session.user.id} roleNames={roleNames}>{children}</DashboardShell>;
 }

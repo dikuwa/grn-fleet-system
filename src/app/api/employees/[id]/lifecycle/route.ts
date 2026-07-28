@@ -13,7 +13,7 @@ import {
   workflowActions,
 } from '@/db/schema';
 import { and, count, eq } from 'drizzle-orm';
-import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { AVAILABILITY_STATUSES, EMPLOYMENT_STATUSES } from '@/lib/employee-lifecycle';
 import { recordAuditEvent } from '@/lib/audit-event';
@@ -28,6 +28,8 @@ async function getEmployee(id: string, tenantId: string) {
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
+  const roleCheck = await requireDashboardAction(auth.session, '/dashboard/staff', 'view');
+  if (roleCheck instanceof NextResponse) return roleCheck;
   const permission = await requirePermission(auth.session, Permissions.STAFF_VIEW);
   if (permission instanceof NextResponse) return permission;
   const { id } = await params;
@@ -44,6 +46,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
+  const roleCheck = await requireDashboardAction(auth.session, '/dashboard/staff', 'update');
+  if (roleCheck instanceof NextResponse) return roleCheck;
   const permission = await requirePermission(auth.session, Permissions.STAFF_LIFECYCLE_MANAGE);
   if (permission instanceof NextResponse) return permission;
   const { id } = await params;
@@ -178,6 +182,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
+  const roleCheck = await requireDashboardAction(auth.session, '/dashboard/staff', 'delete');
+  if (roleCheck instanceof NextResponse) return roleCheck;
   const permission = await requirePermission(auth.session, Permissions.STAFF_LIFECYCLE_MANAGE);
   if (permission instanceof NextResponse) return permission;
   const { id } = await params;

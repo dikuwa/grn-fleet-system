@@ -2,6 +2,7 @@
 /* eslint-disable react-hooks/set-state-in-effect, react-hooks/immutability */
 
 import { useState, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +13,7 @@ import { ClipboardCheck, ChevronLeft, CheckCircle2, XCircle, Loader2, Camera, Tr
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 interface Vehicle {
   id: string;
@@ -81,6 +83,10 @@ const CATEGORY_LABELS: Record<string, string> = {
 export default function NewInspectionPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { data: profile } = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
@@ -217,8 +223,8 @@ export default function NewInspectionPage() {
         await saveDraft({
           draftType: type === 'departure' ? 'inspection_departure' : 'inspection_return',
           formData: { vehicleId, tripRef: tripId, odometerReading, fuelLevel, checklist, notes, photos: photos.map((photo) => photo.file), inspectorAcknowledged, driverAcknowledged },
-          userId: null,
-          tenantId: null,
+          userId: profile?.id || null,
+          tenantId: profile?.tenantId || null,
           syncStatus: 'pending',
         });
         toast({ title: 'Inspection saved offline', description: 'It will sync automatically when connectivity returns.', variant: 'success' });

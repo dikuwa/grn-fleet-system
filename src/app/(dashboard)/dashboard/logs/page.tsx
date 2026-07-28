@@ -15,6 +15,7 @@ import {
   Gauge, X,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 interface Trip {
   id: string;
@@ -63,6 +64,10 @@ export default function DailyLogsPage() {
   const { toast } = useToast();
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [showDrafts, setShowDrafts] = useState(false);
+  const { data: profile } = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
 
   // Online status — initialize from navigator.onLine via lazy state, then listen for changes
   useEffect(() => {
@@ -78,14 +83,15 @@ export default function DailyLogsPage() {
 
   // Check unsynced drafts count
   useEffect(() => {
+    if (!profile) return;
     const check = async () => {
-      const count = await countUnsyncedDrafts();
+      const count = await countUnsyncedDrafts({ userId: profile.id, tenantId: profile.tenantId });
       setUnsyncedCount(count);
     };
     check();
     const interval = setInterval(check, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [profile]);
 
   // Fetch trips for dropdown
   const { data: tripsData } = useQuery({
@@ -105,16 +111,16 @@ export default function DailyLogsPage() {
   const saveDraftLocally = useCallback(async () => {
     const draft = await saveDraft({
       id: draftId || undefined,
-      draftType: 'request',
+      draftType: 'trip_log',
       formData: formData as unknown as Record<string, unknown>,
-      userId: null,
-      tenantId: null,
+      userId: profile?.id || null,
+      tenantId: profile?.tenantId || null,
       syncStatus: 'pending',
     });
     setDraftId(draft.id);
     setSubmitMessage('Draft saved locally');
     setTimeout(() => setSubmitMessage(null), 3000);
-  }, [formData, draftId]);
+  }, [formData, draftId, profile]);
 
 
 
@@ -471,6 +477,8 @@ export default function DailyLogsPage() {
       {/* Drafts List */}
       <DraftListSection
         show={showDrafts}
+        userId={profile?.id}
+        tenantId={profile?.tenantId}
         onToggle={() => setShowDrafts(!showDrafts)}
         onLoadDraft={(draft) => {
           setFormData(draft.formData as unknown as LogFormData);
@@ -508,10 +516,14 @@ export default function DailyLogsPage() {
 
 function DraftListSection({
   show,
+  userId,
+  tenantId,
   onToggle,
   onLoadDraft,
 }: {
   show: boolean;
+  userId?: string;
+  tenantId?: string;
   onToggle: () => void;
   onLoadDraft: (draft: { id: string; formData: Record<string, unknown> }) => void;
 }) {
@@ -520,9 +532,9 @@ function DraftListSection({
   >([]);
 
   useEffect(() => {
-    if (!show) return;
-    listDrafts({ draftType: 'request' }).then(setDrafts);
-  }, [show]);
+    if (!show || !userId || !tenantId) return;
+    listDrafts({ draftType: 'trip_log', userId, tenantId }).then(setDrafts);
+  }, [show, tenantId, userId]);
 
   if (!show) {
     return (

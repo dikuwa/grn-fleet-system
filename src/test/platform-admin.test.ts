@@ -81,6 +81,8 @@ vi.mock('@/lib/auth-helpers', () => ({
   requireRequestAuth: vi.fn(),
   requirePermission: vi.fn(),
   requireAnyPermission: vi.fn(),
+  requireDashboardAction: vi.fn(async () => true),
+  getSessionRoleNames: vi.fn(async () => ['Transport Administrator']),
   forbiddenResponse: vi.fn(() => NextResponse.json({ error: 'Forbidden' }, { status: 403 })),
   unauthorizedResponse: vi.fn(() => NextResponse.json({ error: 'Unauthorized' }, { status: 401 })),
 }));

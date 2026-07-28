@@ -4,10 +4,12 @@ import { trips, tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
 import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 import { setAuthorityStatus } from '@/lib/trip-authority';
+import { transportRequests } from '@/db/schema/requests';
+import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 export async function POST(
   req: NextRequest,
@@ -39,6 +41,8 @@ export async function POST(
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/trips', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requireAnyPermission(session, [Permissions.TRIP_MANAGE, Permissions.DRIVER_LOG_CREATE]);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -52,10 +56,12 @@ export async function POST(
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
         beginningOdometer: tripAuthorities.beginningOdometer,
+        requestReference: transportRequests.reference,
       })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+      .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
       .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
@@ -134,6 +140,13 @@ export async function POST(
         outstandingReceiptsDeclared: body.outstandingReceiptsDeclared,
       },
       sourceChannel: 'web',
+    });
+    await recordTenantRequestActivity({
+      tenantId: session.tenantId,
+      requestId: trip.trip.requestId,
+      reference: trip.requestReference,
+      stage: 'completed',
+      officeLabel: 'Return inspection',
     });
 
     return NextResponse.json({ trip: updatedTrip });

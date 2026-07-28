@@ -40,6 +40,7 @@ import type { PermissionCode } from '@/lib/permissions';
 import { Permissions } from '@/lib/permissions';
 import { notifications } from '@/db/schema';
 import { workflowStepToStatus, workflowCompletedStatus } from '@/lib/request-status';
+import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { resolveRoleHolder } from '@/lib/employee-lifecycle';
 import { provisionTripAuthority, setAuthorityStatus } from '@/lib/trip-authority';
 
@@ -1037,6 +1038,7 @@ export class WorkflowEngine {
         .select({
           requesterUserId: transportRequests.requesterUserId,
           tenantId: transportRequests.tenantId,
+          reference: transportRequests.reference,
         })
         .from(transportRequests)
         .where(eq(transportRequests.id, instance.requestId))
@@ -1056,6 +1058,13 @@ export class WorkflowEngine {
 
       const title = titleMap[result] || `Workflow: ${result}`;
       const body = `Step "${currentStep.label}" completed with result: ${result}.`;
+      await recordTenantRequestActivity({
+        tenantId: request.tenantId,
+        requestId: instance.requestId,
+        reference: request.reference,
+        stage: result,
+        officeLabel: currentStep.label,
+      });
 
       // Secure-link requests have no login account; their outcome is delivered
       // through the tracking link/email rather than an internal notification.

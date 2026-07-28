@@ -13,8 +13,8 @@ import { DEFAULT_PAGE_SIZE, STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constan
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
-import { getSessionPermissions } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canPerformDashboardAction, resolveDashboardAccess, SystemRoles } from '@/lib/dashboard-access';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
 
 interface PageProps {
@@ -152,9 +152,15 @@ export default async function RequestsPage({ searchParams }: PageProps) {
     );
   }
 
-  const permissionCodes = await getSessionPermissions(session);
-  const canViewAll = permissionCodes.includes(Permissions.TENANT_MANAGE) || permissionCodes.includes(Permissions.REQUEST_REVIEW_TRANSPORT);
-  const canCreate = permissionCodes.includes(Permissions.REQUEST_CREATE);
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/requests', roleNames);
+  const canViewAll = access.recordScope === 'tenant';
+  const canCreate = canPerformDashboardAction('/dashboard/requests/new', roleNames, 'create');
+  const pageTitle = roleNames.includes(SystemRoles.REQUESTER)
+    ? 'My Requests'
+    : roleNames.includes(SystemRoles.TRANSPORT_ADMIN)
+      ? 'Operational Requests'
+      : 'Transport Request Oversight';
   let result: Awaited<ReturnType<typeof fetchRequests>>;
   try {
     result = await fetchRequests(sp, session.tenantId, session.user.id, canViewAll);
@@ -182,8 +188,10 @@ export default async function RequestsPage({ searchParams }: PageProps) {
         ]}
       />
       <PageHeader
-        title="Transport Requests"
-        description="Create and manage transport requests across the council"
+        title={pageTitle}
+        description={access.accessMode === 'tenant_read_only' || access.accessMode === 'tenant_read'
+          ? 'Read-only tenant request oversight'
+          : canViewAll ? 'Review and manage transport requests' : 'Create and follow your requests'}
       >
         {canCreate && <Button variant="primary" size="sm" asChild>
           <Link href="/dashboard/requests/new">

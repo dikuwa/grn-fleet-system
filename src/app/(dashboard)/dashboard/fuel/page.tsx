@@ -1,6 +1,6 @@
 import { getDb, isDbConnected } from '@/db';
 import { fuelTransactions } from '@/db/schema/trips';
-import { vehicles } from '@/db/schema/fleet';
+import { maintenanceEvents, vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,12 +14,19 @@ import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
-async function fetchFuelEntries(sp: Record<string, string | undefined>, tenantId: string) {
+async function fetchFuelEntries(
+  sp: Record<string, string | undefined>,
+  tenantId: string,
+  userId: string,
+  recordScope: 'self' | 'assigned' | 'related' | 'tenant' | 'platform' | null,
+) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -29,6 +36,20 @@ async function fetchFuelEntries(sp: Record<string, string | undefined>, tenantId
   const anomalyState = sp.anomaly_state?.trim();
 
   const conditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
+  if (recordScope === 'self' || recordScope === 'assigned') {
+    conditions.push(eq(fuelTransactions.recordedByUserId, userId));
+  } else if (recordScope === 'related') {
+    conditions.push(sql`(
+      exists (
+        select 1 from ${vehicleDefects}
+        where ${vehicleDefects.vehicleId} = ${fuelTransactions.vehicleId}
+      )
+      or exists (
+        select 1 from ${maintenanceEvents}
+        where ${maintenanceEvents.vehicleId} = ${fuelTransactions.vehicleId}
+      )
+    )`);
+  }
 
   if (paymentMethod) {
     conditions.push(eq(fuelTransactions.paymentMethod, paymentMethod));
@@ -123,8 +144,11 @@ export default async function FuelPage({ searchParams }: PageProps) {
   }
 
   let result: Awaited<ReturnType<typeof fetchFuelEntries>>;
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/fuel', roleNames);
+  const canCreate = canPerformDashboardAction('/dashboard/fuel/new', roleNames, 'create');
   try {
-    result = await fetchFuelEntries(sp, session.tenantId);
+    result = await fetchFuelEntries(sp, session.tenantId, session.user.id, access.recordScope);
   } catch (error) {
     console.error('Fuel query failed:', error);
     return (
@@ -140,9 +164,11 @@ export default async function FuelPage({ searchParams }: PageProps) {
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fuel' }]} />
       <PageHeader title="Fuel Records" description="Track fuel transactions and monitor consumption">
-        <Button variant="primary" size="sm" asChild>
-          <Link href="/dashboard/fuel/new"><Plus className="h-4 w-4" /> New Entry</Link>
-        </Button>
+        {canCreate && (
+          <Button variant="primary" size="sm" asChild>
+            <Link href="/dashboard/fuel/new"><Plus className="h-4 w-4" /> New Entry</Link>
+          </Button>
+        )}
       </PageHeader>
 
       {sp.warning === 'reimbursement_pending' && (

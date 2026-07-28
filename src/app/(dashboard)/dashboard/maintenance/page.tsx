@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canAccessDashboardPath, canPerformDashboardAction } from '@/lib/dashboard-access';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -147,6 +149,10 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
   }
 
   let result: Awaited<ReturnType<typeof fetchMaintenance>>;
+  const roleNames = await getSessionRoleNames(session);
+  const canCreate = canPerformDashboardAction('/dashboard/maintenance/new', roleNames, 'create');
+  const canExport = canPerformDashboardAction('/dashboard/maintenance', roleNames, 'export');
+  const canViewFleet = canAccessDashboardPath('/dashboard/fleet', roleNames);
   try {
     result = await fetchMaintenance(sp, session.tenantId);
   } catch (error) {
@@ -179,24 +185,24 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
         title="Maintenance"
         description="Vehicle service and repair history across the fleet"
       >
-        <Button variant="primary" size="sm" asChild>
+        {canCreate && <Button variant="primary" size="sm" asChild>
           <Link href="/dashboard/maintenance/new">
             <Wrench className="h-4 w-4" />
             Schedule Maintenance
           </Link>
-        </Button>
-        <Button variant="secondary" size="sm" asChild>
+        </Button>}
+        {canViewFleet && <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fleet">
             <Car className="h-4 w-4" />
             View Fleet
           </Link>
-        </Button>
-        <Button variant="tertiary" size="sm" asChild>
+        </Button>}
+        {canExport && <Button variant="tertiary" size="sm" asChild>
           <a href="/api/reports?type=maintenance&export=csv&period=90d">
             <Download className="h-4 w-4" />
             Export CSV
           </a>
-        </Button>
+        </Button>}
       </PageHeader>
 
       {/* Due-soon tabs */}

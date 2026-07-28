@@ -4,17 +4,20 @@ import { vehicleAllocations, trips } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
 import { VehicleRecommender } from '@/lib/vehicle-recommender';
 import { eq, and, lt, gt, inArray } from 'drizzle-orm';
+import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/allocations', 'create');
+    if (roleCheck instanceof NextResponse) return roleCheck;
     const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
@@ -91,7 +94,7 @@ export async function POST(req: NextRequest) {
 
     // Verify the transport request exists
     const [foundReq] = await db
-      .select({ id: transportRequests.id, status: transportRequests.status })
+      .select({ id: transportRequests.id, status: transportRequests.status, reference: transportRequests.reference })
       .from(transportRequests)
       .where(and(eq(transportRequests.id, resolvedRequestId), eq(transportRequests.tenantId, tenantId)))
       .limit(1);
@@ -175,6 +178,13 @@ export async function POST(req: NextRequest) {
       entityId: allocation.id,
       summary: `Allocation created: request ${resolvedRequestId?.slice(0, 8)} → vehicle ${resolvedVehicleId?.slice(0, 8)}`,
       sourceChannel: 'web',
+    });
+    await recordTenantRequestActivity({
+      tenantId,
+      requestId: foundReq.id,
+      reference: foundReq.reference,
+      stage: 'allocated',
+      officeLabel: 'Transport office',
     });
 
     return NextResponse.json({ allocation, trip, document: doc, recommendation });

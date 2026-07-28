@@ -3,7 +3,7 @@ import { getDb } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, sql } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { requireAnyPermission } from '@/lib/auth-helpers';
 import { vehicleAllocations, workflowInstances } from '@/db/schema';
@@ -24,6 +24,8 @@ export async function PATCH(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/requests', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requireAnyPermission(session, [Permissions.REQUEST_CANCEL, Permissions.REQUEST_WITHDRAW]);
     if (permCheck instanceof NextResponse) return permCheck;

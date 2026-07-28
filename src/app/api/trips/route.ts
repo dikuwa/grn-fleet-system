@@ -12,10 +12,11 @@ import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees, driverProfiles } from '@/db/schema/people';
 import { eq, and, desc, asc, like, or, sql, type SQL } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { provisionTripAuthority } from '@/lib/trip-authority';
 import { auditEvents, notifications } from '@/db/schema';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 /**
  * GET /api/trips
@@ -27,10 +28,14 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const viewCheck = await requireDashboardAction(session, '/dashboard/trips', 'view');
+    if (viewCheck instanceof NextResponse) return viewCheck;
+    const roleNames = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/trips', roleNames);
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status')?.trim();
-    const driverAssigned = searchParams.get('driver_assigned') === 'true';
+    const driverAssigned = searchParams.get('driver_assigned') === 'true' || access.recordScope === 'assigned';
     const search = searchParams.get('search')?.trim();
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '20', 10)));
@@ -151,6 +156,8 @@ export async function POST(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/allocations', 'create');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;

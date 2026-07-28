@@ -13,10 +13,10 @@ interface DashboardShellProps {
   children: React.ReactNode;
   tenantName?: string;
   userId?: string;
-  permissionCodes: string[];
+  roleNames: string[];
 }
 
-export function DashboardShell({ children, tenantName, userId, permissionCodes }: DashboardShellProps) {
+export function DashboardShell({ children, tenantName, userId, roleNames }: DashboardShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -26,14 +26,14 @@ export function DashboardShell({ children, tenantName, userId, permissionCodes }
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
-        permissionCodes={permissionCodes}
+        roleNames={roleNames}
       />
 
       {/* Mobile sidebar */}
       <MobileSidebar
         open={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
-        permissionCodes={permissionCodes}
+        roleNames={roleNames}
       />
 
       {/* Main content area */}
@@ -43,7 +43,7 @@ export function DashboardShell({ children, tenantName, userId, permissionCodes }
           sidebarCollapsed ? 'md:ml-[72px]' : 'md:ml-[248px]',
         )}
       >
-        <Topbar onMenuClick={() => setMobileMenuOpen(true)} tenantName={tenantName} userId={userId} />
+        <Topbar onMenuClick={() => setMobileMenuOpen(true)} tenantName={tenantName} userId={userId} roleNames={roleNames} />
 
         <main className="mx-auto min-w-0 max-w-[1440px] px-4 py-6 md:px-6 lg:px-8 page-enter">
           <ErrorBoundary label="Dashboard">

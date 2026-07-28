@@ -6,6 +6,7 @@ import { notFound } from 'next/navigation';
 import { APP_NAME } from '@/lib/constants';
 import { createHash } from 'node:crypto';
 import QRCode from 'qrcode';
+import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -109,11 +110,12 @@ export default async function SharePage({ params }: PageProps) {
   const verificationStatus = data.isRevoked
     ? { label: 'Revoked', color: 'text-status-error-text bg-status-error-bg border-status-error-border' }
     : data.isExpired
-      ? { label: 'Expired', color: 'text-status-warning-text bg-status-warning-bg border-status-warning-border' }
+      ? { label: 'Expired', color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg' }
       : { label: 'Active', color: 'text-status-success-text bg-status-success-bg border-status-success-border' };
 
   return (
-    <div className="min-h-screen bg-page flex items-center justify-center p-4">
+    <div className="relative flex min-h-screen items-center justify-center bg-canvas p-4">
+      <div className="absolute right-4 top-4"><PublicThemeToggle /></div>
       <div className="w-full max-w-lg">
         {/* Header */}
         <div className="text-center mb-8">
@@ -173,9 +175,9 @@ export default async function SharePage({ params }: PageProps) {
               </span>
             </div>
             {data.maxViews && (
-              <div className="flex justify-between py-2 border-b border-gray-100">
-                <span className="text-sm text-gray-500">Views</span>
-                <span className="text-sm font-medium text-gray-900">
+              <div className="flex justify-between border-b border-border py-2">
+                <span className="text-sm text-ink-500">Views</span>
+                <span className="text-sm font-medium text-ink-950">
                   {data.currentViews} / {data.maxViews}
                 </span>
               </div>
@@ -183,9 +185,9 @@ export default async function SharePage({ params }: PageProps) {
           </div>
 
           {/* Validity Period */}
-          <div className="bg-gray-50 rounded-xl p-4">
-            <p className="text-xs text-gray-500 mb-1">Validity</p>
-            <p className="text-sm text-gray-700">
+          <div className="rounded-xl bg-muted p-4">
+            <p className="mb-1 text-xs text-ink-500">Validity</p>
+            <p className="text-sm text-ink-700">
               Created {new Date(data.linkCreatedAt).toLocaleDateString('en-NA')}
               {' — '}
               Expires {new Date(data.expiresAt).toLocaleDateString('en-NA')}
@@ -194,7 +196,7 @@ export default async function SharePage({ params }: PageProps) {
 
           {/* Verification Seal */}
           <div className="text-center pt-2">
-            <div className="inline-flex items-center gap-2 text-xs text-gray-400">
+            <div className="inline-flex items-center gap-2 text-xs text-ink-500">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
               </svg>
@@ -204,7 +206,7 @@ export default async function SharePage({ params }: PageProps) {
         </div>
 
         {/* Footer */}
-        <p className="text-center text-xs text-gray-400 mt-6">
+        <p className="mt-6 text-center text-xs text-ink-500">
           This verification page confirms the authenticity of a government fleet document.
           {data.status === 'superseded' && (
             <span className="block mt-1 text-amber-500">

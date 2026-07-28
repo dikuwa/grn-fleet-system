@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { fuelTransactions, trips, vehicleAllocations } from '@/db/schema/trips';
-import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
+import { maintenanceEvents, vehicleDefects, vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
 import { notifications } from '@/db/schema/notifications';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 /**
  * GET /api/fuel
@@ -20,11 +21,30 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
 
     const { session } = auth;
+    const viewCheck = await requireDashboardAction(session, '/dashboard/fuel', 'view');
+    if (viewCheck instanceof NextResponse) return viewCheck;
     const { searchParams } = new URL(request.url);
     const limit = parseInt(searchParams.get('limit') || '50', 10);
     const offset = parseInt(searchParams.get('offset') || '0', 10);
 
     const db = getDb();
+    const roleNames = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/fuel', roleNames);
+    const conditions = [eq(vehicles.tenantId, session.tenantId)];
+    if (access.recordScope === 'self' || access.recordScope === 'assigned') {
+      conditions.push(eq(fuelTransactions.recordedByUserId, session.user.id));
+    } else if (access.recordScope === 'related') {
+      conditions.push(sql`(
+        exists (
+          select 1 from ${vehicleDefects}
+          where ${vehicleDefects.vehicleId} = ${fuelTransactions.vehicleId}
+        )
+        or exists (
+          select 1 from ${maintenanceEvents}
+          where ${maintenanceEvents.vehicleId} = ${fuelTransactions.vehicleId}
+        )
+      )`);
+    }
 
     const rows = await db
       .select({
@@ -44,7 +64,7 @@ export async function GET(request: NextRequest) {
       })
       .from(fuelTransactions)
       .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .where(and(eq(vehicles.tenantId, session.tenantId)))
+      .where(and(...conditions))
       .orderBy(desc(fuelTransactions.transactionAt))
       .limit(limit)
       .offset(offset);
@@ -53,7 +73,7 @@ export async function GET(request: NextRequest) {
       .select({ count: sql<number>`count(*)` })
       .from(fuelTransactions)
       .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .where(eq(vehicles.tenantId, session.tenantId));
+      .where(and(...conditions));
 
     return NextResponse.json({
       success: true,
@@ -76,6 +96,8 @@ export async function POST(req: NextRequest) {
     if (!auth.ok) return auth.error;
 
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/fuel/new', 'create');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     // Check permission — either fuel manager or driver recording fuel
     const managerCheck = await requirePermission(session, Permissions.FUEL_MANAGE);
@@ -338,6 +360,8 @@ export async function PATCH(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/fuel', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permission = await requirePermission(session, Permissions.FUEL_VERIFY);
     if (permission instanceof NextResponse) return permission;

@@ -3,9 +3,10 @@ import { getDb } from '@/db';
 import { vehicleInspections, inspectionItemResults, inspectionTemplateItems, inspectionPhotos } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 export async function GET(
   req: NextRequest,
@@ -16,6 +17,10 @@ export async function GET(
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/inspections', 'view');
+    if (roleCheck instanceof NextResponse) return roleCheck;
+    const roleNames = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
 
     const permCheck = await requirePermission(session, Permissions.INSPECTION_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -36,6 +41,7 @@ export async function GET(
         notes: vehicleInspections.notes,
         createdAt: vehicleInspections.createdAt,
         updatedAt: vehicleInspections.updatedAt,
+        inspectorUserId: vehicleInspections.inspectorUserId,
         make: vehicles.make,
         model: vehicles.model,
         licenceNumber: vehicles.licenceNumber,
@@ -51,6 +57,12 @@ export async function GET(
       .limit(1);
 
     if (!inspection) {
+      return NextResponse.json({ error: 'Inspection not found' }, { status: 404 });
+    }
+    if (
+      (access.recordScope === 'assigned' || access.recordScope === 'self') &&
+      inspection.inspectorUserId !== session.user.id
+    ) {
       return NextResponse.json({ error: 'Inspection not found' }, { status: 404 });
     }
 

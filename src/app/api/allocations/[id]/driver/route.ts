@@ -18,10 +18,12 @@ import {
 } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, gt, lt, inArray, ne, sql, desc } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { calculateDriverCompliance } from '@/lib/employee-lifecycle';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { transportRequests } from '@/db/schema/requests';
+import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 export async function PATCH(
   request: NextRequest,
@@ -32,6 +34,8 @@ export async function PATCH(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/allocations', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -53,11 +57,14 @@ export async function PATCH(
         startAt: vehicleAllocations.startAt,
         endAt: vehicleAllocations.endAt,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        requestId: vehicleAllocations.requestId,
+        requestReference: transportRequests.reference,
         requiredLicenceClass: vehicles.requiredLicenceClass,
         professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
+      .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
       .where(and(eq(vehicleAllocations.id, id), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
 
@@ -154,6 +161,13 @@ export async function PATCH(
       before: { driverEmployeeId: allocation.driverEmployeeId },
       after: { driverEmployeeId, compliance },
     });
+    await recordTenantRequestActivity({
+      tenantId: session.tenantId,
+      requestId: allocation.requestId,
+      reference: allocation.requestReference,
+      stage: 'driver_assigned',
+      officeLabel: 'Transport office',
+    });
 
     return NextResponse.json({ success: true, driverEmployeeId });
   } catch (error) {
@@ -171,6 +185,8 @@ export async function DELETE(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/allocations', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;

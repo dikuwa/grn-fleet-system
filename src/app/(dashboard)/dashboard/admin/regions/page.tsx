@@ -12,6 +12,14 @@ import {
   Trash2, Edit2, RefreshCw, GripVertical, XCircle,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface Region {
   id: string;
@@ -33,6 +41,7 @@ export default function AdminRegionsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Region | null>(null);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -121,7 +130,6 @@ export default function AdminRegionsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this region? This cannot be undone.')) return;
     setDeleting(id);
 
     try {
@@ -129,6 +137,7 @@ export default function AdminRegionsPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete region');
       toast({ title: 'Region deleted', description: 'Region removed successfully', variant: 'success' });
+      setPendingDelete(null);
       fetchRegions();
     } catch (err) {
       toast({ title: 'Failed to delete region', description: err instanceof Error ? err.message : 'Failed to delete region', variant: 'error' });
@@ -244,6 +253,29 @@ export default function AdminRegionsPage() {
         </div>
       )}
 
+      <Dialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete region?</DialogTitle>
+            <DialogDescription>
+              {pendingDelete
+                ? `${pendingDelete.name} will be permanently removed. This action cannot be undone.`
+                : 'This action cannot be undone.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPendingDelete(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              loading={!!pendingDelete && deleting === pendingDelete.id}
+              onClick={() => pendingDelete && handleDelete(pendingDelete.id)}
+            >
+              <Trash2 className="h-4 w-4" /> Delete region
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Loading */}
       {loading && (
         <div className="flex items-center justify-center py-12">
@@ -335,7 +367,7 @@ export default function AdminRegionsPage() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      onClick={() => handleDelete(region.id)}
+                      onClick={() => setPendingDelete(region)}
                       loading={deleting === region.id}
                       title="Delete region"
                       className="text-status-error-text hover:text-red-700"

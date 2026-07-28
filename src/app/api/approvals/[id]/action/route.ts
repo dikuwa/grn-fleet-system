@@ -3,7 +3,7 @@ import { getDb } from '@/db';
 import { workflowInstances } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { eq } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { WorkflowEngine, type WorkflowActionType, type WorkflowActionResult } from '@/lib/workflow-engine';
 
 export async function POST(
@@ -17,6 +17,11 @@ export async function POST(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/approvals', 'approve');
+    if (roleCheck instanceof NextResponse) {
+      const driverCheck = await requireDashboardAction(session, '/dashboard/driver-mobile', 'update');
+      if (driverCheck instanceof NextResponse) return roleCheck;
+    }
 
     const body = await request.json();
     const { actionType, comment } = body;

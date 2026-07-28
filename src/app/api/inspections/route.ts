@@ -4,17 +4,21 @@ import { trips, tripAuthorities, vehicleInspections, inspectionItemResults, insp
 import { vehicles, vehicleDefects, vehicleStatusEvents, maintenanceEvents, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents, notifications, roleAssignments, roles, tenantMemberships } from '@/db/schema';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onInspectionCompleted } from '@/lib/document-generator';
 import { eq, and, isNull, sql } from 'drizzle-orm';
 import { setAuthorityStatus } from '@/lib/trip-authority';
+import { employees } from '@/db/schema/people';
+import { SystemRoles } from '@/lib/dashboard-access';
 
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/inspections/new', 'create');
+    if (roleCheck instanceof NextResponse) return roleCheck;
     const permCheck = await requirePermission(session, Permissions.INSPECTION_PERFORM);
     if (permCheck instanceof NextResponse) return permCheck;
 
@@ -92,6 +96,17 @@ export async function POST(req: NextRequest) {
       trip = foundTrip || null;
       if (!trip || trip.vehicleId !== vehicleId) return NextResponse.json({ error: 'Trip and vehicle do not match' }, { status: 404 });
       if (!trip.driverEmployeeId) return NextResponse.json({ error: 'A valid driver must be assigned before inspection' }, { status: 409 });
+      const roleNames = await getSessionRoleNames(session);
+      if (roleNames.includes(SystemRoles.DRIVER)) {
+        const [employee] = await db
+          .select({ id: employees.id })
+          .from(employees)
+          .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, userId)))
+          .limit(1);
+        if (!employee || employee.id !== trip.driverEmployeeId) {
+          return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+        }
+      }
       if (
         type === 'departure' &&
         (trip.status !== 'pending' ||

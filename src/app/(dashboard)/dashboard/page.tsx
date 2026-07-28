@@ -1,726 +1,186 @@
-import { PageHeader } from '@/components/layout/page-header';
-import { StatCard } from '@/components/ui/card';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
+import Link from 'next/link';
+import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import {
-  FileText,
-  Clock,
-  Truck,
-  AlertTriangle,
-  Fuel,
-  TrendingUp,
-  Wrench,
-  Database,
-  Gauge,
-  User,
-  ChevronRight,
-  CalendarClock,
-  IdCard,
+  Bell,
+  Building2,
+  CheckSquare,
   ClipboardCheck,
+  FileText,
+  Shield,
+  Truck,
+  Users,
+  Wrench,
 } from 'lucide-react';
 import { getDb, isDbConnected } from '@/db';
-import { transportRequests } from '@/db/schema/requests';
-import { vehicles, vehicleDefects } from '@/db/schema/fleet';
-import { workflowInstances } from '@/db/schema/workflows';
-import { fuelTransactions, trips, vehicleAllocations } from '@/db/schema/trips';
-import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
+import {
+  employees,
+  maintenanceEvents,
+  notifications,
+  notificationReads,
+  tenants,
+  transportRequests,
+  trips,
+  vehicleAllocations,
+  vehicleDefects,
+  vehicleInspections,
+  vehicles,
+  workflowInstances,
+  workflowSteps,
+} from '@/db/schema';
 import { getServerSession } from '@/lib/session';
-import { eq, and, desc, asc, sql, isNull, gte, ne, lte, or } from 'drizzle-orm';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canAccessDashboardPath, SystemRoles } from '@/lib/dashboard-access';
+import { PageHeader } from '@/components/layout/page-header';
+import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatDate, formatDateTime } from '@/lib/utils';
-import Link from 'next/link';
 
-async function fetchDashboardData(tenantId: string) {
+type Metric = { label: string; value: number; href?: string; icon: React.ReactNode };
+
+const quickLinks = [
+  ['/dashboard/platform', 'Platform Dashboard'],
+  ['/dashboard/staff', 'Staff Directory'],
+  ['/dashboard/approvals', 'Assigned Approvals'],
+  ['/dashboard/requests', 'Requests'],
+  ['/dashboard/allocations', 'Allocations'],
+  ['/dashboard/trips', 'Trips'],
+  ['/dashboard/fleet', 'Fleet'],
+  ['/dashboard/inspections', 'Inspections'],
+  ['/dashboard/maintenance', 'Maintenance'],
+  ['/dashboard/audit', 'Audit Log'],
+  ['/dashboard/reports', 'Reports'],
+] as const;
+
+async function countRows(query: Promise<Array<{ count: number }>>) {
+  const rows = await query;
+  return Number(rows[0]?.count || 0);
+}
+
+async function getRoleMetrics(tenantId: string, userId: string, roleNames: string[]): Promise<Metric[]> {
   const db = getDb();
+  const has = (role: string) => roleNames.includes(role);
+  const count = sql<number>`count(*)`;
 
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  if (has(SystemRoles.PLATFORM_ADMIN)) {
+    return [
+      { label: 'Active tenants', value: await countRows(db.select({ count }).from(tenants).where(eq(tenants.status, 'active'))), href: '/dashboard/platform/tenants', icon: <Building2 className="h-5 w-5" /> },
+    ];
+  }
 
-  const today = new Date();
-  const thirtyDaysFromNow = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+  if (has(SystemRoles.TENANT_ADMIN)) {
+    return [
+      { label: 'Active employees', value: await countRows(db.select({ count }).from(employees).where(and(eq(employees.tenantId, tenantId), eq(employees.employmentStatus, 'active')))), href: '/dashboard/staff', icon: <Users className="h-5 w-5" /> },
+      { label: 'Fleet drivers', value: await countRows(db.select({ count }).from(employees).where(and(eq(employees.tenantId, tenantId), eq(employees.isDriver, true), eq(employees.employmentStatus, 'active')))), href: '/dashboard/drivers', icon: <Truck className="h-5 w-5" /> },
+    ];
+  }
 
-  const [
-    requestCounts,
-    vehicleCounts,
-    defectCounts,
-    tripCounts,
-    returnDueCount,
-    recentReqs,
-    fuelMonth,
-    pendingApprovals,
-    activeTrips,
-    expiryData,
-    driverLicenceExpiryData,
-    closureReviewTrips,
-  ] = await Promise.all([
-    // Request counts by status
-    db
-      .select({
-        status: transportRequests.status,
-        count: sql<number>`count(*)`,
-      })
-      .from(transportRequests)
-      .where(eq(transportRequests.tenantId, tenantId))
-      .groupBy(transportRequests.status),
-    // Vehicle counts by status
-    db
-      .select({
-        status: vehicles.status,
-        count: sql<number>`count(*)`,
-      })
-      .from(vehicles)
-      .where(and(eq(vehicles.tenantId, tenantId), eq(vehicles.isActive, true)))
-      .groupBy(vehicles.status),
-    // Open defect count (join through vehicles for tenant isolation)
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(vehicleDefects)
-      .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
-      .where(
-        and(
-          eq(vehicles.tenantId, tenantId),
-          isNull(vehicleDefects.resolvedAt),
-        ),
-      ),
-    // Active trip count
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(trips)
-      .where(
-        and(
-          eq(trips.tenantId, tenantId),
-          eq(trips.status, 'in_progress'),
-        ),
-      ),
-    // Return due trip count
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(trips)
-      .where(
-        and(
-          eq(trips.tenantId, tenantId),
-          eq(trips.status, 'return_due'),
-        ),
-      ),
-    // Recent requests (last 5)
-    db
-      .select({
-        id: transportRequests.id,
-        reference: transportRequests.reference,
-        purpose: transportRequests.purpose,
-        status: transportRequests.status,
-        createdAt: transportRequests.createdAt,
-        requesterFirstName: employees.firstName,
-        requesterLastName: employees.lastName,
-      })
-      .from(transportRequests)
-      .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
-      .where(eq(transportRequests.tenantId, tenantId))
-      .orderBy(desc(transportRequests.createdAt))
-      .limit(5),
-    // Fuel this month (join through vehicles for tenant isolation)
-    db
-      .select({ total: sql<number>`coalesce(sum(fuel_transactions.litres), 0)` })
-      .from(fuelTransactions)
-      .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .where(
-        and(
-          eq(vehicles.tenantId, tenantId),
-          gte(fuelTransactions.transactionAt, startOfMonth),
-        ),
-      ),
-    // Active workflow instances (join through transport requests for tenant isolation)
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(workflowInstances)
+  if (has(SystemRoles.REQUESTER)) {
+    return [
+      { label: 'My active requests', value: await countRows(db.select({ count }).from(transportRequests).where(and(eq(transportRequests.tenantId, tenantId), eq(transportRequests.requesterUserId, userId), ne(transportRequests.status, 'closed')))), href: '/dashboard/requests', icon: <FileText className="h-5 w-5" /> },
+    ];
+  }
+
+  if (has(SystemRoles.DRIVER)) {
+    return [
+      { label: 'My active trips', value: await countRows(db.select({ count }).from(trips)
+        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+        .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
+        .where(and(eq(trips.tenantId, tenantId), eq(employees.userId, userId), ne(trips.status, 'closed')))), href: '/dashboard/trips', icon: <Truck className="h-5 w-5" /> },
+      { label: 'My inspections', value: await countRows(db.select({ count }).from(vehicleInspections).where(and(eq(vehicleInspections.tenantId, tenantId), eq(vehicleInspections.inspectorUserId, userId)))), href: '/dashboard/inspections', icon: <ClipboardCheck className="h-5 w-5" /> },
+    ];
+  }
+
+  if (has(SystemRoles.INSPECTOR) || has(SystemRoles.RELEASE_OFFICER)) {
+    return [
+      { label: 'My inspections', value: await countRows(db.select({ count }).from(vehicleInspections).where(and(eq(vehicleInspections.tenantId, tenantId), eq(vehicleInspections.inspectorUserId, userId)))), href: '/dashboard/inspections', icon: <ClipboardCheck className="h-5 w-5" /> },
+    ];
+  }
+
+  if (has(SystemRoles.MAINTENANCE)) {
+    return [
+      { label: 'Open defects', value: await countRows(db.select({ count }).from(vehicleDefects).innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id)).where(and(eq(vehicles.tenantId, tenantId), isNull(vehicleDefects.resolvedAt)))), href: '/dashboard/fleet/defects', icon: <Wrench className="h-5 w-5" /> },
+      { label: 'Maintenance records', value: await countRows(db.select({ count }).from(maintenanceEvents).innerJoin(vehicles, eq(maintenanceEvents.vehicleId, vehicles.id)).where(eq(vehicles.tenantId, tenantId))), href: '/dashboard/maintenance', icon: <CheckSquare className="h-5 w-5" /> },
+    ];
+  }
+
+  if (has(SystemRoles.TRANSPORT_ADMIN) || has(SystemRoles.AUDITOR)) {
+    return [
+      { label: 'Active requests', value: await countRows(db.select({ count }).from(transportRequests).where(and(eq(transportRequests.tenantId, tenantId), ne(transportRequests.status, 'closed')))), href: '/dashboard/requests', icon: <FileText className="h-5 w-5" /> },
+      { label: 'Active trips', value: await countRows(db.select({ count }).from(trips).where(and(eq(trips.tenantId, tenantId), ne(trips.status, 'closed')))), href: '/dashboard/trips', icon: <Truck className="h-5 w-5" /> },
+      { label: 'Open defects', value: await countRows(db.select({ count }).from(vehicleDefects).innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id)).where(and(eq(vehicles.tenantId, tenantId), isNull(vehicleDefects.resolvedAt)))), href: '/dashboard/fleet/defects', icon: <Wrench className="h-5 w-5" /> },
+    ];
+  }
+
+  // Approval roles only see work currently assigned to them.
+  return [
+    { label: 'Assigned approvals', value: await countRows(db.select({ count }).from(workflowInstances)
       .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-      .where(
-        and(
-          eq(transportRequests.tenantId, tenantId),
-          eq(workflowInstances.status, 'active'),
-        ),
-      ),
-    // Active trips list (in_progress or return_due) — last 5
-    db
-      .select({
-        id: trips.id,
-        status: trips.status,
-        startedAt: trips.startedAt,
-        createdAt: trips.createdAt,
-        requestReference: transportRequests.reference,
-        requestPurpose: transportRequests.purpose,
-        make: vehicles.make,
-        model: vehicles.model,
-        licenceNumber: vehicles.licenceNumber,
-        driverFirstName: employees.firstName,
-        driverLastName: employees.lastName,
-      })
-      .from(trips)
-      .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
-      .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
-      .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
-      .where(
-        and(
-          eq(trips.tenantId, tenantId),
-          ne(trips.status, 'closed'),
-          ne(trips.status, 'pending'),
-        ),
-      )
-      .orderBy(desc(trips.startedAt))
-      .limit(5),
-    // Expiry/compliance data — vehicles with expired or soon-to-expire items
-    db
-      .select({
-        id: vehicles.id,
-        licenceNumber: vehicles.licenceNumber,
-        make: vehicles.make,
-        model: vehicles.model,
-        licenceExpiryDate: vehicles.licenceExpiryDate,
-        roadworthyTestDate: vehicles.roadworthyTestDate,
-      })
-      .from(vehicles)
-      .where(
-        and(
-          eq(vehicles.tenantId, tenantId),
-          eq(vehicles.isActive, true),
-          or(
-            lte(vehicles.licenceExpiryDate, thirtyDaysFromNow.toISOString().split('T')[0]),
-            lte(vehicles.roadworthyTestDate, thirtyDaysFromNow.toISOString().split('T')[0]),
-          ),
-        ),
-      )
-      .orderBy(vehicles.licenceExpiryDate),
-    // Driver licence expiry data
-    db
-      .select({
-        id: driverLicences.id,
-        employeeId: employees.id,
-        employeeNumber: employees.employeeNumber,
-        firstName: employees.firstName,
-        lastName: employees.lastName,
-        licenceNumber: driverLicences.licenceNumber,
-        licenceClass: driverLicences.licenceClass,
-        expiryDate: driverLicences.expiryDate,
-        verificationStatus: driverLicences.verificationStatus,
-      })
-      .from(driverLicences)
-      .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
-      .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
-      .where(
-        and(
-          eq(employees.tenantId, tenantId),
-          eq(employees.isDriver, true),
-          eq(employees.employmentStatus, 'active'),
-          lte(driverLicences.expiryDate, thirtyDaysFromNow.toISOString().split('T')[0]),
-        ),
-      )
-      .orderBy(asc(driverLicences.expiryDate))
-      .limit(10),
-    // Closure review trips
-    db
-      .select({
-        id: trips.id,
-        createdAt: trips.createdAt,
-        returnedAt: trips.returnedAt,
-        requestReference: transportRequests.reference,
-        make: vehicles.make,
-        model: vehicles.model,
-        licenceNumber: vehicles.licenceNumber,
-        driverFirstName: employees.firstName,
-        driverLastName: employees.lastName,
-      })
-      .from(trips)
-      .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
-      .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
-      .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-      .leftJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
-      .where(
-        and(
-          eq(trips.tenantId, tenantId),
-          eq(trips.status, 'closure_review'),
-        ),
-      )
-      .orderBy(desc(trips.returnedAt))
-      .limit(10),
-  ]);
-  // Derive summary counts
-  const activeRequests = requestCounts
-    .filter((r) => !['draft', 'closed', 'cancelled'].includes(r.status))
-    .reduce((sum, r) => sum + r.count, 0);
-  const approvalPendingCount = requestCounts
-    .filter((r) => ['submitted', 'supervisor_review', 'transport_review'].includes(r.status))
-    .reduce((sum, r) => sum + r.count, 0);
+      .leftJoin(workflowSteps, and(eq(workflowSteps.definitionId, workflowInstances.definitionId), eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder)))
+      .where(and(eq(transportRequests.tenantId, tenantId), eq(workflowInstances.status, 'active'), or(eq(workflowSteps.assignedUserId, userId), isNull(workflowSteps.assignedUserId))))), href: '/dashboard/approvals', icon: <Shield className="h-5 w-5" /> },
+  ];
+}
 
-  const availableCount = vehicleCounts.find((v) => v.status === 'available')?.count ?? 0;
-  const onTripCount = vehicleCounts.filter((v) =>
-    ['issued', 'allocated', 'provisional'].includes(v.status),
-  ).reduce((sum, v) => sum + v.count, 0);
-  const maintenanceCount = vehicleCounts.find((v) => v.status === 'maintenance')?.count ?? 0;
-  const outOfServiceCount = vehicleCounts.filter((v) =>
-    ['out_of_service', 'written_off'].includes(v.status),
-  ).reduce((sum, v) => sum + v.count, 0);
-
-  const openDefectTotal = Number(defectCounts[0]?.count ?? 0);
-  const activeTripCount = Number(tripCounts[0]?.count ?? 0);
-  const fuelThisMonth = Number(fuelMonth[0]?.total ?? 0);
-  const pendingApprovalCount = Number(pendingApprovals[0]?.count ?? 0);
-
-  // Process expiry data — vehicles
-  const expiredVehicles = expiryData.filter((v) => {
-    if (v.licenceExpiryDate && new Date(v.licenceExpiryDate) < today) return true;
-    if (v.roadworthyTestDate) {
-      const rwExpiry = new Date(v.roadworthyTestDate);
-      rwExpiry.setFullYear(rwExpiry.getFullYear() + 1);
-      if (rwExpiry < today) return true;
-    }
-    return false;
-  });
-  const expiringSoonVehicles = expiryData.filter((v) => {
-    if (!expiredVehicles.find((e) => e.id === v.id)) {
-      if (v.licenceExpiryDate) {
-        const d = new Date(v.licenceExpiryDate);
-        if (d >= today && d <= thirtyDaysFromNow) return true;
-      }
-      if (v.roadworthyTestDate) {
-        const rwExpiry = new Date(v.roadworthyTestDate);
-        rwExpiry.setFullYear(rwExpiry.getFullYear() + 1);
-        if (rwExpiry >= today && rwExpiry <= thirtyDaysFromNow) return true;
-      }
-    }
-    return false;
-  });
-
-  // Process driver licence expiry
-  const expiredDriverLicences = driverLicenceExpiryData.filter((l) => new Date(l.expiryDate) < today);
-  const expiringSoonDriverLicences = driverLicenceExpiryData.filter(
-    (l) => !expiredDriverLicences.find((e) => e.id === l.id),
-  );
-
-  const returnDueCountNum = Number(returnDueCount[0]?.count ?? 0);
-
-  return {
-    activeRequests,
-    approvalPendingCount,
-    activeTripCount,
-    returnDueCount: returnDueCountNum,
-    openDefectTotal,
-    availableCount,
-    onTripCount,
-    maintenanceCount,
-    outOfServiceCount,
-    fuelThisMonth,
-    pendingApprovalCount,
-    recentRequests: recentReqs,
-    activeTrips,
-    expiredCount: expiredVehicles.length,
-    expiringSoonCount: expiringSoonVehicles.length,
-    expiryVehicles: [...expiredVehicles, ...expiringSoonVehicles].slice(0, 8),
-    driverLicenceExpiryData: [...expiredDriverLicences, ...expiringSoonDriverLicences].slice(0, 5),
-    expiredDriverLicenceCount: expiredDriverLicences.length,
-    expiringSoonDriverLicenceCount: expiringSoonDriverLicences.length,
-    closureReviewTrips,
-  };
+async function getUnreadActivityCount(tenantId: string, userId: string, isPlatform: boolean) {
+  const db = getDb();
+  const audience = isPlatform ? 'platform' : 'tenant';
+  return countRows(db.select({ count: sql<number>`count(*)` })
+    .from(notifications)
+    .leftJoin(notificationReads, and(eq(notificationReads.notificationId, notifications.id), eq(notificationReads.userId, userId)))
+    .where(and(eq(notifications.tenantId, tenantId), eq(notifications.audience, audience), isNull(notificationReads.id))));
 }
 
 export default async function DashboardPage() {
   const session = await getServerSession();
-  if (!session) {
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Dashboard" description="Fleet Operations Overview" />
-        <EmptyState
-          icon={<Database className="h-6 w-6" />}
-          title="Authentication Required"
-          description="Sign in to view fleet operations data."
-        />
-      </div>
-    );
+  if (!session || !isDbConnected()) {
+    return <EmptyState icon={<Shield className="h-6 w-6" />} title="Dashboard unavailable" description="Sign in with an active tenant account." />;
   }
 
-  if (!isDbConnected()) {
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Dashboard" description="Fleet Operations Overview" />
-        <EmptyState
-          icon={<Database className="h-6 w-6" />}
-          title="Database Not Configured"
-          description="Set the DATABASE_URL environment variable and run migrations."
-        />
-      </div>
-    );
-  }
-
-  const today = new Date();
-
-  let data: Awaited<ReturnType<typeof fetchDashboardData>>;
-  try {
-    data = await fetchDashboardData(session.tenantId);
-  } catch (error) {
-    console.error('Dashboard query failed:', error);
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Dashboard" description="Fleet Operations Overview" />
-        <EmptyState
-          icon={<Database className="h-6 w-6" />}
-          title="Unable to Load Dashboard"
-          description="The database query failed. Please try again later."
-        />
-      </div>
-    );
-  }
+  const roleNames = await getSessionRoleNames(session);
+  const metrics = await getRoleMetrics(session.tenantId, session.user.id, roleNames);
+  const unreadActivity = await getUnreadActivityCount(
+    session.tenantId,
+    session.user.id,
+    roleNames.includes(SystemRoles.PLATFORM_ADMIN),
+  );
+  const roleLabel = roleNames[0] || 'Employee';
+  const links = quickLinks.filter(([href]) => canAccessDashboardPath(href, roleNames));
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Dashboard"
-        description="Fleet Operations Overview"
-      />
-
-      {/* Return Due Alert Banner */}
-      {data.returnDueCount > 0 && (
-        <div className="rounded-[10px] border border-red-200 bg-red-50 p-4 dark:border-red-800/40 dark:bg-red-950/20">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
-                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-red-800 dark:text-red-300">
-                  {data.returnDueCount} Trip{data.returnDueCount !== 1 ? 's' : ''} Return Overdue
-                </p>
-                <p className="text-xs text-red-600 dark:text-red-400">
-                  These trips have exceeded their allocation end time and need immediate attention.
-                </p>
-              </div>
-            </div>
-            <Link
-              href="/dashboard/trips/active"
-              className="shrink-0 rounded-[8px] bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-700"
-            >
-              View Overdue Trips
-            </Link>
-          </div>
-        </div>
-      )}
-
-      {/* KPI Cards */}
+      <PageHeader title="Dashboard" description={`${roleLabel} workspace`} />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Active Requests"
-          value={String(data.activeRequests)}
-          description="Awaiting processing"
-          icon={<FileText className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Active Trips"
-          value={String(data.activeTripCount)}
-          description="Vehicles on the road"
-          icon={<Truck className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Return Overdue"
-          value={String(data.returnDueCount)}
-          description="Overdue for return"
-          icon={<AlertTriangle className="h-5 w-5" />}
-          className={data.returnDueCount > 0 ? 'border-red-200 bg-red-50/50' : ''}
-        />
-        <StatCard
-          title="Pending Approvals"
-          value={String(data.pendingApprovalCount)}
-          description="Awaiting decision"
-          icon={<Clock className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Open Defects"
-          value={String(data.openDefectTotal)}
-          description="Needs attention"
-          icon={<Wrench className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Expired/Expiring"
-          value={`${data.expiredCount + data.expiredDriverLicenceCount}/${data.expiringSoonCount + data.expiringSoonDriverLicenceCount}`}
-          description="Licence/Roadworthy/Driver"
-          icon={<CalendarClock className="h-5 w-5" />}
-        />
-      </div>
-
-      {/* Active Trips & Right Column */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Active Trips — left 2/3 */}
-        <div className="lg:col-span-2 space-y-6">
-          {(data.activeTrips.length > 0 || data.activeTripCount > 0) && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Gauge className="h-5 w-5 text-status-info-text" />
-                  Active Trips ({data.activeTripCount})
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {data.activeTrips.length === 0 ? (
-                  <div className="rounded-[8px] border border-dashed border-border p-6 text-center">
-                    <Truck className="mx-auto mb-2 h-5 w-5 text-ink-300" />
-                    <p className="text-sm text-ink-500">No active trips right now.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {data.activeTrips.map((trip) => {
-                      const driverName = trip.driverFirstName && trip.driverLastName
-                        ? `${trip.driverFirstName} ${trip.driverLastName}`
-                        : null;
-                      return (
-                        <Link
-                          key={trip.id}
-                          href={`/dashboard/trips/${trip.id}`}
-                          className="flex items-center justify-between rounded-[8px] border border-border p-3 transition-colors hover:border-brand-100 hover:bg-brand-50/20"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-amber-50">
-                              <Truck className="h-5 w-5 text-amber-700" />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium text-ink-950">{trip.make} {trip.model}</p>
-                                <StatusBadgeWithIcon status={trip.status} />
-                              </div>
-                              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-ink-500">
-                                <span>{trip.licenceNumber}</span>
-                                {trip.requestReference && <span>{trip.requestReference}</span>}
-                                {driverName && <span className="flex items-center gap-1"><User className="h-3 w-3" />{driverName}</span>}
-                                <span className="tabular-nums">{trip.startedAt ? formatDateTime(trip.startedAt) : formatDate(trip.createdAt)}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <ChevronRight className="h-4 w-4 text-ink-300 shrink-0" />
-                        </Link>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Trip Closure Review */}
-          {data.closureReviewTrips.length > 0 && (
-            <Card className="border-purple-200 bg-purple-50/20">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <ClipboardCheck className="h-5 w-5 text-purple-600" />
-                  Closure Review ({data.closureReviewTrips.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {data.closureReviewTrips.map((trip) => (
-                  <Link
-                    key={trip.id}
-                    href={`/dashboard/trips/${trip.id}`}
-                    className="flex items-center justify-between rounded-[8px] border border-border bg-surface p-3 transition-colors hover:border-brand-100 hover:bg-muted"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-purple-50">
-                        <ClipboardCheck className="h-4 w-4 text-purple-600" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-ink-950">
-                          {trip.make} {trip.model} · {trip.licenceNumber}
-                        </p>
-                        <p className="text-xs text-ink-500">
-                          {trip.requestReference || 'No reference'}
-                          {trip.driverFirstName && ` · ${trip.driverFirstName} ${trip.driverLastName}`}
-                          {trip.returnedAt && ` · Returned ${formatDateTime(trip.returnedAt)}`}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <StatusBadgeWithIcon status="closure_review" />
-                      <ChevronRight className="h-4 w-4 text-ink-300" />
-                    </div>
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Recent Requests */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Transport Requests</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {data.recentRequests.length === 0 ? (
-                <div className="rounded-[8px] border border-dashed border-border p-6 text-center">
-                  <FileText className="mx-auto mb-2 h-5 w-5 text-ink-300" />
-                  <p className="text-sm text-ink-500">No transport requests yet.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {data.recentRequests.map((request) => {
-                    const requesterName =
-                      request.requesterFirstName && request.requesterLastName
-                        ? `${request.requesterFirstName} ${request.requesterLastName}`
-                        : 'Unknown';
-                    return (
-                      <Link
-                        key={request.id}
-                        href={`/dashboard/requests/${request.id}`}
-                        className="flex items-center justify-between rounded-[8px] border border-border p-3 transition-colors hover:border-brand-100 hover:bg-brand-50/20"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-ink-950 truncate">
-                            {request.purpose || request.reference || 'Untitled'}
-                          </p>
-                          <p className="text-xs text-ink-500">
-                            {requesterName} &middot; {formatDate(request.createdAt)}
-                          </p>
-                        </div>
-                        <span
-                          className={`ml-3 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            request.status === 'approved' || request.status === 'closed'
-                              ? 'bg-status-success-bg text-status-success-text'
-                              : request.status === 'submitted' || request.status === 'supervisor_review'
-                                ? 'bg-status-pending-bg text-status-pending-text'
-                                : 'bg-status-info-bg text-status-info-text'
-                          }`}
-                        >
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              request.status === 'approved' || request.status === 'closed'
-                                ? 'bg-status-success-text'
-                                : request.status === 'submitted' || request.status === 'supervisor_review'
-                                  ? 'bg-status-pending-text'
-                                  : 'bg-status-info-text'
-                            }`}
-                          />
-                          {request.status}
-                        </span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
+        <Card>
+          <CardContent className="pt-5">
+            <Bell className="h-5 w-5 text-brand-700" />
+            <p className="mt-3 text-2xl font-semibold tabular-nums text-ink-950">{unreadActivity}</p>
+            <p className="text-xs text-ink-500">Unread activity updates</p>
+            <Link className="mt-3 inline-block text-xs font-medium text-brand-700" href="/dashboard/notifications">View notifications</Link>
+          </CardContent>
+        </Card>
+        {metrics.map((metric) => (
+          <Card key={metric.label}>
+            <CardContent className="pt-5">
+              <span className="text-brand-700">{metric.icon}</span>
+              <p className="mt-3 text-2xl font-semibold tabular-nums text-ink-950">{metric.value}</p>
+              <p className="text-xs text-ink-500">{metric.label}</p>
+              {metric.href && <Link className="mt-3 inline-block text-xs font-medium text-brand-700" href={metric.href}>Open workspace</Link>}
             </CardContent>
           </Card>
-        </div>
-
-        {/* Right column — Fleet Summary & Expiry Alerts */}
-        <div className="space-y-6">
-          {/* Expiry Alerts Widget */}
-          {(data.expiredCount > 0 || data.expiringSoonCount > 0 || data.driverLicenceExpiryData.length > 0) && (
-            <Card className={(data.expiredCount + data.expiredDriverLicenceCount) > 0 ? 'border-red-200 bg-red-50/30' : 'border-amber-200 bg-amber-50/30'}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <CalendarClock className={`h-4 w-4 ${(data.expiredCount + data.expiredDriverLicenceCount) > 0 ? 'text-red-600' : 'text-amber-600'}`} />
-                  Expiry Alerts
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {/* Vehicle section header */}
-                {data.expiryVehicles.length > 0 && (
-                  <>
-                    <p className="text-xs font-medium text-ink-400 uppercase tracking-wider">Vehicles</p>
-                    {data.expiryVehicles.map((v) => {
-                      const licenceExpired = v.licenceExpiryDate && new Date(v.licenceExpiryDate) < today;
-                      const licenceDays = v.licenceExpiryDate
-                        ? Math.ceil((new Date(v.licenceExpiryDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-                        : null;
-                      const rwExpiry = v.roadworthyTestDate ? new Date(v.roadworthyTestDate) : null;
-                      if (rwExpiry) rwExpiry.setFullYear(rwExpiry.getFullYear() + 1);
-                      const rwExpired = rwExpiry && rwExpiry < today;
-                      const rwDays = rwExpiry
-                        ? Math.ceil((rwExpiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-                        : null;
-
-                      return (
-                        <Link
-                          key={v.id}
-                          href={`/dashboard/fleet/${v.id}`}
-                          className="flex items-center justify-between rounded-[8px] bg-surface px-3 py-2 text-sm transition-colors hover:bg-muted"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className={`h-2 w-2 shrink-0 rounded-full ${(licenceExpired || rwExpired) ? 'bg-red-500' : 'bg-amber-500'}`} />
-                            <span className="font-medium text-ink-950 truncate">{v.licenceNumber}</span>
-                          </div>
-                          <span className="shrink-0 text-xs font-medium text-ink-500">
-                            {licenceExpired && `Lic ${Math.abs(licenceDays!)}d overdue`}
-                            {!licenceExpired && rwExpired && `RW ${Math.abs(rwDays!)}d overdue`}
-                            {!licenceExpired && !rwExpired && licenceDays != null && `Lic ${licenceDays}d`}
-                            {!licenceExpired && !rwExpired && licenceDays == null && rwDays != null && `RW ${rwDays}d`}
-                          </span>
-                        </Link>
-                      );
-                    })}
-                  </>
-                )}
-
-                {/* Driver licence section */}
-                {data.driverLicenceExpiryData.length > 0 && (
-                  <>
-                    <div className="mt-2 flex items-center gap-1.5">
-                      <IdCard className="h-3.5 w-3.5 text-ink-400" />
-                      <p className="text-xs font-medium text-ink-400 uppercase tracking-wider">Drivers</p>
-                    </div>
-                    {data.driverLicenceExpiryData.map((l) => {
-                      const expired = new Date(l.expiryDate) < today;
-                      const days = Math.ceil((new Date(l.expiryDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                      return (
-                        <div
-                          key={l.id}
-                          className="flex items-center justify-between rounded-[8px] bg-surface px-3 py-2 text-sm"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className={`h-2 w-2 shrink-0 rounded-full ${expired ? 'bg-red-500' : 'bg-amber-500'}`} />
-                            <span className="font-medium text-ink-950 truncate">{l.firstName} {l.lastName}</span>
-                          </div>
-                          <span className="shrink-0 text-xs font-medium text-ink-500">
-                            {expired ? `${Math.abs(days)}d overdue` : `${days}d`}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </>
-                )}
-
-                <Link
-                  href="/dashboard/fleet/compliance"
-                  className="mt-1 block text-center text-xs font-medium text-brand-700 hover:text-brand-800 transition-colors"
-                >
-                  View all compliance details →
-                </Link>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Fleet Summary */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Fleet Summary</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[
-                { label: 'Available', value: data.availableCount, icon: Truck, bgColor: 'bg-status-success-bg', iconColor: 'text-status-success-text' },
-                { label: 'On Trip', value: data.onTripCount, icon: TrendingUp, bgColor: 'bg-status-info-bg', iconColor: 'text-status-info-text' },
-                { label: 'In Maintenance', value: data.maintenanceCount, icon: Wrench, bgColor: 'bg-status-pending-bg', iconColor: 'text-status-pending-text' },
-                { label: 'Out of Service', value: data.outOfServiceCount, icon: AlertTriangle, bgColor: 'bg-status-error-bg', iconColor: 'text-status-error-text' },
-                { label: 'Fuel This Month', value: `${data.fuelThisMonth.toFixed(0)} L`, icon: Fuel, bgColor: 'bg-brand-50', iconColor: 'text-brand-700' },
-              ].map((stat, i) => (
-                <div key={i} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className={`flex h-8 w-8 items-center justify-center rounded-[6px] ${stat.bgColor}`}>
-                      <stat.icon className={`h-4 w-4 ${stat.iconColor}`} />
-                    </div>
-                    <span className="text-sm text-ink-700">{stat.label}</span>
-                  </div>
-                  <span className="text-sm font-semibold tabular-nums text-ink-950">
-                    {stat.value}
-                  </span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>        </div>
+        ))}
       </div>
+      {links.length > 0 && (
+        <Card>
+          <CardContent className="pt-5">
+            <h2 className="text-sm font-semibold text-ink-950">Your workspaces</h2>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {links.map(([href, label]) => (
+                <Link key={href} href={href} className="rounded-[8px] border border-border px-4 py-3 text-sm text-ink-700 transition-colors hover:border-brand-200 hover:bg-brand-50/40">
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
-
-

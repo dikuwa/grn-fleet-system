@@ -134,6 +134,13 @@
       "when": 1785186000000,
       "tag": "0018_backfill_licence_codes_and_signatories",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785272400000,
+      "tag": "0019_role_routes_and_shared_notifications",
+      "breakpoints": true
     }
   ]
 }

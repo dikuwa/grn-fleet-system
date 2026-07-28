@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employeeAssignments, employees } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
-import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 export async function POST(request: NextRequest) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
+  const roleCheck = await requireDashboardAction(auth.session, '/dashboard/staff/new', 'create');
+  if (roleCheck instanceof NextResponse) return roleCheck;
   const permission = await requirePermission(auth.session, Permissions.STAFF_MANAGE);
   if (permission instanceof NextResponse) return permission;
   const body = await request.json() as {

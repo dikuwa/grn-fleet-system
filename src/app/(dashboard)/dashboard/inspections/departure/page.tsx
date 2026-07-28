@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -11,6 +12,7 @@ import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff, Truck, Camera, Trash
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 interface ChecklistItem {
   id: string;
@@ -79,6 +81,10 @@ export default function DepartureInspectionPage() {
   const [inspectorAcknowledged, setInspectorAcknowledged] = useState(false);
   const [driverAcknowledged, setDriverAcknowledged] = useState(false);
   const { toast } = useToast();
+  const { data: profile } = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
   const [photos, setPhotos] = useState<Array<{ file: File; preview: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -185,8 +191,8 @@ export default function DepartureInspectionPage() {
           inspectorAcknowledged,
           driverAcknowledged,
         },
-        userId: null,
-        tenantId: null,
+        userId: profile?.id || null,
+        tenantId: profile?.tenantId || null,
         syncStatus: 'pending',
       });
       setOfflineSaved(true);

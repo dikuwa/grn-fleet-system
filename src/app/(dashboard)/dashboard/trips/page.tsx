@@ -13,6 +13,8 @@ import { Database, Truck, Search, ChevronRight, ChevronLeft, Download } from 'lu
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canPerformDashboardAction, resolveDashboardAccess, SystemRoles } from '@/lib/dashboard-access';
 import { statusConfig } from '@/lib/request-status';
 import { StyledSelect } from '@/components/ui/styled-select';
 import Link from 'next/link';
@@ -31,7 +33,13 @@ const TRIP_STATUS_LABELS: Record<string, string> = {
   closed: statusConfig('closed').label,
 };
 
-async function fetchTrips(sp: Record<string, string | undefined>, tenantId: string) {
+async function fetchTrips(
+  sp: Record<string, string | undefined>,
+  tenantId: string,
+  userId: string,
+  recordScope: 'self' | 'assigned' | 'related' | 'tenant' | 'platform',
+  roleNames: string[],
+) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -41,6 +49,24 @@ async function fetchTrips(sp: Record<string, string | undefined>, tenantId: stri
   const driverId = sp.driverId?.trim();
 
   const conditions: SQL[] = [eq(trips.tenantId, tenantId)];
+  if (recordScope === 'assigned' && roleNames.includes(SystemRoles.DRIVER)) {
+    const [driverEmployee] = await db.select({ id: employees.id }).from(employees)
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, userId)))
+      .limit(1);
+    if (!driverEmployee) return { rows: [], totalCount: 0, totalPages: 0, page, filters: { search, status, driverId }, driverList: [] };
+    conditions.push(eq(vehicleAllocations.driverEmployeeId, driverEmployee.id));
+  } else if (recordScope === 'related' && roleNames.includes(SystemRoles.MAINTENANCE)) {
+    conditions.push(sql<boolean>`EXISTS (
+      SELECT 1 FROM maintenance_events me WHERE me.vehicle_id = ${trips.vehicleId}
+      UNION
+      SELECT 1 FROM vehicle_defects vd WHERE vd.vehicle_id = ${trips.vehicleId}
+    )`);
+  } else if (recordScope === 'related') {
+    conditions.push(sql<boolean>`EXISTS (
+      SELECT 1 FROM vehicle_inspections vi
+      WHERE vi.trip_id = ${trips.id} AND vi.inspector_user_id = ${userId}
+    )`);
+  }
 
   if (status) {
     conditions.push(eq(trips.status, status));
@@ -169,9 +195,11 @@ export default async function TripsPage({ searchParams }: PageProps) {
     );
   }
 
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/trips', roleNames);
   let result: Awaited<ReturnType<typeof fetchTrips>>;
   try {
-    result = await fetchTrips(sp, session.tenantId);
+    result = await fetchTrips(sp, session.tenantId, session.user.id, access.recordScope || 'self', roleNames);
   } catch (error) {
     console.error('Trips query failed:', error);
     return (
@@ -190,13 +218,16 @@ export default async function TripsPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips' }]} />
-      <PageHeader title="Trips" description="Manage operational trips and vehicle assignments">
-        <Button variant="tertiary" size="sm" asChild>
+      <PageHeader
+        title={roleNames.includes(SystemRoles.DRIVER) ? 'Assigned Trips' : roleNames.includes(SystemRoles.TENANT_ADMIN) ? 'Trip Monitoring' : 'Trips'}
+        description={access.actions.includes('update') ? 'Manage operational trips and vehicle assignments' : 'Read-only trips within your permitted scope'}
+      >
+        {canPerformDashboardAction('/dashboard/trips', roleNames, 'export') && <Button variant="tertiary" size="sm" asChild>
           <a href="/api/reports?type=trips&export=csv&period=90d">
             <Download className="h-4 w-4" />
             Export CSV
           </a>
-        </Button>
+        </Button>}
       </PageHeader>
 
       {/* Summary */}

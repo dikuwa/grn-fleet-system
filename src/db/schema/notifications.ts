@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, boolean, integer, jsonb, uniqueIndex } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
 /**
@@ -9,18 +9,34 @@ export const notifications = pgTable('notifications', {
   tenantId: uuid('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  recipientUserId: text('recipient_user_id').notNull(),
+  recipientUserId: text('recipient_user_id'),
+  audience: text('audience').notNull().default('user'), // user, tenant, platform
+  audienceTarget: text('audience_target'), // role name, department UUID, or office UUID
   type: text('type').notNull(), // awareness, action_required, outcome, reminder, escalation, operational, risk, emergency
   title: text('title').notNull(),
   body: text('body'),
   entityType: text('entity_type'), // transport_request, trip, vehicle, etc.
   entityId: uuid('entity_id'),
   actionUrl: text('action_url'),
+  requiredRole: text('required_role'),
   priority: text('priority').notNull().default('normal'), // low, normal, high, emergency
   isRead: boolean('is_read').notNull().default(false),
   readAt: timestamp('read_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Per-user read state for tenant/platform activity events. */
+export const notificationReads = pgTable('notification_reads', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  notificationId: uuid('notification_id')
+    .notNull()
+    .references(() => notifications.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull(),
+  readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  notificationUserUnique: uniqueIndex('notification_reads_notification_user_idx')
+    .on(table.notificationId, table.userId),
+}));
 
 /**
  * Notification delivery tracking

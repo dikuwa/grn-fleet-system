@@ -1,18 +1,21 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
-import { syncPendingDrafts, syncSingleDraft } from '@/lib/offline-sync';
+import { syncSingleDraft } from '@/lib/offline-sync';
 import {
   listDrafts,
   deleteDraft,
   getDraft,
 } from '@/lib/offline-drafts';
 import type { OfflineDraft } from '@/lib/offline-drafts';
+import { SystemRoles } from '@/lib/dashboard-access';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 import {
   WifiOff,
   RefreshCw,
@@ -54,7 +57,28 @@ const STATUS_VARIANTS: Record<string, 'pending' | 'success' | 'error' | 'info'> 
   failed: 'error',
 };
 
+function allowedDraftTypes(roleNames: string[]): OfflineDraft['draftType'][] {
+  const allowed = new Set<OfflineDraft['draftType']>();
+  if (roleNames.includes(SystemRoles.TRANSPORT_ADMIN)) {
+    return ['fuel', 'request', 'trip_log', 'trip_progress', 'trip_incident', 'trip_expense', 'inspection_departure', 'inspection_return'];
+  }
+  if (roleNames.includes(SystemRoles.REQUESTER)) allowed.add('request');
+  if (roleNames.includes(SystemRoles.DRIVER)) {
+    ['fuel', 'trip_log', 'trip_progress', 'trip_incident', 'trip_expense', 'inspection_departure', 'inspection_return']
+      .forEach((type) => allowed.add(type as OfflineDraft['draftType']));
+  }
+  if (roleNames.includes(SystemRoles.INSPECTOR) || roleNames.includes(SystemRoles.RELEASE_OFFICER)) {
+    allowed.add('inspection_departure');
+    allowed.add('inspection_return');
+  }
+  return [...allowed];
+}
+
 export default function OfflinePage() {
+  const { data: profile, isLoading: profileLoading } = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
   const [drafts, setDrafts] = useState<OfflineDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -63,9 +87,14 @@ export default function OfflinePage() {
   const [summary, setSummary] = useState({ pending: 0, failed: 0, conflict: 0, synced: 0 });
 
   const loadDrafts = useCallback(async () => {
+    if (!profile) return;
     setLoading(true);
     try {
-      const all = await listDrafts();
+      const all = await listDrafts({
+        userId: profile.id,
+        tenantId: profile.tenantId,
+        draftTypes: allowedDraftTypes(profile.roles.map((role) => role.roleName)),
+      });
       setDrafts(all);
       setSummary({
         pending: all.filter((d) => d.syncStatus === 'pending').length,
@@ -78,7 +107,7 @@ export default function OfflinePage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [profile]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadDrafts(), 0);
@@ -88,7 +117,15 @@ export default function OfflinePage() {
   const handleSyncAll = async () => {
     setSyncing(true);
     try {
-      const result = await syncPendingDrafts();
+      const result = { synced: 0, failed: 0, errors: [] as Array<{ id: string; error: string }> };
+      for (const draft of drafts.filter((item) => item.syncStatus === 'pending' || item.syncStatus === 'failed')) {
+        const itemResult = await syncSingleDraft(draft.id);
+        if (itemResult?.synced) result.synced += 1;
+        else {
+          result.failed += 1;
+          result.errors.push({ id: draft.id, error: itemResult?.error || 'Draft not found' });
+        }
+      }
       await loadDrafts();
       if (result.synced > 0 || result.failed > 0) {
         window.dispatchEvent(new CustomEvent('offline-sync-complete', { detail: result }));
@@ -99,6 +136,7 @@ export default function OfflinePage() {
   };
 
   const handleRetrySingle = async (draftId: string) => {
+    if (!drafts.some((draft) => draft.id === draftId)) return;
     setSyncing(true);
     try {
       await syncSingleDraft(draftId);
@@ -110,11 +148,13 @@ export default function OfflinePage() {
   };
 
   const handleDiscard = async (id: string) => {
+    if (!drafts.some((draft) => draft.id === id)) return;
     await deleteDraft(id);
     await loadDrafts();
   };
 
   const handleViewDetail = async (id: string) => {
+    if (!drafts.some((draft) => draft.id === id)) return;
     try {
       const draft = await getDraft(id);
       setSelectedDraft(draft ?? null);
@@ -253,7 +293,7 @@ export default function OfflinePage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {loading ? (
+          {loading || profileLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
             </div>

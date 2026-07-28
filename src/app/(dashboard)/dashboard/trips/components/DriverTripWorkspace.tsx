@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -31,6 +32,7 @@ import {
 import { Input, Label, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { saveDraft } from '@/lib/offline-drafts';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 import { useToast } from '@/lib/use-toast';
 
 type Action = 'accept' | 'start' | 'return' | 'progress' | 'incident' | null;
@@ -77,6 +79,10 @@ const confirmations = [
 export function DriverTripWorkspace({ tripId }: { tripId: string }) {
   const router = useRouter();
   const { toast } = useToast();
+  const { data: profile } = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
   const [data, setData] = useState<WorkspaceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -170,8 +176,8 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
         await saveDraft({
           draftType: action === 'progress' ? 'trip_progress' : 'trip_incident',
           formData: { tripId, ...payload },
-          userId: null,
-          tenantId: null,
+          userId: profile?.id || null,
+          tenantId: profile?.tenantId || null,
           syncStatus: 'pending',
         });
         toast({ title: 'Saved for sync', description: 'This update will be sent when connectivity returns.', variant: 'success' });
@@ -196,7 +202,7 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
     } finally {
       setWorking(false);
     }
-  }, [action, data, form, load, online, router, toast, tripId]);
+  }, [action, data, form, load, online, profile, router, toast, tripId]);
 
   if (loading) return <div className="h-48 animate-pulse rounded-xl border border-border bg-muted" />;
   if (!data?.authority) return null;

@@ -12,12 +12,17 @@ import { Camera, ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft, deleteDraft } from '@/lib/offline-drafts';
-import { DEFAULT_TENANT_ID } from '@/lib/constants';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
+import { useQuery } from '@tanstack/react-query';
 
 export default function NewFuelEntryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
+  const { data: profile } = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
   const { toast } = useToast();
   const [formData, setFormData] = useState({
     vehicleGrn: searchParams.get('vehicle') || '',
@@ -65,7 +70,7 @@ export default function NewFuelEntryPage() {
         draftType: 'fuel',
         formData: { ...formData, tripId, receiptFile } as unknown as Record<string, unknown>,
         userId: session?.user?.id || null,
-        tenantId: DEFAULT_TENANT_ID,
+        tenantId: profile?.tenantId || null,
         syncStatus: 'pending',
       });
       setDraftId(draft.id);
@@ -74,7 +79,7 @@ export default function NewFuelEntryPage() {
     } catch (err) {
       console.error('Failed to save draft:', err);
     }
-  }, [formData, session, draftId, receiptFile, tripId]);
+  }, [formData, session, profile, draftId, receiptFile, tripId]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,7 +93,7 @@ export default function NewFuelEntryPage() {
           draftType: 'fuel',
           formData: { ...formData, tripId, receiptFile, employeeNumber: formData.employeeNumber } as unknown as Record<string, unknown>,
           userId: session?.user?.id || null,
-          tenantId: DEFAULT_TENANT_ID,
+          tenantId: profile?.tenantId || null,
           syncStatus: 'pending',
         });
         router.push('/dashboard/fuel');
@@ -118,7 +123,7 @@ export default function NewFuelEntryPage() {
           fillType: formData.fillType,
           employeeNumber: formData.paymentMethod === 'personal_reimbursement' ? formData.employeeNumber || undefined : undefined,
           recordedByUserId: session?.user?.id || 'system',
-          tenantId: DEFAULT_TENANT_ID,
+          tenantId: profile?.tenantId,
         }),
       });
       const data = await res.json();
@@ -157,7 +162,7 @@ export default function NewFuelEntryPage() {
       toast({ title: 'Failed to record', description: err instanceof Error ? err.message : 'Transaction could not be saved', variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [router, formData, session, draftId, isOnline, receiptFile, toast, tripId]);
+  }, [router, formData, session, profile, draftId, isOnline, receiptFile, toast, tripId]);
 
   return (
     <div className="space-y-6">

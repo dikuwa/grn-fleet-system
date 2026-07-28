@@ -2,21 +2,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { transportRequests, requestActivities, requestPassengers, requestDrivers, requestRoutes } from '@/db/schema/requests';
 import { employees, departments, driverProfiles } from '@/db/schema/people';
-import { tenantMemberships, roleAssignments, rolePermissions } from '@/db/schema/tenants';
 import { notifications } from '@/db/schema/notifications';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { workflowDefinitions } from '@/db/schema/workflows';
 import { onRequestSubmitted } from '@/lib/document-generator';
 import { WorkflowEngine } from '@/lib/workflow-engine';
 import { eq, and, inArray } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/requests/new', 'create');
+    if (roleCheck instanceof NextResponse) return roleCheck;
     const permCheck = await requirePermission(session, Permissions.REQUEST_CREATE);
     if (permCheck instanceof NextResponse) return permCheck;
 
@@ -220,32 +222,19 @@ export async function POST(req: NextRequest) {
     if (!hasMatchingRoute) {
       // Notify Tenant Administrators about the missing route configuration
       try {
-        const adminMemberships = await db
-          .select({ userId: tenantMemberships.userId })
-          .from(tenantMemberships)
-          .innerJoin(roleAssignments, eq(tenantMemberships.id, roleAssignments.tenantMembershipId))
-          .innerJoin(rolePermissions, eq(roleAssignments.roleId, rolePermissions.roleId))
-          .where(
-            and(
-              eq(tenantMemberships.tenantId, tenantId),
-              eq(tenantMemberships.status, 'active'),
-              eq(rolePermissions.permissionCode, 'tenant:manage'),
-            ),
-          )
-          .groupBy(tenantMemberships.userId);
-        for (const admin of adminMemberships) {
-          await db.insert(notifications).values({
-            tenantId,
-            recipientUserId: admin.userId,
-            type: 'action_required',
-            title: `⚠️ Workflow Route Missing — ${requesterEmployee.firstName} blocked`,
-            body: `${requesterEmployee.firstName} was blocked from submitting a ${scope} transport request. No active approval route matches office ${requesterEmployee.officeId ? requesterEmployee.officeId : '—'} / department ${requesterEmployee.departmentId ? requesterEmployee.departmentId : '—'}. Please configure a workflow route in Admin → Workflow Routing.`,
-            entityType: 'system',
-            entityId: 'workflow-config',
-            actionUrl: '/dashboard/admin/workflows',
-            priority: 'high',
-          });
-        }
+        await db.insert(notifications).values({
+          tenantId,
+          recipientUserId: null,
+          audience: 'tenant_admin',
+          type: 'action_required',
+          title: 'Workflow route missing',
+          body: `A ${scope} request was blocked because no active route matches the responsible office and department.`,
+          entityType: 'system',
+          entityId: null,
+          actionUrl: '/dashboard/admin/workflows',
+          requiredRole: 'Tenant Administrator',
+          priority: 'high',
+        });
       } catch {
         // Notification is best-effort
       }
@@ -276,7 +265,7 @@ export async function POST(req: NextRequest) {
         scope,
         status: 'submitted',
         requesterEmployeeId: requesterEmployee.id,
-        requesterUserId: userId,
+        requesterUserId: requesterEmployee.userId,
         enteredByUserId: userId,
         requestSource: isAssisted ? 'assisted_by_administration' : 'logged_in_self_service',
         requestChannel: 'dashboard',
@@ -396,6 +385,13 @@ export async function POST(req: NextRequest) {
       summary: isAssisted
         ? `${request.reference} requested for employee ${requesterEmployee.id} and entered by ${userId}`
         : `${request.reference} submitted through logged-in self-service`,
+    });
+    await recordTenantRequestActivity({
+      tenantId,
+      requestId: request.id,
+      reference: request.reference,
+      stage: 'submitted',
+      officeLabel: requesterEmployee.departmentName,
     });
 
     return NextResponse.json({ request: { ...request, workflowInstanceId: wfResult.ok ? wfResult.instance.id : null }, document: doc, reference: request.reference });

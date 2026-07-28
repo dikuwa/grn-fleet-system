@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, roleDelegations, roles } from '@/db/schema';
 import { and, asc, eq, gt, inArray, lt, or } from 'drizzle-orm';
-import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { findDelegationConflicts } from '@/lib/employee-lifecycle';
 import { recordAuditEvent } from '@/lib/audit-event';
@@ -47,6 +47,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
+  const roleCheck = await requireDashboardAction(auth.session, '/dashboard/delegations', 'create');
+  if (roleCheck instanceof NextResponse) return roleCheck;
   const permission = await requirePermission(auth.session, Permissions.DELEGATION_MANAGE);
   if (permission instanceof NextResponse) return permission;
   const body = await request.json() as {
@@ -149,6 +151,8 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
+  const roleCheck = await requireDashboardAction(auth.session, '/dashboard/delegations', 'update');
+  if (roleCheck instanceof NextResponse) return roleCheck;
   const permission = await requirePermission(auth.session, Permissions.DELEGATION_MANAGE);
   if (permission instanceof NextResponse) return permission;
   const body = await request.json() as { id: string; action: 'revoke' | 'cancel'; reason: string };

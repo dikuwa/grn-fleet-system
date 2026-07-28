@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 
@@ -19,6 +19,8 @@ export async function POST(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/fleet/defects', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requirePermission(session, Permissions.VEHICLE_UPDATE);
     if (permCheck instanceof NextResponse) return permCheck;

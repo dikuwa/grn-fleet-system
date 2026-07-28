@@ -43,7 +43,10 @@ export async function GET(request: NextRequest) {
     const [employee] = await db
       .select()
       .from(employees)
-      .where(and(eq(employees.userId, session.user.id)))
+      .where(and(
+        eq(employees.userId, session.user.id),
+        eq(employees.tenantId, session.tenantId),
+      ))
       .limit(1);
 
     // Get current roles (tenant-scoped)
@@ -60,14 +63,20 @@ export async function GET(request: NextRequest) {
 
     let roleList: Array<{ roleName: string; isActing: boolean }> = [];
     if (membership) {
-      roleList = await db
+      const assignedRoles = await db
         .select({
           roleName: roles.name,
           isActing: roleAssignments.isActing,
+          startDate: roleAssignments.startDate,
+          endDate: roleAssignments.endDate,
         })
         .from(roleAssignments)
         .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
         .where(eq(roleAssignments.tenantMembershipId, membership.id));
+      const now = new Date();
+      roleList = assignedRoles
+        .filter((role) => role.startDate <= now && (!role.endDate || role.endDate >= now))
+        .map(({ roleName, isActing }) => ({ roleName, isActing }));
     }
 
     return NextResponse.json({

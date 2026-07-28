@@ -1,8 +1,8 @@
 import { getDb, isDbConnected } from '@/db';
-import { workflowInstances, workflowDefinitions, workflowSteps } from '@/db/schema/workflows';
+import { workflowActions, workflowInstances, workflowDefinitions, workflowSteps } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, desc, and, sql, type SQL, or, isNull, ne } from 'drizzle-orm';
+import { eq, desc, and, sql, type SQL, or, inArray, ne } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
@@ -14,6 +14,8 @@ import { Database, ClipboardCheck, Search, ChevronRight, ChevronLeft, CheckCircl
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { getSessionPermissions } from '@/lib/auth-helpers';
+import type { PermissionCode } from '@/lib/permissions';
 import Link from 'next/link';
 
 interface PageProps {
@@ -24,7 +26,12 @@ const WORKFLOW_STATUS_LABELS: Record<string, string> = {
   active: 'Active', completed: 'Completed', cancelled: 'Cancelled', overridden: 'Overridden',
 };
 
-async function fetchApprovals(sp: Record<string, string | undefined>, tenantId: string, userId: string) {
+async function fetchApprovals(
+  sp: Record<string, string | undefined>,
+  tenantId: string,
+  userId: string,
+  permissionCodes: PermissionCode[],
+) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -33,7 +40,25 @@ async function fetchApprovals(sp: Record<string, string | undefined>, tenantId: 
 
   const conditions: SQL[] = [
     eq(transportRequests.tenantId, tenantId),
-    or(ne(workflowInstances.status, 'active'), eq(workflowSteps.assignedUserId, userId), isNull(workflowSteps.assignedUserId))!,
+    or(
+      and(
+        eq(workflowInstances.status, 'active'),
+        or(
+          eq(workflowSteps.assignedUserId, userId),
+          permissionCodes.length
+            ? inArray(workflowSteps.requiredPermission, permissionCodes)
+            : sql`false`,
+        ),
+      ),
+      and(
+        ne(workflowInstances.status, 'active'),
+        sql`exists (
+          select 1 from ${workflowActions}
+          where ${workflowActions.instanceId} = ${workflowInstances.id}
+            and ${workflowActions.actorUserId} = ${userId}
+        )`,
+      ),
+    )!,
   ];
 
   if (status) {
@@ -118,7 +143,8 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchApprovals>>;
   try {
-    result = await fetchApprovals(sp, session.tenantId, session.user.id);
+    const permissions = await getSessionPermissions(session);
+    result = await fetchApprovals(sp, session.tenantId, session.user.id, permissions);
   } catch (error) {
     console.error('Approvals query failed:', error);
     return (

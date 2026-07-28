@@ -13,6 +13,8 @@ import { Database, Truck, Search, ChevronRight, ChevronLeft, Plus } from 'lucide
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canPerformDashboardAction } from '@/lib/dashboard-access';
 import { StyledSelect } from '@/components/ui/styled-select';
 import Link from 'next/link';
 
@@ -141,6 +143,8 @@ export default async function AllocationsPage({ searchParams }: PageProps) {
   }
 
   let result: Awaited<ReturnType<typeof fetchAllocations>>;
+  const roleNames = await getSessionRoleNames(session);
+  const canCreate = canPerformDashboardAction('/dashboard/allocations/new', roleNames, 'create');
   try {
     result = await fetchAllocations(sp, session.tenantId);
   } catch (error) {
@@ -162,9 +166,9 @@ export default async function AllocationsPage({ searchParams }: PageProps) {
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Allocations' }]} />
       <PageHeader title="Vehicle Allocations" description="Manage vehicle assignments to transport requests">
-        <Button variant="primary" size="sm" asChild>
+        {canCreate && <Button variant="primary" size="sm" asChild>
           <Link href="/dashboard/allocations/new"><Plus className="h-4 w-4" /> New Allocation</Link>
-        </Button>
+        </Button>}
       </PageHeader>
 
       {/* Summary */}

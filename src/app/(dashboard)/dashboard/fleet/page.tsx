@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canAccessDashboardPath, canPerformDashboardAction } from '@/lib/dashboard-access';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -212,6 +214,10 @@ export default async function FleetPage({ searchParams }: PageProps) {
   }
 
   let result: Awaited<ReturnType<typeof fetchFleetData>>;
+  const roleNames = await getSessionRoleNames(session);
+  const canViewDefects = canAccessDashboardPath('/dashboard/fleet/defects', roleNames);
+  const canImport = canPerformDashboardAction('/dashboard/fleet/import', roleNames, 'import');
+  const canExport = canPerformDashboardAction('/dashboard/fleet', roleNames, 'export');
   try {
     result = await fetchFleetData(sp, session.tenantId);
   } catch (error) {
@@ -241,24 +247,24 @@ export default async function FleetPage({ searchParams }: PageProps) {
         title="Fleet"
         description="Manage vehicles, view status, defects and maintenance"
       >
-        <Button variant="secondary" size="sm" asChild>
+        {canViewDefects && <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fleet/defects">
             <AlertTriangle className="h-4 w-4" />
             Defects
           </Link>
-        </Button>
-        <Button variant="tertiary" size="sm" asChild>
+        </Button>}
+        {canImport && <Button variant="tertiary" size="sm" asChild>
           <Link href="/dashboard/fleet/import">
             <Upload className="h-4 w-4" />
             Import
           </Link>
-        </Button>
-        <Button variant="tertiary" size="sm" asChild>
+        </Button>}
+        {canExport && <Button variant="tertiary" size="sm" asChild>
           <a href="/api/reports?type=fuel&export=csv&period=90d">
             <Download className="h-4 w-4" />
             Export CSV
           </a>
-        </Button>
+        </Button>}
       </PageHeader>
 
       {/* Filters */}

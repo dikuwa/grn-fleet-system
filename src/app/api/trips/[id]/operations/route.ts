@@ -17,7 +17,7 @@ import {
   rolePermissions,
   tenantMemberships,
 } from '@/db/schema';
-import { hasPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { hasPermission, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { setAuthorityStatus } from '@/lib/trip-authority';
 
@@ -69,6 +69,8 @@ export async function POST(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/trips', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
     const { id } = await params;
     const body = await request.json() as Record<string, unknown>;
     const action = String(body.action || '');

@@ -1,7 +1,7 @@
 import { getDb, isDbConnected } from '@/db';
-import { trips, tripLogEntries, fuelTransactions, vehicleInspections, tripIssues } from '@/db/schema/trips';
+import { trips, tripLogEntries, fuelTransactions, vehicleInspections, tripIssues, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
-import { vehicles } from '@/db/schema/fleet';
+import { vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -12,7 +12,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database } from 'lucide-react';
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
-import { getSessionPermissions } from '@/lib/auth-helpers';
+import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { statusConfig } from '@/lib/request-status';
 import { notFound } from 'next/navigation';
@@ -22,6 +22,7 @@ import {
 import { TripActions } from '../components/TripActions';
 import { DriverTripWorkspace } from '../components/DriverTripWorkspace';
 import Link from 'next/link';
+import { resolveDashboardAccess, SystemRoles } from '@/lib/dashboard-access';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -67,11 +68,13 @@ async function fetchTripDetail(id: string, tenantId: string) {
       requestPurpose: transportRequests.purpose,
       requesterFirstName: employees.firstName,
       requesterLastName: employees.lastName,
+      driverEmployeeId: vehicleAllocations.driverEmployeeId,
     })
     .from(trips)
     .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
     .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
     .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+    .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
     .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId)))
     .then((r) => r[0] ?? null);
 
@@ -170,7 +173,27 @@ export default async function TripDetailPage({ params }: PageProps) {
   }
 
   const { trip, issueRecord, logEntries, fuel, inspections } = data;
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/trips', roleNames);
+  if (access.recordScope === 'assigned') {
+    const db = getDb();
+    const [employee] = await db.select({ id: employees.id }).from(employees)
+      .where(and(eq(employees.tenantId, session.tenantId), eq(employees.userId, session.user.id)))
+      .limit(1);
+    if (!employee || employee.id !== trip.driverEmployeeId) notFound();
+  }
+  if (access.recordScope === 'related') {
+    const db = getDb();
+    const relatedInspection = inspections.some((inspection) => inspection.inspectorUserId === session.user.id);
+    const maintenanceRelated = roleNames.includes(SystemRoles.MAINTENANCE)
+      ? await db.select({ id: vehicleDefects.id }).from(vehicleDefects)
+          .where(eq(vehicleDefects.vehicleId, trip.vehicleId)).limit(1)
+      : [];
+    if (!relatedInspection && maintenanceRelated.length === 0) notFound();
+  }
   const permissionCodes = await getSessionPermissions(session);
+  const isDriver = roleNames.includes(SystemRoles.DRIVER);
+  const canOperate = access.actions.includes('update');
   const variant = TRIP_STATUS_VARIANTS[trip.status] ?? 'info';
 
   return (
@@ -185,7 +208,7 @@ export default async function TripDetailPage({ params }: PageProps) {
         description={`${trip.licenceNumber}${trip.vehicleRegisterNumber ? ` · ${trip.vehicleRegisterNumber}` : ''}`}
       >
         <div className="flex items-center gap-2">
-          {!permissionCodes.includes(Permissions.DRIVER_LOG_CREATE) && <TripActions
+          {canOperate && !isDriver && <TripActions
               tripId={trip.id}
               status={trip.status}
               vehicleId={trip.vehicleId}
@@ -203,7 +226,7 @@ export default async function TripDetailPage({ params }: PageProps) {
         </div>
       </PageHeader>
 
-      {permissionCodes.includes(Permissions.DRIVER_LOG_CREATE) && (
+      {isDriver && (
         <DriverTripWorkspace tripId={trip.id} />
       )}
 

@@ -1,6 +1,6 @@
 import { getDb, isDbConnected } from '@/db';
 import { vehicleInspections } from '@/db/schema/trips';
-import { vehicles } from '@/db/schema/fleet';
+import { maintenanceEvents, vehicleDefects, vehicles } from '@/db/schema/fleet';
 
 import { eq, desc, asc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -14,6 +14,8 @@ import { Database, Search, ChevronRight, ChevronLeft, ClipboardCheck, CheckCircl
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
 import Link from 'next/link';
 
 interface PageProps {
@@ -25,7 +27,12 @@ const INSPECTION_TYPE_LABELS: Record<string, string> = {
   return: 'Return',
 };
 
-async function fetchInspections(sp: Record<string, string | undefined>, tenantId: string) {
+async function fetchInspections(
+  sp: Record<string, string | undefined>,
+  tenantId: string,
+  userId: string,
+  recordScope: 'self' | 'assigned' | 'related' | 'tenant' | 'platform' | null,
+) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -35,6 +42,20 @@ async function fetchInspections(sp: Record<string, string | undefined>, tenantId
   const search = sp.search?.trim();
 
   const conditions: SQL[] = [eq(vehicleInspections.tenantId, tenantId)];
+  if (recordScope === 'assigned' || recordScope === 'self') {
+    conditions.push(eq(vehicleInspections.inspectorUserId, userId));
+  } else if (recordScope === 'related') {
+    conditions.push(sql`(
+      exists (
+        select 1 from ${vehicleDefects}
+        where ${vehicleDefects.vehicleId} = ${vehicleInspections.vehicleId}
+      )
+      or exists (
+        select 1 from ${maintenanceEvents}
+        where ${maintenanceEvents.vehicleId} = ${vehicleInspections.vehicleId}
+      )
+    )`);
+  }
 
   if (type) {
     conditions.push(eq(vehicleInspections.type, type));
@@ -88,7 +109,7 @@ async function fetchInspections(sp: Record<string, string | undefined>, tenantId
         count: sql<number>`count(*)`,
       })
       .from(vehicleInspections)
-      .where(eq(vehicleInspections.tenantId, tenantId))
+      .where(where)
       .groupBy(vehicleInspections.type, vehicleInspections.status, vehicleInspections.overallPass),
   ]);
 
@@ -145,8 +166,11 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   }
 
   let result: Awaited<ReturnType<typeof fetchInspections>>;
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
+  const canCreate = canPerformDashboardAction('/dashboard/inspections/new', roleNames, 'create');
   try {
-    result = await fetchInspections(sp, session.tenantId);
+    result = await fetchInspections(sp, session.tenantId, session.user.id, access.recordScope);
   } catch (error) {
     console.error('Inspections query failed:', error);
     return (
@@ -162,12 +186,16 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
       <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections">
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/inspections/new?type=departure"><ClipboardCheck className="h-4 w-4" /> Departure Inspection</Link>
-        </Button>
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/inspections/new?type=return"><ClipboardCheck className="h-4 w-4" /> Return Inspection</Link>
-        </Button>
+        {canCreate && (
+          <>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/dashboard/inspections/new?type=departure"><ClipboardCheck className="h-4 w-4" /> Departure Inspection</Link>
+            </Button>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/dashboard/inspections/new?type=return"><ClipboardCheck className="h-4 w-4" /> Return Inspection</Link>
+            </Button>
+          </>
+        )}
       </PageHeader>
 
       {/* Type Tabs */}

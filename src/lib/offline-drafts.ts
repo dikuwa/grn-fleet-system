@@ -94,15 +94,36 @@ export async function getDraft(id: string): Promise<OfflineDraft | undefined> {
 }
 
 export async function listDrafts(
-  filters?: { draftType?: OfflineDraft['draftType']; syncStatus?: OfflineDraft['syncStatus'] },
+  filters?: {
+    draftType?: OfflineDraft['draftType'];
+    draftTypes?: OfflineDraft['draftType'][];
+    syncStatus?: OfflineDraft['syncStatus'];
+    syncStatuses?: OfflineDraft['syncStatus'][];
+    userId?: string;
+    tenantId?: string;
+  },
 ): Promise<OfflineDraft[]> {
   let collection = db.drafts.orderBy('updatedAt').reverse();
 
   if (filters?.draftType) {
     collection = collection.filter((d) => d.draftType === filters.draftType) as typeof collection;
   }
+  if (filters?.draftTypes) {
+    const allowed = new Set(filters.draftTypes);
+    collection = collection.filter((d) => allowed.has(d.draftType)) as typeof collection;
+  }
   if (filters?.syncStatus) {
     collection = collection.filter((d) => d.syncStatus === filters.syncStatus) as typeof collection;
+  }
+  if (filters?.syncStatuses) {
+    const allowed = new Set(filters.syncStatuses);
+    collection = collection.filter((d) => allowed.has(d.syncStatus)) as typeof collection;
+  }
+  if (filters?.userId) {
+    collection = collection.filter((d) => d.userId === filters.userId) as typeof collection;
+  }
+  if (filters?.tenantId) {
+    collection = collection.filter((d) => d.tenantId === filters.tenantId) as typeof collection;
   }
 
   return collection.toArray();
@@ -112,9 +133,13 @@ export async function deleteDraft(id: string): Promise<void> {
   await db.drafts.delete(id);
 }
 
-export async function countUnsyncedDrafts(): Promise<number> {
+export async function countUnsyncedDrafts(filters?: { userId?: string; tenantId?: string }): Promise<number> {
   return db.drafts
-    .filter((d) => d.syncStatus === 'pending' || d.syncStatus === 'failed')
+    .filter((d) =>
+      (d.syncStatus === 'pending' || d.syncStatus === 'failed')
+      && (!filters?.userId || d.userId === filters.userId)
+      && (!filters?.tenantId || d.tenantId === filters.tenantId),
+    )
     .count();
 }
 

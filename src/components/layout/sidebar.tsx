@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { APP_SHORT_NAME } from '@/lib/constants';
-import { canAccessDashboardPath } from '@/lib/dashboard-access';
+import { canNavigateDashboardPath, SystemRoles } from '@/lib/dashboard-access';
 import {
   LayoutDashboard,
   FileText,
@@ -38,6 +38,7 @@ import {
   GitBranch,
   PanelLeftClose,
   PanelLeftOpen,
+  AlertTriangle,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -103,6 +104,7 @@ const navGroups: NavGroup[] = [
       },
       { label: 'Expenses', href: '/dashboard/fleet/expenses', icon: Receipt },
       { label: 'Maintenance', href: '/dashboard/maintenance', icon: Wrench },
+      { label: 'Defects', href: '/dashboard/fleet/defects', icon: AlertTriangle },
       { label: 'Inspections', href: '/dashboard/inspections', icon: ClipboardCheck },
       { label: 'Insp. Templates', href: '/dashboard/inspections/templates', icon: ClipboardList },
     ],
@@ -139,22 +141,36 @@ const navGroups: NavGroup[] = [
       { label: 'Regions', href: '/dashboard/admin/regions', icon: MapPin },
       { label: 'Tenants', href: '/dashboard/platform/tenants', icon: Globe },
       { label: 'Platform Dashboard', href: '/dashboard/platform', icon: LayoutDashboard },
+      { label: 'Platform Audit', href: '/dashboard/platform/audit', icon: FileText },
       { label: 'Onboard Tenant', href: '/dashboard/platform/onboard', icon: LayoutDashboard },
     ],
   },
 ];
 
+function roleAwareLabel(item: NavItem, roleNames: readonly string[]) {
+  if (item.href === '/dashboard/requests') {
+    if (roleNames.includes(SystemRoles.REQUESTER)) return 'My Requests';
+    if (roleNames.includes(SystemRoles.TRANSPORT_ADMIN)) return 'Operational Requests';
+  }
+  if (item.href === '/dashboard/approvals') return 'Assigned Approvals';
+  if (item.href === '/dashboard/trips' && roleNames.includes(SystemRoles.DRIVER)) {
+    return 'Assigned Trips';
+  }
+  return item.label;
+}
+
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
-  permissionCodes: string[];
+  roleNames: string[];
 }
 
-export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
   const pathname = usePathname();
   const [activeTripCount, setActiveTripCount] = useState(0);
 
   useEffect(() => {
+    if (!canNavigateDashboardPath('/dashboard/trips', roleNames)) return;
     fetch('/api/reports?type=snapshot&metric=activeTrips')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -163,7 +179,7 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
       .catch(() => {
         /* silent */
       });
-  }, []);
+  }, [roleNames]);
 
   return (
     <aside
@@ -215,7 +231,7 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
         {navGroups
           .map((group) => ({
             ...group,
-            items: group.items.filter((item) => canAccessDashboardPath(item.href, permissionCodes)),
+            items: group.items.filter((item) => canNavigateDashboardPath(item.href, roleNames)),
           }))
           .filter((group) => group.items.length > 0)
           .map((group) => (
@@ -252,7 +268,7 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
                         />
                         {!collapsed && (
                           <>
-                            <span className="flex-1 truncate">{item.label}</span>
+                            <span className="flex-1 truncate">{roleAwareLabel(item, roleNames)}</span>
                             {item.badge !== undefined &&
                               item.label === 'Trips' &&
                               activeTripCount > 0 && (
@@ -285,11 +301,11 @@ export function Sidebar({ collapsed, onToggle, permissionCodes }: SidebarProps) 
 export function MobileSidebar({
   open,
   onClose,
-  permissionCodes,
+  roleNames,
 }: {
   open: boolean;
   onClose: () => void;
-  permissionCodes: string[];
+  roleNames: string[];
 }) {
   const pathname = usePathname();
 
@@ -360,7 +376,7 @@ export function MobileSidebar({
         >
           {navGroups
             .filter((group) =>
-              group.items.some((item) => canAccessDashboardPath(item.href, permissionCodes)),
+              group.items.some((item) => canNavigateDashboardPath(item.href, roleNames)),
             )
             .map((group) => (
               <div key={group.label} className="mb-4">
@@ -369,7 +385,7 @@ export function MobileSidebar({
                 </p>
                 <ul className="space-y-0.5">
                   {group.items
-                    .filter((item) => canAccessDashboardPath(item.href, permissionCodes))
+                    .filter((item) => canNavigateDashboardPath(item.href, roleNames))
                     .map((item) => {
                       const isActive =
                         pathname === item.href || pathname.startsWith(item.href + '/');
@@ -394,7 +410,7 @@ export function MobileSidebar({
                                   : 'text-ink-400 dark:text-ink-500',
                               )}
                             />
-                            <span className="flex-1 truncate">{item.label}</span>
+                            <span className="flex-1 truncate">{roleAwareLabel(item, roleNames)}</span>
                           </Link>
                         </li>
                       );

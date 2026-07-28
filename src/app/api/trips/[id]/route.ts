@@ -15,14 +15,16 @@ import {
   tripIncidents,
   tripProgressEntries,
   trips,
+  vehicleAllocations,
   vehicleInspections,
 } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -35,6 +37,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const auth = await requireRequestAuth(_req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/trips', 'view');
+    if (roleCheck instanceof NextResponse) return roleCheck;
+    const roleNames = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/trips', roleNames);
 
     const permCheck = await requirePermission(session, Permissions.TRIP_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -61,16 +67,28 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         requestReference: transportRequests.reference,
         requesterFirstName: employees.firstName,
         requesterLastName: employees.lastName,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
       })
       .from(trips)
       .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
       .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+      .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
     if (!trip) {
       return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+    }
+    if (access.recordScope === 'assigned') {
+      const [employee] = await db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.tenantId, session.tenantId), eq(employees.userId, session.user.id)))
+        .limit(1);
+      if (!employee || employee.id !== trip.driverEmployeeId) {
+        return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+      }
     }
 
     const [authority] = await db

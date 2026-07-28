@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { syncPendingDrafts } from '@/lib/offline-sync';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 /**
  * OfflineSyncHandler
@@ -15,15 +17,21 @@ import { syncPendingDrafts } from '@/lib/offline-sync';
  */
 export function OfflineSyncHandler() {
   const syncingRef = useRef(false);
+  const { data: profile } = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
 
   useEffect(() => {
+    if (!profile) return;
+    const scope = { userId: profile.id, tenantId: profile.tenantId };
     // Sync on connectivity restore
     async function handleOnline() {
       if (syncingRef.current) return;
       syncingRef.current = true;
 
       try {
-        const result = await syncPendingDrafts();
+        const result = await syncPendingDrafts(scope);
         if (result.synced > 0 || result.failed > 0) {
           console.log(
             `[OfflineSync] Synced ${result.synced}, failed ${result.failed}`,
@@ -44,7 +52,7 @@ export function OfflineSyncHandler() {
       syncingRef.current = true;
 
       try {
-        await syncPendingDrafts();
+        await syncPendingDrafts(scope);
       } finally {
         syncingRef.current = false;
       }
@@ -54,7 +62,7 @@ export function OfflineSyncHandler() {
       window.removeEventListener('online', handleOnline);
       clearInterval(interval);
     };
-  }, []);
+  }, [profile]);
 
   return null;
 }

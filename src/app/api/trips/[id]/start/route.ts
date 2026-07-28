@@ -5,11 +5,12 @@ import { vehicles, vehicleDefects, vehicleStatusEvents } from '@/db/schema/fleet
 import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
 import { eq, and, desc, isNull } from 'drizzle-orm';
 import { setAuthorityStatus } from '@/lib/trip-authority';
+import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 export async function POST(
   req: NextRequest,
@@ -39,6 +40,8 @@ export async function POST(
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/trips', 'update');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requireAnyPermission(session, [Permissions.TRIP_MANAGE, Permissions.DRIVER_LOG_CREATE]);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -53,10 +56,12 @@ export async function POST(
         authorityStatus: tripAuthorities.status,
         validFrom: tripAuthorities.validFrom,
         validUntil: tripAuthorities.validUntil,
+        requestReference: transportRequests.reference,
       })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+      .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
       .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
@@ -186,6 +191,13 @@ export async function POST(
         location: body.latitude && body.longitude ? { latitude: body.latitude, longitude: body.longitude } : null,
       },
       sourceChannel: 'web',
+    });
+    await recordTenantRequestActivity({
+      tenantId: session.tenantId,
+      requestId: tripRecord.requestId,
+      reference: trip.requestReference,
+      stage: 'started',
+      officeLabel: 'Assigned driver',
     });
 
     return NextResponse.json({ trip: updatedTrip });

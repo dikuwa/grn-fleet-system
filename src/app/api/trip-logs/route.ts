@@ -11,9 +11,10 @@ import { tripLogEntries, trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, desc } from 'drizzle-orm';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 /**
  * GET /api/trip-logs
@@ -24,6 +25,8 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/logs', 'view');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     const permCheck = await requirePermission(session, Permissions.TRIP_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -33,6 +36,8 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '50', 10);
 
     const db = getDb();
+    const roles = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/logs', roles);
 
     const conditions = [];
 
@@ -42,6 +47,13 @@ export async function GET(request: NextRequest) {
 
     // Tenant isolation via trips join
     conditions.push(eq(trips.tenantId, session.tenantId));
+    if (access.recordScope === 'self' || access.recordScope === 'assigned') {
+      const [employee] = await db.select({ id: employees.id }).from(employees)
+        .where(and(eq(employees.tenantId, session.tenantId), eq(employees.userId, session.user.id)))
+        .limit(1);
+      if (!employee) return NextResponse.json({ success: true, data: [] });
+      conditions.push(eq(vehicleAllocations.driverEmployeeId, employee.id));
+    }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -67,6 +79,7 @@ export async function GET(request: NextRequest) {
       })
       .from(tripLogEntries)
       .leftJoin(trips, eq(tripLogEntries.tripId, trips.id))
+      .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
       .where(whereClause)
       .orderBy(desc(tripLogEntries.logDate))
@@ -92,6 +105,8 @@ export async function POST(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const roleCheck = await requireDashboardAction(session, '/dashboard/logs', 'create');
+    if (roleCheck instanceof NextResponse) return roleCheck;
 
     // Check permission — driver log or trip manager
     const permCheck = await requirePermission(session, Permissions.DRIVER_LOG_CREATE);

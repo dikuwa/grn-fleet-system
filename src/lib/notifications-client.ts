@@ -18,6 +18,12 @@ export interface AppNotification {
 export interface NotificationFeed {
   notifications: AppNotification[];
   unreadCount: number;
+  preferences: {
+    emailNotifications: boolean;
+    inAppNotifications: boolean;
+    quietHoursStart: string | null;
+    quietHoursEnd: string | null;
+  };
 }
 
 export const notificationQueryKey = ['notifications', 'feed'] as const;

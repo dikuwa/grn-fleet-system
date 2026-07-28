@@ -220,12 +220,19 @@ export async function syncSingleDraft(
  * Attempt to sync all pending drafts.
  * Returns counts of synced/failed drafts.
  */
-export async function syncPendingDrafts(): Promise<SyncResult> {
+export async function syncPendingDrafts(filters?: {
+  userId?: string;
+  tenantId?: string;
+  draftTypes?: OfflineDraft['draftType'][];
+}): Promise<SyncResult> {
   const result: SyncResult = { synced: 0, failed: 0, errors: [] };
 
-  const pending = await listDrafts({ syncStatus: 'pending' });
-  const failed = await listDrafts({ syncStatus: 'failed' });
-  const toSync = [...pending, ...failed];
+  const toSync = await listDrafts({
+    syncStatuses: ['pending', 'failed'],
+    userId: filters?.userId,
+    tenantId: filters?.tenantId,
+    draftTypes: filters?.draftTypes,
+  });
 
   if (toSync.length === 0) return result;
 

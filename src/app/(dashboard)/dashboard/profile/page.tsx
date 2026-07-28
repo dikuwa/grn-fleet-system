@@ -16,6 +16,7 @@ import { useToast } from '@/lib/use-toast';
 import {
   fetchUserProfile,
   userProfileQueryKey,
+  type UserProfileData,
 } from '@/lib/user-profile';
 import { UserAvatar } from '@/components/ui/user-avatar';
 
@@ -92,7 +93,10 @@ export default function UserProfilePage() {
       .then(async (res) => {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Failed to upload photo');
-        await queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
+        queryClient.setQueryData<UserProfileData>(userProfileQueryKey, (current) => (
+          current ? { ...current, image: json.data.imageUrl } : current
+        ));
+        await queryClient.refetchQueries({ queryKey: userProfileQueryKey, type: 'active' });
         toast({ title: 'Photo Updated', description: 'Your profile photo has been uploaded.', variant: 'success' });
       })
       .catch((err) => {
@@ -112,7 +116,10 @@ export default function UserProfilePage() {
       const res = await fetch('/api/users/upload-avatar', { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to remove photo');
-      await queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
+      queryClient.setQueryData<UserProfileData>(userProfileQueryKey, (current) => (
+        current ? { ...current, image: null } : current
+      ));
+      await queryClient.refetchQueries({ queryKey: userProfileQueryKey, type: 'active' });
       toast({ title: 'Photo Removed', description: 'Your profile photo has been removed.', variant: 'success' });
     } catch (err) {
       toast({ title: 'Remove Failed', description: err instanceof Error ? err.message : 'Failed to remove photo', variant: 'error' });

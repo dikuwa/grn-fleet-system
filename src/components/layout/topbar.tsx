@@ -27,14 +27,16 @@ import {
 } from '@/lib/notifications-client';
 import { GlobalSearch } from '@/components/layout/global-search';
 import { UserAvatar } from '@/components/ui/user-avatar';
+import { SystemRoles } from '@/lib/dashboard-access';
 
 interface TopbarProps {
   onMenuClick: () => void;
   tenantName?: string;
   userId?: string;
+  roleNames: string[];
 }
 
-export function Topbar({ onMenuClick, userId }: TopbarProps) {
+export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
   const router = useRouter();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -176,14 +178,16 @@ export function Topbar({ onMenuClick, userId }: TopbarProps) {
                   <User className="h-4 w-4" />
                   My Profile
                 </Link>
-                <Link
-                  href="/dashboard/settings"
-                  className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors dark:text-ink-300 dark:hover:bg-white/[0.06]"
-                  onClick={() => setShowAccountMenu(false)}
-                >
-                  <Settings className="h-4 w-4" />
-                  Account Settings
-                </Link>
+                {roleNames.includes(SystemRoles.TENANT_ADMIN) && (
+                  <Link
+                    href="/dashboard/settings"
+                    className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors dark:text-ink-300 dark:hover:bg-white/[0.06]"
+                    onClick={() => setShowAccountMenu(false)}
+                  >
+                    <Settings className="h-4 w-4" />
+                    Tenant Settings
+                  </Link>
+                )}
 
                 {/* Tenant context */}
                 {profile?.tenantSlug && (
