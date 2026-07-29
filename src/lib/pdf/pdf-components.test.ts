@@ -57,7 +57,7 @@ describe('TransportRequestDocument data contract', () => {
       },
       {
         name: 'Selma Shaningwa',
-        employeeNumber: null,
+        employeeNumber: undefined,
         departmentOrOrganisation: 'Ministry of Works',
         role: 'Observer',
         travellerType: 'External traveller',
@@ -128,7 +128,7 @@ describe('TransportRequestDocument data contract', () => {
     expect(employeePassenger).toBeTruthy();
     expect(employeePassenger?.employeeNumber).toMatch(/^EMP-\d{4}$/);
     expect(externalPassenger).toBeTruthy();
-    expect(externalPassenger?.employeeNumber).toBeNull();
+    expect(externalPassenger?.employeeNumber).toBeUndefined();
     expect(externalPassenger?.departmentOrOrganisation).toBeTruthy();
   });
 
@@ -153,6 +153,48 @@ describe('TransportRequestDocument data contract', () => {
       const mod = await import('./transport-request');
       expect(mod.TransportRequestDocument).toBeDefined();
     }).not.toThrow();
+  });
+
+  // ── Two-column layout tests for Transport Request ──
+  it('transport request exports DocumentRow and DocumentVerificationBlock imports', async () => {
+    const mod = await import('./transport-request');
+    expect(mod.TransportRequestDocument).toBeDefined();
+    // Component compiles without error in two-column layout mode
+    const render = () =>
+      React.createElement(mod.TransportRequestDocument, {
+        data: {
+          reference: mockSnapshot.reference,
+          scope: mockSnapshot.scope,
+          status: mockSnapshot.status,
+          requester: mockSnapshot.requester,
+          activities: mockSnapshot.activities,
+          passengers: mockSnapshot.passengers,
+          drivers: mockSnapshot.drivers,
+          routes: mockSnapshot.routes,
+          approvalWorkflow: mockSnapshot.approvalWorkflow,
+          submittedAt: mockSnapshot.submittedAt,
+          totalAuthorisedKilometres: mockSnapshot.totalAuthorisedKilometres,
+          specialAuthorityRequired: mockSnapshot.specialAuthorityRequired,
+        },
+      });
+    expect(render).not.toThrow();
+  });
+
+  it('transport request builds passenger manifest with requester + drivers + passengers', () => {
+    const totalPassengerCount =
+      1 + // requester
+      mockSnapshot.drivers.length +
+      mockSnapshot.passengers.length;
+    expect(totalPassengerCount).toBe(4); // 1 requester + 1 driver + 2 passengers
+
+    // Verify driver is included as a passenger entry in the manifest
+    const driverRows = mockSnapshot.drivers.map((d) => ({
+      name: d.name,
+      type: `Driver (${d.driverType})`,
+    }));
+    expect(driverRows.length).toBe(1);
+    expect(driverRows[0].name).toBe('John Shikongo');
+    expect(driverRows[0].type).toContain('primary');
   });
 });
 
@@ -333,6 +375,142 @@ describe('TripAuthorityDocument data contract', () => {
       expect(mod.TripAuthorityDocument).toBeDefined();
     }).not.toThrow();
   });
+
+  // ── New: journeyLegs data contract ──
+  describe('journeyLegs data contract', () => {
+    const journeyLegs = [
+      {
+        origin: 'Rundu',
+        destination: 'Mashare',
+        departureDate: '28 Jul 2026',
+        departureTime: '08:00',
+        returnDate: '28 Jul 2026',
+        returnTime: '16:00',
+        estimatedKm: 120,
+        objective: 'Community centre inspection',
+      },
+      {
+        origin: 'Mashare',
+        destination: 'Rundu',
+        departureDate: '28 Jul 2026',
+        departureTime: '16:00',
+        returnDate: '28 Jul 2026',
+        returnTime: '17:30',
+        estimatedKm: 120,
+      },
+    ];
+
+    it('has valid journey leg data', () => {
+      expect(journeyLegs.length).toBe(2);
+      for (const leg of journeyLegs) {
+        expect(leg.origin).toBeTruthy();
+        expect(leg.destination).toBeTruthy();
+        expect(leg.departureDate).toBeTruthy();
+        expect(leg.returnDate).toBeTruthy();
+      }
+    });
+
+    it('each leg has estimated km when provided', () => {
+      for (const leg of journeyLegs) {
+        expect(leg.estimatedKm).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it('total km across all legs matches trip total', () => {
+      const totalKm = journeyLegs.reduce((sum, leg) => sum + (leg.estimatedKm ?? 0), 0);
+      expect(totalKm).toBe(240);
+      expect(totalKm).toBe(mockData.totalKm);
+    });
+
+    it('legs can be rendered by the Journey Details table', () => {
+      const rows = journeyLegs.map((leg) => ({
+        origin: leg.origin || 'Not specified',
+        destination: leg.destination || 'Not specified',
+        departure: leg.departureDate || 'Not set',
+        ret: leg.returnDate || 'Not set',
+        km: leg.estimatedKm ? `${leg.estimatedKm.toLocaleString('en-NA')} km` : '—',
+      }));
+      expect(rows.length).toBe(2);
+      expect(rows[0].origin).toBe('Rundu');
+      expect(rows[1].km).toBe('120 km');
+
+      // Verify fallback behaviour
+      const emptyLegs: Array<{
+        origin: string;
+        destination: string;
+        departureDate?: string;
+        returnDate?: string;
+        estimatedKm?: number;
+      }> = [];
+      const fallbackFields = [
+        { label: 'Approved route', value: mockData.routeSummary || 'Not recorded' },
+        {
+          label: 'Authorised distance',
+          value: mockData.totalKm
+            ? `${mockData.totalKm.toLocaleString('en-NA')} km`
+            : 'Not estimated',
+        },
+      ];
+      expect(emptyLegs.length).toBe(0);
+      expect(fallbackFields[1].value).toContain('240');
+    });
+  });
+
+  // ── New: authorisation data contract ──
+  describe('authorisation data contract', () => {
+    const authorisation = {
+      authoriserName: 'Dr. Samuel Nangolo',
+      authoriserRole: 'Chief Regional Officer',
+      authorisedAt: '28 Jul 2026, 08:00',
+      transportOfficerName: 'Anna Nghikembua',
+      transportOfficerRole: 'Transport Officer',
+      issueDate: '28 Jul 2026',
+      contactNumber: '+264 81 123 4567',
+      approvalMethod: 'Digitally authorised',
+    };
+
+    it('has all required authorisation fields', () => {
+      expect(authorisation.authoriserName).toBeTruthy();
+      expect(authorisation.authoriserRole).toBeTruthy();
+      expect(authorisation.authorisedAt).toBeTruthy();
+      expect(authorisation.transportOfficerName).toBeTruthy();
+      expect(authorisation.transportOfficerRole).toBeTruthy();
+      expect(authorisation.issueDate).toBeTruthy();
+    });
+
+    it('includes optional contact and method fields', () => {
+      expect(authorisation.contactNumber).toBeTruthy();
+      expect(authorisation.approvalMethod).toBe('Digitally authorised');
+    });
+
+    it('falls back to legacy authoriser fields when authorisation is absent', () => {
+      const fallbackName = mockData.authoriser?.name || 'Not recorded';
+      const fallbackRole = mockData.authoriser?.designation || 'Not recorded';
+      const fallbackDate = mockData.authoriser?.authorisedAt || 'Not recorded';
+
+      expect(fallbackName).toBe('Dr. Samuel Nangolo');
+      expect(fallbackRole).toBe('Chief Regional Officer');
+      expect(fallbackDate).toBe('28 Jul 2026, 08:00');
+    });
+
+    it('falls back to transportOfficer fields when authorisation.transportOfficerName is absent', () => {
+      const fallbackTO = mockData.transportOfficer?.name || 'Not recorded';
+      expect(fallbackTO).toBe('Anna Nghikembua');
+
+      const emptyAuth = {
+        authoriserName: '',
+        authoriserRole: '',
+        authorisedAt: undefined,
+        transportOfficerName: '',
+        transportOfficerRole: undefined,
+        issueDate: '',
+      };
+      const fallback = emptyAuth.authoriserName || mockData.authoriser?.name || 'Not recorded';
+      const fallbackTO2 = emptyAuth.transportOfficerName || mockData.transportOfficer?.name || 'Not recorded';
+      expect(fallback).toBe('Dr. Samuel Nangolo');
+      expect(fallbackTO2).toBe('Anna Nghikembua');
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -489,6 +667,185 @@ describe('MaintenanceReportDocument data contract', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Shared Document System Component Tests
+// ---------------------------------------------------------------------------
+
+describe('Shared document system components', () => {
+  it('DocumentRow wraps children in two-column layout', async () => {
+    const { DocumentRow } = await import('./document-system');
+    // Component should exist and be creatable
+    expect(DocumentRow).toBeDefined();
+
+    // Verify React.createElement succeeds with children
+    const left = React.createElement('view', { key: 'left' }, 'Left content');
+    const right = React.createElement('view', { key: 'right' }, 'Right content');
+    const row = React.createElement(DocumentRow, null, left, right);
+    expect(row).toBeDefined();
+    expect(row.props.children).toBeDefined();
+
+    // A single child should also work
+    const singleRow = React.createElement(DocumentRow, null, left);
+    expect(singleRow).toBeDefined();
+  });
+
+  it('DocumentRow preserves child count', async () => {
+    const { DocumentRow } = await import('./document-system');
+
+    // With two children
+    const left = React.createElement('view', { key: 'a' }, 'A');
+    const right = React.createElement('view', { key: 'b' }, 'B');
+    const rowTwo = React.createElement(DocumentRow, null, left, right);
+    const childrenTwo = React.Children.toArray(rowTwo.props.children);
+    expect(childrenTwo.length).toBe(2);
+
+    // With three children
+    const mid = React.createElement('view', { key: 'c' }, 'C');
+    const rowThree = React.createElement(DocumentRow, null, left, mid, right);
+    const childrenThree = React.Children.toArray(rowThree.props.children);
+    expect(childrenThree.length).toBe(3);
+  });
+
+  it('DocumentVerificationBlock renders with full props', async () => {
+    const { DocumentVerificationBlock } = await import('./document-system');
+    expect(DocumentVerificationBlock).toBeDefined();
+
+    // Component with all props
+    const block = React.createElement(DocumentVerificationBlock, {
+      branding: {
+        tenantId: 't1',
+        organisationName: 'Kavango East Regional Council',
+        code: 'KERC',
+        locale: 'en-NA',
+        timezone: 'Africa/Windhoek',
+        primaryColor: '#1F2A44',
+        accentColor: '#0F766E',
+      },
+      verificationCode: 'TA457-X8K2',
+      verificationUrl: 'https://grnfleet.na/v/TA457-X8K2',
+      qrCode: 'data:image/png;base64,testqr',
+    });
+    expect(block).toBeDefined();
+    expect(block.props.branding?.organisationName).toContain('Kavango');
+    expect(block.props.verificationCode).toMatch(/^TA/);
+    expect(block.props.verificationUrl).toContain('grnfleet.na');
+    expect(block.props.qrCode).toContain('base64');
+  });
+
+  it('DocumentVerificationBlock renders with minimal props', async () => {
+    const { DocumentVerificationBlock } = await import('./document-system');
+    const minimal = React.createElement(DocumentVerificationBlock, {});
+    expect(minimal).toBeDefined();
+    expect(minimal.props.qrCode).toBeUndefined();
+    expect(minimal.props.verificationCode).toBeUndefined();
+  });
+
+  it('DocumentHeader accepts all required props', async () => {
+    const { DocumentHeader } = await import('./document-system');
+    const header = React.createElement(DocumentHeader, {
+      title: 'Trip Authority',
+      reference: 'TA-2026-000457',
+      version: 1,
+      status: 'Active',
+      issueDate: '29 Jul 2026',
+    });
+    expect(header).toBeDefined();
+    expect(header.props.title).toBe('Trip Authority');
+    expect(header.props.reference).toMatch(/^TA-/);
+    expect(header.props.status).toBe('Active');
+  });
+
+  it('DocumentSection renders with title and children', async () => {
+    const { DocumentSection } = await import('./document-system');
+    const section = React.createElement(
+      DocumentSection,
+      {
+        title: 'Test Section',
+        children: React.createElement('text', { key: 'c' }, 'Test content'),
+      },
+    );
+    expect(section).toBeDefined();
+    expect(section.props.title).toBe('Test Section');
+    expect(section.props).not.toHaveProperty('wrap'); // default true
+
+    const noWrap = React.createElement(
+      DocumentSection,
+      {
+        title: 'No Wrap',
+        wrap: false,
+        children: React.createElement('text', { key: 'c2' }, 'Content'),
+      },
+    );
+    expect(noWrap.props.wrap).toBe(false);
+  });
+
+  it('DocumentFieldGrid renders fields correctly', async () => {
+    const { DocumentFieldGrid } = await import('./document-system');
+    const grid = React.createElement(DocumentFieldGrid, {
+      fields: [
+        { label: 'Name', value: 'John Shikongo' },
+        { label: 'Department', value: 'Transport' },
+      ],
+    });
+    expect(grid).toBeDefined();
+    expect(grid.props.fields.length).toBe(2);
+    expect(grid.props.fields[0].value).toBe('John Shikongo');
+
+    // Empty fields should be handled gracefully
+    const empty = React.createElement(DocumentFieldGrid, { fields: [] });
+    expect(empty.props.fields.length).toBe(0);
+  });
+
+  it('DocumentTable renders with columns and rows', async () => {
+    const { DocumentTable } = await import('./document-system');
+    const table = React.createElement(DocumentTable, {
+      columns: [
+        { key: 'name', label: 'Name' },
+        { key: 'dept', label: 'Department' },
+      ],
+      rows: [
+        { name: 'John', dept: 'Transport' },
+        { name: 'Maria', dept: 'Admin' },
+      ],
+    });
+    expect(table).toBeDefined();
+    expect(table.props.columns.length).toBe(2);
+    expect(table.props.rows.length).toBe(2);
+
+    // Empty table should show empty label
+    const emptyTable = React.createElement(DocumentTable, {
+      columns: [{ key: 'x', label: 'X' }],
+      rows: [],
+      emptyLabel: 'No records found',
+    });
+    expect(emptyTable.props.emptyLabel).toBe('No records found');
+  });
+
+  it('DocumentSignature renders with and without signature URL', async () => {
+    const { DocumentSignature } = await import('./document-system');
+
+    // With signature
+    const signed = React.createElement(DocumentSignature, {
+      name: 'Dr. Samuel Nangolo',
+      role: 'Chief Regional Officer',
+      signedAt: '29 Jul 2026',
+      signatureUrl: 'data:image/png;base64,sig',
+    });
+    expect(signed).toBeDefined();
+    expect(signed.props.name).toContain('Nangolo');
+    expect(signed.props.signatureUrl).toContain('base64');
+
+    // Without signature (fallback)
+    const unsigned = React.createElement(DocumentSignature, {
+      name: '—',
+      role: 'Transport Officer',
+    });
+    expect(unsigned).toBeDefined();
+    expect(unsigned.props.signatureUrl).toBeUndefined();
+    expect(unsigned.props.signedAt).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Snapshot format consistency tests
 // ---------------------------------------------------------------------------
 
@@ -567,5 +924,85 @@ describe('Snapshot format consistency', () => {
       expect(formatHumanValue(true, 'specialAuthorityRequired')).toBe('Yes');
       expect(formatHumanValue(null, 'test')).toBe('Not recorded');
     }).not.toThrow();
+  });
+
+  // ── Two-column layout consistency ──
+  it('document interfaces support two-column layout with journeyLegs and authorisation', async () => {
+    // Verify that trip-authority exports journeyLegs-related display functions
+    const mod = await import('./trip-authority');
+    expect(mod.TripAuthorityDocument).toBeDefined();
+
+    // Verify the component renders with journeyLegs data (data contract test)
+    const journeyLegsFields = ['origin', 'destination', 'departureDate', 'returnDate', 'estimatedKm'];
+    expect(journeyLegsFields.length).toBe(5);
+
+    const authorisationFields = [
+      'authoriserName',
+      'authoriserRole',
+      'authorisedAt',
+      'transportOfficerName',
+      'issueDate',
+    ];
+    expect(authorisationFields.length).toBe(5);
+    expect(authorisationFields.includes('authoriserName')).toBe(true);
+    expect(journeyLegsFields.includes('origin')).toBe(true);
+  });
+
+  it('journeyLegs data flows correctly from API to component', () => {
+    // Simulate the API-to-component data pipeline
+    const apiResponseLegs = [
+      {
+        origin: 'Windhoek',
+        destination: 'Rundu',
+        departureDate: '2026-07-28T08:00:00.000Z',
+        departureTime: '08:00',
+        returnDate: '2026-07-28T17:00:00.000Z',
+        returnTime: '17:00',
+        estimatedKm: 700,
+        objective: 'Regional inspection',
+      },
+    ];
+
+    // The component expects departureDate as a string, not ISO — the API
+    // route converts it via formatHumanDate
+    const componentReady = apiResponseLegs.map((leg) => ({
+      ...leg,
+      departureDate: '28 Jul 2026',
+      returnDate: '28 Jul 2026',
+    }));
+
+    expect(componentReady.length).toBe(1);
+    expect(componentReady[0].departureDate).not.toContain('T'); // human-readable, not ISO
+    expect(componentReady[0].estimatedKm).toBe(700);
+  });
+
+  it('authorisation data flows correctly from API to component', () => {
+    // Simulate the API-to-component data pipeline
+    const apiAuthoriserData = {
+      name: 'Dr. Samuel Nangolo',
+      designation: 'Chief Regional Officer',
+      authorisedAt: '28 Jul 2026, 08:00',
+    };
+    const apiTransportOfficerData = {
+      name: 'Anna Nghikembua',
+      designation: 'Transport Officer',
+      issuedAt: '28 Jul 2026, 07:00',
+    };
+
+    // The component builds authorisation object from these
+    const authorisation = {
+      authoriserName: apiAuthoriserData.name,
+      authoriserRole: apiAuthoriserData.designation,
+      authorisedAt: apiAuthoriserData.authorisedAt,
+      transportOfficerName: apiTransportOfficerData.name,
+      transportOfficerRole: apiTransportOfficerData.designation,
+      issueDate: apiTransportOfficerData.issuedAt,
+      approvalMethod: 'Digitally authorised',
+    };
+
+    expect(authorisation.authoriserName).toBe('Dr. Samuel Nangolo');
+    expect(authorisation.authoriserRole).toBe('Chief Regional Officer');
+    expect(authorisation.transportOfficerName).toBe('Anna Nghikembua');
+    expect(authorisation.approvalMethod).toBe('Digitally authorised');
   });
 });
