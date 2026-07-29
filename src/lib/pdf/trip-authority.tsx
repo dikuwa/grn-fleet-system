@@ -11,9 +11,11 @@ import {
   DocumentFieldGrid,
   DocumentHeader,
   DocumentPage,
+  DocumentRow,
   DocumentSection,
   DocumentSignature,
   DocumentTable,
+  DocumentVerificationBlock,
   DocumentVerificationFooter,
   documentStyles,
 } from './document-system';
@@ -37,7 +39,6 @@ export interface TripAuthorityData {
   scope: string;
   startAt: string;
   endAt: string;
-  allocatedByUserId?: string;
   requesterName?: string;
   department?: string;
   transportOffice?: string;
@@ -78,6 +79,28 @@ export interface TripAuthorityData {
     licenceClass?: string;
     licenceExpiry?: string;
   }>;
+  // ── Journey details (route legs) ──
+  journeyLegs?: Array<{
+    origin: string;
+    destination: string;
+    departureDate: string;
+    departureTime?: string;
+    returnDate: string;
+    returnTime?: string;
+    estimatedKm?: number;
+    objective?: string;
+  }>;
+  // ── Authorisation details ──
+  authorisation?: {
+    authoriserName: string;
+    authoriserRole: string;
+    authorisedAt?: string;
+    transportOfficerName: string;
+    transportOfficerRole?: string;
+    issueDate: string;
+    contactNumber?: string;
+    approvalMethod?: string;
+  };
   specialConditions?: string;
   beginningOdometer?: number;
   endingOdometer?: number;
@@ -93,21 +116,6 @@ export interface TripAuthorityData {
     issuedAt?: string;
     signatureUrl?: string;
   };
-  routeEntries?: Array<{
-    occurredAt: string;
-    type: string;
-    location?: string;
-    odometer?: number;
-    note?: string;
-  }>;
-  defects?: Array<{ severity: string; description: string; status?: string }>;
-  incidents?: Array<{
-    type: string;
-    occurredAt: string;
-    description: string;
-    safeToContinue: boolean;
-  }>;
-  arrivalInspection?: { status: string; odometer?: number; completedAt?: string };
   goodsAndEquipment?: Array<{
     description: string;
     quantity?: string;
@@ -150,9 +158,13 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
     .split(/\n|;/)
     .map((condition) => condition.trim())
     .filter(Boolean);
+
+  const journeyLegs = data.journeyLegs || [];
+
   return (
     <Document title={`Trip Authority ${data.reference}`}>
       <DocumentPage status={status === 'draft' ? 'draft' : undefined}>
+        {/* ── Header ── */}
         <DocumentHeader
           branding={branding}
           title="Trip Authority"
@@ -163,224 +175,302 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
           qrCode={data.qrCodeDataUrl}
         />
 
-        <DocumentSection title="Trip summary">
-          <DocumentFieldGrid
-            fields={[
-              { label: 'Request reference', value: data.requestReference },
-              { label: 'Purpose', value: data.purpose || 'Not recorded' },
-              { label: 'Scope', value: humanizeKey(data.scope) },
-              { label: 'Department', value: data.department || 'Not recorded' },
-              { label: 'Transport office', value: data.transportOffice || 'Not recorded' },
-              { label: 'Validity', value: `${data.startAt} — ${data.endAt}` },
-              { label: 'Approved route', value: data.routeSummary || 'Not recorded' },
-              {
-                label: 'Authorised distance',
-                value: data.totalKm
-                  ? `${data.totalKm.toLocaleString('en-NA')} km`
-                  : 'Not estimated',
-              },
-            ]}
-          />
-        </DocumentSection>
-
-        <DocumentSection title="Vehicle details">
-          <DocumentFieldGrid
-            fields={[
-              { label: 'Registration / plate', value: data.vehicle.licenceNumber },
-              { label: 'Asset register number', value: data.vehicle.vehicleRegisterNumber },
-              {
-                label: 'Make and model',
-                value: `${data.vehicle.make} ${data.vehicle.model}`.trim(),
-              },
-              { label: 'Colour', value: data.vehicle.colour || 'Not recorded' },
-              { label: 'Fuel type', value: data.vehicle.fuelType || 'Not recorded' },
-              {
-                label: 'Current odometer',
-                value: formatHumanValue(
-                  data.vehicle.currentOdometer ?? data.beginningOdometer,
-                  'odometer',
-                ),
-              },
-              {
-                label: 'Inspection status',
-                value: formatDocumentStatus(data.vehicle.inspectionStatus || 'pending'),
-              },
-            ]}
-          />
-        </DocumentSection>
-
-        <DocumentSection title="Driver details">
-          <DocumentFieldGrid
-            fields={[
-              { label: 'Driver', value: data.driver?.name || 'Not assigned' },
-              { label: 'Employee number', value: data.driver?.employeeNumber || 'Not recorded' },
-              { label: 'Designation', value: data.driver?.designation || 'Not recorded' },
-              { label: 'Department', value: data.driver?.department || 'Not recorded' },
-              {
-                label: 'Licence',
-                value:
-                  [data.driver?.licenceNumber, data.driver?.licenceClass]
-                    .filter(Boolean)
-                    .join(' · ') || 'Not recorded',
-              },
-              { label: 'Licence expiry', value: data.driver?.licenceExpiry || 'Not recorded' },
-              {
-                label: 'Driver acknowledgement',
-                value: data.driver?.acceptedAt
-                  ? `Acknowledged ${data.driver.acceptedAt}`
-                  : 'Awaiting acknowledgement',
-              },
-            ]}
-          />
-        </DocumentSection>
-
-        <DocumentSection title={`Authorised travellers (${data.passengers?.length || 0})`}>
-          <DocumentTable
-            columns={[
-              { key: 'name', label: 'Name' },
-              { key: 'employeeNumber', label: 'Employee number / ID' },
-              { key: 'organisation', label: 'Department / organisation' },
-              { key: 'type', label: 'Traveller type' },
-            ]}
-            rows={(data.passengers || []).map((passenger) => ({
-              name: passenger.name,
-              employeeNumber: passenger.employeeNumber || 'External',
-              organisation: passenger.department || passenger.organisation || 'Not recorded',
-              type: humanizeKey(passenger.passengerType || 'passenger'),
-            }))}
-            emptyLabel="No additional travellers authorised"
-          />
-        </DocumentSection>
-
-        {conditions.length > 0 && (
-          <DocumentSection title="Conditions" wrap={false}>
-            {conditions.map((condition, index) => (
-              <Text key={condition} style={{ marginBottom: 2 }}>
-                {index + 1}. {condition}
-              </Text>
-            ))}
+        {/* ════════════════════════════════════════
+           ROW 1: Trip Summary | Authorisation
+           ════════════════════════════════════════ */}
+        <DocumentRow>
+          {/* Left: Trip Summary */}
+          <DocumentSection title="Trip summary">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Purpose', value: data.purpose || 'Not recorded' },
+                { label: 'Scope', value: humanizeKey(data.scope) },
+                { label: 'Department', value: data.department || 'Not recorded' },
+                { label: 'Transport office', value: data.transportOffice || 'Not recorded' },
+                { label: 'Validity', value: [data.startAt, data.endAt].filter(Boolean).join(' — ') || 'Not set' },
+                { label: 'Status', value: formatDocumentStatus(status) },
+              ]}
+            />
           </DocumentSection>
-        )}
+          {/* Right: Authorisation */}
+          <DocumentSection title="Authorisation">
+            <DocumentFieldGrid
+              fields={[
+                {
+                  label: 'Authorised by',
+                  value: data.authorisation?.authoriserName || data.authoriser?.name || 'Not recorded',
+                },
+                {
+                  label: 'Role',
+                  value: data.authorisation?.authoriserRole || data.authoriser?.designation || 'Not recorded',
+                },
+                {
+                  label: 'Authorised date',
+                  value: data.authorisation?.authorisedAt || data.authoriser?.authorisedAt || 'Not recorded',
+                },
+                {
+                  label: 'Transport officer',
+                  value: data.authorisation?.transportOfficerName || data.transportOfficer?.name || 'Not recorded',
+                },
+                {
+                  label: 'Issue date',
+                  value: data.authorisation?.issueDate || (data.issuedAt ? formatHumanDate(data.issuedAt, branding?.locale) : 'Not recorded'),
+                },
+                {
+                  label: 'Approval method',
+                  value: data.authorisation?.approvalMethod || 'Digitally authorised',
+                },
+              ]}
+            />
+          </DocumentSection>
+        </DocumentRow>
 
+        {/* ════════════════════════════════════════
+           ROW 2: Vehicle Details | Driver Details
+           ════════════════════════════════════════ */}
+        <DocumentRow>
+          {/* Left: Vehicle Details */}
+          <DocumentSection title="Vehicle details">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Registration / plate', value: data.vehicle.licenceNumber },
+                { label: 'Asset register number', value: data.vehicle.vehicleRegisterNumber },
+                {
+                  label: 'Make and model',
+                  value: `${data.vehicle.make} ${data.vehicle.model}`.trim(),
+                },
+                { label: 'Colour', value: data.vehicle.colour || 'Not recorded' },
+                { label: 'Fuel type', value: data.vehicle.fuelType || 'Not recorded' },
+                {
+                  label: 'Current odometer',
+                  value: formatHumanValue(
+                    data.vehicle.currentOdometer ?? data.beginningOdometer,
+                    'odometer',
+                  ),
+                },
+                {
+                  label: 'Inspection status',
+                  value: formatDocumentStatus(data.vehicle.inspectionStatus || 'pending'),
+                },
+              ]}
+            />
+          </DocumentSection>
+          {/* Right: Driver Details */}
+          <DocumentSection title="Driver details">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Driver', value: data.driver?.name || 'Not assigned' },
+                { label: 'Employee number', value: data.driver?.employeeNumber || 'Not recorded' },
+                { label: 'Designation', value: data.driver?.designation || 'Not recorded' },
+                { label: 'Department', value: data.driver?.department || 'Not recorded' },
+                {
+                  label: 'Licence',
+                  value:
+                    [data.driver?.licenceNumber, data.driver?.licenceClass]
+                      .filter(Boolean)
+                      .join(' · ') || 'Not recorded',
+                },
+                { label: 'Licence expiry', value: data.driver?.licenceExpiry || 'Not recorded' },
+                { label: 'Contact', value: data.driver?.contactNumber || 'Not recorded' },
+              ]}
+            />
+          </DocumentSection>
+        </DocumentRow>
+
+        {/* ════════════════════════════════════════
+           ROW 3: Journey Details | Authorised Passengers
+           ════════════════════════════════════════ */}
+        <DocumentRow>
+          {/* Left: Journey Details */}
+          <DocumentSection title="Journey details">
+            {journeyLegs.length > 0 ? (
+              <DocumentTable
+                columns={[
+                  { key: 'origin', label: 'From' },
+                  { key: 'destination', label: 'To' },
+                  { key: 'departure', label: 'Departure' },
+                  { key: 'ret', label: 'Return' },
+                  { key: 'km', label: 'Km' },
+                ]}
+                rows={journeyLegs.map((leg, i) => ({
+                  origin: leg.origin || 'Not specified',
+                  destination: leg.destination || 'Not specified',
+                  departure: leg.departureDate || 'Not set',
+                  ret: leg.returnDate || 'Not set',
+                  km: leg.estimatedKm ? `${leg.estimatedKm.toLocaleString('en-NA')} km` : '—',
+                }))}
+                emptyLabel="No route legs recorded"
+              />
+            ) : (
+              <DocumentFieldGrid
+                fields={[
+                  { label: 'Approved route', value: data.routeSummary || 'Not recorded' },
+                  {
+                    label: 'Authorised distance',
+                    value: data.totalKm
+                      ? `${data.totalKm.toLocaleString('en-NA')} km`
+                      : 'Not estimated',
+                  },
+                  { label: 'Objective', value: data.purpose || 'Not recorded' },
+                ]}
+              />
+            )}
+          </DocumentSection>
+          {/* Right: Authorised Passengers */}
+          <DocumentSection title={`Authorised passengers (${data.passengers?.length || 0})`}>
+            <DocumentTable
+              columns={[
+                { key: 'name', label: 'Name' },
+                { key: 'employeeNumber', label: 'Employee no. / ID' },
+                { key: 'organisation', label: 'Department / organisation' },
+                { key: 'type', label: 'Type' },
+              ]}
+              rows={(data.passengers || []).map((passenger) => ({
+                name: passenger.name,
+                employeeNumber: passenger.employeeNumber || 'External',
+                organisation: passenger.department || passenger.organisation || 'Not recorded',
+                type: humanizeKey(passenger.passengerType || 'passenger'),
+              }))}
+              emptyLabel="No passengers authorised"
+            />
+          </DocumentSection>
+        </DocumentRow>
+
+        {/* ════════════════════════════════════════
+           ROW 4: Goods & Equipment | Pre-departure Inspection
+           ════════════════════════════════════════ */}
+        <DocumentRow>
+          {/* Left: Goods & Equipment */}
+          <DocumentSection title="Goods and equipment">
+            {data.goodsAndEquipment && data.goodsAndEquipment.length > 0 ? (
+              <DocumentTable
+                columns={[
+                  { key: 'description', label: 'Description' },
+                  { key: 'quantity', label: 'Quantity' },
+                  { key: 'purpose', label: 'Purpose' },
+                ]}
+                rows={data.goodsAndEquipment.map((item) => ({
+                  description: item.description,
+                  quantity: item.quantity || '—',
+                  purpose: item.purpose || '—',
+                }))}
+                emptyLabel="No goods or equipment recorded"
+              />
+            ) : (
+              <Text style={{ color: '#4B5563', fontSize: 7 }}>None recorded</Text>
+            )}
+          </DocumentSection>
+          {/* Right: Pre-departure Inspection */}
+          <DocumentSection title="Pre-departure inspection">
+            {data.preDepartureInspection ? (
+              <>
+                <DocumentFieldGrid
+                  fields={[
+                    { label: 'Status', value: formatDocumentStatus(data.preDepartureInspection.status) },
+                    { label: 'Odometer', value: formatHumanValue(data.preDepartureInspection.odometer, 'odometer') },
+                    { label: 'Inspector', value: data.preDepartureInspection.inspectorName || 'Not recorded' },
+                    { label: 'Date', value: data.preDepartureInspection.completedAt || 'Not recorded' },
+                  ]}
+                />
+                {data.preDepartureInspection.notes && (
+                  <Text style={{ marginTop: 2, color: '#4B5563', fontSize: 6.5 }}>
+                    Notes: {data.preDepartureInspection.notes}
+                  </Text>
+                )}
+              </>
+            ) : (
+              <Text style={{ color: '#4B5563', fontSize: 7 }}>Pre-departure inspection pending</Text>
+            )}
+          </DocumentSection>
+        </DocumentRow>
+
+        {/* ════════════════════════════════════════
+           ROW 5: Fuel Information | Special Conditions
+           ════════════════════════════════════════ */}
+        <DocumentRow>
+          {/* Left: Fuel Information */}
+          <DocumentSection title="Fuel information">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Fuel card / voucher', value: data.fuelInformation?.fuelCardNumber || 'Not assigned' },
+                { label: 'Expected fuel', value: data.fuelInformation?.expectedFuel || 'Not estimated' },
+                { label: 'Fuel type', value: data.fuelInformation?.fuelType || 'Not specified' },
+                { label: 'Cost centre', value: data.fuelInformation?.costCentre || 'Not recorded' },
+              ]}
+            />
+          </DocumentSection>
+          {/* Right: Special Conditions */}
+          <DocumentSection title="Special conditions" wrap={false}>
+            {conditions.length > 0 ? (
+              conditions.map((condition, index) => (
+                <Text key={condition} style={{ marginBottom: 1.5, fontSize: 6.5 }}>
+                  {index + 1}. {condition}
+                </Text>
+              ))
+            ) : (
+              <>
+                <Text style={{ marginBottom: 1.5, fontSize: 6.5, color: '#4B5563' }}>
+                  1. Authority is valid only for the approved purpose and period.
+                </Text>
+                <Text style={{ marginBottom: 1.5, fontSize: 6.5, color: '#4B5563' }}>
+                  2. Driver must comply with traffic laws and council policies.
+                </Text>
+                <Text style={{ marginBottom: 1.5, fontSize: 6.5, color: '#4B5563' }}>
+                  3. Accidents, breakdowns and incidents must be reported immediately.
+                </Text>
+                <Text style={{ marginBottom: 1.5, fontSize: 6.5, color: '#4B5563' }}>
+                  4. This document must be produced when requested by an authorised officer.
+                </Text>
+              </>
+            )}
+          </DocumentSection>
+        </DocumentRow>
+
+        {/* ════════════════════════════════════════
+           ROW 6: Approvals (three-column)
+           ════════════════════════════════════════ */}
         <DocumentSection title="Approvals" wrap={false}>
           <View style={documentStyles.signatureRow}>
-            {data.transportOfficer && (
+            {data.transportOfficer ? (
               <DocumentSignature
                 name={data.transportOfficer.name}
                 role={data.transportOfficer.designation || 'Transport Officer'}
                 signedAt={data.transportOfficer.issuedAt}
                 signatureUrl={data.transportOfficer.signatureUrl}
               />
+            ) : (
+              <DocumentSignature name="—" role="Transport Officer" />
             )}
             <DocumentSignature
-              name={data.authoriser?.name || 'Authorising officer not recorded'}
-              role={data.authoriser?.designation || 'Authorising Officer'}
-              signedAt={data.authoriser?.authorisedAt}
+              name={data.authoriser?.name || data.authorisation?.authoriserName || '—'}
+              role={data.authoriser?.designation || data.authorisation?.authoriserRole || 'Authorising Officer'}
+              signedAt={data.authoriser?.authorisedAt || data.authorisation?.authorisedAt}
               signatureUrl={data.authoriser?.signatureUrl}
             />
-            {data.driver && (
+            {data.driver ? (
               <DocumentSignature
                 name={data.driver.name}
                 role="Driver acknowledgement"
                 signedAt={data.driver.acceptedAt}
                 signatureUrl={data.driver.signatureUrl}
               />
+            ) : (
+              <DocumentSignature name="—" role="Driver acknowledgement" />
             )}
           </View>
         </DocumentSection>
 
-        {data.goodsAndEquipment && data.goodsAndEquipment.length > 0 && (
-          <DocumentSection title="Goods and equipment">
-            <DocumentTable
-              columns={[
-                { key: 'description', label: 'Description' },
-                { key: 'quantity', label: 'Quantity' },
-                { key: 'purpose', label: 'Purpose' },
-              ]}
-              rows={data.goodsAndEquipment.map((item) => ({
-                description: item.description,
-                quantity: item.quantity || 'Not specified',
-                purpose: item.purpose || 'Not specified',
-              }))}
-              emptyLabel="No goods or equipment recorded"
-            />
-          </DocumentSection>
-        )}
+        <View style={documentStyles.spacer} />
 
-        {data.preDepartureInspection && (
-          <DocumentSection title="Pre-departure vehicle inspection">
-            <DocumentFieldGrid
-              fields={[
-                { label: 'Inspection status', value: formatDocumentStatus(data.preDepartureInspection.status) },
-                { label: 'Odometer reading', value: formatHumanValue(data.preDepartureInspection.odometer, 'odometer') },
-                { label: 'Inspector', value: data.preDepartureInspection.inspectorName || 'Not recorded' },
-                { label: 'Completed at', value: data.preDepartureInspection.completedAt || 'Not recorded' },
-              ]}
-            />
-            {data.preDepartureInspection.items && data.preDepartureInspection.items.length > 0 && (
-              <DocumentTable
-                columns={[
-                  { key: 'item', label: 'Item' },
-                  { key: 'result', label: 'Result' },
-                  { key: 'comment', label: 'Comment' },
-                ]}
-                rows={data.preDepartureInspection.items.map((item) => ({
-                  item: item.label,
-                  result: item.result === 'pass' ? '✓' : item.result === 'fail' ? '✗' : humanizeKey(item.result),
-                  comment: item.comment || '',
-                }))}
-                emptyLabel="No inspection items recorded"
-              />
-            )}
-            {data.preDepartureInspection.notes && (
-              <Text style={{ marginTop: 3, color: '#4B5563', fontSize: 7 }}>
-                Notes: {data.preDepartureInspection.notes}
-              </Text>
-            )}
-          </DocumentSection>
-        )}
-
-        {data.fuelInformation && (
-          <DocumentSection title="Fuel information">
-            <DocumentFieldGrid
-              fields={[
-                { label: 'Fuel card / voucher', value: data.fuelInformation.fuelCardNumber || 'Not assigned' },
-                { label: 'Expected fuel', value: data.fuelInformation.expectedFuel || 'Not estimated' },
-                { label: 'Fuel type', value: data.fuelInformation.fuelType || 'Not specified' },
-                { label: 'Cost centre', value: data.fuelInformation.costCentre || 'Not recorded' },
-              ]}
-            />
-          </DocumentSection>
-        )}
-
-        {(data.routeEntries?.length || data.defects?.length || data.incidents?.length) && (
-          <DocumentSection title="Operational record">
-            <DocumentTable
-              columns={[
-                { key: 'event', label: 'Event' },
-                { key: 'details', label: 'Details' },
-                { key: 'time', label: 'Date and time' },
-              ]}
-              rows={[
-                ...(data.routeEntries || []).map((entry) => ({
-                  event: humanizeKey(entry.type),
-                  details: [entry.location, entry.note].filter(Boolean).join(' · '),
-                  time: entry.occurredAt,
-                })),
-                ...(data.defects || []).map((defect) => ({
-                  event: `Defect · ${humanizeKey(defect.severity)}`,
-                  details: defect.description,
-                  time: humanizeKey(defect.status || 'open'),
-                })),
-                ...(data.incidents || []).map((incident) => ({
-                  event: humanizeKey(incident.type),
-                  details: incident.description,
-                  time: incident.occurredAt,
-                })),
-              ]}
-            />
-          </DocumentSection>
-        )}
+        {/* ════════════════════════════════════════
+           Verification block
+           ════════════════════════════════════════ */}
+        <DocumentVerificationBlock
+          branding={branding}
+          verificationCode={data.verificationCode}
+          verificationUrl={data.verificationUrl}
+          qrCode={data.qrCodeDataUrl}
+        />
 
         <DocumentVerificationFooter
           branding={branding}

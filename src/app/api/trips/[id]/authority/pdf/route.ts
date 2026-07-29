@@ -8,16 +8,14 @@ import {
   tripAuthorities,
   tripAuthorityPassengers,
   tripAuthorisedDrivers,
-  tripIncidents,
-  tripProgressEntries,
   vehicleAllocations,
   vehicleInspections,
   inspectionItemResults,
   inspectionTemplateItems,
 } from '@/db/schema/trips';
 import { departments, employees } from '@/db/schema/people';
-import { vehicleDefects, vehicles } from '@/db/schema/fleet';
-import { transportRequests } from '@/db/schema/requests';
+import { vehicles } from '@/db/schema/fleet';
+import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { tenantBranding, tenants } from '@/db/schema/tenants';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -70,7 +68,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!authority)
       return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
 
-    const [passengers, drivers, progress, incidents, defects, departureInspections, authoriserEmployee, transportOfficerEmployee, requesterName] = await Promise.all([
+    const [passengers, drivers, departureInspections, authoriserEmployee, transportOfficerEmployee, requesterName, routeRows] = await Promise.all([
       db
         .select()
         .from(tripAuthorityPassengers)
@@ -92,20 +90,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
         .leftJoin(departments, eq(departments.id, employees.departmentId))
         .where(eq(tripAuthorisedDrivers.authorityId, authority.authority.id)),
-      db
-        .select()
-        .from(tripProgressEntries)
-        .where(
-          and(
-            eq(tripProgressEntries.tripId, id),
-            eq(tripProgressEntries.tenantId, session.tenantId),
-          ),
-        ),
-      db
-        .select()
-        .from(tripIncidents)
-        .where(and(eq(tripIncidents.tripId, id), eq(tripIncidents.tenantId, session.tenantId))),
-      db.select().from(vehicleDefects).where(eq(vehicleDefects.tripId, id)),
       // Latest departure inspection for the allocated vehicle
       db
         .select()
@@ -158,6 +142,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           .limit(1);
         return emp ? `${emp.firstName} ${emp.lastName}` : null;
       })(),
+      // Fetch request routes for journey legs
+      db
+        .select()
+        .from(requestRoutes)
+        .where(eq(requestRoutes.requestId, authority.authority.requestId)),
     ]);
 
     // Fetch inspection items if a departure inspection exists
@@ -216,6 +205,30 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       transportOffice: authority.requestingOfficeSnapshot || undefined,
       routeSummary: authority.authority.approvedRoute || undefined,
       totalKm: distance,
+      journeyLegs: routeRows && routeRows.length > 0
+        ? routeRows.map((r) => ({
+            origin: r.originName || 'Not specified',
+            destination: r.destinationName || 'Not specified',
+            departureDate: authority.authority.validFrom?.toISOString().split('T')[0] || 'Not set',
+            returnDate: authority.authority.validUntil?.toISOString().split('T')[0] || 'Not set',
+            estimatedKm: r.totalKilometres ?? r.mappedDistanceKm ?? undefined,
+          }))
+        : undefined,
+      authorisation: {
+        authoriserName: authoriserEmployee
+          ? `${authoriserEmployee.firstName} ${authoriserEmployee.lastName}`
+          : authority.authority.authorisedByUserId
+            ? 'Authorising officer'
+            : 'Not recorded',
+        authoriserRole: authoriserEmployee?.jobTitle || 'Authorising Officer',
+        authorisedAt: authority.authority.authorisedAt?.toLocaleString('en-NA'),
+        transportOfficerName: transportOfficerEmployee
+          ? `${transportOfficerEmployee.firstName} ${transportOfficerEmployee.lastName}`
+          : 'Not recorded',
+        transportOfficerRole: transportOfficerEmployee?.jobTitle || 'Transport Officer',
+        issueDate: authority.authority.issuedAt?.toLocaleString('en-NA') || 'Not recorded',
+        approvalMethod: 'Digitally authorised',
+      },
       authorityStatus: authority.authority.status.replaceAll('_', ' '),
       documentVersion: authority.authority.version,
       issuedAt: authority.authority.issuedAt?.toISOString(),

@@ -186,14 +186,22 @@ export async function generateTripAuthorityPdf(
     .limit(1);
   const resolvedBranding = await resolveTenantBranding(tenantId);
 
-  // Build route summary
+  // Build route summary and journey legs
   let routeSummary: string | undefined;
   let totalKm: number | undefined;
+  let journeyLegs: TripAuthorityData['journeyLegs'] = [];
   if (req) {
     const routes = await db.select().from(requestRoutes).where(eq(requestRoutes.requestId, req.id));
     if (routes.length > 0) {
       routeSummary = routes.map((r) => `${r.originName} → ${r.destinationName}`).join('; ');
       totalKm = routes.reduce((sum, r) => sum + (r.totalKilometres ?? r.mappedDistanceKm ?? 0), 0);
+      journeyLegs = routes.map((r) => ({
+        origin: r.originName || 'Not specified',
+        destination: r.destinationName || 'Not specified',
+        departureDate: alloc.startAt.toISOString().split('T')[0],
+        returnDate: alloc.endAt.toISOString().split('T')[0],
+        estimatedKm: r.totalKilometres ?? r.mappedDistanceKm ?? undefined,
+      }));
     }
   }
 
@@ -386,6 +394,16 @@ export async function generateTripAuthorityPdf(
     purpose: req?.purpose || undefined,
     routeSummary,
     totalKm,
+    journeyLegs: journeyLegs.length > 0 ? journeyLegs : undefined,
+    authorisation: (authoriser || transportOfficer) ? {
+      authoriserName: authoriser?.name || 'Authorising officer',
+      authoriserRole: authoriser?.designation || 'Authorising Officer',
+      authorisedAt: authoriser?.authorisedAt,
+      transportOfficerName: transportOfficer?.name || 'Transport Officer',
+      transportOfficerRole: transportOfficer?.designation || 'Transport Officer',
+      issueDate: authority?.issuedAt?.toLocaleString('en-NA') || new Date().toISOString().split('T')[0],
+      approvalMethod: 'Digitally authorised',
+    } : undefined,
     specialConditions,
     driver,
     passengers,
