@@ -28,7 +28,9 @@ import {
   Wifi,
   WifiOff,
   Loader2,
+  Shield,
 } from 'lucide-react';
+import Link from 'next/link';
 
 type ReportType =
   | 'fuel'
@@ -236,6 +238,13 @@ export default function ReportsPage() {
               </button>
             ))}
           </div>
+          <Link
+            href="/dashboard/reports/licence-expiry"
+            className="inline-flex items-center gap-2 rounded-[8px] bg-muted px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-border"
+          >
+            <Shield className="h-4 w-4" />
+            Licence Expiry
+          </Link>
           {activeReport && (
             <p className="mt-2 text-xs text-ink-500">{activeReport.description}</p>
           )}
