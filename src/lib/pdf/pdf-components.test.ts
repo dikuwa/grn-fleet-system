@@ -157,6 +157,185 @@ describe('TransportRequestDocument data contract', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Trip Authority Document Tests
+// ---------------------------------------------------------------------------
+
+describe('TripAuthorityDocument data contract', () => {
+  const mockData = {
+    reference: 'TA-2026-000457',
+    requestReference: 'GRN/TR/2026/0728/362',
+    scope: 'regional',
+    startAt: '28 Jul 2026',
+    endAt: '29 Jul 2026',
+    tenantName: 'Kavango East Regional Council',
+    vehicle: {
+      licenceNumber: 'GRN-003-2024',
+      vehicleRegisterNumber: 'N 45203',
+      make: 'Toyota',
+      model: 'Hilux Double Cab',
+      colour: 'White',
+      fuelType: 'Diesel',
+      currentOdometer: 62350,
+    },
+    authorityStatus: 'active',
+    documentVersion: 1,
+    purpose: 'Field inspection of community water projects',
+    department: 'Community Development',
+    routeSummary: 'Rundu → Mashare → Rundu',
+    totalKm: 240,
+    driver: {
+      name: 'John Shikongo',
+      employeeNumber: 'EMP-0015',
+      designation: 'Senior Driver',
+      department: 'Transport',
+      licenceNumber: 'L123456',
+      licenceClass: 'B',
+      licenceExpiry: '31 Dec 2026',
+      acceptedAt: '28 Jul 2026, 08:30',
+    },
+    passengers: [
+      {
+        name: 'Maria Shikongo',
+        employeeNumber: 'EMP-0042',
+        passengerType: 'government_employee',
+        destination: 'Mashare',
+        indemnityConfirmed: true,
+      },
+      {
+        name: 'Petrus Ndara',
+        employeeNumber: 'EMP-0087',
+        passengerType: 'government_employee',
+      },
+    ],
+    specialConditions: 'Driver must rest 15 min every 2 hours\nNo night driving after 18:00',
+    beginningOdometer: 62000,
+    endingOdometer: 62350,
+    transportOfficer: {
+      name: 'Anna Nghikembua',
+      designation: 'Transport Officer',
+      issuedAt: '28 Jul 2026, 07:00',
+    },
+    authoriser: {
+      name: 'Dr. Samuel Nangolo',
+      designation: 'Chief Regional Officer',
+      authorisedAt: '28 Jul 2026, 08:00',
+    },
+    goodsAndEquipment: [
+      { description: 'Water testing kit', quantity: '1', purpose: 'Field water quality testing' },
+      { description: 'Survey equipment', quantity: '3', purpose: 'Site measurements' },
+    ],
+    preDepartureInspection: {
+      status: 'completed',
+      odometer: 62000,
+      items: [
+        { label: 'Tyres', result: 'pass' },
+        { label: 'Brakes', result: 'pass' },
+        { label: 'Lights', result: 'pass' },
+        { label: 'Oil level', result: 'pass' },
+        { label: 'Spare wheel', result: 'fail', comment: 'Spare tyre pressure low' },
+      ],
+      inspectorName: 'Inspector Kamati',
+      notes: 'Spare tyre needs inflation before departure',
+      completedAt: '28 Jul 2026, 06:30',
+    },
+    fuelInformation: {
+      fuelCardNumber: 'FC-0082',
+      expectedFuel: '30 L (est.)',
+      fuelType: 'Diesel',
+      costCentre: 'CC-PROJ-2026',
+    },
+    verificationCode: 'TA457-X8K2',
+  };
+
+  it('has all required fields for trip authority snapshot', () => {
+    expect(mockData.reference).toMatch(/^TA-\d{4}-\d{6}$/);
+    expect(mockData.requestReference).toMatch(/^GRN\/TR\/\d{4}\/\d{4}\/\d{3}$/);
+    expect(mockData.vehicle.licenceNumber).toBeTruthy();
+    expect(mockData.vehicle.make).toBeTruthy();
+    expect(mockData.vehicle.model).toBeTruthy();
+    expect(mockData.scope).toMatch(/^(regional|national)$/);
+    expect(mockData.totalKm).toBeGreaterThan(0);
+  });
+
+  it('vehicle details are complete', () => {
+    expect(mockData.vehicle.licenceNumber).toBeTruthy();
+    expect(mockData.vehicle.vehicleRegisterNumber).toBeTruthy();
+    expect(mockData.vehicle.colour).toBeTruthy();
+    expect(mockData.vehicle.fuelType).toBeTruthy();
+    expect(mockData.vehicle.currentOdometer).toBeGreaterThan(0);
+  });
+
+  it('conditions are parsed correctly', () => {
+    const conditions = mockData.specialConditions
+      .split(/\n|;/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+    expect(conditions.length).toBe(2);
+    expect(conditions[0]).toContain('rest 15 min');
+    expect(conditions[1]).toContain('night driving');
+  });
+
+  it('driver has licence and acknowledgement', () => {
+    expect(mockData.driver?.name).toBeTruthy();
+    expect(mockData.driver?.employeeNumber).toMatch(/^EMP-\d{4}$/);
+    expect(mockData.driver?.licenceNumber).toBeTruthy();
+    expect(mockData.driver?.licenceClass).toBeTruthy();
+    expect(mockData.driver?.acceptedAt).toBeTruthy();
+  });
+
+  it('passengers have required identification', () => {
+    for (const p of mockData.passengers) {
+      expect(p.name).toBeTruthy();
+      expect(p.employeeNumber).toMatch(/^EMP-\d{4}$/);
+      expect(p.passengerType).toBeTruthy();
+    }
+  });
+
+  it('approvals have officers and dates', () => {
+    expect(mockData.transportOfficer?.name).toBeTruthy();
+    expect(mockData.transportOfficer?.designation).toBeTruthy();
+    expect(mockData.transportOfficer?.issuedAt).toBeTruthy();
+    expect(mockData.authoriser?.name).toBeTruthy();
+    expect(mockData.authoriser?.designation).toBeTruthy();
+    expect(mockData.authoriser?.authorisedAt).toBeTruthy();
+  });
+
+  it('goods and equipment have descriptions', () => {
+    expect(mockData.goodsAndEquipment).toBeDefined();
+    expect(mockData.goodsAndEquipment!.length).toBe(2);
+    for (const item of mockData.goodsAndEquipment!) {
+      expect(item.description).toBeTruthy();
+    }
+  });
+
+  it('pre-departure inspection has items with results', () => {
+    expect(mockData.preDepartureInspection).toBeDefined();
+    expect(mockData.preDepartureInspection!.status).toBe('completed');
+    expect(mockData.preDepartureInspection!.items!.length).toBe(5);
+    const failed = mockData.preDepartureInspection!.items!.filter((i) => i.result === 'fail');
+    expect(failed.length).toBe(1);
+    expect(failed[0].label).toBe('Spare wheel');
+    expect(failed[0].comment).toContain('low');
+    expect(mockData.preDepartureInspection!.notes).toBeTruthy();
+  });
+
+  it('fuel information has card and type', () => {
+    expect(mockData.fuelInformation).toBeDefined();
+    expect(mockData.fuelInformation!.fuelCardNumber).toMatch(/^FC-/);
+    expect(mockData.fuelInformation!.fuelType).toBe('Diesel');
+    expect(mockData.fuelInformation!.expectedFuel).toContain('L');
+    expect(mockData.fuelInformation!.costCentre).toBeTruthy();
+  });
+
+  it('component module loads correctly', () => {
+    expect(async () => {
+      const mod = await import('./trip-authority');
+      expect(mod.TripAuthorityDocument).toBeDefined();
+    }).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Fuel Summary Document Tests
 // ---------------------------------------------------------------------------
 
