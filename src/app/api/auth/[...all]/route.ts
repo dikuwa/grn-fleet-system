@@ -37,7 +37,7 @@ async function handleSignIn(request: NextRequest) {
     const body = await request.json();
     const { email, password } = body;
 
-    if (email && process.env.NODE_ENV !== 'test' && !process.env.CI) {
+    if (email && process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development' && !process.env.CI) {
       const rl = await rateLimit(`login:${ip}:${email}`, 20, 60);
       if (!rl.success) {
         const res = NextResponse.json(
@@ -154,7 +154,7 @@ async function handleSession(request: NextRequest) {
   try {
     // Rate limit: 30 session checks per IP per 60 seconds (skipped in test)
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    if (process.env.NODE_ENV !== 'test' && !process.env.CI) {
+    if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development' && !process.env.CI) {
       const rl = await rateLimit(`session:${ip}`, 30, 60);
       if (!rl.success) {
         console.warn('[Auth] Rate limit exceeded for session checks', { ip });
