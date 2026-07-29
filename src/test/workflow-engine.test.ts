@@ -335,59 +335,80 @@ describe('WorkflowEngine — Status display', () => {
 });
 
 describe('WorkflowEngine — Built-in step definitions', () => {
-  it('regional workflow has 5 steps', async () => {
-    const { WorkflowEngine } = await import('@/lib/workflow-engine');
-
-    // Verify the engine can be instantiated with no DB (uses getDb internally)
-    const engine = new WorkflowEngine();
-    expect(engine).toBeInstanceOf(WorkflowEngine);
+  it('regional workflow has exactly 5 steps', async () => {
+    const { REGIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const steps = REGIONAL_WORKFLOW_STEPS as unknown as unknown[];
+    expect(steps).toHaveLength(5);
   });
 
-  it('regional steps follow the correct order', () => {
-    const expectedStepOrder = [
-      'supervisor_approve',  // Step 1
-      'transport_review',    // Step 2
-      'release',             // Step 3
-      'authorise',           // Step 4
-      'acknowledge',         // Step 5
-    ];
-
-    expect(expectedStepOrder).toHaveLength(5);
-    expect(expectedStepOrder[0]).toBe('supervisor_approve');
-    expect(expectedStepOrder[expectedStepOrder.length - 1]).toBe('acknowledge');
+  it('national workflow has exactly 6 steps', async () => {
+    const { NATIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const steps = NATIONAL_WORKFLOW_STEPS as unknown as unknown[];
+    expect(steps).toHaveLength(6);
   });
 
-  it('national workflow has more steps than regional', () => {
-    const regionalStepCount = 5;
-    const nationalStepCount = 6;
-    expect(nationalStepCount).toBeGreaterThan(regionalStepCount);
-    expect(nationalStepCount - regionalStepCount).toBe(1); // one extra level
+  it('regional steps start with supervisor_approve and end with acknowledge', async () => {
+    const { REGIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const steps = REGIONAL_WORKFLOW_STEPS as unknown as { actionType: string; stepOrder: number }[];
+    expect(steps[0].actionType).toBe('supervisor_approve');
+    expect(steps[steps.length - 1].actionType).toBe('acknowledge');
   });
 
-  it('regional workflow has release then authorise', () => {
-    const regionalSteps = [
-      'supervisor_approve',
-      'transport_review',
-      'release',
-      'authorise',
-      'acknowledge',
-    ];
-    expect(regionalSteps[2]).toBe('release');
-    expect(regionalSteps[3]).toBe('authorise');
+  it('national steps start with supervisor_approve and end with acknowledge', async () => {
+    const { NATIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const steps = NATIONAL_WORKFLOW_STEPS as unknown as { actionType: string; stepOrder: number }[];
+    expect(steps[0].actionType).toBe('supervisor_approve');
+    expect(steps[steps.length - 1].actionType).toBe('acknowledge');
   });
 
-  it('national workflow has two release steps', () => {
-    const nationalSteps = [
-      'supervisor_approve',
-      'transport_review',
-      'release',
-      'release',
-      'authorise',
-      'acknowledge',
-    ];
-    // National adds a Director release between transport_review and CRO authorisation
-    const releaseSteps = nationalSteps.filter((s) => s === 'release');
+  it('national has one more step than regional (+1 Director release)', async () => {
+    const { REGIONAL_WORKFLOW_STEPS, NATIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const r = REGIONAL_WORKFLOW_STEPS as unknown as unknown[];
+    const n = NATIONAL_WORKFLOW_STEPS as unknown as unknown[];
+    expect(n.length - r.length).toBe(1);
+  });
+
+  it('regional workflow has release (step 3) then authorise (step 4)', async () => {
+    const { REGIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const steps = REGIONAL_WORKFLOW_STEPS as unknown as { actionType: string; stepOrder: number }[];
+    expect(steps[2].actionType).toBe('release');
+    expect(steps[3].actionType).toBe('authorise');
+  });
+
+  it('national workflow has two release steps (steps 3 and 4)', async () => {
+    const { NATIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const steps = NATIONAL_WORKFLOW_STEPS as unknown as { actionType: string }[];
+    const releaseSteps = steps.filter((s) => s.actionType === 'release');
     expect(releaseSteps).toHaveLength(2);
+  });
+
+  it('regional step 3 (release) requires VEHICLE_RELEASE_REGIONAL permission', async () => {
+    const { Permissions } = await import('@/lib/permissions');
+    const { REGIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const step = (REGIONAL_WORKFLOW_STEPS as unknown as { requiredPermission: string }[])[2];
+    expect(step.requiredPermission).toBe(Permissions.VEHICLE_RELEASE_REGIONAL);
+  });
+
+  it('regional step 4 (authorise) requires TRIP_AUTHORIZE_REGIONAL permission', async () => {
+    const { Permissions } = await import('@/lib/permissions');
+    const { REGIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const step = (REGIONAL_WORKFLOW_STEPS as unknown as { requiredPermission: string }[])[3];
+    expect(step.requiredPermission).toBe(Permissions.TRIP_AUTHORIZE_REGIONAL);
+  });
+
+  it('national step 5 (authorise) requires TRIP_AUTHORIZE_NATIONAL permission', async () => {
+    const { Permissions } = await import('@/lib/permissions');
+    const { NATIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const authoriseStep = (NATIONAL_WORKFLOW_STEPS as unknown as { actionType: string; requiredPermission: string }[]).find((s) => s.actionType === 'authorise');
+    expect(authoriseStep?.requiredPermission).toBe(Permissions.TRIP_AUTHORIZE_NATIONAL);
+  });
+
+  it('all regional steps have stepOrder matching array index + 1', async () => {
+    const { REGIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
+    const steps = REGIONAL_WORKFLOW_STEPS as unknown as { stepOrder: number }[];
+    steps.forEach((s, i) => {
+      expect(s.stepOrder).toBe(i + 1);
+    });
   });
 });
 

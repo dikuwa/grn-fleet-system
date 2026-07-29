@@ -80,7 +80,7 @@ export type EngineResult =
 // ---------------------------------------------------------------------------
 
 /** Steps for a regional-scope trip */
-const REGIONAL_WORKFLOW_STEPS = [
+export const REGIONAL_WORKFLOW_STEPS = [
   {
     stepOrder: 1,
     actionType: 'supervisor_approve' as const,
@@ -144,7 +144,7 @@ const REGIONAL_WORKFLOW_STEPS = [
 ] as const;
 
 /** Steps for a national-scope trip (adds Director step) */
-const NATIONAL_WORKFLOW_STEPS = [
+export const NATIONAL_WORKFLOW_STEPS = [
   ...REGIONAL_WORKFLOW_STEPS.slice(0, 3),
   {
     stepOrder: 4,
