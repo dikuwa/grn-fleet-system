@@ -15,7 +15,7 @@ import {
   inspectionItemResults,
   inspectionTemplateItems,
 } from '@/db/schema/trips';
-import { employees } from '@/db/schema/people';
+import { departments, employees } from '@/db/schema/people';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { tenantBranding, tenants } from '@/db/schema/tenants';
@@ -44,6 +44,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         authorisedKm: transportRequests.totalAuthorisedKilometres,
         purpose: transportRequests.purpose,
         department: transportRequests.department,
+        requestingOfficeSnapshot: transportRequests.requestingOfficeSnapshot,
+        requesterEmployeeId: transportRequests.requesterEmployeeId,
         tenantName: tenants.name,
         footer: tenantBranding.documentFooter,
         registration: vehicles.licenceNumber,
@@ -68,7 +70,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!authority)
       return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
 
-    const [passengers, drivers, progress, incidents, defects, departureInspections, authoriserEmployee, transportOfficerEmployee] = await Promise.all([
+    const [passengers, drivers, progress, incidents, defects, departureInspections, authoriserEmployee, transportOfficerEmployee, requesterName] = await Promise.all([
       db
         .select()
         .from(tripAuthorityPassengers)
@@ -83,9 +85,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           firstName: employees.firstName,
           lastName: employees.lastName,
           jobTitle: employees.jobTitle,
+          phone: employees.phone,
+          departmentName: departments.name,
         })
         .from(tripAuthorisedDrivers)
         .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
+        .leftJoin(departments, eq(departments.id, employees.departmentId))
         .where(eq(tripAuthorisedDrivers.authorityId, authority.authority.id)),
       db
         .select()
@@ -139,6 +144,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           .where(eq(employees.userId, authority.allocatedByUserId))
           .limit(1);
         return emp || null;
+      })(),
+      // Resolve requester name from transport request's requesterEmployeeId
+      (async () => {
+        if (!authority.requesterEmployeeId) return null;
+        const [emp] = await db
+          .select({
+            firstName: employees.firstName,
+            lastName: employees.lastName,
+          })
+          .from(employees)
+          .where(eq(employees.id, authority.requesterEmployeeId))
+          .limit(1);
+        return emp ? `${emp.firstName} ${emp.lastName}` : null;
       })(),
     ]);
 
@@ -194,6 +212,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       endAt: authority.authority.validUntil?.toLocaleString('en-NA') || 'Not set',
       purpose: authority.authority.purpose || undefined,
       department: authority.department || undefined,
+      requesterName: requesterName || undefined,
+      transportOffice: authority.requestingOfficeSnapshot || undefined,
       routeSummary: authority.authority.approvedRoute || undefined,
       totalKm: distance,
       authorityStatus: authority.authority.status.replaceAll('_', ' '),
@@ -213,6 +233,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             licenceNumber: primary.licenceNumber || undefined,
             licenceClass: primary.licenceClass || undefined,
             licenceExpiry: primary.licenceExpiry?.toLocaleDateString('en-NA'),
+            department: primary.departmentName || undefined,
+            contactNumber: primary.phone || undefined,
             acceptedAt: authority.authority.acceptedAt?.toLocaleString('en-NA'),
           }
         : undefined,

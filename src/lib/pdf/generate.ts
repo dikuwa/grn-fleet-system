@@ -241,6 +241,7 @@ export async function generateTripAuthorityPdf(
         firstName: employees.firstName,
         lastName: employees.lastName,
         jobTitle: employees.jobTitle,
+        phone: employees.phone,
         licenceClass: tripAuthorisedDrivers.licenceClass,
         licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
       })
@@ -254,6 +255,7 @@ export async function generateTripAuthorityPdf(
         name: `${primary.firstName} ${primary.lastName}`,
         employeeNumber: primary.employeeNumber || undefined,
         designation: primary.jobTitle || undefined,
+        contactNumber: primary.phone || undefined,
         acceptedAt: authority.acceptedAt?.toLocaleString('en-NA'),
       };
     }
@@ -370,7 +372,16 @@ export async function generateTripAuthorityPdf(
       fuelType: vehicle?.fuelType || undefined,
       currentOdometer: vehicle?.currentOdometer || undefined,
     },
-    requesterName: undefined,
+    requesterName: req?.requesterEmployeeId
+      ? await db
+          .select({
+            name: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.middleName}, ${employees.lastName})`,
+          })
+          .from(employees)
+          .where(eq(employees.id, req.requesterEmployeeId))
+          .limit(1)
+          .then((rows) => rows[0]?.name || undefined)
+      : undefined,
     department: req?.department || undefined,
     purpose: req?.purpose || undefined,
     routeSummary,
