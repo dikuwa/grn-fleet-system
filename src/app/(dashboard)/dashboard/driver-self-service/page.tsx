@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -11,7 +11,7 @@ import {
   User, Car, ClipboardCheck, Gauge, FileText,
   AlertTriangle, Loader2, RefreshCw, ChevronRight,
   Clock, MapPin, CheckCircle2, XCircle, Shield,
-  IdCard, CalendarClock, Bell, PenSquare,
+  IdCard, CalendarClock, Bell, PenSquare, AlertCircle,
 } from 'lucide-react';
 import Link from 'next/link';
 import { LicenceUploadPanel } from '@/app/(dashboard)/dashboard/staff/[id]/LicenceUploadPanel';
@@ -70,6 +70,8 @@ export default function DriverSelfServicePage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'licences' | 'trips'>('overview');
   const fetched = useRef(false);
+  const [expiryAlerts, setExpiryAlerts] = useState<string[]>([]);
+  const expiryCheckDone = useRef(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -104,13 +106,31 @@ export default function DriverSelfServicePage() {
     }
   }, []);
 
+  // Check licence expiry and create notifications if needed
+  useEffect(() => {
+    if (!driverInfo || expiryCheckDone.current) return;
+    expiryCheckDone.current = true;
+    const now = new Date();
+    const alerts: string[] = [];
+    for (const lic of driverInfo.licences) {
+      const expiry = new Date(lic.expiryDate);
+      const daysLeft = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysLeft <= 0) {
+        alerts.push(`Licence ${lic.licenceClass} (${lic.licenceNumber.slice(-4)}) expired on ${formatDate(lic.expiryDate)}`);
+      } else if (daysLeft <= 30) {
+        alerts.push(`Licence ${lic.licenceClass} (${lic.licenceNumber.slice(-4)}) expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'} (${formatDate(lic.expiryDate)})`);
+      }
+    }
+    setExpiryAlerts(alerts);
+  }, [driverInfo, formatDate]);
+
   useEffect(() => {
     if (fetched.current) return;
     fetched.current = true;
     fetchData();
   }, [fetchData]);
 
-  const statusVariant = (s: string): 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency' => {
+  const statusVariant = useCallback((s: string): 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency' => {
     switch (s) {
       case 'in_progress': return 'success';
       case 'pending': case 'issued': return 'pending';
@@ -119,11 +139,11 @@ export default function DriverSelfServicePage() {
       case 'cancelled': return 'cancelled';
       default: return 'pending';
     }
-  };
+  }, []);
 
-  const statusLabel = (s: string): string => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const statusLabel = useCallback((s: string): string => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()), []);
 
-  const activeTrips = trips.filter((t) => ['pending', 'in_progress', 'issued'].includes(t.status));
+  const activeTrips = useMemo(() => trips.filter((t) => ['pending', 'in_progress', 'issued'].includes(t.status)), [trips]);
 
   return (
     <div className="space-y-6">
@@ -153,7 +173,35 @@ export default function DriverSelfServicePage() {
       ) : !driverInfo ? (
         <EmptyState icon={<User className="h-8 w-8" />} title="No driver profile found" description="Your employee account may not have a driver profile assigned. Contact your Transport Administrator." />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-3">
+        <>
+          {/* Licence Expiry Alert Banner */}
+          {expiryAlerts.length > 0 && (
+            <div className={expiryAlerts.some(a => a.includes('expired')) ? 'rounded-[8px] border border-status-error-border bg-status-error-bg p-4' : 'rounded-[8px] border border-amber-200 bg-amber-50 p-4'}>
+              <div className="flex items-start gap-3">
+                <AlertCircle className={`h-5 w-5 mt-0.5 ${expiryAlerts.some(a => a.includes('expired')) ? 'text-status-error-text' : 'text-amber-600'}`} />
+                <div className="min-w-0">
+                  <p className={`text-sm font-medium ${expiryAlerts.some(a => a.includes('expired')) ? 'text-status-error-text' : 'text-amber-800'}`}>
+                    Driving Licence{expiryAlerts.length > 1 ? 's' : ''} Need{expiryAlerts.length === 1 ? 's' : ''} Attention
+                  </p>
+                  <ul className="mt-1 text-xs space-y-0.5">
+                    {expiryAlerts.map((alert, i) => (
+                      <li key={i} className={expiryAlerts.some(a => a.includes('expired')) ? 'text-status-error-text/80' : 'text-amber-700'}>
+                        {alert}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <button
+                  onClick={() => setExpiryAlerts([])}
+                  className="ml-auto shrink-0 text-ink-400 hover:text-ink-600 transition-colors"
+                  aria-label="Dismiss alert"
+                >
+                  <XCircle className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="grid gap-6 lg:grid-cols-3">
           {/* Left Column - Profile */}
           <div className="space-y-6 lg:col-span-1">
             {/* Profile Card */}
@@ -202,19 +250,19 @@ export default function DriverSelfServicePage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-2">
-                  <Link href="/dashboard/logs" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                  <Link href="/dashboard/logs" prefetch={true} className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                     <PenSquare className="h-5 w-5 text-amber-600" />
                     <span className="text-xs font-medium text-ink-700">Daily Log</span>
                   </Link>
-                  <Link href="/dashboard/fuel/new" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                  <Link href="/dashboard/fuel/new" prefetch={true} className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                     <Gauge className="h-5 w-5 text-purple-600" />
                     <span className="text-xs font-medium text-ink-700">Fuel Entry</span>
                   </Link>
-                  <Link href="/dashboard/inspections" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                  <Link href="/dashboard/inspections" prefetch={true} className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                     <ClipboardCheck className="h-5 w-5 text-brand-600" />
                     <span className="text-xs font-medium text-ink-700">Inspections</span>
                   </Link>
-                  <Link href="/dashboard/requests/new" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                  <Link href="/dashboard/requests/new" prefetch={true} className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                     <FileText className="h-5 w-5 text-blue-600" />
                     <span className="text-xs font-medium text-ink-700">New Request</span>
                   </Link>
@@ -280,7 +328,7 @@ export default function DriverSelfServicePage() {
                       ) : (
                         <div className="space-y-2">
                           {activeTrips.map((t) => (
-                            <Link key={t.id} href={`/dashboard/trips/${t.id}`} className="flex items-center justify-between rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                            <Link key={t.id} href={`/dashboard/trips/${t.id}`} prefetch={true} className="flex items-center justify-between rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                               <div>
                                 <div className="flex items-center gap-2">
                                   <span className="text-sm font-medium text-ink-950">{t.reference || t.id.slice(0, 8)}</span>
@@ -373,7 +421,7 @@ export default function DriverSelfServicePage() {
                     ) : (
                       <div className="space-y-2">
                         {trips.map((t) => (
-                          <Link key={t.id} href={`/dashboard/trips/${t.id}`} className="flex items-center justify-between rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                          <Link key={t.id} href={`/dashboard/trips/${t.id}`} prefetch={true} className="flex items-center justify-between rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                             <div className="flex items-center gap-3">
                               <Gauge className={`h-8 w-8 p-1.5 rounded-[6px] ${
                                 t.status === 'in_progress' ? 'bg-green-50 text-green-600' :
@@ -402,6 +450,7 @@ export default function DriverSelfServicePage() {
             </Card>
           </div>
         </div>
+        </>
       )}
     </div>
   );
