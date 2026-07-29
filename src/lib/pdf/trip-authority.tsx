@@ -108,6 +108,26 @@ export interface TripAuthorityData {
     safeToContinue: boolean;
   }>;
   arrivalInspection?: { status: string; odometer?: number; completedAt?: string };
+  goodsAndEquipment?: Array<{
+    description: string;
+    quantity?: string;
+    purpose?: string;
+  }>;
+  preDepartureInspection?: {
+    status: string;
+    odometer?: number;
+    items?: Array<{ label: string; result: string; comment?: string }>;
+    defects?: Array<{ severity: string; description: string }>;
+    notes?: string;
+    completedAt?: string;
+    inspectorName?: string;
+  };
+  fuelInformation?: {
+    fuelCardNumber?: string;
+    expectedFuel?: string;
+    fuelType?: string;
+    costCentre?: string;
+  };
 }
 
 export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ data }) => {
@@ -268,6 +288,70 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
             )}
           </View>
         </DocumentSection>
+
+        {data.goodsAndEquipment && data.goodsAndEquipment.length > 0 && (
+          <DocumentSection title="Goods and equipment">
+            <DocumentTable
+              columns={[
+                { key: 'description', label: 'Description' },
+                { key: 'quantity', label: 'Quantity' },
+                { key: 'purpose', label: 'Purpose' },
+              ]}
+              rows={data.goodsAndEquipment.map((item) => ({
+                description: item.description,
+                quantity: item.quantity || 'Not specified',
+                purpose: item.purpose || 'Not specified',
+              }))}
+              emptyLabel="No goods or equipment recorded"
+            />
+          </DocumentSection>
+        )}
+
+        {data.preDepartureInspection && (
+          <DocumentSection title="Pre-departure vehicle inspection">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Inspection status', value: formatDocumentStatus(data.preDepartureInspection.status) },
+                { label: 'Odometer reading', value: formatHumanValue(data.preDepartureInspection.odometer, 'odometer') },
+                { label: 'Inspector', value: data.preDepartureInspection.inspectorName || 'Not recorded' },
+                { label: 'Completed at', value: data.preDepartureInspection.completedAt || 'Not recorded' },
+              ]}
+            />
+            {data.preDepartureInspection.items && data.preDepartureInspection.items.length > 0 && (
+              <DocumentTable
+                columns={[
+                  { key: 'item', label: 'Item' },
+                  { key: 'result', label: 'Result' },
+                  { key: 'comment', label: 'Comment' },
+                ]}
+                rows={data.preDepartureInspection.items.map((item) => ({
+                  item: item.label,
+                  result: item.result === 'pass' ? '✓' : item.result === 'fail' ? '✗' : humanizeKey(item.result),
+                  comment: item.comment || '',
+                }))}
+                emptyLabel="No inspection items recorded"
+              />
+            )}
+            {data.preDepartureInspection.notes && (
+              <Text style={{ marginTop: 3, color: '#4B5563', fontSize: 7 }}>
+                Notes: {data.preDepartureInspection.notes}
+              </Text>
+            )}
+          </DocumentSection>
+        )}
+
+        {data.fuelInformation && (
+          <DocumentSection title="Fuel information">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Fuel card / voucher', value: data.fuelInformation.fuelCardNumber || 'Not assigned' },
+                { label: 'Expected fuel', value: data.fuelInformation.expectedFuel || 'Not estimated' },
+                { label: 'Fuel type', value: data.fuelInformation.fuelType || 'Not specified' },
+                { label: 'Cost centre', value: data.fuelInformation.costCentre || 'Not recorded' },
+              ]}
+            />
+          </DocumentSection>
+        )}
 
         {(data.routeEntries?.length || data.defects?.length || data.incidents?.length) && (
           <DocumentSection title="Operational record">

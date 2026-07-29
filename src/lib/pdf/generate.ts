@@ -18,7 +18,15 @@ import { SnapshotDocument, type SnapshotDocumentData } from './snapshot-document
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { vehicles } from '@/db/schema/fleet';
-import { vehicleAllocations, vehicleInspections } from '@/db/schema/trips';
+import {
+  tripAuthorities,
+  tripAuthorityPassengers,
+  tripAuthorisedDrivers,
+  vehicleAllocations,
+  vehicleInspections,
+  inspectionItemResults,
+  inspectionTemplateItems,
+} from '@/db/schema/trips';
 import { transportRequests, requestRoutes, requestDrivers, requestPassengers, requestActivities, requestAttachments } from '@/db/schema/requests';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { employees } from '@/db/schema/people';
@@ -171,7 +179,6 @@ export async function generateTripAuthorityPdf(
 
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
 
-  // Get branding info for document footer
   const [branding] = await db
     .select()
     .from(tenantBranding)
@@ -184,10 +191,164 @@ export async function generateTripAuthorityPdf(
   let totalKm: number | undefined;
   if (req) {
     const routes = await db.select().from(requestRoutes).where(eq(requestRoutes.requestId, req.id));
-
     if (routes.length > 0) {
       routeSummary = routes.map((r) => `${r.originName} → ${r.destinationName}`).join('; ');
       totalKm = routes.reduce((sum, r) => sum + (r.totalKilometres ?? r.mappedDistanceKm ?? 0), 0);
+    }
+  }
+
+  // Try to find the trip authority record to enrich with real driver, passengers, approvals
+  const [authority] = await db
+    .select()
+    .from(tripAuthorities)
+    .where(and(eq(tripAuthorities.allocationId, allocationId), eq(tripAuthorities.tenantId, tenantId)))
+    .orderBy(desc(tripAuthorities.createdAt))
+    .limit(1);
+
+  let driver: TripAuthorityData['driver'] | undefined;
+  let passengers: TripAuthorityData['passengers'] | undefined;
+  let additionalDrivers: TripAuthorityData['additionalDrivers'] | undefined;
+  let authoriser: TripAuthorityData['authoriser'] | undefined;
+  let transportOfficer: TripAuthorityData['transportOfficer'] | undefined;
+  let specialConditions: string | undefined;
+  let goodsAndEquipment: TripAuthorityData['goodsAndEquipment'] | undefined;
+  let preDepartureInspection: TripAuthorityData['preDepartureInspection'] | undefined;
+  let fuelInformation: TripAuthorityData['fuelInformation'] | undefined;
+
+  if (authority) {
+    specialConditions = authority.specialConditions || undefined;
+
+    // Fetch passengers from trip authority
+    const passengerRows = await db
+      .select()
+      .from(tripAuthorityPassengers)
+      .where(eq(tripAuthorityPassengers.authorityId, authority.id));
+    if (passengerRows.length > 0) {
+      passengers = passengerRows.map((p) => ({
+        name: p.fullName,
+        employeeNumber: p.employeeNumber || undefined,
+        passengerType: p.passengerType,
+        destination: p.destination || undefined,
+        indemnityConfirmed: p.indemnityConfirmed,
+      }));
+    }
+
+    // Fetch authorised drivers
+    const driverRows = await db
+      .select({
+        driverType: tripAuthorisedDrivers.driverType,
+        employeeNumber: tripAuthorisedDrivers.employeeNumber,
+        firstName: employees.firstName,
+        lastName: employees.lastName,
+        jobTitle: employees.jobTitle,
+        licenceClass: tripAuthorisedDrivers.licenceClass,
+        licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
+      })
+      .from(tripAuthorisedDrivers)
+      .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
+      .where(eq(tripAuthorisedDrivers.authorityId, authority.id));
+
+    const primary = driverRows.find((d) => d.driverType === 'primary');
+    if (primary) {
+      driver = {
+        name: `${primary.firstName} ${primary.lastName}`,
+        employeeNumber: primary.employeeNumber || undefined,
+        designation: primary.jobTitle || undefined,
+        acceptedAt: authority.acceptedAt?.toLocaleString('en-NA'),
+      };
+    }
+
+    additionalDrivers = driverRows
+      .filter((d) => d.driverType !== 'primary')
+      .map((d) => ({
+        name: `${d.firstName} ${d.lastName}`,
+        employeeNumber: d.employeeNumber || undefined,
+        licenceClass: d.licenceClass || undefined,
+        licenceExpiry: d.licenceExpiry?.toLocaleDateString('en-NA'),
+      }));
+
+    // Fetch departure inspection
+    const [depInsp] = await db
+      .select()
+      .from(vehicleInspections)
+      .where(and(
+        eq(vehicleInspections.vehicleId, alloc.vehicleId),
+        eq(vehicleInspections.type, 'departure'),
+      ))
+      .orderBy(desc(vehicleInspections.createdAt))
+      .limit(1);
+
+    if (depInsp) {
+      const inspResults = await db
+        .select({
+          result: inspectionItemResults.result,
+          comment: inspectionItemResults.comment,
+          label: inspectionTemplateItems.label,
+        })
+        .from(inspectionItemResults)
+        .innerJoin(inspectionTemplateItems, eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId))
+        .where(eq(inspectionItemResults.inspectionId, depInsp.id));
+
+      preDepartureInspection = {
+        status: depInsp.status,
+        odometer: depInsp.odometerReading || undefined,
+        items: inspResults.length > 0
+          ? inspResults.map((item) => ({
+              label: item.label,
+              result: item.result,
+              comment: item.comment || undefined,
+            }))
+          : undefined,
+        notes: depInsp.notes || undefined,
+        completedAt: depInsp.createdAt.toLocaleString('en-NA'),
+      };
+    }
+
+    // Resolve authoriser from snapshot
+    const snap = authority.authoriserSnapshot as { employeeId?: string } | null;
+    if (snap?.employeeId) {
+      const [authEmp] = await db
+        .select({
+          firstName: employees.firstName,
+          lastName: employees.lastName,
+          jobTitle: employees.jobTitle,
+        })
+        .from(employees)
+        .where(eq(employees.id, snap.employeeId))
+        .limit(1);
+      if (authEmp) {
+        authoriser = {
+          name: `${authEmp.firstName} ${authEmp.lastName}`,
+          designation: authEmp.jobTitle || 'Authorising Officer',
+          authorisedAt: authority.authorisedAt?.toLocaleString('en-NA'),
+        };
+      }
+    }
+
+    // Resolve transport officer from allocation
+    const [toEmp] = await db
+      .select({
+        firstName: employees.firstName,
+        lastName: employees.lastName,
+        jobTitle: employees.jobTitle,
+      })
+      .from(employees)
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, alloc.allocatedByUserId)))
+      .limit(1);
+    if (toEmp) {
+      transportOfficer = {
+        name: `${toEmp.firstName} ${toEmp.lastName}`,
+        designation: toEmp.jobTitle || 'Transport Officer',
+        issuedAt: authority.issuedAt?.toLocaleString('en-NA'),
+      };
+    }
+
+    // Build fuel information
+    if (vehicle?.fuelCardNumber || vehicle?.fuelType) {
+      fuelInformation = {
+        fuelCardNumber: vehicle?.fuelCardNumber || undefined,
+        fuelType: vehicle?.fuelType || undefined,
+      };
     }
   }
 
@@ -205,11 +366,27 @@ export async function generateTripAuthorityPdf(
       vehicleRegisterNumber: vehicle?.vehicleRegisterNumber || 'N/A',
       make: vehicle?.make || '',
       model: vehicle?.model || '',
+      colour: vehicle?.colour || undefined,
+      fuelType: vehicle?.fuelType || undefined,
+      currentOdometer: vehicle?.currentOdometer || undefined,
     },
     requesterName: undefined,
+    department: req?.department || undefined,
     purpose: req?.purpose || undefined,
     routeSummary,
     totalKm,
+    specialConditions,
+    driver,
+    passengers,
+    additionalDrivers,
+    authoriser,
+    transportOfficer,
+    goodsAndEquipment,
+    preDepartureInspection,
+    fuelInformation,
+    authorityStatus: authority?.status || 'issued',
+    documentVersion: authority?.documentVersion || 1,
+    issuedAt: authority?.issuedAt?.toISOString(),
   };
 
   const element = React.createElement(

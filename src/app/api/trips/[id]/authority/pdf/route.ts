@@ -2,7 +2,7 @@ import React from 'react';
 import QRCode from 'qrcode';
 import { renderToStream } from '@react-pdf/renderer';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   tripAuthorities,
@@ -11,6 +11,9 @@ import {
   tripIncidents,
   tripProgressEntries,
   vehicleAllocations,
+  vehicleInspections,
+  inspectionItemResults,
+  inspectionTemplateItems,
 } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
@@ -39,6 +42,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         requestReference: transportRequests.reference,
         scope: transportRequests.scope,
         authorisedKm: transportRequests.totalAuthorisedKilometres,
+        purpose: transportRequests.purpose,
+        department: transportRequests.department,
         tenantName: tenants.name,
         footer: tenantBranding.documentFooter,
         registration: vehicles.licenceNumber,
@@ -48,7 +53,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         colour: vehicles.colour,
         fuelType: vehicles.fuelType,
         currentOdometer: vehicles.currentOdometer,
-        department: transportRequests.department,
+        fuelCardNumber: vehicles.fuelCardNumber,
+        vehicleId: vehicles.id,
+        allocatedByUserId: vehicleAllocations.allocatedByUserId,
       })
       .from(tripAuthorities)
       .innerJoin(transportRequests, eq(transportRequests.id, tripAuthorities.requestId))
@@ -61,7 +68,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!authority)
       return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
 
-    const [passengers, drivers, progress, incidents, defects] = await Promise.all([
+    const [passengers, drivers, progress, incidents, defects, departureInspections, authoriserEmployee, transportOfficerEmployee] = await Promise.all([
       db
         .select()
         .from(tripAuthorityPassengers)
@@ -94,7 +101,63 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         .from(tripIncidents)
         .where(and(eq(tripIncidents.tripId, id), eq(tripIncidents.tenantId, session.tenantId))),
       db.select().from(vehicleDefects).where(eq(vehicleDefects.tripId, id)),
+      // Latest departure inspection for the allocated vehicle
+      db
+        .select()
+        .from(vehicleInspections)
+        .where(and(
+          eq(vehicleInspections.vehicleId, authority.vehicleId),
+          eq(vehicleInspections.type, 'departure'),
+        ))
+        .orderBy(desc(vehicleInspections.createdAt))
+        .limit(1),
+      // Resolve authoriser name from authoriserSnapshot.employeeId
+      (async () => {
+        const snap = authority.authority.authoriserSnapshot as { employeeId?: string } | null;
+        if (!snap?.employeeId) return null;
+        const [emp] = await db
+          .select({
+            firstName: employees.firstName,
+            lastName: employees.lastName,
+            jobTitle: employees.jobTitle,
+          })
+          .from(employees)
+          .where(eq(employees.id, snap.employeeId))
+          .limit(1);
+        return emp;
+      })(),
+      // Resolve transport officer from allocation's allocatedByUserId
+      (async () => {
+        if (!authority.allocatedByUserId) return null;
+        const [emp] = await db
+          .select({
+            firstName: employees.firstName,
+            lastName: employees.lastName,
+            jobTitle: employees.jobTitle,
+          })
+          .from(employees)
+          .where(eq(employees.userId, authority.allocatedByUserId))
+          .limit(1);
+        return emp || null;
+      })(),
     ]);
+
+    // Fetch inspection items if a departure inspection exists
+    let inspectionItems: Array<{ label: string; result: string; comment: string | null }> = [];
+    if (departureInspections && departureInspections.length > 0) {
+      const insp = departureInspections[0];
+      const results = await db
+        .select({
+          result: inspectionItemResults.result,
+          comment: inspectionItemResults.comment,
+          label: inspectionTemplateItems.label,
+        })
+        .from(inspectionItemResults)
+        .innerJoin(inspectionTemplateItems, eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId))
+        .where(eq(inspectionItemResults.inspectionId, insp.id));
+      inspectionItems = results;
+    }
+
     const branding = await resolveTenantBranding(session.tenantId);
     const primary = drivers.find((driver) => driver.driverType === 'primary');
     const token = (authority.authority.data as { verificationToken?: string } | null)
@@ -160,12 +223,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         destination: passenger.destination || undefined,
         indemnityConfirmed: passenger.indemnityConfirmed,
       })),
-      authoriser: {
-        name: authority.authority.authorisedByUserId
-          ? 'Authorising officer'
-          : 'Authorising officer not recorded',
-        authorisedAt: authority.authority.authorisedAt?.toLocaleString('en-NA'),
-      },
+      authoriser: (authoriserEmployee || authority.authority.authorisedByUserId)
+        ? {
+            name: authoriserEmployee
+              ? `${authoriserEmployee.firstName} ${authoriserEmployee.lastName}`
+              : 'Authorising officer',
+            designation: authoriserEmployee?.jobTitle || 'Authorising Officer',
+            authorisedAt: authority.authority.authorisedAt?.toLocaleString('en-NA'),
+          }
+        : undefined,
       additionalDrivers: drivers
         .filter((driver) => driver.driverType !== 'primary')
         .map((driver) => ({
@@ -174,25 +240,42 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           licenceClass: driver.licenceClass || undefined,
           licenceExpiry: driver.licenceExpiry?.toLocaleDateString('en-NA'),
         })),
-      routeEntries: progress.map((entry) => ({
-        occurredAt: entry.occurredAt.toLocaleString('en-NA'),
-        type: entry.entryType,
-        location: entry.location || undefined,
-        odometer: entry.odometerReading || undefined,
-        note: entry.note || undefined,
-      })),
-      defects: defects.map((defect) => ({
-        severity: defect.severity,
-        description: defect.description,
-        status: defect.resolvedAt ? 'resolved' : 'open',
-      })),
-      incidents: incidents.map((incident) => ({
-        type: incident.incidentType,
-        occurredAt: incident.occurredAt.toLocaleString('en-NA'),
-        description: incident.description,
-        safeToContinue: incident.safeToContinue,
-      })),
+      transportOfficer: transportOfficerEmployee
+        ? {
+            name: `${transportOfficerEmployee.firstName} ${transportOfficerEmployee.lastName}`,
+            designation: transportOfficerEmployee.jobTitle || 'Transport Officer',
+            issuedAt: authority.authority.issuedAt?.toLocaleString('en-NA'),
+          }
+        : undefined,
+      goodsAndEquipment: authority.authority.purpose
+        ? [{ description: 'Authorised cargo per trip purpose', purpose: authority.authority.purpose }]
+        : undefined,
+      preDepartureInspection: departureInspections && departureInspections.length > 0
+        ? {
+            status: departureInspections[0].status,
+            odometer: departureInspections[0].odometerReading || undefined,
+            items: inspectionItems.length > 0
+              ? inspectionItems.map((item) => ({
+                  label: item.label,
+                  result: item.result,
+                  comment: item.comment || undefined,
+                }))
+              : undefined,
+            notes: departureInspections[0].notes || undefined,
+            completedAt: departureInspections[0].createdAt.toLocaleString('en-NA'),
+          }
+        : undefined,
+      fuelInformation: (() => {
+        const info: { fuelCardNumber?: string; expectedFuel?: string; fuelType?: string; costCentre?: string } = {};
+        if (authority.fuelCardNumber) info.fuelCardNumber = authority.fuelCardNumber;
+        if (authority.fuelType) info.fuelType = authority.fuelType;
+        if (authority.authorisedKm) {
+          info.expectedFuel = `${Math.round(authority.authorisedKm / 8)} L (est.)`;
+        }
+        return Object.keys(info).length > 0 ? info : undefined;
+      })(),
     };
+
     const element = React.createElement(TripAuthorityDocument, { data });
     const stream = await renderToStream(
       element as unknown as React.ReactElement<Record<string, unknown>>,
