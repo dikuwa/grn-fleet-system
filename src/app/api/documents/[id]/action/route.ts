@@ -3,13 +3,12 @@ import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { auditEvents } from '@/db/schema/audit';
 import { eq } from 'drizzle-orm';
+import { and } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -34,7 +33,7 @@ export async function POST(
     const [doc] = await db
       .select()
       .from(generatedDocuments)
-      .where(eq(generatedDocuments.id, id))
+      .where(and(eq(generatedDocuments.id, id), eq(generatedDocuments.tenantId, session.tenantId)))
       .limit(1);
 
     if (!doc) {
@@ -42,20 +41,36 @@ export async function POST(
     }
 
     if (action === 'issue') {
-      if (doc.status === 'issued') {
+      if (doc.status !== 'draft') {
         return NextResponse.json(
-          { error: 'Document is already issued' },
+          { error: `Only draft documents can be issued. Current status: ${doc.status}` },
           { status: 409 },
         );
       }
+      const documentHash = createHash('sha256')
+        .update(
+          JSON.stringify({
+            documentType: doc.documentType,
+            version: doc.documentVersion,
+            snapshot: doc.snapshotData,
+          }),
+        )
+        .digest('hex');
 
       const [updated] = await db
         .update(generatedDocuments)
         .set({
           status: 'issued',
+          hash: documentHash,
           updatedAt: new Date(),
         })
-        .where(eq(generatedDocuments.id, id))
+        .where(
+          and(
+            eq(generatedDocuments.id, id),
+            eq(generatedDocuments.tenantId, session.tenantId),
+            eq(generatedDocuments.status, 'draft'),
+          ),
+        )
         .returning();
 
       // Audit log
@@ -75,9 +90,9 @@ export async function POST(
     }
 
     if (action === 'supersede') {
-      if (doc.status === 'superseded') {
+      if (doc.status !== 'issued') {
         return NextResponse.json(
-          { error: 'Document is already superseded' },
+          { error: 'Only an issued document can be superseded.' },
           { status: 409 },
         );
       }
@@ -88,7 +103,13 @@ export async function POST(
           status: 'superseded',
           updatedAt: new Date(),
         })
-        .where(eq(generatedDocuments.id, id))
+        .where(
+          and(
+            eq(generatedDocuments.id, id),
+            eq(generatedDocuments.tenantId, session.tenantId),
+            eq(generatedDocuments.status, 'issued'),
+          ),
+        )
         .returning();
 
       // Audit log

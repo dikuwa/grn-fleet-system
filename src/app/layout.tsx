@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Onest } from 'next/font/google';
+import { Allura, Onest } from 'next/font/google';
 import { APP_NAME, APP_DESCRIPTION } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import './globals.css';
@@ -8,6 +8,12 @@ const onest = Onest({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-onest',
+});
+const allura = Allura({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+  variable: '--font-allura',
 });
 
 export const metadata: Metadata = {
@@ -59,7 +65,7 @@ export default function RootLayout({
   `;
 
   return (
-    <html lang="en" className={cn(onest.variable)} suppressHydrationWarning>
+    <html lang="en" className={cn(onest.variable, allura.variable)} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <link rel="manifest" href="/manifest.json" />
@@ -68,7 +74,10 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content={APP_NAME} />
       </head>
-      <body className="min-h-screen antialiased" style={{ fontFamily: 'var(--font-onest), sans-serif' }}>
+      <body
+        className="min-h-screen antialiased"
+        style={{ fontFamily: 'var(--font-onest), sans-serif' }}
+      >
         <ServiceWorkerRegistration />
         <ThemeProvider>
           <Providers>{children}</Providers>

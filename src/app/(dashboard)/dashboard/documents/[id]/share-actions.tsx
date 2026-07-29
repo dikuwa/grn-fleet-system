@@ -1,70 +1,157 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useMemo, useState } from 'react';
+import {
+  CheckCircle2,
+  Copy,
+  Download,
+  ExternalLink,
+  Mail,
+  MessageCircle,
+  Printer,
+  Share2,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Share2, Smartphone, Copy, CheckCircle2 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 
-interface Props {
+export function ShareActions({
+  shareUrl,
+  documentTitle,
+  documentId,
+  documentReference,
+  status,
+  organisationName,
+  verificationCode,
+}: {
   shareUrl?: string;
   documentTitle: string;
   documentId: string;
-}
+  documentReference?: string;
+  status?: string;
+  organisationName?: string;
+  verificationCode?: string;
+}) {
+  const [copied, setCopied] = useState<'link' | 'message' | null>(null);
+  const defaultMessage = useMemo(
+    () =>
+      [
+        organisationName,
+        documentTitle,
+        documentReference ? `Reference: ${documentReference}` : null,
+        status ? `Status: ${status}` : null,
+        'Verify securely:',
+        shareUrl,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    [documentReference, documentTitle, organisationName, shareUrl, status],
+  );
+  const [editedMessage, setEditedMessage] = useState('');
+  const message = editedMessage || defaultMessage;
 
-export function ShareActions({ shareUrl, documentTitle }: Props) {
-  const [copied, setCopied] = useState(false);
-
-  const hasShareApi = typeof window !== 'undefined' && 'share' in navigator;
-
-  const handleNativeShare = useCallback(async () => {
-    const urlToShare = shareUrl || window.location.href;
-
-    if (hasShareApi) {
-      try {
-        await navigator.share({
-          title: documentTitle,
-          text: `${documentTitle} — Government Fleet Management System`,
-          url: urlToShare,
-        });
-      } catch (err) {
-        // User cancelled or share failed — fall back to clipboard
-        if (err instanceof Error && err.name !== 'AbortError') {
-          await navigator.clipboard.writeText(urlToShare);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        }
-      }
-    } else {
-      // Web Share API not supported — copy to clipboard
-      try {
-        await navigator.clipboard.writeText(urlToShare);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Clipboard API not available either
-        const textarea = document.createElement('textarea');
-        textarea.value = urlToShare;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      }
-    }
-  }, [shareUrl, documentTitle, hasShareApi]);
+  const copy = async (value: string, kind: 'link' | 'message') => {
+    await navigator.clipboard.writeText(value);
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 1800);
+  };
 
   return (
-    <div className="flex items-center gap-2">
-      <Button variant="secondary" size="sm" onClick={handleNativeShare}>
-        {copied ? (
-          <CheckCircle2 className="h-4 w-4" />
-        ) : hasShareApi ? (
-          <Share2 className="h-4 w-4" />
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm">
+          <Share2 className="h-4 w-4" /> Share
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Share verified document</DialogTitle>
+        </DialogHeader>
+        {!shareUrl ? (
+          <div className="border-status-pending-bg bg-status-pending-bg rounded-lg border p-4">
+            <p className="text-ink-950 text-sm font-medium">Create a secure link first</p>
+            <p className="text-ink-600 mt-1 text-xs">
+              Use “Create Link” to choose an expiry and access limit. GovFleet will reuse an
+              existing active link by default.
+            </p>
+          </div>
         ) : (
-          <Copy className="h-4 w-4" />
+          <>
+            <label className="text-ink-500 text-xs font-medium">
+              Formatted message
+              <textarea
+                value={message}
+                onChange={(event) => setEditedMessage(event.target.value)}
+                rows={6}
+                className="border-border bg-canvas text-ink-950 mt-1 w-full resize-none rounded-lg border p-3 text-sm"
+              />
+            </label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button
+                variant="primary"
+                onClick={() =>
+                  window.open(
+                    `https://wa.me/?text=${encodeURIComponent(message)}`,
+                    '_blank',
+                    'noopener',
+                  )
+                }
+              >
+                <MessageCircle className="h-4 w-4" /> Open in WhatsApp
+              </Button>
+              <Button variant="secondary" onClick={() => copy(shareUrl, 'link')}>
+                {copied === 'link' ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+                {copied === 'link' ? 'Link copied' : 'Copy secure link'}
+              </Button>
+              <Button variant="secondary" onClick={() => copy(message, 'message')}>
+                {copied === 'message' ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+                {copied === 'message' ? 'Message copied' : 'Copy formatted message'}
+              </Button>
+              {verificationCode && (
+                <Button variant="secondary" onClick={() => copy(verificationCode, 'message')}>
+                  <Copy className="h-4 w-4" /> Copy verification code
+                </Button>
+              )}
+              <Button variant="secondary" asChild>
+                <a
+                  href={`mailto:?subject=${encodeURIComponent(documentTitle)}&body=${encodeURIComponent(message)}`}
+                >
+                  <Mail className="h-4 w-4" /> Send by email
+                </a>
+              </Button>
+              <Button variant="secondary" asChild>
+                <a href={`/api/documents/${documentId}/pdf`}>
+                  <Download className="h-4 w-4" /> Download PDF
+                </a>
+              </Button>
+              <Button variant="secondary" onClick={() => window.print()}>
+                <Printer className="h-4 w-4" /> Print document
+              </Button>
+              <Button variant="secondary" asChild>
+                <a href={shareUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="h-4 w-4" /> Open verification page
+                </a>
+              </Button>
+              <Button variant="secondary" asChild>
+                <a href="/dashboard/share-links">Manage link</a>
+              </Button>
+            </div>
+          </>
         )}
-        {copied ? 'Copied!' : hasShareApi ? 'Share' : 'Copy Link'}
-      </Button>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

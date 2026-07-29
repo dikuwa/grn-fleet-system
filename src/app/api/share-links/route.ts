@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { shareLinks, generatedDocuments } from '@/db/schema/documents';
 import { eq, and, desc, count, gte, lt, ilike, sql } from 'drizzle-orm';
-import { generateShareToken } from '@/lib/share-token';
+import { generateShareToken, generateShortShareIdentity } from '@/lib/share-token';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { auditEvents } from '@/db/schema/audit';
 
 /**
  * GET /api/share-links
@@ -121,7 +122,14 @@ export async function POST(request: NextRequest) {
     const userId = session.user.id;
 
     const body = await request.json();
-    const { documentId, expiresInHours = 168, maxViews, redactionProfile } = body;
+    const {
+      documentId,
+      expiresInHours = 168,
+      maxViews,
+      redactionProfile,
+      allowDownload = false,
+      createSeparateLink = false,
+    } = body;
 
     if (!documentId) {
       return NextResponse.json({ error: 'Missing required field: documentId' }, { status: 400 });
@@ -144,12 +152,49 @@ export async function POST(request: NextRequest) {
     if (!doc) {
       return NextResponse.json({ error: 'Document not found in your tenant' }, { status: 404 });
     }
+    if (doc.status === 'draft') {
+      return NextResponse.json(
+        { error: 'Issue the document before creating a public verification link' },
+        { status: 409 },
+      );
+    }
+
+    if (!createSeparateLink) {
+      const [existing] = await db
+        .select()
+        .from(shareLinks)
+        .where(
+          and(
+            eq(shareLinks.tenantId, session.tenantId),
+            eq(shareLinks.documentId, documentId),
+            eq(shareLinks.isRevoked, false),
+            gte(shareLinks.expiresAt, new Date()),
+          ),
+        )
+        .orderBy(desc(shareLinks.createdAt))
+        .limit(1);
+      if (existing?.shortSlug) {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        return NextResponse.json({
+          success: true,
+          reused: true,
+          data: { ...existing, shareUrl: `${baseUrl}/v/${existing.shortSlug}` },
+        });
+      }
+    }
 
     const tenantId = session.tenantId;
     const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
 
     // Generate secure token
     const { token, tokenHash } = await generateShareToken(documentId, expiresAt);
+    const snapshot = doc.snapshotData as Record<string, unknown>;
+    const readablePrefix = String(
+      snapshot.authorityNumber ||
+        snapshot.reference ||
+        `${doc.documentType.slice(0, 2)}${doc.documentVersion}`,
+    );
+    const { shortSlug, verificationCode } = await generateShortShareIdentity(readablePrefix);
 
     // Store share link
     const [link] = await db
@@ -158,22 +203,43 @@ export async function POST(request: NextRequest) {
         tenantId,
         documentId,
         tokenHash,
+        shortSlug,
+        verificationCode,
         expiresAt,
         maxViews: maxViews || null,
         redactionProfile: redactionProfile || 'external_standard',
+        accessPolicy: { allowPreview: true, allowDownload: Boolean(allowDownload) },
         createdByUserId: userId || 'system',
       })
       .returning();
+    await db.insert(auditEvents).values({
+      tenantId,
+      tenantSequence: Date.now(),
+      eventType: 'document_share_link_created',
+      actorUserId: userId,
+      action: 'create_share_link',
+      entityType: 'document',
+      entityId: documentId,
+      after: {
+        shortSlug,
+        expiresAt: expiresAt.toISOString(),
+        maxViews: maxViews || null,
+        allowDownload: Boolean(allowDownload),
+      },
+      summary: `Secure link created for ${doc.documentType}`,
+      sourceChannel: 'web',
+    });
 
     // Build shareable URL
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const shareUrl = `${baseUrl}/share/${encodeURIComponent(token)}`;
+    const shareUrl = `${baseUrl}/v/${encodeURIComponent(shortSlug)}`;
 
     return NextResponse.json({
       success: true,
       data: {
         ...link,
         shareUrl,
+        legacyShareUrl: `${baseUrl}/share/${encodeURIComponent(token)}`,
       },
     });
   } catch (error) {
@@ -211,6 +277,17 @@ export async function DELETE(request: NextRequest) {
     if (!revoked) {
       return NextResponse.json({ error: 'Share link not found' }, { status: 404 });
     }
+    await db.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: Date.now(),
+      eventType: 'document_share_link_revoked',
+      actorUserId: session.user.id,
+      action: 'revoke_share_link',
+      entityType: 'document',
+      entityId: revoked.documentId,
+      summary: 'Secure document share link revoked',
+      sourceChannel: 'web',
+    });
 
     return NextResponse.json({ success: true, data: revoked });
   } catch (error) {

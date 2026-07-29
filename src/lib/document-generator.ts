@@ -11,13 +11,27 @@
 
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
-import { trips, fuelTransactions, reimbursements, vehicleInspections, tripClosures } from '@/db/schema/trips';
+import {
+  trips,
+  fuelTransactions,
+  reimbursements,
+  vehicleInspections,
+  tripClosures,
+} from '@/db/schema/trips';
 import { validateDocumentSnapshot, hasSchema } from '@/lib/document-validation';
-import { transportRequests, requestActivities, requestDrivers } from '@/db/schema/requests';
+import {
+  transportRequests,
+  requestActivities,
+  requestDrivers,
+  requestPassengers,
+  requestRoutes,
+  requestAttachments,
+} from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
-import { employees } from '@/db/schema/people';
+import { departments, employees, offices } from '@/db/schema/people';
+import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
@@ -63,16 +77,69 @@ async function buildTransportRequestSnapshot(requestId: string) {
     .from(requestActivities)
     .where(eq(requestActivities.requestId, requestId));
 
-  const drivers = await db
-    .select()
-    .from(requestDrivers)
-    .where(eq(requestDrivers.requestId, requestId));
-
   const [requester] = await db
-    .select({ name: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.middleName}, ${employees.lastName})` })
+    .select({
+      name: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.middleName}, ${employees.lastName})`,
+      employeeNumber: employees.employeeNumber,
+      designation: employees.jobTitle,
+      phone: employees.phone,
+      email: employees.email,
+      department: departments.name,
+      office: offices.name,
+    })
     .from(employees)
+    .leftJoin(departments, eq(departments.id, employees.departmentId))
+    .leftJoin(offices, eq(offices.id, employees.officeId))
     .where(eq(employees.id, req.requesterEmployeeId))
     .limit(1);
+  const [drivers, passengers, routes, attachments, approvals] = await Promise.all([
+    db
+      .select({
+        driverType: requestDrivers.driverType,
+        sortOrder: requestDrivers.sortOrder,
+        name: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
+        employeeNumber: employees.employeeNumber,
+        department: departments.name,
+      })
+      .from(requestDrivers)
+      .innerJoin(employees, eq(employees.id, requestDrivers.employeeId))
+      .leftJoin(departments, eq(departments.id, employees.departmentId))
+      .where(eq(requestDrivers.requestId, requestId)),
+    db
+      .select({
+        employeeId: requestPassengers.employeeId,
+        externalName: requestPassengers.externalName,
+        externalOrganisation: requestPassengers.externalOrganisation,
+        travellerRole: requestPassengers.travellerRole,
+        reasonForTravel: requestPassengers.reasonForTravel,
+        employeeName: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
+        employeeNumber: employees.employeeNumber,
+        department: departments.name,
+      })
+      .from(requestPassengers)
+      .leftJoin(employees, eq(employees.id, requestPassengers.employeeId))
+      .leftJoin(departments, eq(departments.id, employees.departmentId))
+      .where(eq(requestPassengers.requestId, requestId)),
+    db.select().from(requestRoutes).where(eq(requestRoutes.requestId, requestId)),
+    db
+      .select({ fileName: requestAttachments.fileName, mimeType: requestAttachments.mimeType })
+      .from(requestAttachments)
+      .where(eq(requestAttachments.requestId, requestId)),
+    db
+      .select({
+        stage: workflowActions.stepOrder,
+        action: workflowActions.actionType,
+        decision: workflowActions.result,
+        officer: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
+        comment: workflowActions.comment,
+        dateTime: workflowActions.createdAt,
+        signed: sql<boolean>`${workflowActions.signatureRef} is not null`,
+      })
+      .from(workflowActions)
+      .innerJoin(workflowInstances, eq(workflowInstances.id, workflowActions.instanceId))
+      .leftJoin(employees, eq(employees.id, workflowActions.actorEmployeeId))
+      .where(eq(workflowInstances.requestId, requestId)),
+  ]);
 
   return {
     id: req.id,
@@ -82,20 +149,53 @@ async function buildTransportRequestSnapshot(requestId: string) {
     status: req.status,
     department: req.department,
     purpose: req.purpose,
-    requester: requester?.name || 'Unknown',
+    requester: {
+      name: requester?.name || 'Unknown',
+      employeeNumber: requester?.employeeNumber,
+      designation: requester?.designation,
+      department: requester?.department || req.department,
+      office: requester?.office,
+      phone: requester?.phone,
+      email: requester?.email,
+    },
     totalAuthorisedKilometres: req.totalAuthorisedKilometres,
     specialAuthorityRequired: req.specialAuthorityRequired,
     submittedAt: req.submittedAt?.toISOString(),
     activities: activities.map((a) => ({
       title: a.title,
+      description: a.description,
       venue: a.venue,
       startDate: a.startDate.toISOString(),
       endDate: a.endDate.toISOString(),
       estimatedKilometres: a.estimatedKilometres,
     })),
-    drivers: drivers.map((d) => ({
-      driverType: d.driverType,
-      sortOrder: d.sortOrder,
+    passengers: passengers.map((passenger) => ({
+      name: passenger.employeeId ? passenger.employeeName : passenger.externalName,
+      employeeNumber: passenger.employeeNumber,
+      departmentOrOrganisation: passenger.employeeId
+        ? passenger.department
+        : passenger.externalOrganisation,
+      role: passenger.travellerRole,
+      travellerType: passenger.employeeId ? 'Employee' : 'External traveller',
+      reasonForTravel: passenger.reasonForTravel,
+    })),
+    travellerCount: passengers.length + 1,
+    drivers,
+    routes: routes.map((route) => ({
+      origin: route.originName,
+      destination: route.destinationName,
+      estimatedKilometres: route.totalKilometres || route.mappedDistanceKm,
+      estimatedDurationMinutes: route.mappedDurationMinutes,
+    })),
+    attachments,
+    approvalWorkflow: approvals.map((approval) => ({
+      stage: approval.stage,
+      action: approval.action,
+      officer: approval.officer || 'Officer not recorded',
+      decision: approval.decision,
+      dateTime: approval.dateTime.toISOString(),
+      comment: approval.comment,
+      signature: approval.signed ? 'Digitally signed' : 'No signature applied',
     })),
   };
 }
@@ -116,7 +216,12 @@ async function buildTripAuthoritySnapshot(allocationId: string) {
     .limit(1);
 
   const [vehicle] = await db
-    .select({ licenceNumber: vehicles.licenceNumber, make: vehicles.make, model: vehicles.model, vehicleRegisterNumber: vehicles.vehicleRegisterNumber })
+    .select({
+      licenceNumber: vehicles.licenceNumber,
+      make: vehicles.make,
+      model: vehicles.model,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+    })
     .from(vehicles)
     .where(eq(vehicles.id, alloc.vehicleId))
     .limit(1);
@@ -148,7 +253,10 @@ async function buildInspectionReportSnapshot(inspectionId: string) {
   if (!insp) return null;
 
   const [vehicle] = await db
-    .select({ licenceNumber: vehicles.licenceNumber, vehicleRegisterNumber: vehicles.vehicleRegisterNumber })
+    .select({
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+    })
     .from(vehicles)
     .where(eq(vehicles.id, insp.vehicleId))
     .limit(1);
@@ -210,11 +318,7 @@ async function buildFuelSummarySnapshot(tripId: string) {
 async function buildVehicleHistorySnapshot(vehicleId: string) {
   const db = getDb();
 
-  const [vehicle] = await db
-    .select()
-    .from(vehicles)
-    .where(eq(vehicles.id, vehicleId))
-    .limit(1);
+  const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.id, vehicleId)).limit(1);
   if (!vehicle) return null;
 
   // All maintenance events
@@ -252,7 +356,10 @@ async function buildVehicleHistorySnapshot(vehicleId: string) {
     .where(eq(trips.vehicleId, vehicleId))
     .orderBy(desc(trips.createdAt));
 
-  const totalMaintenanceCost = maintenance.reduce((sum, e) => sum + (e.cost ? Number(e.cost) : 0), 0);
+  const totalMaintenanceCost = maintenance.reduce(
+    (sum, e) => sum + (e.cost ? Number(e.cost) : 0),
+    0,
+  );
   const totalFuelLitres = fuel.reduce((sum, f) => sum + Number(f.litres), 0);
   const totalFuelCost = fuel.reduce((sum, f) => sum + Number(f.amount), 0);
   const totalTripCount = tripData.length;
@@ -320,7 +427,9 @@ async function buildMaintenanceReportSnapshot(vehicleId: string) {
   if (events.length === 0) return null;
 
   const totalCost = events.reduce((sum, e) => sum + (e.cost ? Number(e.cost) : 0), 0);
-  const nextService = events.find((e) => e.nextServiceDate && new Date(e.nextServiceDate) > new Date());
+  const nextService = events.find(
+    (e) => e.nextServiceDate && new Date(e.nextServiceDate) > new Date(),
+  );
 
   const [vehicle] = await db
     .select({ licenceNumber: vehicles.licenceNumber, make: vehicles.make, model: vehicles.model })
@@ -375,11 +484,7 @@ async function buildAuditReportSnapshot(tenantId: string) {
 async function buildTripCompletionSnapshot(tripId: string) {
   const db = getDb();
 
-  const [trip] = await db
-    .select()
-    .from(trips)
-    .where(eq(trips.id, tripId))
-    .limit(1);
+  const [trip] = await db.select().from(trips).where(eq(trips.id, tripId)).limit(1);
   if (!trip) return null;
 
   const [closure] = await db
@@ -391,7 +496,10 @@ async function buildTripCompletionSnapshot(tripId: string) {
   const fuelSummary = await buildFuelSummarySnapshot(tripId);
 
   const [vehicle] = await db
-    .select({ licenceNumber: vehicles.licenceNumber, vehicleRegisterNumber: vehicles.vehicleRegisterNumber })
+    .select({
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+    })
     .from(vehicles)
     .where(eq(vehicles.id, trip.vehicleId))
     .limit(1);
@@ -433,7 +541,9 @@ const BUILDERS: Record<string, (id: string) => Promise<Record<string, unknown> |
   vehicle: buildVehicleHistorySnapshot,
   tenant: buildAuditReportSnapshot,
 };
-const DOCUMENT_BUILDERS: Partial<Record<DocumentType, (id: string) => Promise<Record<string, unknown> | null>>> = {
+const DOCUMENT_BUILDERS: Partial<
+  Record<DocumentType, (id: string) => Promise<Record<string, unknown> | null>>
+> = {
   fuel_summary: buildFuelSummarySnapshot,
 };
 
@@ -454,7 +564,8 @@ const DOCUMENT_BUILDERS: Partial<Record<DocumentType, (id: string) => Promise<Re
 export async function generateDocument(
   payload: DocumentPayload,
 ): Promise<typeof generatedDocuments.$inferSelect | null> {
-  const { documentType, entityType, entityId, tenantId, generatedByUserId, templateVersion } = payload;
+  const { documentType, entityType, entityId, tenantId, generatedByUserId, templateVersion } =
+    payload;
 
   const builder = DOCUMENT_BUILDERS[documentType] || BUILDERS[entityType];
   if (!builder) {
@@ -472,7 +583,10 @@ export async function generateDocument(
   if (hasSchema(documentType)) {
     const validation = validateDocumentSnapshot(documentType, snapshotData);
     if (!validation.valid) {
-      console.warn(`[DocGen] Snapshot validation failed for ${documentType}:${entityId}`, validation.errors);
+      console.warn(
+        `[DocGen] Snapshot validation failed for ${documentType}:${entityId}`,
+        validation.errors,
+      );
       // Non-blocking — store the document with a warning, but log the issue
     }
   }
@@ -528,11 +642,7 @@ export async function generateDocument(
 /**
  * Called when a transport request is submitted (not draft).
  */
-export async function onRequestSubmitted(
-  requestId: string,
-  tenantId: string,
-  userId: string,
-) {
+export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
   return generateDocument({
     documentType: 'transport_request',
     entityType: 'transport_request',
@@ -545,11 +655,7 @@ export async function onRequestSubmitted(
 /**
  * Called when a trip is closed.
  */
-export async function onTripClosed(
-  tripId: string,
-  tenantId: string,
-  userId: string,
-) {
+export async function onTripClosed(tripId: string, tenantId: string, userId: string) {
   const results = await Promise.all([
     generateDocument({
       documentType: 'trip_completion',
@@ -573,11 +679,7 @@ export async function onTripClosed(
 /**
  * Called when a trip is issued (vehicle + driver assigned).
  */
-export async function onTripIssued(
-  allocationId: string,
-  tenantId: string,
-  userId: string,
-) {
+export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   return generateDocument({
     documentType: 'trip_authority',
     entityType: 'vehicle_allocation',

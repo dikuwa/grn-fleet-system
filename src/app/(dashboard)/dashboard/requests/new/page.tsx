@@ -5,14 +5,23 @@ import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FileText, ChevronLeft, ChevronRight, Check, Plus, Trash2, MapPin, Users, User, CalendarDays } from 'lucide-react';
+import {
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  Plus,
+  Trash2,
+  MapPin,
+  Users,
+  User,
+  CalendarDays,
+} from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 import { useToast } from '@/lib/use-toast';
-import {
-  EmployeeCombobox,
-  type EmployeeSearchOption,
-} from '@/components/ui/employee-combobox';
+import { EmployeeCombobox, type EmployeeSearchOption } from '@/components/ui/employee-combobox';
+import { EmployeeMultiSelect } from '@/components/ui/employee-multi-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { StyledSelect } from '@/components/ui/styled-select';
 
@@ -36,6 +45,12 @@ interface Passenger {
   employeeId: string;
   employee: EmployeeSearchOption | null;
   externalName: string;
+  externalOrganisation?: string;
+  externalPhone?: string;
+  externalEmail?: string;
+  externalIdReference?: string;
+  travellerRole?: string;
+  reasonForTravel?: string;
 }
 
 interface Driver {
@@ -123,26 +138,38 @@ function BasicInfoStep({
 }) {
   return (
     <div className="space-y-4">
-      <div className="rounded-[8px] border border-border p-4">
-        <label className="mb-1 block text-xs font-medium text-ink-500">Requesting employee</label>
+      <div className="border-border rounded-[8px] border p-4">
+        <label className="text-ink-500 mb-1 block text-xs font-medium">Requesting employee</label>
         <EmployeeCombobox
           kind="employee"
           value={data.requesterEmployeeId}
           selectedOption={data.requesterEmployee}
-          onSelect={(employee) => onChange({ requesterEmployeeId: employee?.id || '', requesterEmployee: employee })}
+          onSelect={(employee) =>
+            onChange({ requesterEmployeeId: employee?.id || '', requesterEmployee: employee })
+          }
           placeholder="Self, or search employee for an assisted request"
         />
-        <p className="mt-1 text-xs text-ink-500">Leave blank to use your linked employee profile. Selecting another employee requires assisted-request permission.</p>
+        <p className="text-ink-500 mt-1 text-xs">
+          Leave blank to use your linked employee profile. Selecting another employee requires
+          assisted-request permission.
+        </p>
         {data.requesterEmployee && (
           <div className="mt-3">
-            <label className="mb-1 block text-xs font-medium text-ink-500">Reason for assisted submission *</label>
-            <textarea value={data.assistedReason} onChange={(event) => onChange({ assistedReason: event.target.value })} rows={2} className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            <label className="text-ink-500 mb-1 block text-xs font-medium">
+              Reason for assisted submission *
+            </label>
+            <textarea
+              value={data.assistedReason}
+              onChange={(event) => onChange({ assistedReason: event.target.value })}
+              rows={2}
+              className="border-border bg-surface text-ink-950 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            />
           </div>
         )}
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-ink-500 mb-1">Trip Scope *</label>
+        <label className="text-ink-500 mb-1 block text-xs font-medium">Trip Scope *</label>
         <div className="flex gap-4">
           {(['regional', 'national'] as const).map((s) => (
             <label
@@ -161,9 +188,11 @@ function BasicInfoStep({
                 onChange={() => onChange({ scope: s })}
                 className="sr-only"
               />
-              <span className={`h-3 w-3 rounded-full border-2 ${
-                data.scope === s ? 'border-brand-500 bg-brand-500' : 'border-ink-300'
-              }`} />
+              <span
+                className={`h-3 w-3 rounded-full border-2 ${
+                  data.scope === s ? 'border-brand-500 bg-brand-500' : 'border-ink-300'
+                }`}
+              />
               <span className="capitalize">{s}</span>
             </label>
           ))}
@@ -171,65 +200,80 @@ function BasicInfoStep({
       </div>
 
       <div>
-        <label className="mb-1 block text-xs font-medium text-ink-500">Driver preference</label>
-        <StyledSelect value={data.driverPreference} onChange={(event) => onChange({ driverPreference: event.target.value })}>
+        <label className="text-ink-500 mb-1 block text-xs font-medium">Driver preference</label>
+        <StyledSelect
+          value={data.driverPreference}
+          onChange={(event) => onChange({ driverPreference: event.target.value })}
+        >
           <option value="transport_admin_assign">Transport Administrator should assign</option>
           <option value="requester_qualified_driver">I am a qualified driver and may drive</option>
           <option value="preferred_driver">I will suggest a preferred driver</option>
           <option value="no_preference">No preference</option>
         </StyledSelect>
-        <p className="mt-1 text-xs text-ink-500">A preferred driver is a request only and remains subject to availability and compliance.</p>
+        <p className="text-ink-500 mt-1 text-xs">
+          A preferred driver is a request only and remains subject to availability and compliance.
+        </p>
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-ink-500 mb-1">Purpose / Reason for Travel *</label>
+        <label className="text-ink-500 mb-1 block text-xs font-medium">
+          Purpose / Reason for Travel *
+        </label>
         <textarea
           value={data.purpose}
           onChange={(e) => onChange({ purpose: e.target.value })}
           rows={3}
           placeholder="Describe the purpose of this transport request..."
-          className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+          className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
         />
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-ink-500 mb-1">Department / Directorate</label>
+        <label className="text-ink-500 mb-1 block text-xs font-medium">
+          Department / Directorate
+        </label>
         <input
           type="text"
           value={data.department}
           onChange={(e) => onChange({ department: e.target.value })}
           placeholder="e.g. Technical Services, Community Development"
-          className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+          className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
         />
       </div>
 
-      <div className="flex items-start gap-3 rounded-[8px] border border-border p-4">
+      <div className="border-border flex items-start gap-3 rounded-[8px] border p-4">
         <input
           type="checkbox"
           id="specialAuthority"
           checked={data.specialAuthorityRequired}
           onChange={(e) => onChange({ specialAuthorityRequired: e.target.checked })}
-          className="mt-0.5 h-4 w-4 rounded border-border text-brand-600 focus:ring-brand-200"
+          className="border-border text-brand-600 focus:ring-brand-200 mt-0.5 h-4 w-4 rounded"
         />
         <div>
-          <label htmlFor="specialAuthority" className="text-sm font-medium text-ink-950 cursor-pointer">
+          <label
+            htmlFor="specialAuthority"
+            className="text-ink-950 cursor-pointer text-sm font-medium"
+          >
             Special Authority Required
           </label>
-          <p className="text-xs text-ink-500">
-            Check this if the trip requires special authority (e.g., out-of-region travel, VIP, high-profile events).
+          <p className="text-ink-500 text-xs">
+            Check this if the trip requires special authority (e.g., out-of-region travel, VIP,
+            high-profile events).
           </p>
         </div>
       </div>
 
       {data.specialAuthorityRequired && (
         <div>
-          <label className="block text-xs font-medium text-ink-500 mb-1">Reason for Special Authority</label>
+          <label className="text-ink-500 mb-1 block text-xs font-medium">
+            Reason for Special Authority
+          </label>
           <textarea
             value={data.specialAuthorityReason}
             onChange={(e) => onChange({ specialAuthorityReason: e.target.value })}
             rows={2}
             placeholder="Explain why special authority is needed..."
-            className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
       )}
@@ -270,62 +314,66 @@ function ActivitiesStep({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-ink-500">
-          Add the programme of activities for this trip.
-        </p>
+        <p className="text-ink-500 text-sm">Add the programme of activities for this trip.</p>
         <Button variant="secondary" size="sm" onClick={addActivity}>
           <Plus className="h-4 w-4" /> Add Activity
         </Button>
       </div>
 
       {activities.length === 0 ? (
-        <div className="rounded-[8px] border border-dashed border-border p-8 text-center">
-          <CalendarDays className="mx-auto mb-2 h-6 w-6 text-ink-300" />
-          <p className="text-sm text-ink-500">No activities added yet. Click &ldquo;Add Activity&rdquo; to begin.</p>
+        <div className="border-border rounded-[8px] border border-dashed p-8 text-center">
+          <CalendarDays className="text-ink-300 mx-auto mb-2 h-6 w-6" />
+          <p className="text-ink-500 text-sm">
+            No activities added yet. Click &ldquo;Add Activity&rdquo; to begin.
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
           {activities.map((a, i) => (
             <Card key={a.id}>
               <CardContent className="pt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-medium text-ink-500">Activity {i + 1}</span>
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-ink-500 text-xs font-medium">Activity {i + 1}</span>
                   <Button variant="secondary" size="sm" onClick={() => removeActivity(a.id)}>
-                    <Trash2 className="h-3.5 w-3.5 text-status-error-text" />
+                    <Trash2 className="text-status-error-text h-3.5 w-3.5" />
                   </Button>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Title *</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">Title *</label>
                     <input
                       type="text"
                       value={a.title}
                       onChange={(e) => updateActivity(a.id, { title: e.target.value })}
                       placeholder="e.g. Field inspection — Divundu"
-                      className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Venue</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">Venue</label>
                     <input
                       type="text"
                       value={a.venue}
                       onChange={(e) => updateActivity(a.id, { venue: e.target.value })}
                       placeholder="Venue name"
-                      className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Est. Km</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">Est. Km</label>
                     <input
                       type="number"
                       value={a.estimatedKilometres || ''}
-                      onChange={(e) => updateActivity(a.id, { estimatedKilometres: Number(e.target.value) })}
-                      className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      onChange={(e) =>
+                        updateActivity(a.id, { estimatedKilometres: Number(e.target.value) })
+                      }
+                      className="border-border bg-surface text-ink-950 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Start Date *</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">
+                      Start Date *
+                    </label>
                     <DatePicker
                       value={a.startDate}
                       onChange={(value) => updateActivity(a.id, { startDate: value })}
@@ -333,7 +381,9 @@ function ActivitiesStep({
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">End Date *</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">
+                      End Date *
+                    </label>
                     <DatePicker
                       value={a.endDate}
                       onChange={(value) => updateActivity(a.id, { endDate: value })}
@@ -342,13 +392,15 @@ function ActivitiesStep({
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Description</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">
+                      Description
+                    </label>
                     <textarea
                       value={a.description}
                       onChange={(e) => updateActivity(a.id, { description: e.target.value })}
                       rows={2}
                       placeholder="Optional description..."
-                      className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -375,7 +427,14 @@ function PeopleStep({
   const addPassenger = () => {
     onPassengersChange([
       ...passengers,
-      { id: nextId(), type: 'external', employeeId: '', employee: null, externalName: '' },
+      {
+        id: nextId(),
+        type: 'external',
+        employeeId: '',
+        employee: null,
+        externalName: '',
+        travellerRole: 'passenger',
+      },
     ]);
   };
 
@@ -385,6 +444,24 @@ function PeopleStep({
 
   const removePassenger = (id: string) => {
     onPassengersChange(passengers.filter((p) => p.id !== id));
+  };
+
+  const employeePassengers = passengers
+    .filter((passenger) => passenger.type === 'employee' && passenger.employee)
+    .map((passenger) => passenger.employee!);
+  const setEmployeePassengers = (selected: EmployeeSearchOption[]) => {
+    const external = passengers.filter((passenger) => passenger.type === 'external');
+    onPassengersChange([
+      ...selected.map((employee) => ({
+        id: passengers.find((passenger) => passenger.employeeId === employee.id)?.id || nextId(),
+        type: 'employee' as const,
+        employeeId: employee.id,
+        employee,
+        externalName: '',
+        travellerRole: 'passenger',
+      })),
+      ...external,
+    ]);
   };
 
   const addDriver = () => {
@@ -412,107 +489,152 @@ function PeopleStep({
     <div className="space-y-6">
       {/* Passengers */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-ink-950">Passengers</h3>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h3 className="text-ink-950 text-sm font-semibold">
+              Employees and external travellers
+            </h3>
+            <p className="text-ink-500 mt-0.5 text-xs">
+              Select several employees at once, or add a person outside the employee directory.
+            </p>
+          </div>
           <Button variant="secondary" size="sm" onClick={addPassenger}>
-            <Plus className="h-4 w-4" /> Add Passenger
+            <Plus className="h-4 w-4" /> Add external traveller
           </Button>
         </div>
-        {passengers.length === 0 ? (
-          <div className="rounded-[8px] border border-dashed border-border p-6 text-center">
-            <Users className="mx-auto mb-2 h-5 w-5 text-ink-300" />
-            <p className="text-sm text-ink-500">No passengers added.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {passengers.map((p) => (
-              <div key={p.id} className="flex items-center gap-3 rounded-[8px] border border-border p-3">
-                <div className="flex-1 flex items-center gap-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
+        <EmployeeMultiSelect value={employeePassengers} onChange={setEmployeePassengers} />
+        <p className="text-ink-500 mt-2 text-xs" aria-live="polite">
+          {employeePassengers.length} employee{employeePassengers.length === 1 ? '' : 's'} selected
+        </p>
+        <div className="mt-3 space-y-3">
+          {passengers
+            .filter((passenger) => passenger.type === 'external')
+            .map((passenger) => (
+              <div key={passenger.id} className="border-border rounded-lg border p-3">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-ink-600 text-xs font-semibold tracking-wide uppercase">
+                    External traveller
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => removePassenger(passenger.id)}
+                    aria-label="Remove external traveller"
+                    className="focus-ring text-ink-400 hover:text-status-error-text"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-ink-500 text-xs font-medium">
+                    Full name *
                     <input
-                      type="checkbox"
-                      checked={p.type === 'employee'}
-                      onChange={() =>
-                        updatePassenger(p.id, {
-                          type: p.type === 'employee' ? 'external' : 'employee',
-                          employeeId: '',
-                          employee: null,
-                          externalName: '',
+                      value={passenger.externalName}
+                      onChange={(event) =>
+                        updatePassenger(passenger.id, { externalName: event.target.value })
+                      }
+                      className="border-border bg-surface text-ink-950 mt-1 h-10 w-full rounded-lg border px-3 text-sm"
+                    />
+                  </label>
+                  <label className="text-ink-500 text-xs font-medium">
+                    Organisation
+                    <input
+                      value={passenger.externalOrganisation || ''}
+                      onChange={(event) =>
+                        updatePassenger(passenger.id, {
+                          externalOrganisation: event.target.value,
                         })
                       }
-                      className="h-4 w-4 rounded border-border text-brand-600"
+                      className="border-border bg-surface text-ink-950 mt-1 h-10 w-full rounded-lg border px-3 text-sm"
                     />
-                    <span className="text-xs text-ink-700">Employee</span>
+                  </label>
+                  <label className="text-ink-500 text-xs font-medium">
+                    Phone
+                    <input
+                      value={passenger.externalPhone || ''}
+                      onChange={(event) =>
+                        updatePassenger(passenger.id, { externalPhone: event.target.value })
+                      }
+                      className="border-border bg-surface text-ink-950 mt-1 h-10 w-full rounded-lg border px-3 text-sm"
+                    />
+                  </label>
+                  <label className="text-ink-500 text-xs font-medium">
+                    Email
+                    <input
+                      type="email"
+                      value={passenger.externalEmail || ''}
+                      onChange={(event) =>
+                        updatePassenger(passenger.id, { externalEmail: event.target.value })
+                      }
+                      className="border-border bg-surface text-ink-950 mt-1 h-10 w-full rounded-lg border px-3 text-sm"
+                    />
+                  </label>
+                  <label className="text-ink-500 text-xs font-medium">
+                    Role on trip
+                    <input
+                      value={passenger.travellerRole || ''}
+                      onChange={(event) =>
+                        updatePassenger(passenger.id, { travellerRole: event.target.value })
+                      }
+                      placeholder="Passenger, team lead…"
+                      className="border-border bg-surface text-ink-950 mt-1 h-10 w-full rounded-lg border px-3 text-sm"
+                    />
+                  </label>
+                  <label className="text-ink-500 text-xs font-medium">
+                    Reason for travelling
+                    <input
+                      value={passenger.reasonForTravel || ''}
+                      onChange={(event) =>
+                        updatePassenger(passenger.id, { reasonForTravel: event.target.value })
+                      }
+                      className="border-border bg-surface text-ink-950 mt-1 h-10 w-full rounded-lg border px-3 text-sm"
+                    />
                   </label>
                 </div>
-                <div className="flex-2">
-                  {p.type === 'employee' ? (
-                    <EmployeeCombobox
-                      value={p.employeeId}
-                      selectedOption={p.employee}
-                      onSelect={(employee) => updatePassenger(p.id, {
-                        employeeId: employee?.id || '',
-                        employee,
-                      })}
-                      placeholder="Search employee passengers…"
-                    />
-                  ) : (
-                    <input
-                      type="text"
-                      value={p.externalName}
-                      onChange={(e) => updatePassenger(p.id, { externalName: e.target.value })}
-                      placeholder="External passenger name"
-                      className="h-9 w-full rounded-[6px] border border-border bg-surface px-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
-                    />
-                  )}
-                </div>
-                <button
-                  onClick={() => removePassenger(p.id)}
-                  className="shrink-0 text-ink-400 hover:text-status-error-text transition-colors"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
               </div>
             ))}
-          </div>
-        )}
+        </div>
       </div>
 
       {/* Drivers */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-ink-950">Drivers</h3>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-ink-950 text-sm font-semibold">Drivers</h3>
           <Button variant="secondary" size="sm" onClick={addDriver}>
             <Plus className="h-4 w-4" /> Add Driver
           </Button>
         </div>
         {drivers.length === 0 ? (
-          <div className="rounded-[8px] border border-dashed border-border p-6 text-center">
-            <User className="mx-auto mb-2 h-5 w-5 text-ink-300" />
-            <p className="text-sm text-ink-500">No drivers assigned.</p>
+          <div className="border-border rounded-[8px] border border-dashed p-6 text-center">
+            <User className="text-ink-300 mx-auto mb-2 h-5 w-5" />
+            <p className="text-ink-500 text-sm">No drivers assigned.</p>
           </div>
         ) : (
           <div className="space-y-2">
             {drivers.map((d) => (
-              <div key={d.id} className="flex items-center gap-3 rounded-[8px] border border-border p-3">
+              <div
+                key={d.id}
+                className="border-border flex items-center gap-3 rounded-[8px] border p-3"
+              >
                 <div className="flex-1">
                   <EmployeeCombobox
                     kind="driver"
                     value={d.employeeId}
                     selectedOption={d.employee}
-                    onSelect={(employee) => updateDriver(d.id, {
-                      employeeId: employee?.id || '',
-                      employee,
-                    })}
+                    onSelect={(employee) =>
+                      updateDriver(d.id, {
+                        employeeId: employee?.id || '',
+                        employee,
+                      })
+                    }
                     placeholder="Search authorised drivers…"
                   />
                 </div>
-                <span className="rounded-full bg-status-info-bg px-2.5 py-1 text-xs font-medium text-status-info-text">
+                <span className="bg-status-info-bg text-status-info-text rounded-full px-2.5 py-1 text-xs font-medium">
                   Nominated
                 </span>
                 <button
                   onClick={() => removeDriver(d.id)}
-                  className="shrink-0 text-ink-400 hover:text-status-error-text transition-colors"
+                  className="text-ink-400 hover:text-status-error-text shrink-0 transition-colors"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -520,29 +642,21 @@ function PeopleStep({
             ))}
           </div>
         )}
-        <p className="mt-2 text-xs text-ink-500">
-          Driver selections are nominations. The Transport Administrator confirms or changes the final driver during allocation.
+        <p className="text-ink-500 mt-2 text-xs">
+          Driver selections are nominations. The Transport Administrator confirms or changes the
+          final driver during allocation.
         </p>
       </div>
     </div>
   );
 }
 
-function RouteStep({
-  routes,
-  onChange,
-}: {
-  routes: Route[];
-  onChange: (r: Route[]) => void;
-}) {
+function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[]) => void }) {
   const [calculating, setCalculating] = useState(false);
   const [calcError, setCalcError] = useState<string | null>(null);
 
   const addRoute = () => {
-    onChange([
-      ...routes,
-      { id: nextId(), originName: '', destinationName: '', estimatedKm: 0 },
-    ]);
+    onChange([...routes, { id: nextId(), originName: '', destinationName: '', estimatedKm: 0 }]);
   };
 
   const updateRoute = (id: string, patch: Partial<Route>) => {
@@ -589,7 +703,8 @@ function RouteStep({
           const idx = updates.findIndex(
             (r) =>
               r.originName.toLowerCase().trim() === (calc.originName || '').toLowerCase().trim() &&
-              r.destinationName.toLowerCase().trim() === (calc.destinationName || '').toLowerCase().trim(),
+              r.destinationName.toLowerCase().trim() ===
+                (calc.destinationName || '').toLowerCase().trim(),
           );
           if (idx !== -1) {
             updates[idx] = { ...updates[idx], estimatedKm: Math.round(calc.distanceKm || 0) };
@@ -607,8 +722,9 @@ function RouteStep({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-ink-500">
-          Define the travel route. Distances can be calculated automatically when Maps credentials are configured.
+        <p className="text-ink-500 text-sm">
+          Define the travel route. Distances can be calculated automatically when Maps credentials
+          are configured.
         </p>
         <div className="flex items-center gap-2">
           {routes.filter((r) => r.originName.trim() && r.destinationName.trim()).length > 0 && (
@@ -628,61 +744,68 @@ function RouteStep({
       </div>
 
       {calcError && (
-        <div className="rounded-[8px] border border-status-error-bg bg-status-error-bg px-4 py-2 text-xs text-status-error-text">
+        <div className="border-status-error-bg bg-status-error-bg text-status-error-text rounded-[8px] border px-4 py-2 text-xs">
           {calcError}
         </div>
       )}
 
       {routes.length === 0 ? (
-        <div className="rounded-[8px] border border-dashed border-border p-8 text-center">
-          <MapPin className="mx-auto mb-2 h-6 w-6 text-ink-300" />
-          <p className="text-sm text-ink-500">No routes defined yet. Click &ldquo;Add Route&rdquo; to add origin and destination.</p>
+        <div className="border-border rounded-[8px] border border-dashed p-8 text-center">
+          <MapPin className="text-ink-300 mx-auto mb-2 h-6 w-6" />
+          <p className="text-ink-500 text-sm">
+            No routes defined yet. Click &ldquo;Add Route&rdquo; to add origin and destination.
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
           {routes.map((r, i) => (
             <Card key={r.id}>
               <CardContent className="pt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-medium text-ink-500">Route {i + 1}</span>
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-ink-500 text-xs font-medium">Route {i + 1}</span>
                   <Button variant="secondary" size="sm" onClick={() => removeRoute(r.id)}>
-                    <Trash2 className="h-3.5 w-3.5 text-status-error-text" />
+                    <Trash2 className="text-status-error-text h-3.5 w-3.5" />
                   </Button>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Origin *</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">Origin *</label>
                     <input
                       type="text"
                       value={r.originName}
                       onChange={(e) => updateRoute(r.id, { originName: e.target.value })}
                       placeholder="e.g. Rundu, Kavango East"
-                      className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Destination *</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">
+                      Destination *
+                    </label>
                     <input
                       type="text"
                       value={r.destinationName}
                       onChange={(e) => updateRoute(r.id, { destinationName: e.target.value })}
                       placeholder="e.g. Windhoek, Khomas Region"
-                      className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Estimated Distance (km)</label>
+                    <label className="text-ink-500 mb-1 block text-xs font-medium">
+                      Estimated Distance (km)
+                    </label>
                     <input
                       type="number"
                       value={r.estimatedKm || ''}
                       onChange={(e) => updateRoute(r.id, { estimatedKm: Number(e.target.value) })}
                       placeholder="e.g. 500"
-                      className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div className="flex items-end">
-                    <div className="rounded-[8px] border border-dashed border-border px-3 py-2 text-xs text-ink-500">
-                      Distance calculation adapter — route distances will be calculated automatically when the routing service is configured.
+                    <div className="border-border text-ink-500 rounded-[8px] border border-dashed px-3 py-2 text-xs">
+                      Distance calculation adapter — route distances will be calculated
+                      automatically when the routing service is configured.
                     </div>
                   </div>
                 </div>
@@ -702,11 +825,11 @@ function ReviewStep({ data, reference }: { data: RequestFormData; reference: str
 
   return (
     <div className="space-y-4">
-      <div className="rounded-[10px] border border-brand-200 bg-brand-50 px-4 py-3">
-        <p className="text-sm font-medium text-brand-700">
+      <div className="border-brand-200 bg-brand-50 rounded-[10px] border px-4 py-3">
+        <p className="text-brand-700 text-sm font-medium">
           Reference: <span className="font-mono tabular-nums">{reference}</span>
         </p>
-        <p className="text-xs text-brand-600 mt-0.5">
+        <p className="text-brand-600 mt-0.5 text-xs">
           This reference will be assigned when the request is submitted.
         </p>
       </div>
@@ -715,53 +838,59 @@ function ReviewStep({ data, reference }: { data: RequestFormData; reference: str
       <div className="grid gap-4 sm:grid-cols-4">
         <Card>
           <CardContent className="pt-4 text-center">
-            <p className="text-sm font-[650] text-ink-950">{totalActivityKm || totalKm} km</p>
-            <p className="text-xs text-ink-500">Total Estimated</p>
+            <p className="text-ink-950 text-sm font-[650]">{totalActivityKm || totalKm} km</p>
+            <p className="text-ink-500 text-xs">Total Estimated</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 text-center">
-            <p className="text-sm font-[650] text-ink-950">{data.activities.length}</p>
-            <p className="text-xs text-ink-500">Activities</p>
+            <p className="text-ink-950 text-sm font-[650]">{data.activities.length}</p>
+            <p className="text-ink-500 text-xs">Activities</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 text-center">
-            <p className="text-sm font-[650] text-ink-950">{totalPassengers}</p>
-            <p className="text-xs text-ink-500">Passengers</p>
+            <p className="text-ink-950 text-sm font-[650]">{totalPassengers}</p>
+            <p className="text-ink-500 text-xs">Passengers</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 text-center">
-            <p className="text-sm font-[650] text-ink-950">{data.drivers.length}</p>
-            <p className="text-xs text-ink-500">Drivers</p>
+            <p className="text-ink-950 text-sm font-[650]">{data.drivers.length}</p>
+            <p className="text-ink-500 text-xs">Drivers</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Details */}
       <Card>
-        <CardContent className="pt-4 space-y-3">
+        <CardContent className="space-y-3 pt-4">
           <div className="flex justify-between text-sm">
             <span className="text-ink-500">Scope</span>
-            <span className="font-medium text-ink-950 capitalize">{data.scope}</span>
+            <span className="text-ink-950 font-medium capitalize">{data.scope}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-ink-500">Purpose</span>
-            <span className="font-medium text-ink-950 text-right max-w-[60%]">{data.purpose || 'Not specified'}</span>
+            <span className="text-ink-950 max-w-[60%] text-right font-medium">
+              {data.purpose || 'Not specified'}
+            </span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-ink-500">Department</span>
-            <span className="font-medium text-ink-950">{data.department || 'Not specified'}</span>
+            <span className="text-ink-950 font-medium">{data.department || 'Not specified'}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-ink-500">Special Authority</span>
-            <span className="font-medium text-ink-950">{data.specialAuthorityRequired ? 'Yes' : 'No'}</span>
+            <span className="text-ink-950 font-medium">
+              {data.specialAuthorityRequired ? 'Yes' : 'No'}
+            </span>
           </div>
           {data.specialAuthorityRequired && (
             <div className="flex justify-between text-sm">
               <span className="text-ink-500">Special Authority Reason</span>
-              <span className="font-medium text-ink-950 text-right max-w-[60%]">{data.specialAuthorityReason}</span>
+              <span className="text-ink-950 max-w-[60%] text-right font-medium">
+                {data.specialAuthorityReason}
+              </span>
             </div>
           )}
         </CardContent>
@@ -769,12 +898,14 @@ function ReviewStep({ data, reference }: { data: RequestFormData; reference: str
 
       {(data.activities.length > 0 || data.routes.length > 0) && (
         <Card>
-          <CardContent className="pt-4 space-y-3">
-            <h4 className="text-sm font-semibold text-ink-950">Itinerary</h4>
+          <CardContent className="space-y-3 pt-4">
+            <h4 className="text-ink-950 text-sm font-semibold">Itinerary</h4>
             {data.activities.map((a, i) => (
               <div key={a.id} className="flex items-center justify-between text-sm">
-                <span className="text-ink-700">{i + 1}. {a.title}</span>
-                <span className="text-xs text-ink-500">
+                <span className="text-ink-700">
+                  {i + 1}. {a.title}
+                </span>
+                <span className="text-ink-500 text-xs">
                   {a.startDate && formatDate(a.startDate)}
                   {a.estimatedKilometres > 0 && ` · ${a.estimatedKilometres} km`}
                 </span>
@@ -806,7 +937,11 @@ export default function NewRequestPage() {
   }, []);
 
   const canProceed = (): boolean => {
-    if (step === 0) return formData.purpose.trim().length > 0 && (!formData.requesterEmployee || formData.assistedReason.trim().length > 0);
+    if (step === 0)
+      return (
+        formData.purpose.trim().length > 0 &&
+        (!formData.requesterEmployee || formData.assistedReason.trim().length > 0)
+      );
     if (step === 1) {
       return formData.activities.every((activity) =>
         Boolean(activity.title.trim() && activity.startDate && activity.endDate),
@@ -817,14 +952,16 @@ export default function NewRequestPage() {
         .filter((passenger) => passenger.type === 'employee')
         .map((passenger) => passenger.employeeId);
       const driverIds = formData.drivers.map((driver) => driver.employeeId);
-      return formData.passengers.every((passenger) =>
-        passenger.type === 'employee'
-          ? Boolean(passenger.employeeId)
-          : Boolean(passenger.externalName.trim()),
-      ) &&
+      return (
+        formData.passengers.every((passenger) =>
+          passenger.type === 'employee'
+            ? Boolean(passenger.employeeId)
+            : Boolean(passenger.externalName.trim()),
+        ) &&
         formData.drivers.every((driver) => Boolean(driver.employeeId)) &&
         new Set(employeePassengerIds).size === employeePassengerIds.length &&
-        new Set(driverIds).size === driverIds.length;
+        new Set(driverIds).size === driverIds.length
+      );
     }
     return true;
   };
@@ -841,7 +978,9 @@ export default function NewRequestPage() {
           purpose: formData.purpose,
           requesterEmployeeNumber: formData.requesterEmployee?.employeeNumber,
           assistedReason: formData.assistedReason,
-          confirmationMethod: formData.requesterEmployee ? 'pending_employee_confirmation' : 'authenticated_submission',
+          confirmationMethod: formData.requesterEmployee
+            ? 'pending_employee_confirmation'
+            : 'authenticated_submission',
           department: formData.department,
           scope: formData.scope,
           specialAuthorityRequired: formData.specialAuthorityRequired,
@@ -863,9 +1002,14 @@ export default function NewRequestPage() {
 
       const data = await res.json();
       router.push(`/dashboard/requests/${data.request.id}`);
-      toast({ title: 'Request Submitted', description: 'Transport request has been created successfully.', variant: 'success' });
+      toast({
+        title: 'Request Submitted',
+        description: 'Transport request has been created successfully.',
+        variant: 'success',
+      });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to submit request. Please try again.';
+      const msg =
+        err instanceof Error ? err.message : 'Failed to submit request. Please try again.';
       setError(msg);
       toast({ title: 'Submission Failed', description: msg, variant: 'error' });
     } finally {
@@ -947,11 +1091,7 @@ export default function NewRequestPage() {
                 {s.label}
               </button>
               {i < STEPS.length - 1 && (
-                <div
-                  className={`mx-1 h-px w-4 ${
-                    i < step ? 'bg-brand-500' : 'bg-border'
-                  }`}
-                />
+                <div className={`mx-1 h-px w-4 ${i < step ? 'bg-brand-500' : 'bg-border'}`} />
               )}
             </div>
           );
@@ -965,7 +1105,7 @@ export default function NewRequestPage() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-[8px] border border-status-error-bg bg-status-error-bg px-4 py-3 text-sm text-status-error-text">
+        <div className="border-status-error-bg bg-status-error-bg text-status-error-text rounded-[8px] border px-4 py-3 text-sm">
           {error}
         </div>
       )}
@@ -994,12 +1134,7 @@ export default function NewRequestPage() {
               Continue <ChevronRight className="h-4 w-4" />
             </Button>
           ) : (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handleSubmit}
-              disabled={submitting}
-            >
+            <Button variant="primary" size="sm" onClick={handleSubmit} disabled={submitting}>
               {submitting ? 'Submitting...' : 'Submit Request'}
             </Button>
           )}

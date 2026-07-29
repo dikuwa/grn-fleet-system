@@ -1,26 +1,37 @@
-/**
- * Trip Authority — PDF document template
- *
- * Renders an official Trip Authority document using @react-pdf/renderer.
- * Generated when a vehicle is allocated and issued for a trip.
- */
-
 import React from 'react';
-import { Document, Image, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { Document, Text, View } from '@react-pdf/renderer';
+import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
+import {
+  formatDocumentStatus,
+  formatHumanDate,
+  formatHumanValue,
+  humanizeKey,
+} from '@/lib/human-readable';
+import {
+  DocumentFieldGrid,
+  DocumentHeader,
+  DocumentPage,
+  DocumentSection,
+  DocumentSignature,
+  DocumentTable,
+  DocumentVerificationFooter,
+  documentStyles,
+} from './document-system';
 
 export interface TripAuthorityData {
   reference: string;
   tenantName?: string;
   tenantDocumentFooter?: string;
+  branding?: ResolvedTenantBranding | null;
   vehicle: {
     licenceNumber: string;
     vehicleRegisterNumber: string;
     make: string;
     model: string;
+    colour?: string;
+    fuelType?: string;
+    currentOdometer?: number;
+    inspectionStatus?: string;
   };
   requestReference: string;
   scope: string;
@@ -28,6 +39,9 @@ export interface TripAuthorityData {
   endAt: string;
   allocatedByUserId?: string;
   requesterName?: string;
+  department?: string;
+  transportOffice?: string;
+  priority?: string;
   purpose?: string;
   routeSummary?: string;
   totalKm?: number;
@@ -41,14 +55,19 @@ export interface TripAuthorityData {
     name: string;
     employeeNumber?: string;
     designation?: string;
+    department?: string;
+    contactNumber?: string;
     licenceNumber?: string;
     licenceClass?: string;
     licenceExpiry?: string;
     acceptedAt?: string;
+    signatureUrl?: string;
   };
   passengers?: Array<{
     name: string;
     employeeNumber?: string;
+    department?: string;
+    organisation?: string;
     passengerType?: string;
     destination?: string;
     indemnityConfirmed?: boolean;
@@ -66,344 +85,225 @@ export interface TripAuthorityData {
     name?: string;
     designation?: string;
     authorisedAt?: string;
+    signatureUrl?: string;
   };
-  routeEntries?: Array<{ occurredAt: string; type: string; location?: string; odometer?: number; note?: string }>;
+  transportOfficer?: {
+    name: string;
+    designation?: string;
+    issuedAt?: string;
+    signatureUrl?: string;
+  };
+  routeEntries?: Array<{
+    occurredAt: string;
+    type: string;
+    location?: string;
+    odometer?: number;
+    note?: string;
+  }>;
   defects?: Array<{ severity: string; description: string; status?: string }>;
-  incidents?: Array<{ type: string; occurredAt: string; description: string; safeToContinue: boolean }>;
+  incidents?: Array<{
+    type: string;
+    occurredAt: string;
+    description: string;
+    safeToContinue: boolean;
+  }>;
   arrivalInspection?: { status: string; odometer?: number; completedAt?: string };
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
+export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ data }) => {
+  const branding =
+    data.branding ||
+    (data.tenantName
+      ? {
+          tenantId: '',
+          organisationName: data.tenantName,
+          code: '',
+          locale: 'en-NA',
+          timezone: 'Africa/Windhoek',
+          primaryColor: '#1F2A44',
+          accentColor: '#0F766E',
+          documentFooter: data.tenantDocumentFooter,
+        }
+      : null);
+  const status = data.authorityStatus || 'issued';
+  const conditions = (data.specialConditions || '')
+    .split(/\n|;/)
+    .map((condition) => condition.trim())
+    .filter(Boolean);
+  return (
+    <Document title={`Trip Authority ${data.reference}`}>
+      <DocumentPage status={status === 'draft' ? 'draft' : undefined}>
+        <DocumentHeader
+          branding={branding}
+          title="Trip Authority"
+          reference={data.reference}
+          version={data.documentVersion || 1}
+          status={formatDocumentStatus(status)}
+          issueDate={formatHumanDate(data.issuedAt || new Date().toISOString(), branding?.locale)}
+          qrCode={data.qrCodeDataUrl}
+        />
 
-const styles = StyleSheet.create({
-  page: {
-    padding: 40,
-    fontFamily: 'Helvetica',
-    fontSize: 10,
-    lineHeight: 1.5,
-    color: '#1a1a1a',
-  },
-  header: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#1F4E8C',
-    paddingBottom: 12,
-    marginBottom: 20,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1F4E8C',
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 11,
-    color: '#4B5563',
-  },
-  referenceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-    padding: 10,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 4,
-  },
-  referenceLabel: {
-    fontSize: 9,
-    color: '#6B7280',
-    marginBottom: 2,
-  },
-  referenceValue: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#1F4E8C',
-  },
-  section: {
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#1F4E8C',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    paddingBottom: 4,
-    marginBottom: 8,
-  },
-  row: {
-    flexDirection: 'row',
-    marginBottom: 4,
-  },
-  label: {
-    width: 140,
-    color: '#6B7280',
-    fontSize: 10,
-  },
-  value: {
-    flex: 1,
-    fontSize: 10,
-    color: '#1a1a1a',
-  },
-  vehicleDetails: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 4,
-  },
-  vehicleCard: {
-    flex: 1,
-    padding: 8,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  vehicleLabel: {
-    fontSize: 8,
-    color: '#6B7280',
-    marginBottom: 2,
-  },
-  vehicleValue: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    color: '#1a1a1a',
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 30,
-    left: 40,
-    right: 40,
-    textAlign: 'center',
-    fontSize: 8,
-    color: '#9CA3AF',
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    paddingTop: 8,
-  },
-  stamp: {
-    marginTop: 24,
-    padding: 12,
-    borderWidth: 2,
-    borderColor: '#1F4E8C',
-    borderStyle: 'dashed',
-    borderRadius: 4,
-  },
-  stampTitle: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#1F4E8C',
-    marginBottom: 4,
-  },
-  stampText: {
-    fontSize: 9,
-    color: '#4B5563',
-  },
-  signatureRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 20,
-  },
-  signatureBlock: {
-    width: '45%',
-  },
-  signatureLine: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-    marginTop: 24,
-    marginBottom: 4,
-  },
-  signatureLabel: {
-    fontSize: 8,
-    color: '#6B7280',
-  },
-  qr: { width: 72, height: 72 },
-  compactRow: { flexDirection: 'row', borderBottomWidth: 0.5, borderBottomColor: '#D1D5DB', paddingVertical: 4 },
-  compactIndex: { width: 24, color: '#6B7280' },
-  compactMain: { flex: 1 },
-  compactMeta: { width: 120, color: '#4B5563', fontSize: 8 },
-  pageNumber: { position: 'absolute', bottom: 14, right: 40, fontSize: 8, color: '#9CA3AF' },
-});
+        <DocumentSection title="Trip summary">
+          <DocumentFieldGrid
+            fields={[
+              { label: 'Request reference', value: data.requestReference },
+              { label: 'Purpose', value: data.purpose || 'Not recorded' },
+              { label: 'Scope', value: humanizeKey(data.scope) },
+              { label: 'Department', value: data.department || 'Not recorded' },
+              { label: 'Transport office', value: data.transportOffice || 'Not recorded' },
+              { label: 'Validity', value: `${data.startAt} — ${data.endAt}` },
+              { label: 'Approved route', value: data.routeSummary || 'Not recorded' },
+              {
+                label: 'Authorised distance',
+                value: data.totalKm
+                  ? `${data.totalKm.toLocaleString('en-NA')} km`
+                  : 'Not estimated',
+              },
+            ]}
+          />
+        </DocumentSection>
 
-// ---------------------------------------------------------------------------
-// Document Component
-// ---------------------------------------------------------------------------
+        <DocumentSection title="Vehicle details">
+          <DocumentFieldGrid
+            fields={[
+              { label: 'Registration / plate', value: data.vehicle.licenceNumber },
+              { label: 'Asset register number', value: data.vehicle.vehicleRegisterNumber },
+              {
+                label: 'Make and model',
+                value: `${data.vehicle.make} ${data.vehicle.model}`.trim(),
+              },
+              { label: 'Colour', value: data.vehicle.colour || 'Not recorded' },
+              { label: 'Fuel type', value: data.vehicle.fuelType || 'Not recorded' },
+              {
+                label: 'Current odometer',
+                value: formatHumanValue(
+                  data.vehicle.currentOdometer ?? data.beginningOdometer,
+                  'odometer',
+                ),
+              },
+              {
+                label: 'Inspection status',
+                value: formatDocumentStatus(data.vehicle.inspectionStatus || 'pending'),
+              },
+            ]}
+          />
+        </DocumentSection>
 
-export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ data }) => (
-  <Document>
-    <Page size="A4" style={styles.page}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>TRIP AUTHORITY</Text>
-        <Text style={styles.headerSubtitle}>{data.tenantName || 'Regional Council Fleet Management'}</Text>
-      </View>
+        <DocumentSection title="Driver details">
+          <DocumentFieldGrid
+            fields={[
+              { label: 'Driver', value: data.driver?.name || 'Not assigned' },
+              { label: 'Employee number', value: data.driver?.employeeNumber || 'Not recorded' },
+              { label: 'Designation', value: data.driver?.designation || 'Not recorded' },
+              { label: 'Department', value: data.driver?.department || 'Not recorded' },
+              {
+                label: 'Licence',
+                value:
+                  [data.driver?.licenceNumber, data.driver?.licenceClass]
+                    .filter(Boolean)
+                    .join(' · ') || 'Not recorded',
+              },
+              { label: 'Licence expiry', value: data.driver?.licenceExpiry || 'Not recorded' },
+              {
+                label: 'Driver acknowledgement',
+                value: data.driver?.acceptedAt
+                  ? `Acknowledged ${data.driver.acceptedAt}`
+                  : 'Awaiting acknowledgement',
+              },
+            ]}
+          />
+        </DocumentSection>
 
-      {/* Reference */}
-      <View style={styles.referenceRow}>
-        <View>
-          <Text style={styles.referenceLabel}>Authority Reference</Text>
-          <Text style={styles.referenceValue}>TA-{data.reference}</Text>
-        </View>
-        <View>
-          <Text style={styles.referenceLabel}>Request Reference</Text>
-          <Text style={styles.referenceValue}>{data.requestReference}</Text>
-        </View>
-        {data.qrCodeDataUrl && <Image src={data.qrCodeDataUrl} style={styles.qr} />}
-      </View>
+        <DocumentSection title={`Authorised travellers (${data.passengers?.length || 0})`}>
+          <DocumentTable
+            columns={[
+              { key: 'name', label: 'Name' },
+              { key: 'employeeNumber', label: 'Employee number / ID' },
+              { key: 'organisation', label: 'Department / organisation' },
+              { key: 'type', label: 'Traveller type' },
+            ]}
+            rows={(data.passengers || []).map((passenger) => ({
+              name: passenger.name,
+              employeeNumber: passenger.employeeNumber || 'External',
+              organisation: passenger.department || passenger.organisation || 'Not recorded',
+              type: humanizeKey(passenger.passengerType || 'passenger'),
+            }))}
+            emptyLabel="No additional travellers authorised"
+          />
+        </DocumentSection>
 
-      {/* Trip Details */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Trip Details</Text>
-        <View style={styles.row}>
-          <Text style={styles.label}>Scope</Text>
-          <Text style={styles.value}>{data.scope === 'national' ? 'National' : 'Regional'}</Text>
-        </View>
-        {data.driver && (
-          <>
-            <View style={styles.row}><Text style={styles.label}>Primary Driver</Text><Text style={styles.value}>{data.driver.name}</Text></View>
-            <View style={styles.row}><Text style={styles.label}>Driver Licence</Text><Text style={styles.value}>{[data.driver.licenceNumber, data.driver.licenceClass, data.driver.licenceExpiry].filter(Boolean).join(' · ')}</Text></View>
-          </>
+        {conditions.length > 0 && (
+          <DocumentSection title="Conditions" wrap={false}>
+            {conditions.map((condition, index) => (
+              <Text key={condition} style={{ marginBottom: 2 }}>
+                {index + 1}. {condition}
+              </Text>
+            ))}
+          </DocumentSection>
         )}
-        <View style={styles.row}>
-          <Text style={styles.label}>Purpose</Text>
-          <Text style={styles.value}>{data.purpose || 'Not specified'}</Text>
-        </View>
-        {data.requesterName && (
-          <View style={styles.row}>
-            <Text style={styles.label}>Requester</Text>
-            <Text style={styles.value}>{data.requesterName}</Text>
+
+        <DocumentSection title="Approvals" wrap={false}>
+          <View style={documentStyles.signatureRow}>
+            {data.transportOfficer && (
+              <DocumentSignature
+                name={data.transportOfficer.name}
+                role={data.transportOfficer.designation || 'Transport Officer'}
+                signedAt={data.transportOfficer.issuedAt}
+                signatureUrl={data.transportOfficer.signatureUrl}
+              />
+            )}
+            <DocumentSignature
+              name={data.authoriser?.name || 'Authorising officer not recorded'}
+              role={data.authoriser?.designation || 'Authorising Officer'}
+              signedAt={data.authoriser?.authorisedAt}
+              signatureUrl={data.authoriser?.signatureUrl}
+            />
+            {data.driver && (
+              <DocumentSignature
+                name={data.driver.name}
+                role="Driver acknowledgement"
+                signedAt={data.driver.acceptedAt}
+                signatureUrl={data.driver.signatureUrl}
+              />
+            )}
           </View>
+        </DocumentSection>
+
+        {(data.routeEntries?.length || data.defects?.length || data.incidents?.length) && (
+          <DocumentSection title="Operational record">
+            <DocumentTable
+              columns={[
+                { key: 'event', label: 'Event' },
+                { key: 'details', label: 'Details' },
+                { key: 'time', label: 'Date and time' },
+              ]}
+              rows={[
+                ...(data.routeEntries || []).map((entry) => ({
+                  event: humanizeKey(entry.type),
+                  details: [entry.location, entry.note].filter(Boolean).join(' · '),
+                  time: entry.occurredAt,
+                })),
+                ...(data.defects || []).map((defect) => ({
+                  event: `Defect · ${humanizeKey(defect.severity)}`,
+                  details: defect.description,
+                  time: humanizeKey(defect.status || 'open'),
+                })),
+                ...(data.incidents || []).map((incident) => ({
+                  event: humanizeKey(incident.type),
+                  details: incident.description,
+                  time: incident.occurredAt,
+                })),
+              ]}
+            />
+          </DocumentSection>
         )}
-        {data.routeSummary && (
-          <View style={styles.row}>
-            <Text style={styles.label}>Route</Text>
-            <Text style={styles.value}>{data.routeSummary}</Text>
-          </View>
-        )}
-        {data.totalKm && (
-          <View style={styles.row}>
-            <Text style={styles.label}>Total Distance</Text>
-            <Text style={styles.value}>{data.totalKm} km</Text>
-          </View>
-        )}
-        <View style={styles.row}>
-          <Text style={styles.label}>Start Date</Text>
-          <Text style={styles.value}>{data.startAt}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>End Date</Text>
-          <Text style={styles.value}>{data.endAt}</Text>
-        </View>
-      </View>
 
-      {/* Vehicle Details */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Assigned Vehicle</Text>
-        <View style={styles.vehicleDetails}>
-          <View style={styles.vehicleCard}>
-            <Text style={styles.vehicleLabel}>Licence / Plate</Text>
-            <Text style={styles.vehicleValue}>{data.vehicle.licenceNumber}</Text>
-          </View>
-          <View style={styles.vehicleCard}>
-            <Text style={styles.vehicleLabel}>Register Number</Text>
-            <Text style={styles.vehicleValue}>{data.vehicle.vehicleRegisterNumber}</Text>
-          </View>
-          <View style={styles.vehicleCard}>
-            <Text style={styles.vehicleLabel}>Make / Model</Text>
-            <Text style={styles.vehicleValue}>{data.vehicle.make} {data.vehicle.model}</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Authority Control</Text>
-        <View style={styles.row}><Text style={styles.label}>Document Status</Text><Text style={styles.value}>{data.authorityStatus || 'Issued'}</Text></View>
-        <View style={styles.row}><Text style={styles.label}>Document Version</Text><Text style={styles.value}>v{data.documentVersion || 1}</Text></View>
-        <View style={styles.row}><Text style={styles.label}>Special Conditions</Text><Text style={styles.value}>{data.specialConditions || 'None recorded'}</Text></View>
-        <View style={styles.row}><Text style={styles.label}>Odometer</Text><Text style={styles.value}>{data.beginningOdometer ?? 'Pending'} → {data.endingOdometer ?? 'Pending'}</Text></View>
-      </View>
-
-      {/* Authority Stamp */}
-      <View style={styles.stamp}>
-        <Text style={styles.stampTitle}>AUTHORISATION</Text>
-        <Text style={styles.stampText}>
-          This Trip Authority is issued in accordance with the Regional Council Transport Policy.
-          The above-named vehicle is released for official use for the specified trip period.
-        </Text>
-      </View>
-
-      {/* Signatures */}
-      <View style={styles.signatureRow}>
-        <View style={styles.signatureBlock}>
-          <View style={styles.signatureLine} />
-          <Text style={styles.signatureLabel}>Transport Officer / Date</Text>
-        </View>
-        <View style={styles.signatureBlock}>
-          <View style={styles.signatureLine} />
-          <Text style={styles.signatureLabel}>Authorising Officer / Date</Text>
-        </View>
-      </View>
-
-      {/* Footer */}
-      <Text style={styles.footer}>
-        {data.tenantDocumentFooter || 'Kavango East Regional Council — Fleet Management'}
-      </Text>
-      <Text style={styles.pageNumber}>Page 1 of 2 · Generated {new Date().toLocaleString('en-NA')}</Text>
-    </Page>
-
-    <Page size="A4" style={styles.page}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>TRIP AUTHORITY — OPERATIONAL RECORD</Text>
-        <Text style={styles.headerSubtitle}>{data.reference} · Version {data.documentVersion || 1}</Text>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Authorised Passengers ({data.passengers?.length || 0})</Text>
-        {(data.passengers || []).length ? data.passengers!.map((passenger, index) => (
-          <View key={`${passenger.name}-${index}`} style={styles.compactRow}>
-            <Text style={styles.compactIndex}>{index + 1}.</Text>
-            <Text style={styles.compactMain}>{passenger.name}{passenger.employeeNumber ? ` · ${passenger.employeeNumber}` : ''}</Text>
-            <Text style={styles.compactMeta}>{passenger.passengerType || 'Passenger'} · {passenger.destination || 'Approved destination'}</Text>
-          </View>
-        )) : <Text>No passengers authorised.</Text>}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Additional Authorised Drivers</Text>
-        {(data.additionalDrivers || []).length ? data.additionalDrivers!.map((driver, index) => (
-          <View key={`${driver.name}-${index}`} style={styles.compactRow}>
-            <Text style={styles.compactIndex}>{index + 1}.</Text>
-            <Text style={styles.compactMain}>{driver.name}{driver.employeeNumber ? ` · ${driver.employeeNumber}` : ''}</Text>
-            <Text style={styles.compactMeta}>{driver.licenceClass || 'Licence class not recorded'} · {driver.licenceExpiry || 'No expiry'}</Text>
-          </View>
-        )) : <Text>No additional drivers authorised.</Text>}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Route and Stop Entries</Text>
-        {(data.routeEntries || []).length ? data.routeEntries!.slice(0, 18).map((entry, index) => (
-          <View key={`${entry.occurredAt}-${index}`} style={styles.compactRow}>
-            <Text style={styles.compactIndex}>{index + 1}.</Text>
-            <Text style={styles.compactMain}>{entry.type.replace(/_/g, ' ')} · {entry.location || 'Location not recorded'}</Text>
-            <Text style={styles.compactMeta}>{entry.occurredAt}{entry.odometer ? ` · ${entry.odometer} km` : ''}</Text>
-          </View>
-        )) : <Text>No operational route entries recorded.</Text>}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Defects and Incidents</Text>
-        {(data.defects || []).map((defect, index) => <Text key={`defect-${index}`}>• {defect.severity}: {defect.description}</Text>)}
-        {(data.incidents || []).map((incident, index) => <Text key={`incident-${index}`}>• {incident.type}: {incident.description} ({incident.safeToContinue ? 'safe to continue' : 'continuation blocked'})</Text>)}
-        {!(data.defects || []).length && !(data.incidents || []).length && <Text>No defects or incidents recorded.</Text>}
-      </View>
-
-      <View style={styles.stamp}>
-        <Text style={styles.stampTitle}>DIGITAL VERIFICATION</Text>
-        <Text style={styles.stampText}>Verification code: {data.verificationCode || 'Not available'}</Text>
-        <Text style={styles.stampText}>{data.verificationUrl || 'Use the QR code on page 1 to verify the current authority status.'}</Text>
-      </View>
-
-      <Text style={styles.footer}>{data.tenantDocumentFooter || 'Official government fleet record'}</Text>
-      <Text style={styles.pageNumber}>Page 2 of 2 · Generated {new Date().toLocaleString('en-NA')}</Text>
-    </Page>
-  </Document>
-);
+        <DocumentVerificationFooter
+          branding={branding}
+          verificationCode={data.verificationCode}
+          verificationUrl={data.verificationUrl}
+        />
+      </DocumentPage>
+    </Document>
+  );
+};

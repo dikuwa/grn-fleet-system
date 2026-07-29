@@ -18,6 +18,7 @@ import { vehicleAllocations, vehicleInspections } from '@/db/schema/trips';
 import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { eq } from 'drizzle-orm';
+import { resolveTenantBranding } from '@/lib/tenant-branding';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -51,11 +52,7 @@ export async function generateTripAuthorityPdf(
     .where(eq(vehicles.id, alloc.vehicleId))
     .limit(1);
 
-  const [tenant] = await db
-    .select()
-    .from(tenants)
-    .where(eq(tenants.id, tenantId))
-    .limit(1);
+  const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
 
   // Get branding info for document footer
   const [branding] = await db
@@ -63,20 +60,16 @@ export async function generateTripAuthorityPdf(
     .from(tenantBranding)
     .where(eq(tenantBranding.tenantId, tenantId))
     .limit(1);
+  const resolvedBranding = await resolveTenantBranding(tenantId);
 
   // Build route summary
   let routeSummary: string | undefined;
   let totalKm: number | undefined;
   if (req) {
-    const routes = await db
-      .select()
-      .from(requestRoutes)
-      .where(eq(requestRoutes.requestId, req.id));
+    const routes = await db.select().from(requestRoutes).where(eq(requestRoutes.requestId, req.id));
 
     if (routes.length > 0) {
-      routeSummary = routes
-        .map((r) => `${r.originName} → ${r.destinationName}`)
-        .join('; ');
+      routeSummary = routes.map((r) => `${r.originName} → ${r.destinationName}`).join('; ');
       totalKm = routes.reduce((sum, r) => sum + (r.totalKilometres ?? r.mappedDistanceKm ?? 0), 0);
     }
   }
@@ -85,6 +78,7 @@ export async function generateTripAuthorityPdf(
     reference: alloc.id.slice(0, 8).toUpperCase(),
     tenantName: tenant?.name,
     tenantDocumentFooter: branding?.documentFooter || undefined,
+    branding: resolvedBranding,
     requestReference: req?.reference || 'N/A',
     scope: req?.scope || 'regional',
     startAt: alloc.startAt.toISOString().split('T')[0],
@@ -101,7 +95,10 @@ export async function generateTripAuthorityPdf(
     totalKm,
   };
 
-  const element = React.createElement(TripAuthorityDocument as React.ComponentType<{ data: TripAuthorityData }>, { data }) as React.ReactElement;
+  const element = React.createElement(
+    TripAuthorityDocument as React.ComponentType<{ data: TripAuthorityData }>,
+    { data },
+  ) as React.ReactElement;
   return renderPdfToBuffer(element);
 }
 
@@ -127,17 +124,14 @@ export async function generateInspectionReportPdf(
     .where(eq(vehicles.id, insp.vehicleId))
     .limit(1);
 
-  const [tenant] = await db
-    .select()
-    .from(tenants)
-    .where(eq(tenants.id, tenantId))
-    .limit(1);
+  const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
 
   const [branding] = await db
     .select()
     .from(tenantBranding)
     .where(eq(tenantBranding.tenantId, tenantId))
     .limit(1);
+  const resolvedBranding = await resolveTenantBranding(tenantId);
 
   const data: InspectionReportData = {
     inspectionId: insp.id,
@@ -154,12 +148,16 @@ export async function generateInspectionReportPdf(
     inspectedAt: insp.createdAt.toISOString().split('T')[0],
     tenantName: tenant?.name,
     tenantDocumentFooter: branding?.documentFooter || undefined,
+    branding: resolvedBranding,
     inspectorName: undefined,
     driverName: undefined,
     items: [],
   };
 
-  const element = React.createElement(InspectionReportDocument as React.ComponentType<{ data: InspectionReportData }>, { data }) as React.ReactElement;
+  const element = React.createElement(
+    InspectionReportDocument as React.ComponentType<{ data: InspectionReportData }>,
+    { data },
+  ) as React.ReactElement;
   return renderPdfToBuffer(element);
 }
 
@@ -196,20 +194,21 @@ export async function generateDocumentPdf(
     default: {
       // Use the generic snapshot PDF for all other document types
       if (doc.snapshotData) {
-        const [t] = await db
-          .select()
-          .from(tenants)
-          .where(eq(tenants.id, doc.tenantId))
-          .limit(1);
+        const [t] = await db.select().from(tenants).where(eq(tenants.id, doc.tenantId)).limit(1);
         const snapshotData: SnapshotDocumentData = {
           documentType: doc.documentType,
           documentVersion: doc.documentVersion,
           tenantName: t?.name,
+          branding: await resolveTenantBranding(doc.tenantId),
           tenantDocumentFooter: undefined,
           snapshotData: doc.snapshotData as Record<string, unknown>,
           generatedAt: doc.createdAt.toISOString(),
+          status: doc.status,
         };
-        const element = React.createElement(SnapshotDocument as React.ComponentType<{ data: SnapshotDocumentData }>, { data: snapshotData }) as React.ReactElement;
+        const element = React.createElement(
+          SnapshotDocument as React.ComponentType<{ data: SnapshotDocumentData }>,
+          { data: snapshotData },
+        ) as React.ReactElement;
         buffer = await renderPdfToBuffer(element);
       }
       break;
@@ -228,7 +227,9 @@ export async function generateDocumentPdf(
 // ---------------------------------------------------------------------------
 
 async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Array> {
-  const stream = await renderToStream(element as unknown as React.ReactElement<Record<string, unknown>>);
+  const stream = await renderToStream(
+    element as unknown as React.ReactElement<Record<string, unknown>>,
+  );
   const chunks: Uint8Array[] = [];
   for await (const chunk of stream) {
     chunks.push(new Uint8Array(chunk as unknown as ArrayBuffer));

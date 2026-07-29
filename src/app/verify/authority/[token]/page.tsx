@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { CheckCircle2, CircleSlash2, Clock3, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, CircleSlash2, Clock3 } from 'lucide-react';
 import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { tripAuthorities, tripAuthorisedDrivers, vehicleAllocations } from '@/db/schema/trips';
@@ -8,11 +8,16 @@ import { employees } from '@/db/schema/people';
 import { tenants } from '@/db/schema/tenants';
 import { vehicles } from '@/db/schema/fleet';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
+import { TenantLogo } from '@/components/documents/tenant-logo';
+import { resolveTenantBranding, type ResolvedTenantBranding } from '@/lib/tenant-branding';
 
 export const dynamic = 'force-dynamic';
 
 function publicStatus(status: string, validFrom: Date | null, validUntil: Date | null) {
   const now = new Date();
+  if (['draft', 'awaiting_approval', 'approved'].includes(status)) {
+    return { label: 'Not Yet Issued', valid: false };
+  }
   if (status === 'cancelled') return { label: 'Cancelled', valid: false };
   if (status === 'suspended') return { label: 'Suspended', valid: false };
   if (status === 'superseded') return { label: 'Superseded', valid: false };
@@ -66,65 +71,90 @@ export default async function VerifyAuthorityPage({
   if (!authority) {
     return (
       <VerificationShell>
-        <div className="rounded-xl border border-status-error-border bg-status-error-bg p-6 text-center">
-          <CircleSlash2 className="mx-auto h-10 w-10 text-status-error-text" />
-          <h1 className="mt-3 text-xl font-semibold text-ink-950">Authority Not Found</h1>
-          <p className="mt-2 text-sm text-ink-600">This verification code is invalid or no longer recognised.</p>
+        <div className="border-status-error-border bg-status-error-bg rounded-xl border p-6 text-center">
+          <CircleSlash2 className="text-status-error-text mx-auto h-10 w-10" />
+          <h1 className="text-ink-950 mt-3 text-xl font-semibold">Authority Not Found</h1>
+          <p className="text-ink-600 mt-2 text-sm">
+            This verification code is invalid or no longer recognised.
+          </p>
         </div>
       </VerificationShell>
     );
   }
 
   const verification = publicStatus(authority.status, authority.validFrom, authority.validUntil);
-  await db.insert(auditEvents).values({
-    tenantId: authority.tenantId!,
-    tenantSequence: 0,
-    eventType: 'trip_authority_verified',
-    actorUserId: 'public-verifier',
-    action: 'verify',
-    entityType: 'trip_authority',
-    entityId: authority.id,
-    summary: `${authority.authorityNumber} public verification returned ${verification.label}`,
-    sourceChannel: 'public_qr',
-  }).catch(() => undefined);
+  const branding = await resolveTenantBranding(authority.tenantId!);
+  await db
+    .insert(auditEvents)
+    .values({
+      tenantId: authority.tenantId!,
+      tenantSequence: 0,
+      eventType: 'trip_authority_verified',
+      actorUserId: 'public-verifier',
+      action: 'verify',
+      entityType: 'trip_authority',
+      entityId: authority.id,
+      summary: `${authority.authorityNumber} public verification returned ${verification.label}`,
+      sourceChannel: 'public_qr',
+    })
+    .catch(() => undefined);
 
   const rows = [
     ['Trip Authority', authority.authorityNumber ?? 'Pending number'],
     ['Organisation', authority.organisation],
     ['Vehicle', authority.registration],
-    ['Authorised driver', [authority.driverFirstName, authority.driverLastName].filter(Boolean).join(' ') || 'Not available'],
+    [
+      'Authorised driver',
+      [authority.driverFirstName, authority.driverLastName].filter(Boolean).join(' ') ||
+        'Not available',
+    ],
     ['Valid from', authority.validFrom?.toLocaleString('en-NA') ?? 'Not set'],
     ['Valid until', authority.validUntil?.toLocaleString('en-NA') ?? 'Not set'],
-    ['Route', [authority.origin, authority.destination].filter(Boolean).join(' → ') || 'Approved route on authority'],
+    [
+      'Route',
+      [authority.origin, authority.destination].filter(Boolean).join(' → ') ||
+        'Approved route on authority',
+    ],
     ['Issue date', authority.issuedAt?.toLocaleString('en-NA') ?? 'Not issued'],
     ['Version', `v${authority.version}`],
     ['Last update', authority.updatedAt.toLocaleString('en-NA')],
   ];
 
   return (
-    <VerificationShell>
-      <div className={`rounded-xl border p-5 ${verification.valid
-        ? 'border-status-success-border bg-status-success-bg'
-        : 'border-status-error-border bg-status-error-bg'}`}>
+    <VerificationShell branding={branding}>
+      <div
+        className={`rounded-xl border p-5 ${
+          verification.valid
+            ? 'border-status-success-border bg-status-success-bg'
+            : 'border-status-error-border bg-status-error-bg'
+        }`}
+      >
         <div className="flex items-center gap-3">
-          {verification.valid
-            ? <CheckCircle2 className="h-9 w-9 text-status-success-text" />
-            : <CircleSlash2 className="h-9 w-9 text-status-error-text" />}
+          {verification.valid ? (
+            <CheckCircle2 className="text-status-success-text h-9 w-9" />
+          ) : (
+            <CircleSlash2 className="text-status-error-text h-9 w-9" />
+          )}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-ink-600">Verification result</p>
-            <h1 className="text-2xl font-bold text-ink-950">{verification.label}</h1>
+            <p className="text-ink-600 text-xs font-semibold tracking-wider uppercase">
+              Verification result
+            </p>
+            <h1 className="text-ink-950 text-2xl font-bold">{verification.label}</h1>
           </div>
         </div>
       </div>
-      <div className="mt-4 overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+      <div className="border-border bg-surface mt-4 overflow-hidden rounded-xl border shadow-sm">
         {rows.map(([label, value]) => (
-          <div key={label} className="grid grid-cols-[8rem_1fr] gap-3 border-b border-border px-4 py-3 last:border-0">
-            <span className="text-xs font-medium text-ink-500">{label}</span>
-            <span className="text-sm font-medium text-ink-950">{value}</span>
+          <div
+            key={label}
+            className="border-border grid grid-cols-[8rem_1fr] gap-3 border-b px-4 py-3 last:border-0"
+          >
+            <span className="text-ink-500 text-xs font-medium">{label}</span>
+            <span className="text-ink-950 text-sm font-medium">{value}</span>
           </div>
         ))}
       </div>
-      <p className="mt-4 flex items-center justify-center gap-2 text-center text-xs text-ink-500">
+      <p className="text-ink-500 mt-4 flex items-center justify-center gap-2 text-center text-xs">
         <Clock3 className="h-3.5 w-3.5" />
         Live result generated {new Date().toLocaleString('en-NA')}
       </p>
@@ -132,18 +162,29 @@ export default async function VerifyAuthorityPage({
   );
 }
 
-function VerificationShell({ children }: { children: React.ReactNode }) {
+function VerificationShell({
+  children,
+  branding,
+}: {
+  children: React.ReactNode;
+  branding?: ResolvedTenantBranding | null;
+}) {
   return (
-    <main className="min-h-screen bg-page px-4 py-8">
+    <main className="bg-page min-h-screen px-4 py-8">
       <div className="mx-auto max-w-xl">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-brand-700 text-white">
-              <ShieldCheck className="h-6 w-6" />
-            </span>
+            <TenantLogo
+              src={branding?.logoUrl}
+              organisationName={branding?.organisationName || 'GRN Fleet'}
+              code={branding?.code}
+              className="h-11 w-11"
+            />
             <div>
-              <p className="text-sm font-bold text-ink-950">GRN Fleet</p>
-              <p className="text-xs text-ink-500">Official Trip Authority Verification</p>
+              <p className="text-ink-950 text-sm font-bold">
+                {branding?.organisationName || 'GRN Fleet'}
+              </p>
+              <p className="text-ink-500 text-xs">Official Trip Authority Verification</p>
             </div>
           </div>
           <PublicThemeToggle />

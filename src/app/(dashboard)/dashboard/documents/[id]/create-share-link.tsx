@@ -2,20 +2,28 @@
 
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { Link2, Copy, CheckCircle2 } from 'lucide-react';
 
 interface Props {
   documentId: string;
+  disabled?: boolean;
 }
 
-export function CreateShareLinkButton({ documentId }: Props) {
+export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [expiresInHours, setExpiresInHours] = useState(168); // 7 days
   const [maxViews, setMaxViews] = useState<number>(0);
+  const [allowDownload, setAllowDownload] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -31,6 +39,7 @@ export function CreateShareLinkButton({ documentId }: Props) {
           documentId,
           expiresInHours,
           maxViews: maxViews > 0 ? maxViews : undefined,
+          allowDownload,
         }),
       });
 
@@ -46,7 +55,7 @@ export function CreateShareLinkButton({ documentId }: Props) {
     } finally {
       setIsCreating(false);
     }
-  }, [documentId, expiresInHours, maxViews]);
+  }, [allowDownload, documentId, expiresInHours, maxViews]);
 
   const copyToClipboard = useCallback(async () => {
     if (!shareUrl) return;
@@ -69,9 +78,20 @@ export function CreateShareLinkButton({ documentId }: Props) {
   }, []);
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) reset(); setIsOpen(open); }}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) reset();
+        setIsOpen(open);
+      }}
+    >
       <DialogTrigger asChild>
-        <Button variant="secondary" size="sm">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={disabled}
+          title={disabled ? 'Issue the document before creating a public link' : undefined}
+        >
           <Link2 className="h-4 w-4" /> Create Link
         </Button>
       </DialogTrigger>
@@ -83,7 +103,7 @@ export function CreateShareLinkButton({ documentId }: Props) {
         {!shareUrl ? (
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="block text-xs font-medium text-ink-500">Expires After</label>
+              <label className="text-ink-500 block text-xs font-medium">Expires After</label>
               <StyledSelect
                 value={expiresInHours}
                 onChange={(e) => setExpiresInHours(Number(e.target.value))}
@@ -95,9 +115,25 @@ export function CreateShareLinkButton({ documentId }: Props) {
                 <option value={8760}>1 year</option>
               </StyledSelect>
             </div>
+            <label className="border-border flex items-start gap-3 rounded-lg border p-3">
+              <input
+                type="checkbox"
+                checked={allowDownload}
+                onChange={(event) => setAllowDownload(event.target.checked)}
+                className="border-border mt-0.5 h-4 w-4 rounded"
+              />
+              <span>
+                <span className="text-ink-950 block text-sm font-medium">
+                  Allow verified PDF download
+                </span>
+                <span className="text-ink-500 block text-xs">
+                  Leave off when the recipient only needs authenticity verification.
+                </span>
+              </span>
+            </label>
 
             <div className="space-y-2">
-              <label className="block text-xs font-medium text-ink-500">
+              <label className="text-ink-500 block text-xs font-medium">
                 Max Views <span className="text-ink-400">(0 = unlimited)</span>
               </label>
               <input
@@ -105,16 +141,16 @@ export function CreateShareLinkButton({ documentId }: Props) {
                 min={0}
                 value={maxViews}
                 onChange={(e) => setMaxViews(Number(e.target.value))}
-                className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                className="border-border bg-surface text-ink-950 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
               />
             </div>
 
-            {error && (
-              <p className="text-xs text-status-error-text">{error}</p>
-            )}
+            {error && <p className="text-status-error-text text-xs">{error}</p>}
 
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" size="sm" onClick={() => reset()}>Cancel</Button>
+              <Button variant="secondary" size="sm" onClick={() => reset()}>
+                Cancel
+              </Button>
               <Button variant="primary" size="sm" onClick={createLink} loading={isCreating}>
                 <Link2 className="h-4 w-4" /> Generate Link
               </Button>
@@ -122,24 +158,30 @@ export function CreateShareLinkButton({ documentId }: Props) {
           </div>
         ) : (
           <div className="space-y-4">
-            <p className="text-xs text-ink-500">
+            <p className="text-ink-500 text-xs">
               Share this link securely. Anyone with the link can view the document.
             </p>
 
-            <div className="flex items-center gap-2 rounded-[8px] border border-border bg-muted/30 p-2">
+            <div className="border-border bg-muted/30 flex items-center gap-2 rounded-[8px] border p-2">
               <input
                 type="text"
                 readOnly
                 value={shareUrl}
-                className="share-url-input flex-1 bg-transparent text-xs font-mono text-ink-950 outline-none"
+                className="share-url-input text-ink-950 flex-1 bg-transparent font-mono text-xs outline-none"
               />
               <Button variant="secondary" size="compact" onClick={copyToClipboard}>
-                {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
               </Button>
             </div>
 
             <div className="flex justify-end">
-              <Button variant="primary" size="sm" onClick={reset}>Done</Button>
+              <Button variant="primary" size="sm" onClick={reset}>
+                Done
+              </Button>
             </div>
           </div>
         )}

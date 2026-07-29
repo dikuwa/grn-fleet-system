@@ -20,7 +20,8 @@ export async function GET(request: NextRequest) {
 
   const kind = request.nextUrl.searchParams.get('kind') === 'driver' ? 'driver' : 'employee';
   const requestedUnavailable = request.nextUrl.searchParams.get('showUnavailable') === 'true';
-  const canViewUnavailable = requestedUnavailable && await hasPermission(session, Permissions.STAFF_VIEW);
+  const canViewUnavailable =
+    requestedUnavailable && (await hasPermission(session, Permissions.STAFF_VIEW));
   const query = request.nextUrl.searchParams.get('q')?.trim().slice(0, 100) || '';
   const limit = Math.min(30, Math.max(1, Number(request.nextUrl.searchParams.get('limit')) || 20));
   const conditions = [
@@ -30,10 +31,7 @@ export async function GET(request: NextRequest) {
   if (!canViewUnavailable) conditions.push(eq(employees.availabilityStatus, 'available'));
 
   if (kind === 'driver') {
-    conditions.push(
-      eq(employees.isDriver, true),
-      eq(driverProfiles.driverStatus, 'authorised'),
-    );
+    conditions.push(eq(employees.isDriver, true), eq(driverProfiles.driverStatus, 'authorised'));
     if (!canViewUnavailable) conditions.push(eq(driverProfiles.availabilityStatus, 'available'));
   }
   if (query) {
@@ -43,7 +41,13 @@ export async function GET(request: NextRequest) {
         ilike(employees.lastName, `%${query}%`),
         ilike(employees.employeeNumber, `%${query}%`),
         ilike(employees.email, `%${query}%`),
-        ilike(sql<string>`concat(${employees.firstName}, ' ', ${employees.lastName})`, `%${query}%`),
+        ilike(employees.phone, `%${query}%`),
+        ilike(departments.name, `%${query}%`),
+        ilike(offices.name, `%${query}%`),
+        ilike(
+          sql<string>`concat(${employees.firstName}, ' ', ${employees.lastName})`,
+          `%${query}%`,
+        ),
       )!,
     );
   }
@@ -72,9 +76,9 @@ export async function GET(request: NextRequest) {
     .limit(limit);
 
   const data = rows.map((row) => ({
-      ...row,
-      fullName: `${row.firstName} ${row.lastName}`.trim(),
-    }));
+    ...row,
+    fullName: `${row.firstName} ${row.lastName}`.trim(),
+  }));
 
   return NextResponse.json(
     { success: true, data },

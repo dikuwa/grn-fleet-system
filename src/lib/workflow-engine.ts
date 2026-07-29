@@ -43,6 +43,7 @@ import { workflowStepToStatus, workflowCompletedStatus } from '@/lib/request-sta
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { resolveRoleHolder } from '@/lib/employee-lifecycle';
 import { provisionTripAuthority, setAuthorityStatus } from '@/lib/trip-authority';
+import { userProfiles } from '@/db/schema/auth';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -516,6 +517,16 @@ export class WorkflowEngine {
         .from(employees)
         .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)))
         .limit(1);
+      const [signatureProfile] = await this.db
+        .select({
+          type: userProfiles.signatureType,
+          ref: userProfiles.signatureRef,
+          typedName: userProfiles.signatureTypedName,
+          confirmedAt: userProfiles.signatureConfirmedAt,
+        })
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, session.user.id))
+        .limit(1);
       const resolution = (currentStep.config || {}) as Record<string, unknown>;
       await this.db.insert(workflowActions).values({
         instanceId: instance.id,
@@ -528,6 +539,13 @@ export class WorkflowEngine {
           typeof resolution.delegationId === 'string' ? resolution.delegationId : null,
         isActing: resolution.isActing === true,
         comment: comment ?? null,
+        signatureRef:
+          signatureProfile?.confirmedAt &&
+          ['approved', 'released', 'authorised', 'acknowledged', 'overridden'].includes(result)
+            ? signatureProfile.type === 'typed'
+              ? `typed:${signatureProfile.typedName || session.user.name || 'Approved'}`
+              : signatureProfile.ref
+            : null,
         metadata: {
           resolvedCapacity: resolution.resolvedCapacity,
           resolvedRoleId: resolution.resolvedRoleId,
@@ -1166,7 +1184,8 @@ export class WorkflowEngine {
         eventType: params.action,
         tenantId,
         tenantSequence: Date.now(),
-        summary: params.metadata ? JSON.stringify(params.metadata) : null,
+        summary: `${params.entityType.replaceAll('_', ' ')} ${params.action.replaceAll('_', ' ')}`,
+        after: params.metadata || null,
       });
     } catch (err) {
       console.error('Failed to log workflow audit event:', err);

@@ -2,9 +2,11 @@
 
 import { getDb, isDbConnected } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
-import { eq, desc, and, sql, count } from 'drizzle-orm';
+import { user } from '@/db/schema/better-auth';
+import { tenants } from '@/db/schema/tenants';
+import { eq, desc, and, sql, count, gte, lte } from 'drizzle-orm';
 import Link from 'next/link';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -25,9 +27,21 @@ import { getServerSession } from '@/lib/session';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { groupedCountMap } from '@/lib/statistics';
+import { documentTypeLabel, formatDocumentStatus, formatHumanValue } from '@/lib/human-readable';
 
 interface PageProps {
-  searchParams: Promise<{ q?: string; type?: string; status?: string; page?: string }>;
+  searchParams: Promise<{
+    q?: string;
+    type?: string;
+    status?: string;
+    department?: string;
+    requester?: string;
+    vehicle?: string;
+    driver?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    page?: string;
+  }>;
 }
 
 const DOCUMENT_TYPE_ICONS: Record<string, typeof FileText> = {
@@ -57,6 +71,12 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
   const q = normalizeOptionalFilter(rawParams.q);
   const status = normalizeOptionalFilter(rawParams.status);
   const type = normalizeOptionalFilter(rawParams.type);
+  const department = normalizeOptionalFilter(rawParams.department);
+  const requester = normalizeOptionalFilter(rawParams.requester);
+  const vehicle = normalizeOptionalFilter(rawParams.vehicle);
+  const driver = normalizeOptionalFilter(rawParams.driver);
+  const dateFrom = normalizeOptionalFilter(rawParams.dateFrom);
+  const dateTo = normalizeOptionalFilter(rawParams.dateTo);
   const page = normalizeOptionalFilter(rawParams.page);
   const currentPage = Math.max(1, parseInt(page || '1', 10) || 1);
   const session = await getServerSession();
@@ -88,8 +108,19 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
     conditions.push(eq(generatedDocuments.status, status));
   }
   if (q) {
-    conditions.push(sql`${generatedDocuments.documentType}::text ILIKE ${`%${q}%`}`);
+    conditions.push(
+      sql`(${generatedDocuments.documentType}::text ILIKE ${`%${q}%`} OR ${generatedDocuments.snapshotData}::text ILIKE ${`%${q}%`})`,
+    );
   }
+  for (const value of [department, requester, vehicle, driver]) {
+    if (value) {
+      conditions.push(sql`${generatedDocuments.snapshotData}::text ILIKE ${`%${value}%`}`);
+    }
+  }
+  if (dateFrom)
+    conditions.push(gte(generatedDocuments.createdAt, new Date(`${dateFrom}T00:00:00`)));
+  if (dateTo)
+    conditions.push(lte(generatedDocuments.createdAt, new Date(`${dateTo}T23:59:59.999`)));
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -108,9 +139,15 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
     const counts = groupedCountMap(statusCounts);
     const overallTotal = [...counts.values()].reduce((sum, value) => sum + value, 0);
 
-    const docs = await db
-      .select()
+    const rows = await db
+      .select({
+        document: generatedDocuments,
+        creatorName: user.name,
+        tenantName: tenants.name,
+      })
       .from(generatedDocuments)
+      .leftJoin(user, eq(user.id, generatedDocuments.generatedByUserId))
+      .innerJoin(tenants, eq(tenants.id, generatedDocuments.tenantId))
       .where(where)
       .orderBy(desc(generatedDocuments.createdAt))
       .limit(DEFAULT_PAGE_SIZE)
@@ -186,7 +223,17 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
             <FilterToolbar
               action="/dashboard/documents"
               resetHref="/dashboard/documents"
-              isFiltered={hasActiveFilters({ q, status, type })}
+              isFiltered={hasActiveFilters({
+                q,
+                status,
+                type,
+                department,
+                requester,
+                vehicle,
+                driver,
+                dateFrom,
+                dateTo,
+              })}
               className="gap-3"
             >
               <div className="min-w-[200px] flex-1">
@@ -203,6 +250,29 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
                   ))}
                 </StyledSelect>
               </div>
+              {[
+                ['department', 'Department', department],
+                ['requester', 'Requester', requester],
+                ['vehicle', 'Vehicle', vehicle],
+                ['driver', 'Driver', driver],
+              ].map(([name, label, value]) => (
+                <div key={name} className="min-w-[150px]">
+                  <label className="text-ink-500 mb-1 block text-xs font-medium">{label}</label>
+                  <LiveSearchInput
+                    name={name}
+                    defaultValue={value || ''}
+                    placeholder={`${label}…`}
+                  />
+                </div>
+              ))}
+              <div>
+                <label className="text-ink-500 mb-1 block text-xs font-medium">From</label>
+                <StyledDateInput name="dateFrom" defaultValue={dateFrom || ''} />
+              </div>
+              <div>
+                <label className="text-ink-500 mb-1 block text-xs font-medium">To</label>
+                <StyledDateInput name="dateTo" defaultValue={dateTo || ''} />
+              </div>
               <div>
                 <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
                 <StyledSelect name="status" defaultValue={status || ''} placeholder="All Statuses">
@@ -218,7 +288,7 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
         {/* Documents List */}
         <Card>
           <CardContent className="p-0">
-            {docs.length === 0 ? (
+            {rows.length === 0 ? (
               <div className="py-12">
                 <EmptyState
                   icon={<FileText className="h-6 w-6" />}
@@ -232,8 +302,11 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
               </div>
             ) : (
               <div className="divide-border divide-y">
-                {docs.map((doc) => {
+                {rows.map(({ document: doc, creatorName, tenantName }) => {
                   const DocIcon = DOCUMENT_TYPE_ICONS[doc.documentType] || FileText;
+                  const snapshot = doc.snapshotData as Record<string, unknown>;
+                  const reference =
+                    snapshot.authorityNumber || snapshot.reference || snapshot.requestReference;
                   return (
                     <Link
                       key={doc.id}
@@ -246,7 +319,7 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className="text-ink-950 truncate text-sm font-medium">
-                            {DOCUMENT_TYPE_LABELS[doc.documentType] || doc.documentType}
+                            {documentTypeLabel(doc.documentType)}
                           </p>
                           <Badge
                             variant={
@@ -258,11 +331,13 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
                             }
                             size="sm"
                           >
-                            {doc.status}
+                            {formatDocumentStatus(doc.status)}
                           </Badge>
                         </div>
                         <p className="text-ink-500 mt-0.5 text-xs">
-                          v{doc.documentVersion} · {formatDate(doc.createdAt)}
+                          {reference ? `${formatHumanValue(reference)} · ` : ''}v
+                          {doc.documentVersion} · {tenantName} · {creatorName || 'GovFleet'} ·{' '}
+                          {formatDate(doc.createdAt)}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
@@ -290,6 +365,12 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
                       q: q || undefined,
                       type: type || undefined,
                       status: status || undefined,
+                      department: department || undefined,
+                      requester: requester || undefined,
+                      vehicle: vehicle || undefined,
+                      driver: driver || undefined,
+                      dateFrom: dateFrom || undefined,
+                      dateTo: dateTo || undefined,
                       page: String(currentPage - 1),
                     })}
                   >
@@ -304,6 +385,12 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
                       q: q || undefined,
                       type: type || undefined,
                       status: status || undefined,
+                      department: department || undefined,
+                      requester: requester || undefined,
+                      vehicle: vehicle || undefined,
+                      driver: driver || undefined,
+                      dateFrom: dateFrom || undefined,
+                      dateTo: dateTo || undefined,
                       page: String(currentPage + 1),
                     })}
                   >

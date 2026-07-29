@@ -66,6 +66,15 @@ interface AuditEvent {
   entity: string;
   severity: 'info' | 'warning' | 'critical';
   details: string;
+  technical: {
+    eventKey: string;
+    actorId: string;
+    targetId?: string;
+    sourceChannel?: string;
+    correlationId?: string;
+    before?: unknown;
+    after?: unknown;
+  };
 }
 
 const severityConfig: Record<Severity, { label: string; variant: 'info' | 'error' | 'pending' }> = {
@@ -153,21 +162,30 @@ export default function AuditLogPage() {
     const json = await res.json();
     if (!json?.success) throw new Error('Unable to load audit events');
 
-    const apiEvents = (json.data?.events || []).map((e: Record<string, string>) => ({
+    const apiEvents = (json.data?.events || []).map((e: Record<string, unknown>) => ({
       id: e.id,
-      timestamp: new Date(e.createdAt).toLocaleString('en-NA', {
+      timestamp: new Date(String(e.createdAt)).toLocaleString('en-NA', {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
       }),
-      eventType: (e.eventType || 'request') as EventType,
-      action: e.action || 'Event recorded',
-      actor: e.actorUserId || 'System',
-      entity: e.entityType || '—',
+      eventType: String(e.eventType || 'request').split('_')[0] as EventType,
+      action: String(e.displayTitle || 'Event recorded'),
+      actor: String(e.actorName || 'GovFleet'),
+      entity: String(e.entityType || 'Record').replaceAll('_', ' '),
       severity: 'info' as const,
-      details: e.summary || 'No details available.',
+      details: String(e.displayDescription || 'Event recorded.'),
+      technical: {
+        eventKey: String(e.eventType || ''),
+        actorId: String(e.actorUserId || ''),
+        targetId: e.entityId ? String(e.entityId) : undefined,
+        sourceChannel: e.sourceChannel ? String(e.sourceChannel) : undefined,
+        correlationId: e.correlationId ? String(e.correlationId) : undefined,
+        before: e.before,
+        after: e.after,
+      },
     }));
 
     if (append) {
@@ -408,6 +426,27 @@ export default function AuditLogPage() {
                           </span>
                         )}
                       </div>
+                      <details className="border-border bg-muted/40 mt-3 rounded-md border px-3 py-2">
+                        <summary className="focus-ring text-ink-600 cursor-pointer text-xs font-medium">
+                          Technical details
+                        </summary>
+                        <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                          {Object.entries(event.technical)
+                            .filter(([, value]) => value !== undefined && value !== null)
+                            .map(([key, value]) => (
+                              <div key={key} className="min-w-0">
+                                <dt className="text-ink-500 font-medium capitalize">
+                                  {key.replace(/([a-z])([A-Z])/g, '$1 $2')}
+                                </dt>
+                                <dd className="text-ink-700 mt-0.5 font-mono text-[11px] break-words">
+                                  {typeof value === 'object'
+                                    ? `${Object.keys(value as Record<string, unknown>).length} changed field(s)`
+                                    : String(value)}
+                                </dd>
+                              </div>
+                            ))}
+                        </dl>
+                      </details>
                     </div>
                   </div>
                 </CardContent>

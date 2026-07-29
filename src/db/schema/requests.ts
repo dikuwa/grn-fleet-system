@@ -96,6 +96,12 @@ export const requestPassengers = pgTable('request_passengers', {
     .references(() => transportRequests.id, { onDelete: 'cascade' }),
   employeeId: uuid('employee_id').references(() => employees.id),
   externalName: text('external_name'), // For non-employee passengers
+  externalIdReference: text('external_id_reference'),
+  externalOrganisation: text('external_organisation'),
+  externalPhone: text('external_phone'),
+  externalEmail: text('external_email'),
+  travellerRole: text('traveller_role').notNull().default('passenger'),
+  reasonForTravel: text('reason_for_travel'),
   status: text('status').notNull().default('confirmed'), // proposed, confirmed, removed
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -7,7 +7,7 @@ import type { NextRequest } from 'next/server';
  */
 const publicRoutes = [
   '/login',
-  '/api/auth',       // Better Auth handles auth internally
+  '/api/auth', // Better Auth handles auth internally
   '/_next/static',
   '/_next/image',
   '/favicon.ico',
@@ -15,6 +15,9 @@ const publicRoutes = [
   '/sw.js',
   '/images',
   '/request',
+  '/v',
+  '/share',
+  '/verify',
   '/staff-import-template.csv',
   '/vehicle-import-template.csv',
   '/office-import-template.csv',

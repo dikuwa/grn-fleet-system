@@ -40,6 +40,7 @@ export const Permissions = {
   TRIP_CLOSE: 'trip:close',
   TRIP_VIEW: 'trip:view',
   TRIP_MANAGE: 'trip:manage',
+  TRIP_AUTHORITY_OVERRIDE_NUMBER: 'tripAuthority:overrideNumber',
 
   // Drivers
   DRIVER_LOG_CREATE: 'driver:log-create',
@@ -135,6 +136,7 @@ export const RoleDefinitions = {
       Permissions.FUEL_MANAGE,
       Permissions.FUEL_VERIFY,
       Permissions.TRIP_VIEW,
+      Permissions.TRIP_AUTHORITY_OVERRIDE_NUMBER,
       Permissions.INSPECTION_VIEW,
       Permissions.INSPECTION_PERFORM,
       Permissions.MAINTENANCE_VIEW,

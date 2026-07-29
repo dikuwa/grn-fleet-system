@@ -1,4 +1,14 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, jsonb } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  boolean,
+  integer,
+  jsonb,
+  uniqueIndex,
+  index,
+} from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
 /**
@@ -29,24 +39,36 @@ export const generatedDocuments = pgTable('generated_documents', {
 /**
  * Secure share links
  */
-export const shareLinks = pgTable('share_links', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  documentId: uuid('document_id')
-    .notNull()
-    .references(() => generatedDocuments.id, { onDelete: 'cascade' }),
-  tokenHash: text('token_hash').notNull(),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-  isRevoked: boolean('is_revoked').notNull().default(false),
-  maxViews: integer('max_views'),
-  currentViews: integer('current_views').notNull().default(0),
-  redactionProfile: text('redaction_profile').notNull().default('external_standard'),
-  createdByUserId: text('created_by_user_id').notNull(),
-  lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const shareLinks = pgTable(
+  'share_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => generatedDocuments.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    shortSlug: text('short_slug'),
+    verificationCode: text('verification_code'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    isRevoked: boolean('is_revoked').notNull().default(false),
+    maxViews: integer('max_views'),
+    currentViews: integer('current_views').notNull().default(0),
+    redactionProfile: text('redaction_profile').notNull().default('external_standard'),
+    accessPolicy: jsonb('access_policy')
+      .$type<{ allowPreview?: boolean; allowDownload?: boolean }>()
+      .default({ allowPreview: true, allowDownload: false }),
+    createdByUserId: text('created_by_user_id').notNull(),
+    lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_share_links_short_slug').on(table.shortSlug),
+    index('idx_share_links_tenant_document').on(table.tenantId, table.documentId),
+  ],
+);
 
 /**
  * Share access events (audit log for external link access)

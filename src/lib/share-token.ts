@@ -12,9 +12,10 @@
  */
 
 import { env } from '@/env';
+import { randomBytes } from 'node:crypto';
 import { getDb } from '@/db';
 import { shareLinks, shareAccessEvents, generatedDocuments } from '@/db/schema/documents';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -23,6 +24,7 @@ import { eq, sql } from 'drizzle-orm';
 const TOKEN_BYTES = 32;
 const NONCE_BYTES = 16;
 const HASH_ALGORITHM = 'SHA-256';
+const SHORT_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -100,6 +102,34 @@ export async function generateShareToken(
   return { token, tokenHash };
 }
 
+function secureShortCode(length: number): string {
+  const bytes = randomBytes(length);
+  return Array.from(bytes, (byte) => SHORT_ALPHABET[byte % SHORT_ALPHABET.length]).join('');
+}
+
+export async function generateShortShareIdentity(prefix: string): Promise<{
+  shortSlug: string;
+  verificationCode: string;
+}> {
+  const db = getDb();
+  const safePrefix =
+    prefix
+      .replace(/[^a-z0-9]/gi, '')
+      .toUpperCase()
+      .slice(-8) || 'DOC';
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const verificationCode = secureShortCode(8);
+    const shortSlug = `${safePrefix}-${verificationCode}`;
+    const [collision] = await db
+      .select({ id: shareLinks.id })
+      .from(shareLinks)
+      .where(eq(shareLinks.shortSlug, shortSlug))
+      .limit(1);
+    if (!collision) return { shortSlug, verificationCode };
+  }
+  throw new Error('Unable to allocate a unique secure link');
+}
+
 /**
  * Verify a share token against its stored hash.
  */
@@ -110,10 +140,7 @@ export async function verifyShareToken(token: string): Promise<{
 }> {
   try {
     // Hash the provided token
-    const hashBytes = await crypto.subtle.digest(
-      HASH_ALGORITHM,
-      new TextEncoder().encode(token),
-    );
+    const hashBytes = await crypto.subtle.digest(HASH_ALGORITHM, new TextEncoder().encode(token));
     const tokenHash = bytesToBase64(new Uint8Array(hashBytes));
 
     // Look up by hash
@@ -168,14 +195,12 @@ export async function recordShareAccess(
   }
 
   // Insert audit event
-  await db
-    .insert(shareAccessEvents)
-    .values({
-      shareLinkId,
-      ipAddress: metadata?.ipAddress || null,
-      userAgent: metadata?.userAgent || null,
-      result,
-    });
+  await db.insert(shareAccessEvents).values({
+    shareLinkId,
+    ipAddress: metadata?.ipAddress || null,
+    userAgent: metadata?.userAgent || null,
+    result,
+  });
 }
 
 /**
@@ -207,4 +232,42 @@ export async function resolveSharedDocument(token: string): Promise<{
   await recordShareAccess(shareLink.id, 'granted');
 
   return { document: doc };
+}
+
+export async function resolveShortSharedDocument(shortSlug: string): Promise<{
+  document?: typeof generatedDocuments.$inferSelect;
+  shareLink?: typeof shareLinks.$inferSelect;
+  error?: string;
+}> {
+  const db = getDb();
+  const [shareLink] = await db
+    .select()
+    .from(shareLinks)
+    .where(eq(shareLinks.shortSlug, shortSlug.toUpperCase()))
+    .limit(1);
+  if (!shareLink) return { error: 'not_found' };
+  if (shareLink.isRevoked) {
+    await recordShareAccess(shareLink.id, 'revoked');
+    return { error: 'revoked', shareLink };
+  }
+  if (shareLink.expiresAt < new Date()) {
+    await recordShareAccess(shareLink.id, 'expired');
+    return { error: 'expired', shareLink };
+  }
+  if (shareLink.maxViews && shareLink.currentViews >= shareLink.maxViews) {
+    return { error: 'max_views_exceeded', shareLink };
+  }
+  const [document] = await db
+    .select()
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.id, shareLink.documentId),
+        eq(generatedDocuments.tenantId, shareLink.tenantId),
+      ),
+    )
+    .limit(1);
+  if (!document) return { error: 'document_not_found', shareLink };
+  await recordShareAccess(shareLink.id, 'granted');
+  return { document, shareLink };
 }

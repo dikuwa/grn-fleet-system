@@ -9,16 +9,23 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  User, Mail, Shield, Building2, Eye, EyeOff,
-  Loader2, Save, CheckCircle2, XCircle, KeyRound, Camera,
+  User,
+  Mail,
+  Shield,
+  Building2,
+  Eye,
+  EyeOff,
+  Loader2,
+  Save,
+  CheckCircle2,
+  XCircle,
+  KeyRound,
+  Camera,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
-import {
-  fetchUserProfile,
-  userProfileQueryKey,
-  type UserProfileData,
-} from '@/lib/user-profile';
+import { fetchUserProfile, userProfileQueryKey, type UserProfileData } from '@/lib/user-profile';
 import { UserAvatar } from '@/components/ui/user-avatar';
+import { SignatureProfile } from '@/components/profile/signature-profile';
 
 export default function UserProfilePage() {
   const { toast } = useToast();
@@ -48,7 +55,12 @@ export default function UserProfilePage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
 
-  const { data: profileData, isLoading, error, refetch } = useQuery({
+  const {
+    data: profileData,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: userProfileQueryKey,
     queryFn: ({ signal }) => fetchUserProfile(signal),
   });
@@ -58,7 +70,8 @@ export default function UserProfilePage() {
     const timer = window.setTimeout(() => {
       if (profileData) {
         if (profileData.name && !editName) setEditName(profileData.name);
-        if (profileData.profile?.displayName && !displayName) setDisplayName(profileData.profile.displayName);
+        if (profileData.profile?.displayName && !displayName)
+          setDisplayName(profileData.profile.displayName);
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -69,7 +82,11 @@ export default function UserProfilePage() {
     if (!file) return;
 
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      toast({ title: 'Invalid Format', description: 'Only JPEG, PNG, and WebP images are allowed.', variant: 'error' });
+      toast({
+        title: 'Invalid Format',
+        description: 'Only JPEG, PNG, and WebP images are allowed.',
+        variant: 'error',
+      });
       return;
     }
     if (file.size > 2 * 1024 * 1024) {
@@ -93,14 +110,22 @@ export default function UserProfilePage() {
       .then(async (res) => {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Failed to upload photo');
-        queryClient.setQueryData<UserProfileData>(userProfileQueryKey, (current) => (
-          current ? { ...current, image: json.data.imageUrl } : current
-        ));
+        queryClient.setQueryData<UserProfileData>(userProfileQueryKey, (current) =>
+          current ? { ...current, image: json.data.imageUrl } : current,
+        );
         await queryClient.refetchQueries({ queryKey: userProfileQueryKey, type: 'active' });
-        toast({ title: 'Photo Updated', description: 'Your profile photo has been uploaded.', variant: 'success' });
+        toast({
+          title: 'Photo Updated',
+          description: 'Your profile photo has been uploaded.',
+          variant: 'success',
+        });
       })
       .catch((err) => {
-        toast({ title: 'Upload Failed', description: err instanceof Error ? err.message : 'Failed to upload photo', variant: 'error' });
+        toast({
+          title: 'Upload Failed',
+          description: err instanceof Error ? err.message : 'Failed to upload photo',
+          variant: 'error',
+        });
       })
       .finally(() => {
         setUploadingPhoto(false);
@@ -116,13 +141,21 @@ export default function UserProfilePage() {
       const res = await fetch('/api/users/upload-avatar', { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to remove photo');
-      queryClient.setQueryData<UserProfileData>(userProfileQueryKey, (current) => (
-        current ? { ...current, image: null } : current
-      ));
+      queryClient.setQueryData<UserProfileData>(userProfileQueryKey, (current) =>
+        current ? { ...current, image: null } : current,
+      );
       await queryClient.refetchQueries({ queryKey: userProfileQueryKey, type: 'active' });
-      toast({ title: 'Photo Removed', description: 'Your profile photo has been removed.', variant: 'success' });
+      toast({
+        title: 'Photo Removed',
+        description: 'Your profile photo has been removed.',
+        variant: 'success',
+      });
     } catch (err) {
-      toast({ title: 'Remove Failed', description: err instanceof Error ? err.message : 'Failed to remove photo', variant: 'error' });
+      toast({
+        title: 'Remove Failed',
+        description: err instanceof Error ? err.message : 'Failed to remove photo',
+        variant: 'error',
+      });
     } finally {
       setUploadingPhoto(false);
     }
@@ -142,7 +175,11 @@ export default function UserProfilePage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update profile');
       await queryClient.invalidateQueries({ queryKey: userProfileQueryKey });
-      toast({ title: 'Profile Updated', description: 'Your profile has been saved.', variant: 'success' });
+      toast({
+        title: 'Profile Updated',
+        description: 'Your profile has been saved.',
+        variant: 'success',
+      });
     } catch (err) {
       toast({
         title: 'Update Failed',
@@ -156,11 +193,19 @@ export default function UserProfilePage() {
 
   const handleChangePassword = async () => {
     if (newPassword !== confirmPassword) {
-      toast({ title: 'Passwords do not match', description: 'New password and confirmation must match.', variant: 'error' });
+      toast({
+        title: 'Passwords do not match',
+        description: 'New password and confirmation must match.',
+        variant: 'error',
+      });
       return;
     }
     if (newPassword.length < 6) {
-      toast({ title: 'Password Too Short', description: 'Password must be at least 6 characters.', variant: 'error' });
+      toast({
+        title: 'Password Too Short',
+        description: 'Password must be at least 6 characters.',
+        variant: 'error',
+      });
       return;
     }
 
@@ -173,7 +218,11 @@ export default function UserProfilePage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to change password');
-      toast({ title: 'Password Changed', description: 'Your password has been updated successfully.', variant: 'success' });
+      toast({
+        title: 'Password Changed',
+        description: 'Your password has been updated successfully.',
+        variant: 'success',
+      });
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
@@ -192,7 +241,7 @@ export default function UserProfilePage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
+        <Loader2 className="text-ink-400 h-6 w-6 animate-spin" />
       </div>
     );
   }
@@ -201,8 +250,14 @@ export default function UserProfilePage() {
     return (
       <div className="space-y-6">
         <PageHeader title="My Profile" />
-        <EmptyState icon={<User className="h-6 w-6" />} title="Failed to load profile" description={error instanceof Error ? error.message : 'Please try again.'} />
-        <Button variant="secondary" size="sm" onClick={() => refetch()}>Retry</Button>
+        <EmptyState
+          icon={<User className="h-6 w-6" />}
+          title="Failed to load profile"
+          description={error instanceof Error ? error.message : 'Please try again.'}
+        />
+        <Button variant="secondary" size="sm" onClick={() => refetch()}>
+          Retry
+        </Button>
       </div>
     );
   }
@@ -211,14 +266,8 @@ export default function UserProfilePage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'My Profile' },
-      ]} />
-      <PageHeader
-        title="My Profile"
-        description="Manage your account details and preferences"
-      />
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'My Profile' }]} />
+      <PageHeader title="My Profile" description="Manage your account details and preferences" />
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Profile Summary Sidebar */}
@@ -227,8 +276,12 @@ export default function UserProfilePage() {
             <div className="flex flex-col items-center text-center">
               <div className="relative mb-4">
                 {previewUrl ? (
-                  <div className="h-24 w-24 overflow-hidden rounded-full bg-brand-50">
-                    <img src={previewUrl} alt="New profile photo preview" className="h-full w-full animate-pulse object-cover" />
+                  <div className="bg-brand-50 h-24 w-24 overflow-hidden rounded-full">
+                    <img
+                      src={previewUrl}
+                      alt="New profile photo preview"
+                      className="h-full w-full animate-pulse object-cover"
+                    />
                   </div>
                 ) : (
                   <UserAvatar
@@ -244,11 +297,11 @@ export default function UserProfilePage() {
                   className="hidden"
                   onChange={handlePhotoFileSelect}
                 />
-                <div className="absolute bottom-0 right-0 flex">
+                <div className="absolute right-0 bottom-0 flex">
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploadingPhoto}
-                    className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-ink-500 hover:text-ink-700 hover:bg-muted transition-colors shadow-sm"
+                    className="border-border bg-surface text-ink-500 hover:text-ink-700 hover:bg-muted flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-colors"
                     title="Change profile photo"
                   >
                     {uploadingPhoto ? (
@@ -260,7 +313,7 @@ export default function UserProfilePage() {
                   {profileData.image && (
                     <button
                       onClick={handleRemovePhoto}
-                      className="ml-1 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-status-error-text hover:bg-status-error-bg transition-colors shadow-sm"
+                      className="border-border bg-surface text-status-error-text hover:bg-status-error-bg ml-1 flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-colors"
                       title="Remove profile photo"
                     >
                       <XCircle className="h-4 w-4" />
@@ -268,10 +321,12 @@ export default function UserProfilePage() {
                   )}
                 </div>
               </div>
-              <h2 className="text-lg font-semibold text-ink-950">{profileData.name || 'Unnamed'}</h2>
-              <p className="text-sm text-ink-500">{profileData.email}</p>
+              <h2 className="text-ink-950 text-lg font-semibold">
+                {profileData.name || 'Unnamed'}
+              </h2>
+              <p className="text-ink-500 text-sm">{profileData.email}</p>
               {profileData.employee && (
-                <p className="text-xs text-ink-400 mt-1">
+                <p className="text-ink-400 mt-1 text-xs">
                   {profileData.employee.jobTitle || 'No title'}
                 </p>
               )}
@@ -280,24 +335,33 @@ export default function UserProfilePage() {
               <div className="mt-4 flex flex-wrap justify-center gap-1.5">
                 {profileData.roles.map((r, i) => (
                   <Badge key={i} variant={r.isActing ? 'pending' : 'info'} size="sm">
-                    {r.roleName}{r.isActing ? ' (acting)' : ''}
+                    {r.roleName}
+                    {r.isActing ? ' (acting)' : ''}
                   </Badge>
                 ))}
               </div>
 
               {/* Tenant info */}
-              <div className="mt-4 w-full border-t border-border pt-4 space-y-2 text-left">
-                <div className="flex items-center gap-2 text-xs text-ink-500">
+              <div className="border-border mt-4 w-full space-y-2 border-t pt-4 text-left">
+                <div className="text-ink-500 flex items-center gap-2 text-xs">
                   <Building2 className="h-3.5 w-3.5 shrink-0" />
-                  <span>Tenant: <span className="font-medium text-ink-700">{profileData.tenantSlug}</span></span>
+                  <span>
+                    Tenant:{' '}
+                    <span className="text-ink-700 font-medium">{profileData.tenantSlug}</span>
+                  </span>
                 </div>
                 {profileData.employee && (
-                  <div className="flex items-center gap-2 text-xs text-ink-500">
+                  <div className="text-ink-500 flex items-center gap-2 text-xs">
                     <User className="h-3.5 w-3.5 shrink-0" />
-                    <span>Employee: <span className="font-medium text-ink-700">{profileData.employee.employeeNumber}</span></span>
+                    <span>
+                      Employee:{' '}
+                      <span className="text-ink-700 font-medium">
+                        {profileData.employee.employeeNumber}
+                      </span>
+                    </span>
                   </div>
                 )}
-                <div className="flex items-center gap-2 text-xs text-ink-500">
+                <div className="text-ink-500 flex items-center gap-2 text-xs">
                   <Mail className="h-3.5 w-3.5 shrink-0" />
                   <span>Verified: {profileData.emailVerified ? 'Yes' : 'No'}</span>
                 </div>
@@ -307,7 +371,7 @@ export default function UserProfilePage() {
         </Card>
 
         {/* Main Content */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="space-y-6 lg:col-span-2">
           {/* Personal Details */}
           <Card>
             <CardHeader>
@@ -332,24 +396,32 @@ export default function UserProfilePage() {
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="How others see you"
                 />
-                <p className="text-xs text-ink-400">Optional. If not set, your full name is used.</p>
+                <p className="text-ink-400 text-xs">
+                  Optional. If not set, your full name is used.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label>Email</Label>
                 <Input value={profileData.email} disabled className="bg-muted" />
-                <p className="text-xs text-ink-400">Email cannot be changed. Contact your administrator.</p>
+                <p className="text-ink-400 text-xs">
+                  Email cannot be changed. Contact your administrator.
+                </p>
               </div>
 
               <div className="flex justify-end pt-2">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleSaveProfile}
-                  loading={isSaving}
-                >
+                <Button variant="primary" size="sm" onClick={handleSaveProfile} loading={isSaving}>
                   <Save className="h-4 w-4" /> Save Changes
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Digital Signature</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <SignatureProfile defaultName={profileData.name || ''} />
             </CardContent>
           </Card>
 
@@ -381,9 +453,13 @@ export default function UserProfilePage() {
                   <button
                     type="button"
                     onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-500 hover:text-ink-700"
+                    className="text-ink-500 hover:text-ink-700 absolute top-1/2 right-3 -translate-y-1/2"
                   >
-                    {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showCurrentPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
                   </button>
                 </div>
               </div>
@@ -399,7 +475,7 @@ export default function UserProfilePage() {
                   <button
                     type="button"
                     onClick={() => setShowNewPassword(!showNewPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-500 hover:text-ink-700"
+                    className="text-ink-500 hover:text-ink-700 absolute top-1/2 right-3 -translate-y-1/2"
                   >
                     {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
@@ -417,9 +493,13 @@ export default function UserProfilePage() {
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-500 hover:text-ink-700"
+                    className="text-ink-500 hover:text-ink-700 absolute top-1/2 right-3 -translate-y-1/2"
                   >
-                    {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showConfirmPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
                   </button>
                 </div>
               </div>

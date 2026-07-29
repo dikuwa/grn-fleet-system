@@ -5,8 +5,9 @@ import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { APP_NAME } from '@/lib/constants';
 import { createHash } from 'node:crypto';
-import QRCode from 'qrcode';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
+import { TenantLogo } from '@/components/documents/tenant-logo';
+import { documentTypeLabel, formatDocumentStatus } from '@/lib/human-readable';
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -71,17 +72,6 @@ async function resolveSharedDocument(token: string) {
   };
 }
 
-const DOCUMENT_TYPE_LABELS: Record<string, string> = {
-  transport_request: 'Transport Request',
-  trip_authority: 'Trip Authority',
-  vehicle_allocation: 'Vehicle Allocation',
-  fuel_summary: 'Fuel Summary',
-  inspection_report: 'Inspection Report',
-  trip_completion: 'Trip Completion Report',
-  maintenance_report: 'Maintenance Report',
-  audit_report: 'Audit Report',
-};
-
 export default async function SharePage({ params }: PageProps) {
   const { token } = await params;
   const data = await resolveSharedDocument(token);
@@ -90,61 +80,60 @@ export default async function SharePage({ params }: PageProps) {
     notFound();
   }
 
-  const brandColor = data.tenant.brandColor || '#2563eb';
-  const docTypeLabel = DOCUMENT_TYPE_LABELS[data.documentType] || data.documentType;
-
-  // Generate QR code for the verification URL
-  let qrCodeDataUrl: string | null = null;
-  try {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const verificationUrl = `${baseUrl}/share/${token}`;
-    qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, {
-      width: 180,
-      margin: 1,
-      color: { dark: '#1F4E8C', light: '#FFFFFF' },
-    });
-  } catch {
-    // QR generation failed silently
-  }
+  const docTypeLabel = documentTypeLabel(data.documentType);
 
   const verificationStatus = data.isRevoked
-    ? { label: 'Revoked', color: 'text-status-error-text bg-status-error-bg border-status-error-border' }
+    ? {
+        label: 'Revoked',
+        color: 'text-status-error-text bg-status-error-bg border-status-error-border',
+      }
     : data.isExpired
-      ? { label: 'Expired', color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg' }
-      : { label: 'Active', color: 'text-status-success-text bg-status-success-bg border-status-success-border' };
+      ? {
+          label: 'Expired',
+          color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg',
+        }
+      : data.status === 'draft'
+        ? {
+            label: 'Draft — not issued',
+            color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg',
+          }
+        : data.status === 'superseded'
+          ? {
+              label: 'Superseded',
+              color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg',
+            }
+          : {
+              label: 'Verified and active',
+              color: 'text-status-success-text bg-status-success-bg border-status-success-border',
+            };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-canvas p-4">
-      <div className="absolute right-4 top-4"><PublicThemeToggle /></div>
+    <div className="bg-canvas relative flex min-h-screen items-center justify-center p-4">
+      <div className="absolute top-4 right-4">
+        <PublicThemeToggle />
+      </div>
       <div className="w-full max-w-lg">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-surface shadow-sm mb-4">
-            {data.tenant.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={data.tenant.logoUrl} alt="" className="w-10 h-10 object-contain" />
-            ) : (
-              <div
-                className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold"
-                style={{ backgroundColor: brandColor }}
-              >
-                {data.tenant.code.charAt(0)}
-              </div>
-            )}
+        <div className="mb-8 text-center">
+          <div className="bg-surface mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full shadow-sm">
+            <TenantLogo
+              src={data.tenant.logoUrl}
+              organisationName={data.tenant.name}
+              code={data.tenant.code}
+              className="h-10 w-10"
+            />
           </div>
-          <h1 className="text-xl font-semibold text-ink-950">
-            {data.tenant.name}
-          </h1>
-          <p className="text-sm text-ink-500 mt-1">{APP_NAME}</p>
+          <h1 className="text-ink-950 text-xl font-semibold">{data.tenant.name}</h1>
+          <p className="text-ink-500 mt-1 text-sm">{APP_NAME}</p>
         </div>
 
         {/* Verification Card */}
-        <div className="bg-surface rounded-2xl shadow-sm border border-border p-6 space-y-6">
+        <div className="bg-surface border-border space-y-6 rounded-2xl border p-6 shadow-sm">
           {/* Status Badge */}
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-ink-700">Document Verification</h2>
+            <h2 className="text-ink-700 text-sm font-medium">Document Verification</h2>
             <span
-              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${verificationStatus.color}`}
+              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${verificationStatus.color}`}
             >
               {verificationStatus.label}
             </span>
@@ -152,21 +141,23 @@ export default async function SharePage({ params }: PageProps) {
 
           {/* Document Info */}
           <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-border">
-              <span className="text-sm text-ink-500">Document Type</span>
-              <span className="text-sm font-medium text-ink-950">{docTypeLabel}</span>
+            <div className="border-border flex justify-between border-b py-2">
+              <span className="text-ink-500 text-sm">Document Type</span>
+              <span className="text-ink-950 text-sm font-medium">{docTypeLabel}</span>
             </div>
-            <div className="flex justify-between py-2 border-b border-border">
-              <span className="text-sm text-ink-500">Version</span>
-              <span className="text-sm font-medium text-ink-950">v{data.documentVersion}</span>
+            <div className="border-border flex justify-between border-b py-2">
+              <span className="text-ink-500 text-sm">Version</span>
+              <span className="text-ink-950 text-sm font-medium">v{data.documentVersion}</span>
             </div>
-            <div className="flex justify-between py-2 border-b border-border">
-              <span className="text-sm text-ink-500">Status</span>
-              <span className="text-sm font-medium text-ink-950 capitalize">{data.status}</span>
+            <div className="border-border flex justify-between border-b py-2">
+              <span className="text-ink-500 text-sm">Status</span>
+              <span className="text-ink-950 text-sm font-medium">
+                {formatDocumentStatus(data.status)}
+              </span>
             </div>
-            <div className="flex justify-between py-2 border-b border-border">
-              <span className="text-sm text-ink-500">Issued</span>
-              <span className="text-sm font-medium text-ink-950">
+            <div className="border-border flex justify-between border-b py-2">
+              <span className="text-ink-500 text-sm">Issued</span>
+              <span className="text-ink-950 text-sm font-medium">
                 {new Date(data.createdAt).toLocaleDateString('en-NA', {
                   year: 'numeric',
                   month: 'long',
@@ -175,9 +166,9 @@ export default async function SharePage({ params }: PageProps) {
               </span>
             </div>
             {data.maxViews && (
-              <div className="flex justify-between border-b border-border py-2">
-                <span className="text-sm text-ink-500">Views</span>
-                <span className="text-sm font-medium text-ink-950">
+              <div className="border-border flex justify-between border-b py-2">
+                <span className="text-ink-500 text-sm">Views</span>
+                <span className="text-ink-950 text-sm font-medium">
                   {data.currentViews} / {data.maxViews}
                 </span>
               </div>
@@ -185,9 +176,9 @@ export default async function SharePage({ params }: PageProps) {
           </div>
 
           {/* Validity Period */}
-          <div className="rounded-xl bg-muted p-4">
-            <p className="mb-1 text-xs text-ink-500">Validity</p>
-            <p className="text-sm text-ink-700">
+          <div className="bg-muted rounded-xl p-4">
+            <p className="text-ink-500 mb-1 text-xs">Validity</p>
+            <p className="text-ink-700 text-sm">
               Created {new Date(data.linkCreatedAt).toLocaleDateString('en-NA')}
               {' — '}
               Expires {new Date(data.expiresAt).toLocaleDateString('en-NA')}
@@ -195,10 +186,20 @@ export default async function SharePage({ params }: PageProps) {
           </div>
 
           {/* Verification Seal */}
-          <div className="text-center pt-2">
-            <div className="inline-flex items-center gap-2 text-xs text-ink-500">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          <div className="pt-2 text-center">
+            <div className="text-ink-500 inline-flex items-center gap-2 text-xs">
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                />
               </svg>
               <span>Digitally Verified — {APP_NAME}</span>
             </div>
@@ -206,10 +207,10 @@ export default async function SharePage({ params }: PageProps) {
         </div>
 
         {/* Footer */}
-        <p className="mt-6 text-center text-xs text-ink-500">
+        <p className="text-ink-500 mt-6 text-center text-xs">
           This verification page confirms the authenticity of a government fleet document.
           {data.status === 'superseded' && (
-            <span className="block mt-1 text-amber-500">
+            <span className="mt-1 block text-amber-500">
               Note: This document has been superseded by a newer version.
             </span>
           )}
