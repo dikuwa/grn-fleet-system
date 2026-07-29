@@ -49,6 +49,7 @@ import {
 } from '@/components/ui/dialog';
 import { StyledDateInput } from '@/components/ui/styled-select';
 import { FieldWrapper } from '@/components/ui/input';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 type NotificationType = 'all' | 'action_required' | 'awareness' | 'reminder' | 'escalation' | 'outcome';
 type NotificationFilter = 'all' | 'unread' | 'read';
@@ -104,6 +105,8 @@ export default function NotificationsPage() {
   const [quietHoursStart, setQuietHoursStart] = useState('20:00');
   const [quietHoursEnd, setQuietHoursEnd] = useState('07:00');
   const [savingPreferences, setSavingPreferences] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [clearAllConfirm, setClearAllConfirm] = useState(false);
   const notificationQuery = useQuery({
     queryKey: notificationQueryKey,
     queryFn: ({ signal }) => fetchNotifications(signal),
@@ -278,7 +281,7 @@ export default function NotificationsPage() {
             Mark All Read
           </Button>
           {notifications.length > 0 && (
-            <Button variant="secondary" size="sm" onClick={clearAll}>
+            <Button variant="secondary" size="sm" onClick={() => setClearAllConfirm(true)}>
               <Trash2 className="h-4 w-4" />
               Clear All
             </Button>
@@ -414,7 +417,7 @@ export default function NotificationsPage() {
                     )}
                     <button
                       onClick={() => {
-                        if (confirm('Delete this notification?')) deleteOne(notification.id);
+                        setDeleteTarget(notification.id);
                       }}
                       aria-label="Delete notification"
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-300 hover:bg-status-error-bg hover:text-status-error-text transition-colors"
@@ -429,6 +432,40 @@ export default function NotificationsPage() {
           })}
         </div>
       )}
+      {/* Delete confirmation dialog */}
+      {deleteTarget && (
+        <ConfirmDialog
+          open={!!deleteTarget}
+          onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+          title="Delete notification"
+          description="This notification will be removed from your notification list."
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          variant="destructive"
+          onConfirm={async () => {
+            if (deleteTarget) {
+              await deleteOne(deleteTarget);
+              setDeleteTarget(null);
+            }
+          }}
+        />
+      )}
+
+      {/* Clear all confirmation dialog */}
+      <ConfirmDialog
+        open={clearAllConfirm}
+        onOpenChange={setClearAllConfirm}
+        title="Clear all notifications"
+        description="All your notifications will be permanently removed. This action cannot be undone."
+        confirmLabel="Clear All"
+        cancelLabel="Cancel"
+        variant="destructive"
+        onConfirm={async () => {
+          await clearAll();
+          setClearAllConfirm(false);
+        }}
+      />
+
       <Dialog open={preferencesOpen} onOpenChange={setPreferencesOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>

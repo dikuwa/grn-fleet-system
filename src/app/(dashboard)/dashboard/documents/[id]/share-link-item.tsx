@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle2, Copy, Link2, Loader2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { useToast } from '@/lib/use-toast';
 
@@ -29,6 +30,7 @@ export function ShareLinkItem({
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const [revokeConfirmOpen, setRevokeConfirmOpen] = useState(false);
 
   const copy = async () => {
     await navigator.clipboard.writeText(shareUrl);
@@ -38,7 +40,6 @@ export function ShareLinkItem({
   };
 
   const revoke = async () => {
-    if (!window.confirm('Revoke this secure link immediately?')) return;
     setRevoking(true);
     const response = await fetch(`/api/share-links?linkId=${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -58,6 +59,17 @@ export function ShareLinkItem({
   };
 
   return (
+    <>
+      <ConfirmDialog
+        open={revokeConfirmOpen}
+        onOpenChange={setRevokeConfirmOpen}
+        title="Revoke secure link"
+        description="This will permanently disable this secure link. Anyone using this link will no longer be able to access the document."
+        confirmLabel="Revoke"
+        cancelLabel="Cancel"
+        variant="destructive"
+        onConfirm={revoke}
+      />
     <div className="border-border bg-muted/30 flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
@@ -85,7 +97,7 @@ export function ShareLinkItem({
           variant="secondary"
           size="sm"
           className="text-status-error-text"
-          onClick={revoke}
+          onClick={() => setRevokeConfirmOpen(true)}
           disabled={revoking}
           aria-label="Revoke secure link"
         >
@@ -93,5 +105,6 @@ export function ShareLinkItem({
         </Button>
       </div>
     </div>
+    </>
   );
 }
