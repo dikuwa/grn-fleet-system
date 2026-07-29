@@ -6,9 +6,16 @@ async function signIn(page: Page) {
   const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
-  const res = await page.request.post(`${BASE}/api/auth/sign-in`, {
+  let res = await page.request.post(`${BASE}/api/auth/sign-in`, {
     data: { email, password },
   });
+  // Retry on rate limit (429) with backoff
+  for (let attempt = 0; attempt < 5 && res.status() === 429; attempt++) {
+    await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+    res = await page.request.post(`${BASE}/api/auth/sign-in`, {
+      data: { email, password },
+    });
+  }
   expect(res.status()).toBe(200);
   const body = await res.json();
   const token = body.token || body.session?.token;

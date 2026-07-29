@@ -78,6 +78,7 @@ export function formatHumanValue(value: unknown, key = ''): string {
   if (typeof value === 'number') {
     if (/amount|cost|price|reimbursement/i.test(key)) return formatMoney(value);
     if (/kilomet|distance|odometer/i.test(key)) return `${value.toLocaleString('en-NA')} km`;
+    if (/fuel|litre|volume/i.test(key)) return `${value.toLocaleString('en-NA')} L`;
     return value.toLocaleString('en-NA');
   }
   if (Array.isArray(value))

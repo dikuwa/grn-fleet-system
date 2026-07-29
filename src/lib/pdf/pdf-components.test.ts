@@ -1029,7 +1029,7 @@ describe('Document edge cases', () => {
       expect(formatHumanValue(100, 'kilometres')).toBe('100 km');
       expect(formatHumanValue(0, 'cost')).toContain('0.00');
       expect(formatHumanValue(1200, 'cost')).toContain('1,200');
-      expect(formatHumanValue(45.5, 'fuel')).toBe('45.5');
+      expect(formatHumanValue(45.5, 'fuel')).toBe('45.5 L');
     });
 
     it('formatHumanDate handles invalid date inputs gracefully', async () => {

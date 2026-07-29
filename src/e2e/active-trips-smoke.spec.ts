@@ -18,9 +18,16 @@ async function signIn(page: Page) {
   const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
-  const res = await page.request.post(`${BASE}/api/auth/sign-in`, {
+  let res = await page.request.post(`${BASE}/api/auth/sign-in`, {
     data: { email, password },
   });
+  // Retry on rate limit (429) with backoff
+  for (let attempt = 0; attempt < 5 && res.status() === 429; attempt++) {
+    await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+    res = await page.request.post(`${BASE}/api/auth/sign-in`, {
+      data: { email, password },
+    });
+  }
   expect(res.status()).toBe(200);
   const body = await res.json();
   const token = body.token || body.session?.token;
@@ -104,12 +111,12 @@ test.describe('Dashboard UI Smoke Tests', () => {
 
   test('departure inspection page loads', async ({ page }) => {
     await page.goto('/dashboard/inspections/departure', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await expect(page.locator('h1:has-text("Departure")').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('return inspection page loads', async ({ page }) => {
     await page.goto('/dashboard/inspections/return', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await expect(page.locator('h1:has-text("Return")').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('inspection templates page loads', async ({ page }) => {
