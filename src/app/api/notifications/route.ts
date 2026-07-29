@@ -346,9 +346,9 @@ export async function POST(request: NextRequest) {
 /**
  * DELETE /api/notifications
  *
- * Delete one or all notifications for the authenticated user.
- * - With ?id=uuid: delete that specific user-owned notification
- * - Without id: clear all user-owned notifications (soft-delete from view)
+ * Delete or dismiss notifications for the authenticated user.
+ * - With ?id=uuid: delete that specific notification (user-scoped) or dismiss it (shared)
+ * - Without id: clear all notifications this user is eligible to see
  */
 export async function DELETE(request: NextRequest) {
   try {
@@ -361,34 +361,47 @@ export async function DELETE(request: NextRequest) {
     const notificationId = searchParams.get('id');
 
     const db = getDb();
+    const roleNames = await getSessionRoleNames(session);
+    const isPlatformAdministrator = roleNames.includes(SystemRoles.PLATFORM_ADMIN);
+    const [employee] = await db.select({
+      departmentId: employees.departmentId,
+      officeId: employees.officeId,
+    }).from(employees)
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, userId)))
+      .limit(1);
+    // Same audience scoping as GET — only notifications this user can see
+    const sharedAudienceCondition = isPlatformAdministrator
+      ? or(
+          eq(notifications.audience, 'platform'),
+          and(eq(notifications.audience, 'user'), eq(notifications.recipientUserId, userId)),
+        )
+      : or(
+          and(eq(notifications.audience, 'user'), eq(notifications.recipientUserId, userId)),
+          eq(notifications.audience, 'tenant'),
+          ...(roleNames.includes(SystemRoles.TENANT_ADMIN) ? [eq(notifications.audience, 'tenant_admin')] : []),
+          ...(roleNames.length ? [and(eq(notifications.audience, 'role'), inArray(notifications.audienceTarget, roleNames))!] : []),
+          ...(employee?.departmentId ? [and(eq(notifications.audience, 'department'), eq(notifications.audienceTarget, employee.departmentId))!] : []),
+          ...(employee?.officeId ? [and(eq(notifications.audience, 'office'), eq(notifications.audienceTarget, employee.officeId))!] : []),
+        );
+    const userScopedCondition = and(
+      eq(notifications.tenantId, tenantId),
+      sharedAudienceCondition,
+    );
 
     if (notificationId) {
-      // Look up the notification (broader scope — user can dismiss any notification
-      // they are eligible to see in the GET feed)
+      // Look up notification — must be in this user's audience
       const [item] = await db
         .select({ id: notifications.id, audience: notifications.audience })
         .from(notifications)
-        .where(and(eq(notifications.id, notificationId), eq(notifications.tenantId, tenantId)))
+        .where(and(eq(notifications.id, notificationId), userScopedCondition))
         .limit(1);
       if (!item) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
 
       if (item.audience === 'user') {
-        // User-scoped: hard delete (cascade removes reads + deliveries)
-        const [ownership] = await db
-          .select({ id: notifications.id })
-          .from(notifications)
-          .where(
-            and(
-              eq(notifications.id, notificationId),
-              eq(notifications.recipientUserId, userId),
-            ),
-          )
-          .limit(1);
-        if (!ownership) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
+        // User-scoped: hard delete
         await db.delete(notifications).where(eq(notifications.id, notificationId));
       } else {
-        // Shared audience (role, tenant, department, office, platform):
-        // dismiss for this user only — don't affect other users
+        // Shared audience: dismiss for this user only
         await db
           .insert(notificationDismissals)
           .values({ notificationId, userId })
@@ -403,7 +416,7 @@ export async function DELETE(request: NextRequest) {
           eq(notifications.recipientUserId, userId),
         ),
       );
-      // Dismiss all shared notifications for this user
+      // Dismiss only the shared notifications this user can see
       const sharedItems = await db
         .select({ id: notifications.id })
         .from(notifications)
@@ -411,6 +424,7 @@ export async function DELETE(request: NextRequest) {
           and(
             eq(notifications.tenantId, tenantId),
             ne(notifications.audience, 'user'),
+            sharedAudienceCondition,
           ),
         );
       if (sharedItems.length) {
