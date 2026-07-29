@@ -6,6 +6,7 @@
  */
 
 import React from 'react';
+import { Document } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 import {
   DocumentPage,
@@ -81,61 +82,63 @@ export function DriverLicenceDocument({ data }: { data: DriverLicenceData }) {
   );
 
   return (
-    <DocumentPage status={status === 'draft' ? 'draft' : undefined}>
-      {/* ===== HEADER ===== */}
-      <DocumentHeader
-        branding={branding}
-        title="Driving Licence"
-        reference={licenceNumber}
-        version={documentVersion}
-        status={isExpired ? 'EXPIRED' : daysLeft <= 30 ? 'EXPIRING' : 'VALID'}
-        issueDate={generatedAt.split('T')[0]}
-        qrCode={qrCode}
-      />
-
-      {/* ===== LICENCE DETAILS ===== */}
-      <DocumentSection title="Licence Details">
-        <DocumentFieldGrid
-          fields={[
-            { label: 'Holder Name', value: holderName },
-            { label: 'Licence Number', value: licenceNumber },
-            { label: 'Licence Class', value: licenceClass },
-            { label: 'Issue Date', value: issueDate },
-            { label: 'Expiry Date', value: expiryDate },
-            { label: 'Status', value: isExpired ? 'Expired' : daysLeft <= 30 ? `Expiring (${daysLeft} days)` : 'Valid' },
-            ...(issueNumber ? [{ label: 'Issue Number', value: issueNumber }] : []),
-            ...(driverRestrictionCode ? [{ label: 'Restriction Code', value: driverRestrictionCode }] : []),
-            ...(allowedVehicleCategories ? [{ label: 'Vehicle Categories', value: allowedVehicleCategories }] : []),
-            ...(nationalIdNumber ? [{ label: 'National ID', value: `••••${nationalIdNumber.slice(-4)}` }] : []),
-          ]}
+    <Document title={`Driving Licence — ${licenceNumber}`}>
+      <DocumentPage status={status === 'draft' ? 'draft' : undefined}>
+        {/* ===== HEADER ===== */}
+        <DocumentHeader
+          branding={branding}
+          title="Driving Licence"
+          reference={licenceNumber}
+          version={documentVersion}
+          status={isExpired ? 'EXPIRED' : daysLeft <= 30 ? 'EXPIRING' : 'VALID'}
+          issueDate={generatedAt.split('T')[0]}
+          qrCode={qrCode}
         />
-      </DocumentSection>
 
-      {/* ===== ISSUING NOTES ===== */}
-      <DocumentSection title="Issuing Information">
-        <DocumentFieldGrid
-          fields={[
-            { label: 'Issuing Authority', value: branding?.organisationName || tenantName || 'Government of Namibia' },
-            { label: 'Document Generated', value: generatedAt },
-            { label: 'Version', value: String(documentVersion) },
-          ]}
+        {/* ===== LICENCE DETAILS ===== */}
+        <DocumentSection title="Licence Details">
+          <DocumentFieldGrid
+            fields={[
+              { label: 'Holder Name', value: holderName },
+              { label: 'Licence Number', value: licenceNumber },
+              { label: 'Licence Class', value: licenceClass },
+              { label: 'Issue Date', value: issueDate },
+              { label: 'Expiry Date', value: expiryDate },
+              { label: 'Status', value: isExpired ? 'Expired' : daysLeft <= 30 ? `Expiring (${daysLeft} days)` : 'Valid' },
+              ...(issueNumber ? [{ label: 'Issue Number', value: issueNumber }] : []),
+              ...(driverRestrictionCode ? [{ label: 'Restriction Code', value: driverRestrictionCode }] : []),
+              ...(allowedVehicleCategories ? [{ label: 'Vehicle Categories', value: allowedVehicleCategories }] : []),
+              ...(nationalIdNumber ? [{ label: 'National ID', value: `••••${nationalIdNumber.slice(-4)}` }] : []),
+            ]}
+          />
+        </DocumentSection>
+
+        {/* ===== ISSUING NOTES ===== */}
+        <DocumentSection title="Issuing Information">
+          <DocumentFieldGrid
+            fields={[
+              { label: 'Issuing Authority', value: branding?.organisationName || tenantName || 'Government of Namibia' },
+              { label: 'Document Generated', value: generatedAt },
+              { label: 'Version', value: String(documentVersion) },
+            ]}
+          />
+        </DocumentSection>
+
+        {/* ===== VERIFICATION ===== */}
+        <DocumentVerificationBlock
+          branding={branding}
+          verificationCode={verificationCode}
+          verificationUrl={verificationUrl}
+          qrCode={qrCode}
         />
-      </DocumentSection>
 
-      {/* ===== VERIFICATION ===== */}
-      <DocumentVerificationBlock
-        branding={branding}
-        verificationCode={verificationCode}
-        verificationUrl={verificationUrl}
-        qrCode={qrCode}
-      />
-
-      {/* ===== FOOTER ===== */}
-      <DocumentVerificationFooter
-        branding={branding}
-        verificationCode={verificationCode}
-        verificationUrl={verificationUrl}
-      />
-    </DocumentPage>
+        {/* ===== FOOTER ===== */}
+        <DocumentVerificationFooter
+          branding={branding}
+          verificationCode={verificationCode}
+          verificationUrl={verificationUrl}
+        />
+      </DocumentPage>
+    </Document>
   );
 }
