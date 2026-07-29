@@ -1,5 +1,5 @@
 import React from 'react';
-import { Document, View } from '@react-pdf/renderer';
+import { Document } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 import {
   formatDocumentStatus,
@@ -12,8 +12,10 @@ import {
   DocumentFieldGrid,
   DocumentHeader,
   DocumentPage,
+  DocumentRow,
   DocumentSection,
   DocumentTable,
+  DocumentVerificationBlock,
   DocumentVerificationFooter,
 } from './document-system';
 
@@ -97,112 +99,116 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
           qrCode={data.qrCodeDataUrl}
         />
 
-        {/* Trip summary */}
-        <DocumentSection title="Trip summary">
-          <DocumentFieldGrid
-            fields={[
-              {
-                label: 'Vehicle registration',
-                value: data.vehicle.licenceNumber,
-              },
-              {
-                label: 'Asset register number',
-                value: data.vehicle.registrationNumber || 'Not recorded',
-              },
-              {
-                label: 'Status',
-                value: formatDocumentStatus(data.status),
-              },
-              {
-                label: 'Issued',
-                value: data.issuedAt
-                  ? formatHumanDate(data.issuedAt, branding?.locale)
-                  : 'Not recorded',
-              },
-              {
-                label: 'Started',
-                value: data.startedAt
-                  ? formatHumanDate(data.startedAt, branding?.locale)
-                  : 'Not recorded',
-              },
-              {
-                label: 'Returned',
-                value: data.returnedAt
-                  ? formatHumanDate(data.returnedAt, branding?.locale)
-                  : 'Not recorded',
-              },
-              {
-                label: 'Closed',
-                value: data.closedAt
-                  ? formatHumanDate(data.closedAt, branding?.locale)
-                  : 'Not recorded',
-              },
-            ]}
-          />
-        </DocumentSection>
-
-        {/* Closure details */}
-        {data.closure && (
-          <DocumentSection title="Closure details" wrap={false}>
+        {/* Row 1: Trip summary | Dates */}
+        <DocumentRow>
+          <DocumentSection title="Trip summary">
             <DocumentFieldGrid
               fields={[
+                { label: 'Vehicle registration', value: data.vehicle.licenceNumber },
+                { label: 'Asset register number', value: data.vehicle.registrationNumber || 'Not recorded' },
+                { label: 'Status', value: formatDocumentStatus(data.status) },
                 {
-                  label: 'Authorised kilometres',
-                  value: formatHumanValue(data.closure.authorisedKm, 'kilometres'),
-                },
-                {
-                  label: 'Actual kilometres',
-                  value: formatHumanValue(data.closure.actualKm, 'kilometres'),
-                },
-                {
-                  label: 'Variance',
-                  value:
-                    data.closure.variance != null
-                      ? `${data.closure.variance >= 0 ? '+' : ''}${data.closure.variance.toLocaleString('en-NA')} km`
-                      : 'Not recorded',
-                },
-                {
-                  label: 'Decision',
-                  value: data.closure.decision
-                    ? humanizeKey(data.closure.decision)
+                  label: 'Fuel total',
+                  value: data.fuelSummary
+                    ? `${data.fuelSummary.totalLitres.toLocaleString('en-NA', { minimumFractionDigits: 1 })} L`
                     : 'Not recorded',
                 },
                 {
-                  label: 'Review notes',
-                  value: data.closure.notes || 'No notes recorded',
+                  label: 'Fuel cost',
+                  value: data.fuelSummary
+                    ? formatMoney(data.fuelSummary.totalCost, branding?.locale)
+                    : 'Not recorded',
                 },
               ]}
             />
           </DocumentSection>
-        )}
-
-        {/* Fuel summary */}
-        {data.fuelSummary && (
-          <DocumentSection title="Fuel usage" wrap={false}>
+          <DocumentSection title="Trip dates">
             <DocumentFieldGrid
               fields={[
                 {
-                  label: 'Total litres',
-                  value: `${data.fuelSummary.totalLitres.toLocaleString('en-NA', {
-                    minimumFractionDigits: 1,
-                  })} L`,
+                  label: 'Issued',
+                  value: data.issuedAt
+                    ? formatHumanDate(data.issuedAt, branding?.locale)
+                    : 'Not recorded',
                 },
                 {
-                  label: 'Total cost',
-                  value: formatMoney(data.fuelSummary.totalCost, branding?.locale),
+                  label: 'Started',
+                  value: data.startedAt
+                    ? formatHumanDate(data.startedAt, branding?.locale)
+                    : 'Not recorded',
                 },
                 {
-                  label: 'Transactions',
-                  value: String(data.fuelSummary.transactionCount),
+                  label: 'Returned',
+                  value: data.returnedAt
+                    ? formatHumanDate(data.returnedAt, branding?.locale)
+                    : 'Not recorded',
                 },
                 {
-                  label: 'Pending reimbursements',
-                  value: String(data.fuelSummary.pendingReimbursements),
+                  label: 'Closed',
+                  value: data.closedAt
+                    ? formatHumanDate(data.closedAt, branding?.locale)
+                    : 'Not recorded',
                 },
               ]}
             />
           </DocumentSection>
-        )}
+        </DocumentRow>
+
+        {/* Row 2: Closure details | Fuel usage */}
+        <DocumentRow>
+          {data.closure && (
+            <DocumentSection title="Closure details" wrap={false}>
+              <DocumentFieldGrid
+                fields={[
+                  { label: 'Authorised kilometres', value: formatHumanValue(data.closure.authorisedKm, 'kilometres') },
+                  { label: 'Actual kilometres', value: formatHumanValue(data.closure.actualKm, 'kilometres') },
+                  {
+                    label: 'Variance',
+                    value:
+                      data.closure.variance != null
+                        ? `${data.closure.variance >= 0 ? '+' : ''}${data.closure.variance.toLocaleString('en-NA')} km`
+                        : 'Not recorded',
+                  },
+                  {
+                    label: 'Decision',
+                    value: data.closure.decision
+                      ? humanizeKey(data.closure.decision)
+                      : 'Not recorded',
+                  },
+                  {
+                    label: 'Review notes',
+                    value: data.closure.notes || 'No notes recorded',
+                  },
+                ]}
+              />
+            </DocumentSection>
+          )}
+          {data.fuelSummary && (
+            <DocumentSection title="Fuel usage" wrap={false}>
+              <DocumentFieldGrid
+                fields={[
+                  {
+                    label: 'Total litres',
+                    value: `${data.fuelSummary.totalLitres.toLocaleString('en-NA', {
+                      minimumFractionDigits: 1,
+                    })} L`,
+                  },
+                  { label: 'Total cost', value: formatMoney(data.fuelSummary.totalCost, branding?.locale) },
+                  { label: 'Transactions', value: String(data.fuelSummary.transactionCount) },
+                  { label: 'Pending reimbursements', value: String(data.fuelSummary.pendingReimbursements) },
+                ]}
+              />
+            </DocumentSection>
+          )}
+        </DocumentRow>
+
+        {/* Verification block */}
+        <DocumentVerificationBlock
+          branding={branding}
+          verificationCode={data.verificationCode}
+          verificationUrl={data.verificationUrl}
+          qrCode={data.qrCodeDataUrl}
+        />
 
         <DocumentVerificationFooter
           branding={branding}

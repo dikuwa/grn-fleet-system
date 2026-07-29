@@ -12,8 +12,10 @@ import {
   DocumentFieldGrid,
   DocumentHeader,
   DocumentPage,
+  DocumentRow,
   DocumentSection,
   DocumentTable,
+  DocumentVerificationBlock,
   DocumentVerificationFooter,
 } from './document-system';
 
@@ -78,14 +80,26 @@ export const SnapshotDocument: React.FC<{ data: SnapshotDocumentData }> = ({ dat
           issueDate={formatHumanDate(data.generatedAt, branding?.locale)}
           qrCode={data.qrCodeDataUrl}
         />
-        <DocumentSection title="Record details">
-          <DocumentFieldGrid
-            fields={scalars.map(([key, value]) => ({
-              label: humanizeKey(key),
-              value: formatHumanValue(value, key),
-            }))}
-          />
-        </DocumentSection>
+        <DocumentRow>
+          <DocumentSection title="Record details">
+            <DocumentFieldGrid
+              fields={scalars.slice(0, 8).map(([key, value]) => ({
+                label: humanizeKey(key),
+                value: formatHumanValue(value, key),
+              }))}
+            />
+          </DocumentSection>
+          {scalars.length > 8 && (
+            <DocumentSection title="Additional details">
+              <DocumentFieldGrid
+                fields={scalars.slice(8, 16).map(([key, value]) => ({
+                  label: humanizeKey(key),
+                  value: formatHumanValue(value, key),
+                }))}
+              />
+            </DocumentSection>
+          )}
+        </DocumentRow>
         {structured.map(([key, value]) => {
           const rows = Array.isArray(value)
             ? value.filter(
@@ -114,6 +128,13 @@ export const SnapshotDocument: React.FC<{ data: SnapshotDocumentData }> = ({ dat
             </DocumentSection>
           );
         })}
+        {/* Verification block */}
+        <DocumentVerificationBlock
+          branding={branding}
+          verificationCode={data.verificationCode}
+          verificationUrl={data.verificationUrl}
+          qrCode={data.qrCodeDataUrl}
+        />
         <DocumentVerificationFooter
           branding={branding}
           verificationCode={data.verificationCode}

@@ -11,9 +11,11 @@ import {
   DocumentFieldGrid,
   DocumentHeader,
   DocumentPage,
+  DocumentRow,
   DocumentSection,
   DocumentSignature,
   DocumentTable,
+  DocumentVerificationBlock,
   DocumentVerificationFooter,
   documentStyles,
 } from './document-system';
@@ -45,6 +47,9 @@ export interface InspectionReportData {
   tenantDocumentFooter?: string;
   branding?: ResolvedTenantBranding | null;
   items?: InspectionItemResult[];
+  verificationCode?: string;
+  verificationUrl?: string;
+  qrCodeDataUrl?: string;
 }
 
 export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> = ({ data }) => {
@@ -72,29 +77,44 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           version={1}
           status={formatDocumentStatus(data.status)}
           issueDate={formatHumanDate(data.inspectedAt, branding?.locale)}
+          qrCode={data.qrCodeDataUrl}
         />
-        <DocumentSection title="Inspection summary">
-          <DocumentFieldGrid
-            fields={[
-              { label: 'Inspection type', value: humanizeKey(data.type) },
-              { label: 'Vehicle registration', value: data.vehicle.licenceNumber },
-              { label: 'Asset register number', value: data.vehicle.registrationNumber },
-              { label: 'Odometer', value: formatHumanValue(data.odometerReading, 'odometer') },
-              { label: 'Fuel level', value: data.fuelLevel || 'Not recorded' },
-              {
-                label: 'Overall result',
-                value:
-                  data.overallPass === null || data.overallPass === undefined
-                    ? 'Pending'
-                    : data.overallPass
-                      ? 'Passed'
-                      : 'Failed',
-              },
-              { label: 'Inspector', value: data.inspectorName || 'Not recorded' },
-              { label: 'Driver', value: data.driverName || 'Not recorded' },
-            ]}
-          />
-        </DocumentSection>
+
+        {/* Row 1: Inspection summary | Vehicle info */}
+        <DocumentRow>
+          <DocumentSection title="Inspection summary">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Inspection type', value: humanizeKey(data.type) },
+                { label: 'Status', value: formatDocumentStatus(data.status) },
+                { label: 'Inspector', value: data.inspectorName || 'Not recorded' },
+                { label: 'Driver', value: data.driverName || 'Not recorded' },
+                { label: 'Inspected at', value: formatHumanDate(data.inspectedAt, branding?.locale) },
+              ]}
+            />
+          </DocumentSection>
+          <DocumentSection title="Vehicle information">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Vehicle registration', value: data.vehicle.licenceNumber },
+                { label: 'Asset register number', value: data.vehicle.registrationNumber },
+                { label: 'Odometer', value: formatHumanValue(data.odometerReading, 'odometer') },
+                { label: 'Fuel level', value: data.fuelLevel || 'Not recorded' },
+                {
+                  label: 'Overall result',
+                  value:
+                    data.overallPass === null || data.overallPass === undefined
+                      ? 'Pending'
+                      : data.overallPass
+                        ? 'Passed'
+                        : 'Failed',
+                },
+              ]}
+            />
+          </DocumentSection>
+        </DocumentRow>
+
+        {/* Checklist table */}
         <DocumentSection title={`Checklist (${data.items?.length || 0})`}>
           <DocumentTable
             columns={[
@@ -113,27 +133,56 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
             emptyLabel="No checklist results were recorded"
           />
         </DocumentSection>
-        {data.notes && (
-          <DocumentSection title="Defects and remarks" wrap={false}>
-            <DocumentFieldGrid fields={[{ label: 'Inspector notes', value: data.notes }]} />
+
+        {/* Defects and signatures — conditional two-column layout */}
+        {data.notes ? (
+          <DocumentRow>
+            <DocumentSection title="Defects and remarks" wrap={false}>
+              <DocumentFieldGrid fields={[{ label: 'Inspector notes', value: data.notes }]} />
+            </DocumentSection>
+            <DocumentSection title="Acknowledgements" wrap={false}>
+              <View style={documentStyles.signatureRow}>
+                <DocumentSignature
+                  name={data.inspectorName || 'Inspector not recorded'}
+                  role="Inspector"
+                  signedAt={data.inspectorSignedAt}
+                  signatureUrl={data.inspectorSignatureUrl}
+                />
+                <DocumentSignature
+                  name={data.driverName || 'Driver not recorded'}
+                  role="Driver acknowledgement"
+                  signedAt={data.driverSignedAt}
+                  signatureUrl={data.driverSignatureUrl}
+                />
+              </View>
+            </DocumentSection>
+          </DocumentRow>
+        ) : (
+          <DocumentSection title="Acknowledgements" wrap={false}>
+            <View style={documentStyles.signatureRow}>
+              <DocumentSignature
+                name={data.inspectorName || 'Inspector not recorded'}
+                role="Inspector"
+                signedAt={data.inspectorSignedAt}
+                signatureUrl={data.inspectorSignatureUrl}
+              />
+              <DocumentSignature
+                name={data.driverName || 'Driver not recorded'}
+                role="Driver acknowledgement"
+                signedAt={data.driverSignedAt}
+                signatureUrl={data.driverSignatureUrl}
+              />
+            </View>
           </DocumentSection>
         )}
-        <DocumentSection title="Acknowledgements" wrap={false}>
-          <View style={documentStyles.signatureRow}>
-            <DocumentSignature
-              name={data.inspectorName || 'Inspector not recorded'}
-              role="Inspector"
-              signedAt={data.inspectorSignedAt}
-              signatureUrl={data.inspectorSignatureUrl}
-            />
-            <DocumentSignature
-              name={data.driverName || 'Driver not recorded'}
-              role="Driver acknowledgement"
-              signedAt={data.driverSignedAt}
-              signatureUrl={data.driverSignatureUrl}
-            />
-          </View>
-        </DocumentSection>
+
+        {/* Verification block */}
+        <DocumentVerificationBlock
+          branding={branding}
+          verificationCode={data.verificationCode}
+          verificationUrl={data.verificationUrl}
+          qrCode={data.qrCodeDataUrl}
+        />
         <DocumentVerificationFooter branding={branding} />
       </DocumentPage>
     </Document>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Document, View } from '@react-pdf/renderer';
+import { Document } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 import {
   formatDocumentStatus,
@@ -12,8 +12,10 @@ import {
   DocumentFieldGrid,
   DocumentHeader,
   DocumentPage,
+  DocumentRow,
   DocumentSection,
   DocumentTable,
+  DocumentVerificationBlock,
   DocumentVerificationFooter,
 } from './document-system';
 
@@ -97,43 +99,37 @@ export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }
           qrCode={data.qrCodeDataUrl}
         />
 
-        {/* Vehicle info */}
-        <DocumentSection title="Vehicle information">
-          <DocumentFieldGrid
-            fields={[
-              {
-                label: 'Vehicle',
-                value: data.vehicle || [data.make, data.model].filter(Boolean).join(' ') || 'Not recorded',
-              },
-              {
-                label: 'Registration',
-                value: data.licenceNumber || 'Not recorded',
-              },
-              {
-                label: 'Asset register number',
-                value: data.vehicleRegisterNumber || 'Not recorded',
-              },
-              {
-                label: 'Total maintenance events',
-                value: String(data.totalEvents),
-              },
-              {
-                label: 'Total cost',
-                value: formatMoney(data.totalCost, branding?.locale),
-              },
-              {
-                label: 'Next service date',
-                value: data.nextServiceDate
-                  ? formatHumanDate(data.nextServiceDate, branding?.locale)
-                  : 'Not scheduled',
-              },
-              {
-                label: 'Next service odometer',
-                value: formatHumanValue(data.nextServiceOdometer, 'odometer'),
-              },
-            ]}
-          />
-        </DocumentSection>
+        {/* Row 1: Vehicle information | Service schedule */}
+        <DocumentRow>
+          <DocumentSection title="Vehicle information">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Vehicle', value: data.vehicle || [data.make, data.model].filter(Boolean).join(' ') || 'Not recorded' },
+                { label: 'Registration', value: data.licenceNumber || 'Not recorded' },
+                { label: 'Asset register number', value: data.vehicleRegisterNumber || 'Not recorded' },
+                { label: 'Status', value: formatDocumentStatus(status) },
+              ]}
+            />
+          </DocumentSection>
+          <DocumentSection title="Service schedule">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Total maintenance events', value: String(data.totalEvents) },
+                { label: 'Total cost', value: formatMoney(data.totalCost, branding?.locale) },
+                {
+                  label: 'Next service date',
+                  value: data.nextServiceDate
+                    ? formatHumanDate(data.nextServiceDate, branding?.locale)
+                    : 'Not scheduled',
+                },
+                {
+                  label: 'Next service odometer',
+                  value: formatHumanValue(data.nextServiceOdometer, 'odometer'),
+                },
+              ]}
+            />
+          </DocumentSection>
+        </DocumentRow>
 
         {/* Events table */}
         {data.events && data.events.length > 0 && (
@@ -159,6 +155,14 @@ export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }
             />
           </DocumentSection>
         )}
+
+        {/* Verification block */}
+        <DocumentVerificationBlock
+          branding={branding}
+          verificationCode={data.verificationCode}
+          verificationUrl={data.verificationUrl}
+          qrCode={data.qrCodeDataUrl}
+        />
 
         <DocumentVerificationFooter
           branding={branding}

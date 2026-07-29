@@ -1,5 +1,5 @@
 import React from 'react';
-import { Document, Text, View } from '@react-pdf/renderer';
+import { Document } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 import {
   formatDocumentStatus,
@@ -11,8 +11,10 @@ import {
   DocumentFieldGrid,
   DocumentHeader,
   DocumentPage,
+  DocumentRow,
   DocumentSection,
   DocumentTable,
+  DocumentVerificationBlock,
   DocumentVerificationFooter,
 } from './document-system';
 
@@ -94,61 +96,61 @@ export const FuelSummaryDocument: React.FC<{ data: FuelSummaryData }> = ({ data 
           qrCode={data.qrCodeDataUrl}
         />
 
-        {/* Trip reference */}
-        <DocumentSection title="Trip information">
-          <DocumentFieldGrid
-            fields={[
-              { label: 'Trip reference', value: data.tripReference || 'Not recorded' },
-              { label: 'Vehicle registration', value: data.vehicleLicence || 'Not recorded' },
-              {
-                label: 'Asset register number',
-                value: data.vehicleRegisterNumber || 'Not recorded',
-              },
-              { label: 'Purpose', value: data.tripPurpose || 'Not recorded' },
-            ]}
-          />
-        </DocumentSection>
-
-        {/* Fuel summary */}
-        <DocumentSection title="Fuel summary">
-          <DocumentFieldGrid
-            fields={[
-              {
-                label: 'Total litres',
-                value: `${data.totalLitres.toLocaleString('en-NA', {
-                  minimumFractionDigits: 1,
-                  maximumFractionDigits: 1,
-                })} L`,
-              },
-              {
-                label: 'Total cost',
-                value: formatMoney(data.totalCost, branding?.locale),
-              },
-              {
-                label: 'Transactions',
-                value: String(data.transactionCount),
-              },
-              {
-                label: 'Pending reimbursements',
-                value: String(data.pendingReimbursements),
-              },
-              {
-                label: 'Actual kilometres',
-                value:
-                  data.actualKilometres != null
-                    ? `${data.actualKilometres.toLocaleString('en-NA')} km`
-                    : 'Not recorded',
-              },
-              {
-                label: 'Kilometre variance',
-                value:
-                  data.kilometreVariance != null
-                    ? `${data.kilometreVariance >= 0 ? '+' : ''}${data.kilometreVariance.toLocaleString('en-NA')} km`
-                    : 'Not recorded',
-              },
-            ]}
-          />
-        </DocumentSection>
+        {/* Row 1: Trip information | Fuel summary */}
+        <DocumentRow>
+          <DocumentSection title="Trip information">
+            <DocumentFieldGrid
+              fields={[
+                { label: 'Trip reference', value: data.tripReference || 'Not recorded' },
+                { label: 'Vehicle registration', value: data.vehicleLicence || 'Not recorded' },
+                {
+                  label: 'Asset register number',
+                  value: data.vehicleRegisterNumber || 'Not recorded',
+                },
+                { label: 'Purpose', value: data.tripPurpose || 'Not recorded' },
+              ]}
+            />
+          </DocumentSection>
+          <DocumentSection title="Fuel summary">
+            <DocumentFieldGrid
+              fields={[
+                {
+                  label: 'Total litres',
+                  value: `${data.totalLitres.toLocaleString('en-NA', {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                  })} L`,
+                },
+                {
+                  label: 'Total cost',
+                  value: formatMoney(data.totalCost, branding?.locale),
+                },
+                {
+                  label: 'Transactions',
+                  value: String(data.transactionCount),
+                },
+                {
+                  label: 'Pending reimbursements',
+                  value: String(data.pendingReimbursements),
+                },
+                {
+                  label: 'Actual kilometres',
+                  value:
+                    data.actualKilometres != null
+                      ? `${data.actualKilometres.toLocaleString('en-NA')} km`
+                      : 'Not recorded',
+                },
+                {
+                  label: 'Kilometre variance',
+                  value:
+                    data.kilometreVariance != null
+                      ? `${data.kilometreVariance >= 0 ? '+' : ''}${data.kilometreVariance.toLocaleString('en-NA')} km`
+                      : 'Not recorded',
+                },
+              ]}
+            />
+          </DocumentSection>
+        </DocumentRow>
 
         {/* Transactions table */}
         {data.transactions && data.transactions.length > 0 && (
@@ -178,6 +180,14 @@ export const FuelSummaryDocument: React.FC<{ data: FuelSummaryData }> = ({ data 
             />
           </DocumentSection>
         )}
+
+        {/* Verification block */}
+        <DocumentVerificationBlock
+          branding={branding}
+          verificationCode={data.verificationCode}
+          verificationUrl={data.verificationUrl}
+          qrCode={data.qrCodeDataUrl}
+        />
 
         <DocumentVerificationFooter
           branding={branding}
