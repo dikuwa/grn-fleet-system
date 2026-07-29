@@ -57,8 +57,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 export default function ReturnInspectionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const tripId = searchParams.get('tripId') || '';
-  const vehicleId = searchParams.get('vehicleId') || '';
+  const tripIdParam = searchParams.get('tripId') || '';
+  const [tripId, setTripId] = useState(tripIdParam);
+  const [vehicleId, setVehicleId] = useState(searchParams.get('vehicleId') || '');
   const [odometer, setOdometer] = useState('');
   const [fuelLevel, setFuelLevel] = useState('half');
   const [checklist, setChecklist] = useState<ChecklistItem[]>(DEFAULT_CHECKLIST);
@@ -75,10 +76,47 @@ export default function ReturnInspectionPage() {
   });
   const [photos, setPhotos] = useState<Array<{ file: File; preview: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [lightboxPhoto, setLightboxPhoto] = useState<string | null>(null);
+  const [vehicleSearch, setVehicleSearch] = useState('');
+  const [vehicles, setVehicles] = useState<Array<{ id: string; licenceNumber: string; make: string; model: string }>>([]);
+  const [vehicleLoading, setVehicleLoading] = useState(false);
+  const [vehicleDropdown, setVehicleDropdown] = useState(false);
+  const [trips, setTrips] = useState<Array<{ id: string; reference: string; status: string }>>([]);
+  const [tripLoading, setTripLoading] = useState(false);
+
+  // Search vehicles dynamically
+  useEffect(() => {
+    if (vehicleSearch.length < 2) { setVehicles([]); return; }
+    const timer = setTimeout(async () => {
+      setVehicleLoading(true);
+      try {
+        const res = await fetch(`/api/fleet?search=${encodeURIComponent(vehicleSearch)}&limit=10`);
+        const json = await res.json();
+        const list = json.vehicles || json.data?.vehicles || json.rows || json.data || [];
+        setVehicles(Array.isArray(list) ? list : []);
+        setVehicleDropdown(true);
+      } catch { /* ignore */ } finally { setVehicleLoading(false); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [vehicleSearch]);
+
+  // Fetch available trips
+  useEffect(() => {
+    fetch('/api/trips?status=pending,issued,in_progress,completed&limit=20')
+      .then((r) => r.json())
+      .then((json) => {
+        const list = json.trips || json.data?.trips || json.rows || [];
+        setTrips(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch trip/vehicle info if tripId is provided
   useEffect(() => {
-    if (!tripId) return;
+    if (!tripId) {
+      setTripInfo(null);
+      return;
+    }
     fetch(`/api/trips/${tripId}`)
       .then((r) => r.json())
       .then((data) => {
@@ -91,7 +129,7 @@ export default function ReturnInspectionPage() {
         }
       })
       .catch(() => {});
-  }, [tripId]);
+  }, [tripId, vehicleId]);
 
   const updateResult = (id: string, result: 'pass' | 'fail' | 'na') => {
     setChecklist((prev) =>
@@ -221,12 +259,23 @@ export default function ReturnInspectionPage() {
       </PageHeader>
 
       <form onSubmit={handleSubmit}>
-        {/* Vehicle Info */}
+        {/* Vehicle Info — Odometer & Fuel */}
         <Card>
-          <CardHeader><CardTitle>Vehicle & Trip Information</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Odometer & Fuel</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5"><Label required>Odometer Reading (km)</Label><Input type="number" placeholder="e.g. 46200" value={odometer} onChange={(e) => setOdometer(e.target.value)} required /></div>
+              <div className="space-y-1.5"><Label required>Fuel Level</Label><StyledSelect value={fuelLevel} onChange={(e) => setFuelLevel(e.target.value)} placeholder="Select fuel level"><option value="full">Full</option><option value="three_quarters">¾</option><option value="half">½</option><option value="quarter">¼</option><option value="empty">Empty</option></StyledSelect></div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Vehicle Selection */}
+        <Card>
+          <CardHeader><CardTitle>Vehicle & Trip Selection</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             {tripInfo && (
-              <div className="rounded-[8px] border border-brand-100 bg-brand-50/30 p-3 mb-3">
+              <div className="rounded-[8px] border border-brand-100 bg-brand-50/30 p-3">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-brand-100">
                     <Truck className="h-5 w-5 text-brand-700" />
@@ -238,12 +287,53 @@ export default function ReturnInspectionPage() {
                 </div>
               </div>
             )}
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-1.5"><Label required>Odometer Reading (km)</Label><Input type="number" placeholder="e.g. 46200" value={odometer} onChange={(e) => setOdometer(e.target.value)} required /></div>
-              <div className="space-y-1.5"><Label required>Fuel Level</Label><StyledSelect value={fuelLevel} onChange={(e) => setFuelLevel(e.target.value)} placeholder="Select fuel level"><option value="full">Full</option><option value="three_quarters">¾</option><option value="half">½</option><option value="quarter">¼</option><option value="empty">Empty</option></StyledSelect></div>
-              <input type="hidden" name="tripId" value={tripId} />
-              <input type="hidden" name="vehicleId" value={vehicleId} />
+            <div className="space-y-1.5 relative">
+              <Label>Search Vehicle</Label>
+              <Input
+                placeholder="Type vehicle GRN, make or model..."
+                value={vehicleSearch}
+                onChange={(e) => { setVehicleSearch(e.target.value); setVehicleId(''); }}
+                onFocus={() => vehicles.length > 0 && setVehicleDropdown(true)}
+                onBlur={() => setTimeout(() => setVehicleDropdown(false), 200)}
+              />
+              {vehicleLoading && <p className="text-xs text-ink-400 mt-1">Searching...</p>}
+              {vehicleDropdown && vehicles.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full rounded-[8px] border border-border bg-surface shadow-lg max-h-48 overflow-y-auto">
+                  {vehicles.map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors"
+                      onMouseDown={() => {
+                        setVehicleId(v.id);
+                        setVehicleSearch(`${v.licenceNumber} — ${v.make} ${v.model}`);
+                        setVehicleDropdown(false);
+                      }}
+                    >
+                      <span className="font-medium">{v.licenceNumber}</span>
+                      <span className="text-ink-500 ml-2">{v.make} {v.model}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+            <div className="space-y-1.5">
+              <Label>Trip Reference</Label>
+              <StyledSelect
+                value={tripId}
+                onChange={(e) => setTripId(e.target.value)}
+              >
+                <option value="">No trip linked (standalone inspection)</option>
+                {trips.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.reference || t.id.slice(0, 8)} — {t.status.replace(/_/g, ' ')}
+                  </option>
+                ))}
+              </StyledSelect>
+              {tripLoading && <p className="text-xs text-ink-400">Loading trips...</p>}
+            </div>
+            <input type="hidden" name="tripId" value={tripId} />
+            <input type="hidden" name="vehicleId" value={vehicleId} />
           </CardContent>
         </Card>
 
@@ -341,19 +431,25 @@ export default function ReturnInspectionPage() {
           </Card>
         )}
 
-        {/* Photos */}
+        {/* Photos — Square Thumbnails + Lightbox */}
         <Card>
           <CardHeader><CardTitle>Photos</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             {photos.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                 {photos.map((photo, idx) => (
-                  <div key={idx} className="relative rounded-[8px] border border-border overflow-hidden group">
-                    <img src={photo.preview} alt={`Photo ${idx + 1}`} className="h-24 w-full object-cover" />
+                  <div key={idx} className="relative group">
+                    <button
+                      type="button"
+                      onClick={() => setLightboxPhoto(photo.preview)}
+                      className="block aspect-square w-full overflow-hidden rounded-[8px] border border-border bg-muted"
+                    >
+                      <img src={photo.preview} alt={`Photo ${idx + 1}`} className="h-full w-full object-cover" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
-                      className="absolute top-1 right-1 rounded-full bg-black/60 p-1.5 text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity active:scale-90"
+                      className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -383,6 +479,59 @@ export default function ReturnInspectionPage() {
           </CardContent>
         </Card>
 
+        {/* Lightbox */}
+        {lightboxPhoto && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            onClick={() => setLightboxPhoto(null)}
+          >
+            <button
+              onClick={() => setLightboxPhoto(null)}
+              className="absolute top-4 right-4 rounded-full bg-white/20 p-2 text-white hover:bg-white/40 transition-colors"
+              aria-label="Close lightbox"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const idx = photos.findIndex((p) => p.preview === lightboxPhoto);
+                if (idx > 0) setLightboxPhoto(photos[idx - 1].preview);
+              }}
+              className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-white/20 p-2 text-white hover:bg-white/40 transition-colors"
+              aria-label="Previous photo"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <img
+              src={lightboxPhoto}
+              alt="Inspection photo enlarged"
+              className="max-h-[85vh] max-w-full rounded-[8px] object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const idx = photos.findIndex((p) => p.preview === lightboxPhoto);
+                if (idx < photos.length - 1) setLightboxPhoto(photos[idx + 1].preview);
+              }}
+              className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-white/20 p-2 text-white hover:bg-white/40 transition-colors"
+              aria-label="Next photo"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+            <p className="absolute bottom-4 text-sm text-white/80">
+              {photos.findIndex((p) => p.preview === lightboxPhoto) + 1} of {photos.length}
+            </p>
+          </div>
+        )}
+
         {/* Notes */}
         <Card>
           <CardHeader><CardTitle>Additional Notes</CardTitle></CardHeader>
@@ -403,25 +552,23 @@ export default function ReturnInspectionPage() {
         {/* Submit */}
         <div className="flex items-center justify-end gap-3">
           <Button variant="secondary" size="sm" asChild><Link href="/dashboard/inspections">Cancel</Link></Button>
-          {offlineSaved && (
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex items-center gap-2">
-                <WifiOff className="h-5 w-5 text-amber-600" />
-                <div>
-                  <p className="text-sm font-medium text-amber-800">Saved Offline</p>
-                  <p className="text-xs text-ink-500">This inspection was saved as a local draft and will sync when connectivity is restored.</p>
+          {offlineSaved ? (
+            <Card>
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2">
+                  <WifiOff className="h-5 w-5 text-amber-600" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">Saved Offline</p>
+                    <p className="text-xs text-ink-500">This inspection was saved as a local draft and will sync when connectivity is restored.</p>
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {!offlineSaved && (
-          <Button variant="primary" size="sm" type="submit" loading={isSubmitting} disabled={!canComplete}>
-            <CheckCircle2 className="h-4 w-4" /> Complete Return Inspection
-          </Button>
-        )}
+              </CardContent>
+            </Card>
+          ) : (
+            <Button variant="primary" size="sm" type="submit" loading={isSubmitting} disabled={!canComplete}>
+              <CheckCircle2 className="h-4 w-4" /> Complete Return Inspection
+            </Button>
+          )}
         </div>
       </form>
     </div>

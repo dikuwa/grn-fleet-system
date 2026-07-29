@@ -14,6 +14,7 @@ import {
   IdCard, CalendarClock, Bell, PenSquare,
 } from 'lucide-react';
 import Link from 'next/link';
+import { LicenceUploadPanel } from '@/app/(dashboard)/dashboard/staff/[id]/LicenceUploadPanel';
 
 interface DriverInfo {
   id: string;
@@ -317,9 +318,9 @@ export default function DriverSelfServicePage() {
                 )}
 
                 {activeTab === 'licences' && (
-                  <div className="p-5">
+                  <div className="p-5 space-y-4">
                     {driverInfo.licences.length === 0 ? (
-                      <p className="text-sm text-ink-500">No licences recorded.</p>
+                      <p className="text-sm text-ink-500">No licences recorded. Upload your Namibian driving licence below.</p>
                     ) : (
                       <div className="space-y-3">
                         {driverInfo.licences.map((lic) => {
@@ -337,6 +338,12 @@ export default function DriverSelfServicePage() {
                                     <span>Issued: {formatDate(lic.issueDate)}</span>
                                     <span>Expires: {formatDate(lic.expiryDate)}</span>
                                   </div>
+                                  <div className="mt-1">
+                                    <StatusBadge
+                                      status={lic.verificationStatus === 'verified' ? 'success' : lic.verificationStatus === 'rejected' ? 'error' : 'pending'}
+                                      label={lic.verificationStatus.replace(/_/g, ' ')}
+                                    />
+                                  </div>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
@@ -353,6 +360,9 @@ export default function DriverSelfServicePage() {
                         })}
                       </div>
                     )}
+                    <div className="border-t border-border pt-4">
+                      <LicenceUploadPanel employeeId={driverInfo.employeeId} />
+                    </div>
                   </div>
                 )}
 

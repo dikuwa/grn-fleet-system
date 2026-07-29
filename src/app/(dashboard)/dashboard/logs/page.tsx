@@ -93,9 +93,9 @@ export default function DailyLogsPage() {
     return () => clearInterval(interval);
   }, [profile]);
 
-  // Fetch trips for dropdown
+  // Fetch trips for dropdown — prioritize active/in-progress trips
   const { data: tripsData } = useQuery({
-    queryKey: ['driver-trips'],
+    queryKey: ['driver-trips-log'],
     queryFn: async () => {
       const res = await fetch('/api/trips?limit=50');
       if (!res.ok) throw new Error('Failed to load trips');
@@ -186,6 +186,15 @@ export default function DailyLogsPage() {
   const updateField = useCallback(<K extends keyof LogFormData>(key: K, value: LogFormData[K]) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
   }, []);
+
+  // Auto-select the single in-progress trip on load
+  useEffect(() => {
+    if (!tripsData || formData.tripId) return;
+    const active = tripsData.filter((t: Trip) => t.status === 'in_progress' || t.status === 'issued');
+    if (active.length === 1) {
+      updateField('tripId', active[0].id);
+    }
+  }, [tripsData, formData.tripId, updateField]);
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
