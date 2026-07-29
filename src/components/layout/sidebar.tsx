@@ -32,6 +32,7 @@ import {
   CalendarClock,
   Clock,
   Mail,
+  Send,
   Layers,
   Database,
   Link2,
@@ -132,6 +133,7 @@ const navGroups: NavGroup[] = [
     label: 'Administration',
     items: [
       { label: 'Notifications', href: '/dashboard/notifications', icon: Bell },
+      { label: 'Delivery Dashboard', href: '/dashboard/notifications/deliveries', icon: Send },
       { label: 'Email History', href: '/dashboard/notifications/history', icon: Mail },
       { label: 'Offline Drafts', href: '/dashboard/offline', icon: Database },
       { label: 'Audit Log', href: '/dashboard/audit', icon: FileText },

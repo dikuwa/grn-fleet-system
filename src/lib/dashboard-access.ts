@@ -80,6 +80,15 @@ export const dashboardRoutePolicy: readonly DashboardRouteRule[] = [
     navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: false,
   },
   {
+    prefix: '/dashboard/notifications/deliveries',
+    capability: 'notification:delivery-dashboard',
+    grants: [
+      grant([R.TENANT_ADMIN, R.TRANSPORT_ADMIN], 'tenant_manage', 'tenant', READ_EXPORT),
+      grant([R.AUDITOR], 'tenant_read_only', 'tenant', READ_EXPORT),
+    ],
+    navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: false,
+  },
+  {
     prefix: '/dashboard/platform',
     capability: 'platform:manage',
     grants: [grant([R.PLATFORM_ADMIN], 'platform_manage', 'platform', MANAGE)],
@@ -160,6 +169,15 @@ export const dashboardRoutePolicy: readonly DashboardRouteRule[] = [
     navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: true,
   },
   { prefix: '/dashboard/share-links', capability: 'document:share', grants: [grant([R.TENANT_ADMIN, R.TRANSPORT_ADMIN], 'tenant_manage', 'tenant', MANAGE)], navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: true },
+  {
+    prefix: '/dashboard/reports/licence-expiry',
+    capability: 'report:licence-expiry',
+    grants: [
+      grant([R.TENANT_ADMIN, R.TRANSPORT_ADMIN], 'tenant_read', 'tenant', READ_EXPORT),
+      grant([R.AUDITOR], 'tenant_read_only', 'tenant', READ_EXPORT),
+    ],
+    navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: false,
+  },
   {
     prefix: '/dashboard/documents',
     capability: 'document:view',

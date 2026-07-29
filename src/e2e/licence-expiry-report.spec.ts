@@ -120,8 +120,10 @@ test.describe('Licence Expiry Report', () => {
     await expiredFilter.click();
     await page.waitForTimeout(500);
 
-    // Verify the filter button is active (has bg-brand style)
-    await expect(expiredFilter).toHaveAttribute('class', /bg-brand/);
+    // Verify the expired filter button gets active styling
+    // The active class is bg-brand-800, not just bg-brand
+    const expiredClasses = await expiredFilter.getAttribute('class');
+    expect(expiredClasses).toContain('bg-brand');
 
     // Try the search input
     const searchInput = page.getByPlaceholder(/Search driver/i);
@@ -133,12 +135,19 @@ test.describe('Licence Expiry Report', () => {
     const expiringFilter = page.getByRole('button', { name: 'Expiring' });
     await expiringFilter.click();
     await page.waitForTimeout(500);
+    await expect(expiringFilter).toBeVisible();
+
+    // Verify the expiring filter is now active
+    const expiringClasses = await expiringFilter.getAttribute('class');
+    expect(expiringClasses).toContain('bg-brand');
 
     // Also test "All" filter
     const allFilter = page.getByRole('button', { name: 'All' });
     await allFilter.click();
     await page.waitForTimeout(500);
-    await expect(allFilter).toHaveAttribute('class', /bg-brand/);
+    await expect(allFilter).toBeVisible();
+    const allClasses = await allFilter.getAttribute('class');
+    expect(allClasses).toContain('bg-brand');
   });
 
   test('4. CSV export triggers download', async ({ page }) => {
