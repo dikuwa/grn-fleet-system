@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { Resend } from 'resend';
 import { getDb } from '@/db';
 import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { notifications } from '@/db/schema/notifications';
@@ -143,6 +144,59 @@ export async function GET(request: NextRequest) {
           actionUrl: '/dashboard/driver-self-service',
           priority: isExpired ? 'high' : 'normal',
         });
+
+        // Send email notification if Resend is configured
+        const resendApiKey = process.env.RESEND_API_KEY;
+        const emailFrom = process.env.EMAIL_FROM;
+        if (resendApiKey && emailFrom && licence.employeeEmail) {
+          try {
+            const resend = new Resend(resendApiKey);
+            await resend.emails.send({
+              from: emailFrom,
+              to: licence.employeeEmail,
+              subject: title,
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2 style="color: ${isExpired ? '#DC2626' : '#D97706'}; border-bottom: 2px solid #E5E7EB; padding-bottom: 8px;">
+                    ${isExpired ? '⚠️' : '⏰'} ${title}
+                  </h2>
+                  <p style="color: #374151; font-size: 15px; line-height: 1.6;">
+                    Dear <strong>${licence.employeeName}</strong>,
+                  </p>
+                  <p style="color: #374151; font-size: 15px; line-height: 1.6;">
+                    ${body}
+                  </p>
+                  <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+                    <tr>
+                      <td style="padding: 8px 12px; background: #F9FAFB; border: 1px solid #E5E7EB; font-weight: 600;">Licence Class</td>
+                      <td style="padding: 8px 12px; background: #F9FAFB; border: 1px solid #E5E7EB;">${licence.licenceClass}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 12px; border: 1px solid #E5E7EB; font-weight: 600;">Licence Number</td>
+                      <td style="padding: 8px 12px; border: 1px solid #E5E7EB;">${licence.licenceNumber}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 12px; background: #F9FAFB; border: 1px solid #E5E7EB; font-weight: 600;">Expiry Date</td>
+                      <td style="padding: 8px 12px; background: #F9FAFB; border: 1px solid #E5E7EB;">${expiryDate.toLocaleDateString('en-NA')}</td>
+                    </tr>
+                  </table>
+                  <p style="color: #6B7280; font-size: 13px;">
+                    Please log in to the fleet management system to update your licence information:
+                    <br /><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/dashboard/driver-self-service" style="color: #2563EB;">Driver Self-Service Portal</a>
+                  </p>
+                  <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 16px 0;" />
+                  <p style="color: #9CA3AF; font-size: 12px;">
+                    This is an automated message from the Government Fleet Management System.
+                    ${isExpired ? 'Please renew your licence at your earliest convenience.' : ''}
+                  </p>
+                </div>
+              `,
+            });
+            console.log(`[cron/licence-expiry] Email sent to ${licence.employeeEmail} for licence ${licence.licenceNumber}`);
+          } catch (emailError) {
+            console.error(`[cron/licence-expiry] Failed to send email to ${licence.employeeEmail}:`, emailError);
+          }
+        }
 
         results.push({
           tenantId,
