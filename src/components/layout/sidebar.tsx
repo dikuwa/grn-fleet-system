@@ -125,6 +125,7 @@ const navGroups: NavGroup[] = [
       { label: 'Documents', href: '/dashboard/documents', icon: FileSpreadsheet },
       { label: 'Share Links', href: '/dashboard/share-links', icon: Link2 },
       { label: 'Reports', href: '/dashboard/reports', icon: FileBarChart },
+      { label: 'Licence Expiry', href: '/dashboard/reports/licence-expiry', icon: Shield },
     ],
   },
   {

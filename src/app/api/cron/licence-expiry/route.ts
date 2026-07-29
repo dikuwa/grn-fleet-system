@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { getDb } from '@/db';
 import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
-import { notifications } from '@/db/schema/notifications';
+import { notifications, notificationDeliveries } from '@/db/schema/notifications';
 import { eq, and, gte, sql } from 'drizzle-orm';
 
 export const maxDuration = 120; // 2 min timeout for large tenants
@@ -132,26 +132,34 @@ export async function GET(request: NextRequest) {
           ? `Your ${licence.licenceClass} driving licence expired on ${expiryDate.toLocaleDateString('en-NA')}. Please renew it to remain eligible for driving assignments.`
           : `Your ${licence.licenceClass} driving licence expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'} (${expiryDate.toLocaleDateString('en-NA')}). Please arrange renewal.`;
 
-        await db.insert(notifications).values({
-          tenantId,
-          recipientUserId: licence.employeeUserId,
-          audience: 'user',
-          type: isExpired ? 'emergency' : 'reminder',
-          title,
-          body,
-          entityType: 'driver_licence',
-          entityId: licence.licenceId,
-          actionUrl: '/dashboard/driver-self-service',
-          priority: isExpired ? 'high' : 'normal',
-        });
+        const [createdNotification] = await db
+          .insert(notifications)
+          .values({
+            tenantId,
+            recipientUserId: licence.employeeUserId,
+            audience: 'user',
+            type: isExpired ? 'emergency' : 'reminder',
+            title,
+            body,
+            entityType: 'driver_licence',
+            entityId: licence.licenceId,
+            actionUrl: '/dashboard/driver-self-service',
+            priority: isExpired ? 'high' : 'normal',
+          })
+          .returning({ id: notifications.id });
+
+        const notificationId = createdNotification?.id;
 
         // Send email notification if Resend is configured
         const resendApiKey = process.env.RESEND_API_KEY;
         const emailFrom = process.env.EMAIL_FROM;
-        if (resendApiKey && emailFrom && licence.employeeEmail) {
+        if (resendApiKey && emailFrom && licence.employeeEmail && notificationId) {
+          let emailStatus: 'sent' | 'failed' = 'failed';
+          let providerId: string | undefined;
+          let errorSummary: string | undefined;
           try {
             const resend = new Resend(resendApiKey);
-            await resend.emails.send({
+            const emailResult = await resend.emails.send({
               from: emailFrom,
               to: licence.employeeEmail,
               subject: title,
@@ -192,9 +200,27 @@ export async function GET(request: NextRequest) {
                 </div>
               `,
             });
-            console.log(`[cron/licence-expiry] Email sent to ${licence.employeeEmail} for licence ${licence.licenceNumber}`);
+            emailStatus = 'sent';
+            providerId = emailResult?.data?.id;
+            console.log(`[cron/licence-expiry] Email sent to ${licence.employeeEmail} for licence ${licence.licenceNumber} (providerId: ${providerId})`);
           } catch (emailError) {
+            emailStatus = 'failed';
+            errorSummary = String(emailError);
             console.error(`[cron/licence-expiry] Failed to send email to ${licence.employeeEmail}:`, emailError);
+          }
+
+          // Record delivery attempt
+          try {
+            await db.insert(notificationDeliveries).values({
+              notificationId,
+              channel: 'email',
+              providerId,
+              attempt: 1,
+              status: emailStatus,
+              errorSummary: emailStatus === 'failed' ? errorSummary : undefined,
+            });
+          } catch (deliveryError) {
+            console.error('[cron/licence-expiry] Failed to record delivery:', deliveryError);
           }
         }
 
