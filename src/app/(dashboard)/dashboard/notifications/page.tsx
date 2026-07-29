@@ -28,6 +28,8 @@ import {
   Inbox,
   Wifi,
   WifiOff,
+  Trash2,
+  X,
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -219,6 +221,41 @@ export default function NotificationsPage() {
     }).then(() => broadcastNotificationChange());
   }, [queryClient]);
 
+  const deleteOne = useCallback(async (notificationId: string) => {
+    const response = await fetch(`/api/notifications?id=${encodeURIComponent(notificationId)}`, {
+      method: 'DELETE',
+      keepalive: true,
+    });
+    if (response.ok) {
+      queryClient.setQueryData<NotificationFeed>(notificationQueryKey, (current) => {
+        if (!current) return current;
+        const removed = current.notifications.find((n) => n.id === notificationId);
+        return {
+          ...current,
+          notifications: current.notifications.filter((n) => n.id !== notificationId),
+          unreadCount: removed && !removed.isRead ? Math.max(0, current.unreadCount - 1) : current.unreadCount,
+        };
+      });
+      broadcastNotificationChange();
+    } else {
+      // Re-fetch on failure to restore correct state
+      await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
+    }
+  }, [queryClient]);
+
+  const clearAll = useCallback(async () => {
+    const response = await fetch('/api/notifications', { method: 'DELETE', keepalive: true });
+    if (response.ok) {
+      queryClient.setQueryData<NotificationFeed>(notificationQueryKey, (current) => {
+        if (!current) return current;
+        return { ...current, notifications: [], unreadCount: 0 };
+      });
+      broadcastNotificationChange();
+    } else {
+      await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
+    }
+  }, [queryClient]);
+
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[
@@ -240,6 +277,12 @@ export default function NotificationsPage() {
             <CheckCheck className="h-4 w-4" />
             Mark All Read
           </Button>
+          {notifications.length > 0 && (
+            <Button variant="secondary" size="sm" onClick={clearAll}>
+              <Trash2 className="h-4 w-4" />
+              Clear All
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={() => setPreferencesOpen(true)}>
             <Settings className="h-4 w-4" />
             Preferences
@@ -359,6 +402,26 @@ export default function NotificationsPage() {
                         <ChevronRight className="h-4 w-4" />
                       </Link>
                     )}
+                    {!notification.isRead && (
+                      <button
+                        onClick={() => markOneRead(notification.id)}
+                        aria-label="Mark as read"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-400 hover:bg-muted hover:text-ink-700 transition-colors"
+                        title="Mark as read"
+                      >
+                        <CheckCheck className="h-4 w-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (confirm('Delete this notification?')) deleteOne(notification.id);
+                      }}
+                      aria-label="Delete notification"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-300 hover:bg-status-error-bg hover:text-status-error-text transition-colors"
+                      title="Delete"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
                 </CardContent>
               </Card>

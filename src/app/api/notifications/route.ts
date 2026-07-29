@@ -328,6 +328,66 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * DELETE /api/notifications
+ *
+ * Delete one or all notifications for the authenticated user.
+ * - With ?id=uuid: delete that specific user-owned notification
+ * - Without id: clear all user-owned notifications (soft-delete from view)
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const userId = session.user.id;
+    const tenantId = session.tenantId;
+    const { searchParams } = new URL(request.url);
+    const notificationId = searchParams.get('id');
+
+    const db = getDb();
+
+    if (notificationId) {
+      // Delete a specific user-owned notification
+      const [item] = await db
+        .select({ id: notifications.id, audience: notifications.audience })
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.id, notificationId),
+            eq(notifications.tenantId, tenantId),
+            or(
+              and(eq(notifications.audience, 'user'), eq(notifications.recipientUserId, userId)),
+              and(eq(notifications.audience, 'platform')),
+            ),
+          ),
+        )
+        .limit(1);
+      if (!item) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
+
+      // Delete cascade removes notification_reads + notification_deliveries
+      await db.delete(notifications).where(eq(notifications.id, notificationId));
+    } else {
+      // Clear all notifications for this user (user-scoped only)
+      await db.delete(notifications).where(
+        and(
+          eq(notifications.tenantId, tenantId),
+          eq(notifications.audience, 'user'),
+          eq(notifications.recipientUserId, userId),
+        ),
+      );
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Notification delete failed:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete notifications: ' + String(error) },
+      { status: 500 },
+    );
+  }
+}
+
 export async function PATCH(request: NextRequest) {
   try {
     // Require auth — only allow updating your own notifications

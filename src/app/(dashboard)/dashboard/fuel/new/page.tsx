@@ -26,6 +26,7 @@ export default function NewFuelEntryPage() {
   const { toast } = useToast();
   const [formData, setFormData] = useState({
     vehicleGrn: searchParams.get('vehicle') || '',
+    vehicleId: '',
     tripRef: '',
     transactionDate: '',
     stationName: '',
@@ -44,6 +45,10 @@ export default function NewFuelEntryPage() {
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [vehicleSearch, setVehicleSearch] = useState(searchParams.get('vehicle') || '');
+  const [vehicles, setVehicles] = useState<Array<{ id: string; licenceNumber: string; make: string; model: string }>>([]);
+  const [vehicleLoading, setVehicleLoading] = useState(false);
+  const [vehicleDropdown, setVehicleDropdown] = useState(false);
   const tripId = searchParams.get('tripId') || '';
 
   useEffect(() => {
@@ -61,6 +66,22 @@ export default function NewFuelEntryPage() {
     setFormData((prev) => ({ ...prev, ...patch }));
     setDraftSaved(false);
   }, []);
+
+  // Search vehicles dynamically
+  useEffect(() => {
+    if (vehicleSearch.length < 2) { setVehicles([]); return; }
+    const timer = setTimeout(async () => {
+      setVehicleLoading(true);
+      try {
+        const res = await fetch(`/api/fleet?search=${encodeURIComponent(vehicleSearch)}&limit=10`);
+        const json = await res.json();
+        const list = json.vehicles || json.data?.vehicles || json.rows || json.data || [];
+        setVehicles(Array.isArray(list) ? list : []);
+        setVehicleDropdown(true);
+      } catch { /* ignore */ } finally { setVehicleLoading(false); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [vehicleSearch]);
 
   // Auto-save draft for offline recovery
   const saveDraftLocally = useCallback(async () => {
@@ -189,7 +210,40 @@ export default function NewFuelEntryPage() {
           <CardHeader><CardTitle>Transaction Details</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5"><Label required>Vehicle GRN</Label><Input placeholder="e.g. GRN-001" value={formData.vehicleGrn} onChange={(e) => updateForm({ vehicleGrn: e.target.value })} required /></div>
+              <div className="space-y-1.5 relative">
+                <Label required>Vehicle</Label>
+                <Input
+                  placeholder="Search vehicle GRN, make or model..."
+                  value={vehicleSearch}
+                  onChange={(e) => {
+                    setVehicleSearch(e.target.value);
+                    updateForm({ vehicleGrn: e.target.value, vehicleId: '' });
+                  }}
+                  onFocus={() => vehicles.length > 0 && setVehicleDropdown(true)}
+                  onBlur={() => setTimeout(() => setVehicleDropdown(false), 200)}
+                  required
+                />
+                {vehicleLoading && <p className="text-xs text-ink-400 mt-1">Searching...</p>}
+                {vehicleDropdown && vehicles.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full rounded-[8px] border border-border bg-surface shadow-lg max-h-48 overflow-y-auto">
+                    {vehicles.map((v) => (
+                      <button
+                        key={v.id}
+                        type="button"
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors"
+                        onMouseDown={() => {
+                          updateForm({ vehicleGrn: v.licenceNumber, vehicleId: v.id });
+                          setVehicleSearch(`${v.licenceNumber} — ${v.make} ${v.model}`);
+                          setVehicleDropdown(false);
+                        }}
+                      >
+                        <span className="font-medium">{v.licenceNumber}</span>
+                        <span className="text-ink-500 ml-2">{v.make} {v.model}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="space-y-1.5"><Label>Trip Reference</Label><Input placeholder="Optional trip ref" value={formData.tripRef} onChange={(e) => updateForm({ tripRef: e.target.value })} /></div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">

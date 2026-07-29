@@ -561,17 +561,22 @@ export default async function InspectionDetailPage({ params }: PageProps) {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {photos.map((photo) => (
                 <div key={photo.id} className="rounded-[8px] border border-border overflow-hidden">
-                  <div className="aspect-video bg-muted flex items-center justify-center">
+                  <a
+                    href={photo.signedUrl || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block aspect-square bg-muted flex items-center justify-center overflow-hidden"
+                  >
                     {photo.signedUrl ? (
                       <img
                         src={photo.signedUrl}
                         alt={photo.caption || 'Inspection photo'}
-                        className="h-full w-full object-cover"
+                        className="h-full w-full object-cover hover:scale-105 transition-transform"
                       />
                     ) : (
                       <Camera className="h-8 w-8 text-ink-300" />
                     )}
-                  </div>
+                  </a>
                   <div className="p-2">
                     <p className="text-xs text-ink-500 truncate">{photo.caption || 'No caption'}</p>
                     <p className="text-xs text-ink-400 tabular-nums">{formatDate(photo.capturedAt)}</p>

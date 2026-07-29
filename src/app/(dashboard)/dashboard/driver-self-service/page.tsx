@@ -201,14 +201,6 @@ export default function DriverSelfServicePage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-2">
-                  <Link href="/dashboard/inspections/new?type=departure" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
-                    <ClipboardCheck className="h-5 w-5 text-brand-600" />
-                    <span className="text-xs font-medium text-ink-700">Departure</span>
-                  </Link>
-                  <Link href="/dashboard/inspections/new?type=return" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
-                    <ClipboardCheck className="h-5 w-5 text-green-600" />
-                    <span className="text-xs font-medium text-ink-700">Return</span>
-                  </Link>
                   <Link href="/dashboard/logs" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                     <PenSquare className="h-5 w-5 text-amber-600" />
                     <span className="text-xs font-medium text-ink-700">Daily Log</span>
@@ -216,6 +208,14 @@ export default function DriverSelfServicePage() {
                   <Link href="/dashboard/fuel/new" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                     <Gauge className="h-5 w-5 text-purple-600" />
                     <span className="text-xs font-medium text-ink-700">Fuel Entry</span>
+                  </Link>
+                  <Link href="/dashboard/inspections" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                    <ClipboardCheck className="h-5 w-5 text-brand-600" />
+                    <span className="text-xs font-medium text-ink-700">Inspections</span>
+                  </Link>
+                  <Link href="/dashboard/requests/new" className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
+                    <FileText className="h-5 w-5 text-blue-600" />
+                    <span className="text-xs font-medium text-ink-700">New Request</span>
                   </Link>
                 </div>
               </CardContent>

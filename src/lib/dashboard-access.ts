@@ -183,7 +183,7 @@ export const dashboardRoutePolicy: readonly DashboardRouteRule[] = [
     navigationVisible: true, directUrlBehaviour: '404', notificationLinkEligible: true,
   },
 
-  { prefix: '/dashboard/requests/new', capability: 'request:create', grants: [grant([R.REQUESTER], 'own_manage', 'self', ['view', 'create']), grant([R.TRANSPORT_ADMIN], 'tenant_manage', 'tenant', ['view', 'create'])], navigationVisible: false, directUrlBehaviour: '403', notificationLinkEligible: false },
+  { prefix: '/dashboard/requests/new', capability: 'request:create', grants: [grant([R.REQUESTER, R.DRIVER], 'own_manage', 'self', ['view', 'create']), grant([R.TRANSPORT_ADMIN], 'tenant_manage', 'tenant', ['view', 'create'])], navigationVisible: false, directUrlBehaviour: '403', notificationLinkEligible: false },
   {
     prefix: '/dashboard/programmes',
     capability: 'programme:view',
@@ -282,15 +282,16 @@ export const dashboardRoutePolicy: readonly DashboardRouteRule[] = [
   },
 
   { prefix: '/dashboard/inspections/templates', capability: 'inspection:templates', grants: [grant([R.TENANT_ADMIN, R.TRANSPORT_ADMIN], 'tenant_manage', 'tenant', MANAGE)], navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: true },
-  { prefix: '/dashboard/inspections/new', capability: 'inspection:perform', grants: [grant([R.TRANSPORT_ADMIN, R.RELEASE_OFFICER, R.DRIVER, R.INSPECTOR], 'assigned_manage', 'assigned', OPERATE)], navigationVisible: false, directUrlBehaviour: '404', notificationLinkEligible: false },
-  { prefix: '/dashboard/inspections/departure', capability: 'inspection:perform', grants: [grant([R.TRANSPORT_ADMIN, R.RELEASE_OFFICER, R.DRIVER, R.INSPECTOR], 'assigned_manage', 'assigned', OPERATE)], navigationVisible: false, directUrlBehaviour: '404', notificationLinkEligible: false },
-  { prefix: '/dashboard/inspections/return', capability: 'inspection:perform', grants: [grant([R.TRANSPORT_ADMIN, R.RELEASE_OFFICER, R.DRIVER, R.INSPECTOR], 'assigned_manage', 'assigned', OPERATE)], navigationVisible: false, directUrlBehaviour: '404', notificationLinkEligible: false },
+  { prefix: '/dashboard/inspections/new', capability: 'inspection:perform', grants: [grant([R.TRANSPORT_ADMIN, R.RELEASE_OFFICER, R.INSPECTOR], 'assigned_manage', 'assigned', OPERATE)], navigationVisible: false, directUrlBehaviour: '404', notificationLinkEligible: false },
+  { prefix: '/dashboard/inspections/departure', capability: 'inspection:perform', grants: [grant([R.TRANSPORT_ADMIN, R.RELEASE_OFFICER, R.INSPECTOR], 'assigned_manage', 'assigned', OPERATE)], navigationVisible: false, directUrlBehaviour: '404', notificationLinkEligible: false },
+  { prefix: '/dashboard/inspections/return', capability: 'inspection:perform', grants: [grant([R.TRANSPORT_ADMIN, R.RELEASE_OFFICER, R.INSPECTOR], 'assigned_manage', 'assigned', OPERATE)], navigationVisible: false, directUrlBehaviour: '404', notificationLinkEligible: false },
   {
     prefix: '/dashboard/inspections',
     capability: 'inspection:view',
     grants: [
       grant([R.TRANSPORT_ADMIN], 'tenant_manage', 'tenant', OPERATE),
-      grant([R.RELEASE_OFFICER, R.DRIVER, R.INSPECTOR], 'assigned_manage', 'assigned', OPERATE),
+      grant([R.RELEASE_OFFICER, R.INSPECTOR], 'assigned_manage', 'assigned', OPERATE),
+      grant([R.DRIVER], 'assigned_read', 'assigned', VIEW),
       grant([R.TENANT_ADMIN], 'tenant_read', 'tenant', VIEW),
       grant([R.AUDITOR], 'tenant_read_only', 'tenant', READ_EXPORT),
     ],
