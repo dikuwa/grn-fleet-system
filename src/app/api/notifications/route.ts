@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { notifications, notificationPreferences, notificationDeliveries, notificationReads } from '@/db/schema/notifications';
-import { eq, and, desc, or, inArray } from 'drizzle-orm';
+import { notifications, notificationPreferences, notificationDeliveries, notificationReads, notificationDismissals } from '@/db/schema/notifications';
+import { eq, and, desc, or, ne, inArray } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { requirePermission } from '@/lib/auth-helpers';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
@@ -78,7 +78,22 @@ export async function GET(request: NextRequest) {
           .where(and(eq(notificationReads.userId, userId), inArray(notificationReads.notificationId, sharedIds)))
       : [];
     const readIds = new Set(readRows.map((row) => row.notificationId));
-    const normalized = visibleItems.map((item) => {
+    // Fetch dismissed notification IDs for this user
+    const dismissedRows = await db
+      .select({ notificationId: notificationDismissals.notificationId })
+      .from(notificationDismissals)
+      .where(
+        and(
+          eq(notificationDismissals.userId, userId),
+          inArray(notificationDismissals.notificationId, visibleItems.map((i) => i.id)),
+        ),
+      );
+    const dismissedIds = new Set(dismissedRows.map((row) => row.notificationId));
+
+    // Filter out dismissed notifications
+    const undismissedItems = visibleItems.filter((item) => !dismissedIds.has(item.id));
+
+    const normalized = undismissedItems.map((item) => {
       const isRead = item.audience === 'user' ? item.isRead : readIds.has(item.id);
       const actionAllowed = item.actionUrl
         ? canAccessDashboardPath(item.actionUrl, roleNames) &&
@@ -348,27 +363,39 @@ export async function DELETE(request: NextRequest) {
     const db = getDb();
 
     if (notificationId) {
-      // Delete a specific user-owned notification
+      // Look up the notification (broader scope — user can dismiss any notification
+      // they are eligible to see in the GET feed)
       const [item] = await db
         .select({ id: notifications.id, audience: notifications.audience })
         .from(notifications)
-        .where(
-          and(
-            eq(notifications.id, notificationId),
-            eq(notifications.tenantId, tenantId),
-            or(
-              and(eq(notifications.audience, 'user'), eq(notifications.recipientUserId, userId)),
-              and(eq(notifications.audience, 'platform')),
-            ),
-          ),
-        )
+        .where(and(eq(notifications.id, notificationId), eq(notifications.tenantId, tenantId)))
         .limit(1);
       if (!item) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
 
-      // Delete cascade removes notification_reads + notification_deliveries
-      await db.delete(notifications).where(eq(notifications.id, notificationId));
+      if (item.audience === 'user') {
+        // User-scoped: hard delete (cascade removes reads + deliveries)
+        const [ownership] = await db
+          .select({ id: notifications.id })
+          .from(notifications)
+          .where(
+            and(
+              eq(notifications.id, notificationId),
+              eq(notifications.recipientUserId, userId),
+            ),
+          )
+          .limit(1);
+        if (!ownership) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
+        await db.delete(notifications).where(eq(notifications.id, notificationId));
+      } else {
+        // Shared audience (role, tenant, department, office, platform):
+        // dismiss for this user only — don't affect other users
+        await db
+          .insert(notificationDismissals)
+          .values({ notificationId, userId })
+          .onConflictDoNothing();
+      }
     } else {
-      // Clear all notifications for this user (user-scoped only)
+      // Clear user-scoped notifications (hard delete)
       await db.delete(notifications).where(
         and(
           eq(notifications.tenantId, tenantId),
@@ -376,6 +403,22 @@ export async function DELETE(request: NextRequest) {
           eq(notifications.recipientUserId, userId),
         ),
       );
+      // Dismiss all shared notifications for this user
+      const sharedItems = await db
+        .select({ id: notifications.id })
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.tenantId, tenantId),
+            ne(notifications.audience, 'user'),
+          ),
+        );
+      if (sharedItems.length) {
+        await db
+          .insert(notificationDismissals)
+          .values(sharedItems.map((n) => ({ notificationId: n.id, userId })))
+          .onConflictDoNothing();
+      }
     }
 
     return NextResponse.json({ success: true });

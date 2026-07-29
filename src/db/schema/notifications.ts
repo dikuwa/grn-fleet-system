@@ -38,6 +38,19 @@ export const notificationReads = pgTable('notification_reads', {
     .on(table.notificationId, table.userId),
 }));
 
+/** Per-user dismissal of shared-audience notifications. */
+export const notificationDismissals = pgTable('notification_dismissals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  notificationId: uuid('notification_id')
+    .notNull()
+    .references(() => notifications.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull(),
+  dismissedAt: timestamp('dismissed_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  notificationUserDismissedUnique: uniqueIndex('notification_dismissals_notification_user_idx')
+    .on(table.notificationId, table.userId),
+}));
+
 /**
  * Notification delivery tracking
  */
