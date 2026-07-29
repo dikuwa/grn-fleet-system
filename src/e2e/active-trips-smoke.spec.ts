@@ -47,7 +47,7 @@ test.describe('Active Trips Tracking', () => {
   });
 
   test('active trips page loads with status stats', async ({ page }) => {
-    await page.goto('/dashboard/trips/active', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/trips/active', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Page header should be visible
     await expect(page.locator('h1:has-text("Active Trips")').first()).toBeVisible({ timeout: 20000 });
@@ -55,42 +55,36 @@ test.describe('Active Trips Tracking', () => {
     // Should show at least one stat card (in progress, return due, etc.)
     const statCards = page.locator('[class*="tabular-nums"]');
     const count = await statCards.count();
-    // There should be 4 stat cards (in progress, return due, return insp, closure review)
     expect(count).toBeGreaterThanOrEqual(1);
   });
 
   test('active trips list shows trip cards with duration', async ({ page }) => {
-    await page.goto('/dashboard/trips/active', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/trips/active', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Check for trip cards (the linked blocks with make/model)
     const tripCards = page.locator('a[href*="/dashboard/trips/"]');
     const cardCount = await tripCards.count();
 
     if (cardCount > 0) {
-      // At least one trip card exists — verify duration component renders
       await expect(tripCards.first()).toBeVisible({ timeout: 5000 });
 
-      // Duration should show a clock icon and time text
       const clockIcons = page.locator('.lucide-clock');
       if (await clockIcons.count() > 0) {
         await expect(clockIcons.first()).toBeVisible({ timeout: 5000 });
       }
     } else {
-      // No active trips — empty state should show
       const emptyState = page.locator('text=No Active Trips');
       await expect(emptyState).toBeVisible({ timeout: 5000 });
     }
   });
 
   test('active trips page link navigates to trip detail', async ({ page }) => {
-    await page.goto('/dashboard/trips/active', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/trips/active', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // Click first trip card if any exist (exclude the "All Trips" button)
     const tripCard = page.locator('a[href^="/dashboard/trips/"]:not([href="/dashboard/trips/active"]):not([href="/dashboard/trips/closure-review"])').first();
     if (await tripCard.isVisible({ timeout: 3000 }).catch(() => false)) {
       await tripCard.click();
-      await page.waitForTimeout(3000);
-      // Should navigate to trip detail (URL contains trip ID)
+      await expect(page.locator('h1').first()).toBeVisible({ timeout: 10000 });
       expect(page.url()).toContain('/dashboard/trips/');
       expect(page.url()).not.toContain('/active');
     }
@@ -98,64 +92,62 @@ test.describe('Active Trips Tracking', () => {
 });
 
 test.describe('Dashboard UI Smoke Tests', () => {
+  test.setTimeout(60_000);
   test.beforeEach(async ({ page }) => {
     await signIn(page);
   });
 
   test('inspections list page loads', async ({ page }) => {
-    await page.goto('/dashboard/inspections', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/inspections', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('departure inspection page loads', async ({ page }) => {
-    await page.goto('/dashboard/inspections/departure', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/inspections/departure', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Departure")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('return inspection page loads', async ({ page }) => {
-    await page.goto('/dashboard/inspections/return', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/inspections/return', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Return")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('inspection templates page loads', async ({ page }) => {
-    await page.goto('/dashboard/inspections/templates', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/inspections/templates', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('expiry alerts dashboard loads', async ({ page }) => {
-    await page.goto('/dashboard/expiry-alerts', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/expiry-alerts', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Expiry")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('vehicle compliance page loads', async ({ page }) => {
-    await page.goto('/dashboard/fleet/compliance', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/fleet/compliance', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Compliance")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('vehicle defects page loads', async ({ page }) => {
-    await page.goto('/dashboard/fleet/defects', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/fleet/defects', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Defects")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('driver mobile view loads', async ({ page }) => {
-    await page.goto('/dashboard/driver-mobile', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/driver-mobile', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('driver self-service page loads', async ({ page }) => {
-    await page.goto('/dashboard/driver-self-service', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/driver-self-service', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('audit log page loads for authorized users', async ({ page }) => {
-    await page.goto('/dashboard/audit', { waitUntil: 'networkidle', timeout: 90000 });
-    // Tenant admin has AUDIT_READ — page should load
-    // Use auto-retrying assertion (polls every 100ms) for client-rendered page
+    await page.goto('/dashboard/audit', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Audit")').first()).toBeVisible({ timeout: 45000 });
   });
 
   test('audit log API rejects unauthorized roles', async ({ page }) => {
-    // Sign in as transport-admin (no AUDIT_READ permission)
     const transportEmail = 'transport.admin@kavangoeast.test';
     const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
@@ -178,16 +170,12 @@ test.describe('Dashboard UI Smoke Tests', () => {
       },
     ]);
 
-    // Audit API should reject transport admins with 403
     const apiRes = await page.request.get(`${BASE}/api/audit?limit=1`);
     expect(apiRes.status()).toBe(403);
-
-    // Page renders client-side empty state (no server redirect) — API contract is the gate
   });
 
   test('notifications page loads', async ({ page }) => {
-    await page.goto('/dashboard/notifications', { waitUntil: 'networkidle', timeout: 90000 });
-    // Use auto-retrying assertion for client-rendered page
+    await page.goto('/dashboard/notifications', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Notification")').first()).toBeVisible({ timeout: 45000 });
   });
 });

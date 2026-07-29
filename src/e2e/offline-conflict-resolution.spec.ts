@@ -21,26 +21,31 @@ import { test, expect, Page } from '@playwright/test';
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
 /**
- * Sign in by navigating to the login page and filling in credentials.
- * This sets real session cookies that work with both SSR and client-side hooks.
+ * Sign in via API and inject the session cookie so the test browser
+ * is authenticated for protected dashboard routes.
  */
-async function signInViaForm(page: Page) {
+async function signInViaApi(page: Page) {
   const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
-  await page.goto('/login', { waitUntil: 'load', timeout: 60000 });
-  await page.waitForTimeout(2000);
+  const res = await page.request.post(`${BASE}/api/auth/sign-in`, {
+    data: { email, password },
+  });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  const token = body.token || body.session?.token;
+  expect(token).toBeDefined();
 
-  // Fill in login form
-  await page.locator('input[type="text"], input[type="email"]').first().fill(email);
-  await page.locator('input[type="password"]').first().fill(password);
-
-  // Click sign-in button
-  await page.locator('button[type="submit"]').first().click();
-
-  // Wait for redirect to dashboard (successful login)
-  await page.waitForURL('**/dashboard', { timeout: 30000 });
-  await page.waitForTimeout(1000);
+  await page.context().addCookies([
+    {
+      name: 'better-auth.session_token',
+      value: token,
+      domain: new URL(BASE).hostname,
+      path: '/',
+      httpOnly: false,
+      sameSite: 'Lax',
+    },
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -49,8 +54,10 @@ async function signInViaForm(page: Page) {
 
 test.describe('Offline Conflict Resolution', () => {
   test.beforeEach(async ({ page }) => {
-    await signInViaForm(page);
+    await signInViaApi(page);
   });
+
+  test.describe.configure({ mode: 'serial' });
 
   // -----------------------------------------------------------------------
   // 1. Page loads with summary cards and empty state
@@ -168,6 +175,12 @@ test.describe('Offline Conflict Resolution', () => {
       }
     }
   });
+
+  // -----------------------------------------------------------------------
+  // Test timeouts
+  // -----------------------------------------------------------------------
+
+  test.setTimeout(60_000);
 
   // -----------------------------------------------------------------------
   // 4. Discard button removes a draft

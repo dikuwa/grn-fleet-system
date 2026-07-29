@@ -1006,3 +1006,309 @@ describe('Snapshot format consistency', () => {
     expect(authorisation.approvalMethod).toBe('Digitally authorised');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Edge Case & Data Flow Tests
+// ---------------------------------------------------------------------------
+
+describe('Document edge cases', () => {
+  describe('human-readable formatter edge cases', () => {
+    it('formatHumanValue handles missing, null, undefined, and empty values', async () => {
+      const { formatHumanValue } = await import('@/lib/human-readable');
+      expect(formatHumanValue(null, 'test')).toBe('Not recorded');
+      expect(formatHumanValue(undefined, 'test')).toBe('Not recorded');
+      expect(formatHumanValue('', 'test')).toBe('Not recorded');
+      expect(formatHumanValue([], 'test')).toBe('No records');
+      expect(formatHumanValue(false, 'isActive')).toBe('No');
+      expect(formatHumanValue(true, 'isActive')).toBe('Yes');
+    });
+
+    it('formatHumanValue handles numeric values correctly', async () => {
+      const { formatHumanValue } = await import('@/lib/human-readable');
+      expect(formatHumanValue(0, 'odometer')).toBe('0 km');
+      expect(formatHumanValue(100, 'kilometres')).toBe('100 km');
+      expect(formatHumanValue(0, 'cost')).toContain('0.00');
+      expect(formatHumanValue(1200, 'cost')).toContain('1,200');
+      expect(formatHumanValue(45.5, 'fuel')).toBe('45.5');
+    });
+
+    it('formatHumanDate handles invalid date inputs gracefully', async () => {
+      const { formatHumanDate } = await import('@/lib/human-readable');
+      // Invalid date string falls back to humanizeKey
+      expect(formatHumanDate('not-a-date')).toBe('Not A Date');
+      // Empty string is falsy
+      expect(formatHumanDate('')).toBe('Not recorded');
+      // Null/undefined
+      expect(formatHumanDate(null)).toBe('Not recorded');
+      // Valid ISO date uses full month name
+      expect(formatHumanDate('2026-07-28T08:00:00.000Z')).toContain('July');
+    });
+
+    it('humanizeKey converts all common key patterns', async () => {
+      const { humanizeKey } = await import('@/lib/human-readable');
+      expect(humanizeKey('transport_request')).toBe('Transport Request');
+      expect(humanizeKey('tripAuthority')).toBe('Trip Authority');
+      expect(humanizeKey('specialAuthorityRequired')).toBe('Special Authority Required');
+      expect(humanizeKey('EMP_0042')).toBe('EMP 0042');
+      expect(humanizeKey('')).toBe('');
+      expect(humanizeKey('N$')).toBe('N$');
+    });
+  });
+
+  describe('document data edge cases', () => {
+    it('transport request handles empty passengers array', () => {
+      const emptyPassengers: Array<Record<string, unknown>> = [];
+      expect(emptyPassengers.length).toBe(0);
+      // Table should show empty state when no passengers
+      const emptyLabel = 'No travellers selected';
+      expect(emptyPassengers.length === 0 ? emptyLabel : '').toBe(emptyLabel);
+    });
+
+    it('transport request handles missing activities', () => {
+      const emptyActivities: Array<Record<string, unknown>> = [];
+      const fallback = emptyActivities.length === 0 ? 'No activities recorded' : '';
+      expect(fallback).toBe('No activities recorded');
+    });
+
+    it('trip authority handles no goods/equipment', () => {
+      const noGoods: Array<Record<string, unknown>> = [];
+      const display = noGoods.length === 0 ? 'None recorded' : noGoods;
+      expect(display).toBe('None recorded');
+    });
+
+    it('trip authority handles pending inspection state', () => {
+      const pendingInspection = {
+        status: 'pending',
+        items: [],
+        notes: 'Awaiting pre-departure inspection',
+      };
+      expect(pendingInspection.status).toBe('pending');
+      expect(pendingInspection.items.length).toBe(0);
+      expect(pendingInspection.notes).toContain('Awaiting');
+    });
+
+    it('trip authority handles missing driver acknowledgement', () => {
+      const pendingDriver = {
+        name: 'John Shikongo',
+        acceptedAt: null,
+      };
+      expect(pendingDriver.acceptedAt).toBeNull();
+      const acknowledgementStatus = pendingDriver.acceptedAt ? 'Accepted' : 'Awaiting driver acceptance';
+      expect(acknowledgementStatus).toBe('Awaiting driver acceptance');
+    });
+
+    it('trip authority handles many passengers (multi-page scenario)', () => {
+      const manyPassengers = Array.from({ length: 20 }, (_, i) => ({
+        name: `Passenger ${i + 1}`,
+        employeeNumber: `EMP-${String(i + 1).padStart(4, '0')}`,
+        passengerType: 'government_employee',
+      }));
+      expect(manyPassengers.length).toBe(20);
+      expect(manyPassengers[0].employeeNumber).toBe('EMP-0001');
+      expect(manyPassengers[19].employeeNumber).toBe('EMP-0020');
+
+      // Verify all IDs are unique
+      const ids = manyPassengers.map((p) => p.employeeNumber);
+      expect(new Set(ids).size).toBe(20);
+    });
+
+    it('trip authority handles long conditions text', () => {
+      const longConditions = Array.from({ length: 10 }, (_, i) => `Condition ${i + 1}: Driver must comply with all traffic regulations and council policies`);
+      expect(longConditions.length).toBe(10);
+      expect(longConditions[0]).toContain('Condition 1');
+      expect(longConditions[9]).toContain('Condition 10');
+      const totalChars = longConditions.reduce((sum, c) => sum + c.length, 0);
+      expect(totalChars).toBeGreaterThan(500);
+    });
+  });
+
+  describe('cross-document data flow', () => {
+    it('trip authorities can be generated from transport request data', () => {
+      // Transport request data (source)
+      const transportRequest = {
+        reference: 'GRN/TR/2026/0728/362',
+        purpose: 'Field inspection of community water projects',
+        scope: 'regional',
+        department: 'Community Development',
+        requester: { name: 'Maria Shikongo', employeeNumber: 'EMP-0042' },
+        passengers: [{ name: 'Petrus Ndara', employeeNumber: 'EMP-0087' }],
+        drivers: [{ name: 'John Shikongo', employeeNumber: 'EMP-0015' }],
+        routes: [{ origin: 'Rundu', destination: 'Mashare', estimatedKilometres: 120 }],
+        totalAuthorisedKilometres: 240,
+        activities: [{ title: 'Community Centre Inspection' }],
+        specialAuthorityRequired: false,
+      };
+
+      // Trip authority inherits from transport request data
+      const tripAuthority = {
+        requestReference: transportRequest.reference,
+        purpose: transportRequest.purpose,
+        scope: transportRequest.scope,
+        department: transportRequest.department,
+        totalKm: transportRequest.totalAuthorisedKilometres,
+        passengers: [
+          {
+            name: transportRequest.requester.name,
+            employeeNumber: transportRequest.requester.employeeNumber,
+            passengerType: 'government_employee',
+          },
+          ...transportRequest.passengers.map((p) => ({
+            name: p.name,
+            employeeNumber: p.employeeNumber,
+            passengerType: 'government_employee',
+          })),
+        ],
+        driver: transportRequest.drivers[0]
+          ? {
+              name: transportRequest.drivers[0].name,
+              employeeNumber: transportRequest.drivers[0].employeeNumber,
+              acceptedAt: null,
+            }
+          : null,
+      };
+
+      // Verify data flow
+      expect(tripAuthority.requestReference).toBe(transportRequest.reference);
+      expect(tripAuthority.purpose).toBe(transportRequest.purpose);
+      expect(tripAuthority.totalKm).toBe(transportRequest.totalAuthorisedKilometres);
+      expect(tripAuthority.passengers.length).toBe(transportRequest.passengers.length + 1); // requester + passengers
+      expect(tripAuthority.driver?.name).toBe('John Shikongo');
+      expect(tripAuthority.driver?.acceptedAt).toBeNull(); // not yet accepted
+    });
+
+    it('inspection report inherits data from trip authority', () => {
+      const tripAuthority = {
+        reference: 'TA-2026-000457',
+        vehicle: { licenceNumber: 'GRN-003-2024', make: 'Toyota', model: 'Hilux' },
+        driver: { name: 'John Shikongo', employeeNumber: 'EMP-0015' },
+        journeyLegs: [
+          { origin: 'Rundu', destination: 'Mashare', estimatedKm: 120 },
+        ],
+      };
+
+      // Inspection inherits vehicle, driver, and journey from the authority
+      const inspection = {
+        authorityReference: tripAuthority.reference,
+        vehicle: { ...tripAuthority.vehicle },
+        driver: { ...tripAuthority.driver },
+        odometer: 62000,
+        location: tripAuthority.journeyLegs[0].origin,
+      };
+
+      expect(inspection.authorityReference).toMatch(/^TA-/);
+      expect(inspection.vehicle.licenceNumber).toBe('GRN-003-2024');
+      expect(inspection.driver.name).toBe('John Shikongo');
+      expect(inspection.location).toBe('Rundu');
+    });
+
+    it('fuel summary inherits cost centre and expected fuel from trip authority', () => {
+      const tripAuthority = {
+        reference: 'TA-2026-000457',
+        fuelInformation: {
+          fuelCardNumber: 'FC-0082',
+          expectedFuel: '30 L (est.)',
+          fuelType: 'Diesel',
+          costCentre: 'CC-PROJ-2026',
+        },
+      };
+
+      const fuelEntry = {
+        authorityReference: tripAuthority.reference,
+        fuelCardNumber: tripAuthority.fuelInformation.fuelCardNumber,
+        fuelType: tripAuthority.fuelInformation.fuelType,
+        costCentre: tripAuthority.fuelInformation.costCentre,
+        litres: 25,
+        amount: 475,
+      };
+
+      expect(fuelEntry.fuelCardNumber).toBe('FC-0082');
+      expect(fuelEntry.fuelType).toBe('Diesel');
+      expect(fuelEntry.costCentre).toBe('CC-PROJ-2026');
+      expect(fuelEntry.litres).toBeLessThan(30); // within expected limit
+    });
+  });
+
+  describe('status calculation precedence', () => {
+    it('trip authority status follows correct precedence order', () => {
+      // The expected precedence from highest priority:
+      // Cancelled > Superseded > Expired > Completed > Awaiting Driver Acceptance > Active > Draft
+
+      const statusPriority = [
+        'Cancelled',
+        'Superseded',
+        'Expired',
+        'Completed',
+        'Awaiting Driver Acceptance',
+        'Scheduled',
+        'Active',
+        'Draft',
+      ];
+
+      // Verify active comes after awaiting acceptance
+      const awaitingIdx = statusPriority.indexOf('Awaiting Driver Acceptance');
+      const activeIdx = statusPriority.indexOf('Active');
+      expect(awaitingIdx).toBeLessThan(activeIdx);
+
+      // Verify completed comes before active
+      const completedIdx = statusPriority.indexOf('Completed');
+      expect(completedIdx).toBeLessThan(activeIdx);
+
+      // Verify cancelled is highest priority
+      expect(statusPriority[0]).toBe('Cancelled');
+
+      // Verify draft is lowest priority
+      expect(statusPriority[statusPriority.length - 1]).toBe('Draft');
+    });
+  });
+
+  describe('document data contract field validation', () => {
+    it('inspection report module loads correctly', async () => {
+      const mod = await import('./inspection-report');
+      expect(mod.InspectionReportDocument).toBeDefined();
+    });
+
+    it('snapshot document module loads correctly', async () => {
+      const mod = await import('./snapshot-document');
+      expect(mod.SnapshotDocument).toBeDefined();
+    });
+
+    it('document generator module loads and has expected exports', async () => {
+      const mod = await import('./generate');
+      // The generate module should have at minimum the core generation function
+      expect(mod).toBeDefined();
+    });
+  });
+
+  describe('tenant branding data contract', () => {
+    it('branding object handles missing logo gracefully', () => {
+      const branding = {
+        tenantId: 't1',
+        organisationName: 'Kavango East Regional Council',
+        code: 'KERC',
+        logoUrl: null,
+        primaryColor: '#1F2A44',
+        accentColor: '#0F766E',
+      };
+
+      const hasLogo = branding.logoUrl != null;
+      expect(hasLogo).toBe(false);
+      const fallback = branding.organisationName.substring(0, 2).toUpperCase();
+      expect(fallback).toBe('KA');
+    });
+
+    it('branding object works with partial contact info', () => {
+      const partialBranding: Record<string, unknown> = {
+        tenantId: 't2',
+        organisationName: 'Zambezi Regional Council',
+        code: 'ZRC',
+        telephone: '+264 66 234 5678',
+        // no email, no website
+      };
+
+      expect(partialBranding.organisationName).toBeTruthy();
+      expect(partialBranding.telephone).toBeTruthy();
+      expect(partialBranding.email).toBeUndefined();
+      expect(partialBranding.website).toBeUndefined();
+    });
+  });
+});

@@ -33,31 +33,31 @@ async function signInAndSetCookie(
 }
 
 test.describe('Regional Trip Workflow', () => {
+  test.setTimeout(60_000);
+
   test.beforeEach(async ({ page }) => {
     await signInAndSetCookie(page);
   });
 
   test('dashboard loads with key metrics', async ({ page }) => {
-    await page.goto('/dashboard', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Dashboard")').first()).toBeVisible({ timeout: 20000 });
     await expect(page.locator('[class*="tabular-nums"]').first()).toBeAttached({ timeout: 15000 });
   });
 
   test('can view fleet list with active vehicles', async ({ page }) => {
-    await page.goto('/dashboard/fleet', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/fleet', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Fleet")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('can view driver list and navigate to detail', async ({ page }) => {
-    await page.goto('/dashboard/drivers', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/drivers', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Driver")').first()).toBeVisible({ timeout: 20000 });
 
     // Try clicking the first driver link to navigate to detail
     const driverLink = page.locator('a[href*="/dashboard/drivers/"]').first();
     if (await driverLink.isVisible({ timeout: 5000 }).catch(() => false)) {
       await driverLink.click();
-      await page.waitForTimeout(3000);
-      // Verify the detail page loaded
       await expect(page.locator('h1:has-text("Driver")').first()).toBeVisible({ timeout: 15000 });
     }
   });
@@ -65,13 +65,13 @@ test.describe('Regional Trip Workflow', () => {
   test('approvals list page loads', async ({ page }) => {
     await page.context().clearCookies();
     await signInAndSetCookie(page, 'supervisor@kavangoeast.test');
-    await page.goto('/dashboard/approvals', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/approvals', { waitUntil: 'domcontentloaded', timeout: 30000 });
     // Use auto-retrying assertion for client-rendered page
     await expect(page.locator('h1:has-text("Approvals")').first()).toBeVisible({ timeout: 45000 });
   });
 
   test('reports page loads all report types', async ({ page }) => {
-    await page.goto('/dashboard/reports', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/reports', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Reports")').first()).toBeVisible({ timeout: 20000 });
 
     const reportButtons = [
@@ -90,24 +90,21 @@ test.describe('Regional Trip Workflow', () => {
   });
 
   test('reports page can switch between report types', async ({ page }) => {
-    await page.goto('/dashboard/reports', { waitUntil: 'networkidle', timeout: 90000 });
-    await page.waitForTimeout(3000);
+    await page.goto('/dashboard/reports', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await expect(page.locator('h1:has-text("Reports")').first()).toBeVisible({ timeout: 15000 });
 
     await page.locator('button:has-text("Fleet Utilisation")').first().click();
-    await page.waitForTimeout(2000);
     await expect(page.locator('text=Total Vehicles').first()).toBeVisible({ timeout: 10000 });
 
     await page.locator('button:has-text("Trip Summary")').first().click();
-    await page.waitForTimeout(2000);
     await expect(page.locator('text=Total Trips').first()).toBeVisible({ timeout: 10000 });
 
     await page.locator('button:has-text("Approvals")').first().click();
-    await page.waitForTimeout(2000);
     await expect(page.locator('text=Avg. Approval Time').first()).toBeAttached({ timeout: 10000 });
   });
 
   test('reports export buttons are present', async ({ page }) => {
-    await page.goto('/dashboard/reports', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/reports', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('button:has-text("Export CSV")').first()).toBeVisible({
       timeout: 20000,
     });
@@ -115,37 +112,36 @@ test.describe('Regional Trip Workflow', () => {
 
   test('inspection pages load', async ({ page }) => {
     await page.goto('/dashboard/inspections/departure', {
-      waitUntil: 'networkidle',
-      timeout: 90000,
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
     });
     await expect(page.locator('h1:has-text("Departure")').first()).toBeVisible({ timeout: 20000 });
 
-    await page.goto('/dashboard/inspections/return', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/inspections/return', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Return")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('maintenance list page loads', async ({ page }) => {
-    await page.goto('/dashboard/maintenance', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/maintenance', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Maintenance")').first()).toBeVisible({
       timeout: 20000,
     });
   });
 
   test('reimbursements list page loads', async ({ page }) => {
-    await page.goto('/dashboard/reimbursements', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/reimbursements', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Reimbursements")').first()).toBeVisible({
       timeout: 20000,
     });
   });
 
   test('vehicle defects page loads', async ({ page }) => {
-    await page.goto('/dashboard/fleet/defects', { waitUntil: 'networkidle', timeout: 90000 });
+    await page.goto('/dashboard/fleet/defects', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Defects")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('allocations new page has vehicle recommendation button', async ({ page }) => {
-    await page.goto('/dashboard/allocations/new', { waitUntil: 'networkidle', timeout: 90000 });
-    // Use auto-retrying assertions for client-rendered page
+    await page.goto('/dashboard/allocations/new', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("New Vehicle Allocation")').first()).toBeVisible({
       timeout: 45000,
     });
@@ -169,11 +165,9 @@ test.describe('Regional Trip Workflow', () => {
         const driverId = body.data[0].employeeId || body.data[0].id;
         if (driverId) {
           await page.goto(`/dashboard/drivers/${driverId}`, {
-            waitUntil: 'networkidle',
-            timeout: 90000,
+            waitUntil: 'domcontentloaded',
+            timeout: 30000,
           });
-          await page.waitForTimeout(2000);
-          // Should show driver info
           await expect(page.locator('h1:has-text("Driver")').first()).toBeVisible({
             timeout: 15000,
           });

@@ -33,28 +33,25 @@ async function signInAndSetCookie(page: Page) {
 }
 
 test.describe('Offline Drafts', () => {
+  test.setTimeout(60_000);
+
   test.beforeEach(async ({ page }) => {
     // Authenticate first
     await signInAndSetCookie(page);
-
-    // Navigate to the fuel entry page
-    // Use 'load' with longer timeout - 'networkidle' won't fire in dev mode
-    // due to Next.js HMR WebSocket connections
-    await page.goto('/dashboard/fuel/new', { waitUntil: 'load', timeout: 60000 });
-
-    // Wait for the form to be interactive (React hydration complete)
-    await page.locator('button:has-text("Save Draft")').first().waitFor({ timeout: 15000 });
   });
 
   test('shows draft save button on fuel entry form', async ({ page }) => {
+    await page.goto('/dashboard/fuel/new', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await expect(page.locator('h1:has-text("New Fuel Entry")').first()).toBeVisible({ timeout: 10000 });
+
     // Verify the fuel entry form loads with the save draft button
     await expect(page.locator('button:has-text("Save Draft")').first()).toBeVisible({ timeout: 10000 });
-
-    // Verify the page title rendered (use specific h1 selector)
-    await expect(page.locator('h1:has-text("New Fuel Entry")')).toBeVisible();
   });
 
   test('saves draft when offline and form data is entered', async ({ page, context }) => {
+    await page.goto('/dashboard/fuel/new', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await expect(page.locator('h1:has-text("New Fuel Entry")').first()).toBeVisible({ timeout: 10000 });
+
     // Fill in the fuel entry form using placeholder selectors
     await page.locator('input[placeholder="e.g. GRN-001"]').fill('GRN-001');
     await page.locator('input[placeholder="e.g. 45.5"]').fill('45.5');
@@ -81,6 +78,9 @@ test.describe('Offline Drafts', () => {
   });
 
   test('shows offline indicator when browser goes offline', async ({ page, context }) => {
+    await page.goto('/dashboard/fuel/new', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await expect(page.locator('h1:has-text("New Fuel Entry")').first()).toBeVisible({ timeout: 10000 });
+
     // Go offline - the indicator should appear (initially hidden when online + 0 drafts)
     await context.setOffline(true);
 
@@ -95,7 +95,7 @@ test.describe('Offline Drafts', () => {
 
   test('offline indicator shows draft count in dashboard shell', async ({ page }) => {
     // Navigate to the main dashboard
-    await page.goto('/dashboard', { waitUntil: 'load', timeout: 60000 });
+    await page.goto('/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // When online with 0 drafts, the indicator is hidden (returns null)
     // This is expected behavior — we just verify the page loads
