@@ -300,8 +300,8 @@ async function seedApprovalWorkflow() {
           requestId: req.id,
           vehicleId: opts.useVehicleId,
           driverEmployeeId: opts.driverEmp.id,
-          startAt: new Date(now.getTime() + 7 * 86400000),
-          endAt: new Date(now.getTime() + 9 * 86400000),
+          startAt: new Date(now.getTime() + (7 + seq * 5) * 86400000),
+          endAt: new Date(now.getTime() + (9 + seq * 5) * 86400000),
           state: 'confirmed',
           allocatedByUserId: transportAdmin!.userId!,
         })
