@@ -23,9 +23,18 @@ test.describe('Employee lifecycle and secure request surfaces', () => {
     }));
     expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport + 5);
 
+    // Use a unique verifier each run to avoid rate-limit collisions
+    const uniqueVerifier = `nobody-${Date.now()}@example.invalid`;
     await page.locator('input[name="employeeNumber"]').fill('DOES-NOT-EXIST');
-    await page.locator('input[name="verifier"]').fill('nobody@example.invalid');
+    await page.locator('input[name="verifier"]').fill(uniqueVerifier);
+
+    // Click submit and wait for the API response
+    const otpResponse = page.waitForResponse(
+      (r) => r.url().includes('/api/public/requests/kavango-east/otp') && r.request().method() === 'POST',
+    );
     await page.getByRole('button', { name: /send one-time code/i }).click();
+    await otpResponse;
+
     // Should show an error alert — the Next.js route announcer also has role=alert so use a specific text match
     await expect(page.getByText(/could not verify|too many attempts/i)).toBeVisible({ timeout: 10_000 });
 

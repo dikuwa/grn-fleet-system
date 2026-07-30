@@ -48,8 +48,9 @@ test.describe.serial('Tenant administrator settings and branding', () => {
 
     const context = await browser.newContext({ storageState: await api.storageState() });
     const page = await context.newPage();
-    await page.goto('/dashboard/settings');
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await page.goto('/dashboard/settings', { waitUntil: 'networkidle' });
+    // Settings is a client component — wait for session + data to load
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible();
     await page.getByRole('button', { name: 'Branding' }).click();
     await expect(page.getByRole('textbox', { name: 'Primary Colour', exact: true })).toBeVisible();

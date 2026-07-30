@@ -74,9 +74,16 @@ test('Tenant Branding keeps its existing tabs and uses the compact responsive la
   await primaryHex.fill(originalPrimary);
   await accentHex.fill(originalAccent);
 
+  // Wait for the save API to complete before checking the toast
+  const responsePromise = page.waitForResponse(
+    (r) => r.url().includes('/api/settings') && r.request().method() === 'POST',
+  );
   await page.getByRole('button', { name: 'Save Changes' }).click();
-  await expect(page.getByText('Settings saved')).toBeVisible();
-  await page.reload({ waitUntil: 'domcontentloaded' });
+  await responsePromise;
+  // Toast auto-dismisses after 4s, so check quickly
+  await expect(page.getByText('Settings saved')).toBeVisible({ timeout: 5_000 });
+  await page.reload({ waitUntil: 'networkidle' });
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: 'Branding' }).click();
   await expect(page.getByLabel('Primary Colour', { exact: true })).toHaveValue(originalPrimary);
   await expect(page.getByLabel('Accent Colour', { exact: true })).toHaveValue(originalAccent);
