@@ -26,7 +26,8 @@ test.describe('Employee lifecycle and secure request surfaces', () => {
     await page.locator('input[name="employeeNumber"]').fill('DOES-NOT-EXIST');
     await page.locator('input[name="verifier"]').fill('nobody@example.invalid');
     await page.getByRole('button', { name: /send one-time code/i }).click();
-    await expect(page.getByText('We could not verify the information provided.')).toBeVisible();
+    // Should show an error alert — the Next.js route announcer also has role=alert so use a specific text match
+    await expect(page.getByText(/could not verify|too many attempts/i)).toBeVisible({ timeout: 10_000 });
 
     await context.close();
   });

@@ -15,7 +15,7 @@ import { test, expect, Page } from '@playwright/test';
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
 async function signIn(page: Page) {
-  const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
+  const email = process.env.SEED_ADMIN_EMAIL || 'transport.admin@kavangoeast.test';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
   const res = await page.request.post(`${BASE}/api/auth/sign-in`, {

@@ -8,7 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff, Truck, Camera, Trash2 } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, AlertTriangle, WifiOff, Truck, Camera, Trash2, History } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
@@ -75,6 +75,17 @@ export default function ReturnInspectionPage() {
     queryFn: ({ signal }) => fetchUserProfile(signal),
   });
   const [photos, setPhotos] = useState<Array<{ file: File; preview: string }>>([]);
+  const [departurePhotos, setDeparturePhotos] = useState<Array<{ id: string; signedUrl: string | null; caption: string | null; inspectionId: string }>>([]);
+  const [departurePhotosLoading, setDeparturePhotosLoading] = useState(false);
+  const [damageClassifications, setDamageClassifications] = useState<Record<number, string>>({});
+
+  const DAMAGE_CLASSIFICATIONS = [
+    { value: 'pre-existing', label: 'Pre-existing', color: 'text-blue-600 bg-blue-50 border-blue-200' },
+    { value: 'new_damage', label: 'New Damage', color: 'text-red-600 bg-red-50 border-red-200' },
+    { value: 'normal_wear', label: 'Normal Wear', color: 'text-yellow-600 bg-yellow-50 border-yellow-200' },
+    { value: 'unclear', label: 'Unclear', color: 'text-gray-600 bg-gray-50 border-gray-200' },
+    { value: 'accident', label: 'Accident', color: 'text-orange-600 bg-orange-50 border-orange-200' },
+  ] as const;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [lightboxPhoto, setLightboxPhoto] = useState<string | null>(null);
   const [vehicleSearch, setVehicleSearch] = useState('');
@@ -129,6 +140,27 @@ export default function ReturnInspectionPage() {
         }
       })
       .catch(() => {});
+
+    // Fetch departure photos for comparison
+    setDeparturePhotosLoading(true);
+    fetch(`/api/trips/${tripId}/departure-photos`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.photos && data.photos.length > 0) {
+          setDeparturePhotos(
+            data.photos.map((p: { id: string; signedUrl: string | null; caption: string | null; inspectionId: string }) => ({
+              id: p.id,
+              signedUrl: p.signedUrl,
+              caption: p.caption,
+              inspectionId: p.inspectionId,
+            })),
+          );
+        } else {
+          setDeparturePhotos([]);
+        }
+      })
+      .catch(() => setDeparturePhotos([]))
+      .finally(() => setDeparturePhotosLoading(false));
   }, [tripId, vehicleId]);
 
   const updateResult = (id: string, result: 'pass' | 'fail' | 'na') => {
@@ -336,6 +368,125 @@ export default function ReturnInspectionPage() {
             <input type="hidden" name="vehicleId" value={vehicleId} />
           </CardContent>
         </Card>
+
+        {/* Pre-Departure vs Return Photo Comparison */}
+        {departurePhotos.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="h-4 w-4" />
+                Pre-Departure vs Return Photo Comparison
+              </CardTitle>
+              <p className="text-xs text-ink-500">
+                Compare departure photos ({departurePhotos.length}) with current vehicle condition.
+                Classify any visual changes below.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                {/* Departure Photos Grid */}
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-status-info-text">
+                    Pre-Departure Photos
+                  </p>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    {departurePhotos.map((photo) => (
+                      <div key={photo.id} className="relative group">
+                        <a
+                          href={photo.signedUrl || '#'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block aspect-square w-full overflow-hidden rounded-[8px] border-2 border-brand-200 bg-muted"
+                        >
+                          {photo.signedUrl ? (
+                            <img
+                              src={photo.signedUrl}
+                              alt={photo.caption || 'Departure photo'}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center">
+                              <Camera className="h-6 w-6 text-ink-300" />
+                            </div>
+                          )}
+                        </a>
+                        {photo.caption && (
+                          <p className="mt-1 text-[10px] text-ink-400 truncate text-center">{photo.caption}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Return Photos Section (inline) with Damage Classification */}
+                {photos.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-status-emergency-text">
+                      Return / Current Photos
+                    </p>
+                    <div className="space-y-4">
+                      {photos.map((photo, idx) => (
+                        <div key={idx} className="rounded-[8px] border border-border p-3">
+                          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setLightboxPhoto(photo.preview)}
+                              className="block aspect-square w-full overflow-hidden rounded-[8px] border-2 border-status-warning-bg bg-muted"
+                            >
+                              <img src={photo.preview} alt={`Return photo ${idx + 1}`} className="h-full w-full object-cover" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
+                              className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                          {/* Damage Classification */}
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] font-medium text-ink-500 mr-1">Classify:</span>
+                            {DAMAGE_CLASSIFICATIONS.map((dc) => (
+                              <button
+                                key={dc.value}
+                                type="button"
+                                onClick={() =>
+                                  setDamageClassifications((prev) => ({
+                                    ...prev,
+                                    [idx]: prev[idx] === dc.value ? '' : dc.value,
+                                  }))
+                                }
+                                className={`rounded-[4px] border px-2 py-0.5 text-[11px] font-medium transition-all active:scale-95 ${
+                                  damageClassifications[idx] === dc.value
+                                    ? `${dc.color} ring-1 ring-inset ring-current`
+                                    : 'text-ink-400 border-border hover:border-ink-300 hover:text-ink-600'
+                                }`}
+                              >
+                                {dc.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Loading state for departure photos */}
+        {departurePhotosLoading && tripId && (
+          <Card>
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 text-sm text-ink-500">
+                <History className="h-4 w-4 animate-pulse" />
+                Loading departure photos for comparison...
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Checklist Categories */}
         {Object.entries(grouped).map(([category, items]) => {

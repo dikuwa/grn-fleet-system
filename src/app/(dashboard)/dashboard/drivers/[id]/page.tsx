@@ -24,11 +24,17 @@ import {
   Building2,
   Truck,
   User,
+  AlertTriangle,
+  Ban,
+  CheckCircle2,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { getSessionPermissions, hasPermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { DriverStatusActions } from './DriverStatusActions';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -233,24 +239,55 @@ export default async function DriverDetailPage({ params }: PageProps) {
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-error-text">{expiredLicences.length}</p><p className="text-xs text-ink-500">Expired</p></CardContent></Card>
       </div>
 
-      {/* Driver Profile */}
+      {/* Driver Profile with Status Management */}
       <Card>
-        <CardHeader><CardTitle>Driver Status</CardTitle></CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Driver Status</CardTitle>
+          <DriverStatusActions
+            employeeId={employee.id}
+            driverStatus={profile.driverStatus}
+            suspensionReason={profile.suspensionReason}
+            employeeName={`${employee.firstName} ${employee.lastName}`}
+          />
+        </CardHeader>
         <CardContent>
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <p className="text-xs text-ink-500">Authorisation Status</p>
-              <StatusBadge status={profile.driverStatus === 'authorised' ? 'success' : 'error'} label={profile.driverStatus} />
+              <StatusBadge
+                status={profile.driverStatus === 'authorised' ? 'success' : profile.driverStatus === 'suspended' ? 'warning' : 'error'}
+                label={profile.driverStatus.charAt(0).toUpperCase() + profile.driverStatus.slice(1)}
+              />
             </div>
             <div>
               <p className="text-xs text-ink-500">Internal Auth Ref</p>
               <p className="text-sm text-ink-700">{profile.internalAuthorisationRef || '—'}</p>
             </div>
             <div>
-              <p className="text-xs text-ink-500">Internal Notes</p>
-              <p className="text-sm text-ink-700">{profile.notes || '—'}</p>
+              <p className="text-xs text-ink-500">Availability</p>
+              <StatusBadge
+                status={profile.availabilityStatus === 'available' ? 'success' : 'pending'}
+                label={profile.availabilityStatus.replace(/_/g, ' ')}
+              />
             </div>
           </div>
+
+          {profile.suspensionReason && (
+            <div className="mt-4 rounded-[8px] border border-status-warning-bg bg-status-warning-bg/10 p-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-status-warning-text" />
+                <div>
+                  <p className="text-sm font-medium text-status-warning-text">Suspension Reason</p>
+                  <p className="mt-1 text-xs text-ink-600">{profile.suspensionReason}</p>
+                  {profile.suspensionEndsAt && (
+                    <p className="mt-1 text-xs text-ink-500">
+                      Expected end: {formatDate(profile.suspensionEndsAt)}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

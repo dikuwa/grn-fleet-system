@@ -52,7 +52,7 @@ test.describe.serial('Tenant administrator settings and branding', () => {
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible();
     await page.getByRole('button', { name: 'Branding' }).click();
-    await expect(page.getByRole('textbox', { name: 'Primary Colour' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Primary Colour', exact: true })).toBeVisible();
     await context.close();
     await api.dispose();
   });

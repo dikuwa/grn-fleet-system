@@ -17,7 +17,7 @@ import { test, expect, type Page } from '@playwright/test';
 
 /** Sign in via the sign-in API and set the session cookie */
 async function signIn(page: Page): Promise<string> {
-  const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
+  const email = process.env.SEED_ADMIN_EMAIL || 'transport.admin@kavangoeast.test';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
   const response = await page.request.post('/api/auth/sign-in', {
@@ -67,10 +67,12 @@ test.describe('Notification Delivery Pipeline', () => {
     const fleetResp = await request.get('/api/fleet', {
       headers: { cookie: `better-auth.session_token=${authCookie}` },
     });
-    const fleetData = await fleetResp.json();
-    test.skip(!fleetData?.vehicles?.length, 'No vehicles available for test');
+    const fleetBody = await fleetResp.json();
+    // Fleet API may return data in various shapes: rows, data, or vehicles
+    const vehicleList = fleetBody.rows || fleetBody.data || fleetBody.vehicles || (Array.isArray(fleetBody) ? fleetBody : []);
+    test.skip(!vehicleList.length, 'No vehicles available for test');
 
-    const vehicleId = fleetData.vehicles[0].id;
+    const vehicleId = vehicleList[0].id;
 
     // Create a fuel transaction (this triggers fuel_created + notification)
     const fuelResp = await request.post('/api/fuel', {
@@ -83,6 +85,7 @@ test.describe('Notification Delivery Pipeline', () => {
         litres: 45.5,
         amount: 675.50,
         fuelType: 'diesel',
+        paymentMethod: 'fuel_card',
         stationName: 'E2E Test Station',
         transactionDate: new Date().toISOString(),
       },
@@ -103,10 +106,10 @@ test.describe('Notification Delivery Pipeline', () => {
     // Find the fuel-related notification
     const fuelNotif = notifData.data.notifications.find(
       (n: { type: string; title: string }) =>
-        n.type === 'fuel_created' && n.title.includes('Fuel Transaction'),
+        n.type === 'fuel_created',
     );
     expect(fuelNotif).toBeTruthy();
-    expect(fuelNotif.title).toContain('Fuel Transaction');
+    expect(fuelNotif.title).toContain('Fuel Entry');
     expect(fuelNotif.entityType).toBe('fuel_transaction');
   });
 

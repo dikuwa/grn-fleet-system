@@ -32,13 +32,13 @@ import {
   rolePermissions,
   roles,
 } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql, lte, or, isNull, gt, ne } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import type { AuthSession } from '@/lib/auth-helpers';
 import { requirePermission, forbiddenResponse } from '@/lib/auth-helpers';
 import type { PermissionCode } from '@/lib/permissions';
 import { Permissions } from '@/lib/permissions';
-import { notifications } from '@/db/schema';
+import { notifications, tenantMemberships, roleAssignments } from '@/db/schema';
 import { workflowStepToStatus, workflowCompletedStatus } from '@/lib/request-status';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { resolveRoleHolder } from '@/lib/employee-lifecycle';
@@ -424,25 +424,92 @@ export class WorkflowEngine {
         ok: false,
         error: forbiddenResponse('This workflow step is assigned to another responsible user.'),
       };
-    }
+    }    // Validate: separation of duty — conflict-of-interest detection
+      if (currentStep.separationDutyRole === 'requester') {
+        const [request] = await this.db
+          .select({
+            requesterUserId: transportRequests.requesterUserId,
+            travellerEmployeeId: transportRequests.travellerEmployeeId,
+            requesterEmployeeId: transportRequests.requesterEmployeeId,
+            id: transportRequests.id,
+          })
+          .from(transportRequests)
+          .where(eq(transportRequests.id, instance.requestId))
+          .limit(1);
 
-    // Validate: separation of duty
-    if (currentStep.separationDutyRole === 'requester') {
-      const [request] = await this.db
-        .select({ requesterUserId: transportRequests.requesterUserId })
-        .from(transportRequests)
-        .where(eq(transportRequests.id, instance.requestId))
-        .limit(1);
+        const isRequester = request && request.requesterUserId === session.user.id;
+        // Also check if the actor is the main traveller/beneficiary
+        let isTraveller = false;
+        if (request && !isRequester) {
+          const [actorEmployee] = await this.db
+            .select({ id: employees.id })
+            .from(employees)
+            .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)))
+            .limit(1);
+          if (
+            actorEmployee &&
+            (request.travellerEmployeeId === actorEmployee.id ||
+              request.requesterEmployeeId === actorEmployee.id)
+          ) {
+            isTraveller = true;
+          }
+        }
 
-      if (request && request.requesterUserId === session.user.id) {
-        return {
-          ok: false,
-          error: forbiddenResponse(
-            'You cannot approve your own request. Another authorised person must review it.',
-          ),
-        };
+        if (isRequester || isTraveller) {
+          // CONFLICT DETECTED — attempt auto-reassignment to an alternate officer
+          const resolution = await this.resolveAlternateOfficer(
+            instance,
+            currentStep,
+            session,
+          );
+          if (resolution) {
+            // The step was reassigned — notify the original actor and the replacement
+            await this.logAuditEvent(
+              {
+                entityType: 'workflow_instance',
+                entityId: instance.id,
+                action: 'workflow.conflict_reassigned',
+                actorUserId: session.user.id,
+                metadata: {
+                  conflictedUserId: session.user.id,
+                  originalStepOrder: currentStep.stepOrder,
+                  reassignedToUserId: resolution.reassignedUserId,
+                  reason: isRequester
+                    ? 'Requester-authoriser conflict detected'
+                    : 'Traveller-authoriser conflict detected',
+                  alternateEmployeeName: resolution.alternateName,
+                  reassignmentMethod: resolution.method,
+                },
+              },
+              session.tenantId,
+            );
+
+            return {
+              ok: false,
+              error: NextResponse.json(
+                {
+                  error: `Conflict of interest detected: you are ${
+                    isRequester ? 'the requester' : 'a traveller'
+                  } on this request. This step has been reassigned to ${
+                    resolution.alternateName
+                  }.`,
+                  conflictReassigned: true,
+                  reassignedTo: resolution.alternateName,
+                },
+                { status: 409 },
+              ),
+            };
+          }
+
+          // No alternate found — block with clear message
+          return {
+            ok: false,
+            error: forbiddenResponse(
+              'You cannot approve your own request or act on a trip where you are a traveller. No eligible alternate officer could be assigned automatically. Please contact your Tenant Administrator.',
+            ),
+          };
+        }
       }
-    }
     if (currentStep.separationDutyRole === 'release') {
       const [releaseAction] = await this.db
         .select({ actorUserId: workflowActions.actorUserId })
@@ -1035,6 +1102,238 @@ export class WorkflowEngine {
         return step;
       }),
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // Conflict-of-interest: alternate officer resolution
+  // -------------------------------------------------------------------------
+
+  /**
+   * When a conflict-of-interest is detected (officer is the requester or a
+   * traveller on the request), attempt to find an alternate officer for the
+   * current workflow step.
+   *
+   * Strategy:
+   *   1. Look for an acting delegation for the conflicted role that is active
+   *      and has the required capability.
+   *   2. Fall back to any other employee in the tenant with the same permission.
+   *   3. Exclude the conflicted user and anyone else on the request.
+   *
+   * Returns null if no eligible alternate can be found.
+   */
+  private async resolveAlternateOfficer(
+    instance: typeof workflowInstances.$inferSelect,
+    currentStep: (typeof workflowSteps.$inferSelect) & { label?: string },
+    session: AuthSession,
+  ): Promise<{
+    reassignedUserId: string;
+    alternateName: string;
+    method: 'acting_delegation' | 'same_role' | 'tenant_admin';
+  } | null> {
+    try {
+      // Look up the tenant
+      const [tenantRequest] = await this.db
+        .select({ tenantId: transportRequests.tenantId })
+        .from(transportRequests)
+        .where(eq(transportRequests.id, instance.requestId))
+        .limit(1);
+      if (!tenantRequest) return null;
+
+      const tenantId = tenantRequest.tenantId;
+
+      // Get the role IDs that grant the required permission
+      const permissionCode = currentStep.requiredPermission;
+      if (!permissionCode) return null;
+
+      const roleRows = await this.db
+        .select({ roleId: roles.id })
+        .from(roles)
+        .innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
+        .where(
+          and(
+            eq(roles.tenantId, tenantId),
+            eq(rolePermissions.permissionCode, permissionCode as string),
+          ),
+        );
+
+      if (roleRows.length === 0) return null;
+
+      // Get the requester/traveller employee IDs to exclude
+      const [requestInfo] = await this.db
+        .select({
+          requesterUserId: transportRequests.requesterUserId,
+          requesterEmployeeId: transportRequests.requesterEmployeeId,
+          travellerEmployeeId: transportRequests.travellerEmployeeId,
+        })
+        .from(transportRequests)
+        .where(eq(transportRequests.id, instance.requestId))
+        .limit(1);
+
+      const excludeUserIds: string[] = [session.user.id];
+      if (requestInfo?.requesterUserId && requestInfo.requesterUserId !== session.user.id) {
+        excludeUserIds.push(requestInfo.requesterUserId);
+      }
+
+      const now = new Date();
+
+      for (const role of roleRows) {
+        const capability =
+          currentStep.actionType === 'authorise'
+            ? 'sign'
+            : currentStep.actionType === 'release'
+              ? 'allocate'
+              : 'approve';
+
+        // 1. Try acting delegations first
+        const actingColumns = {
+          approve: 'can_approve',
+          sign: 'can_sign',
+          allocate: 'can_allocate_vehicles',
+          assign_driver: 'can_assign_drivers',
+          reconcile: 'can_reconcile_trips',
+        };
+
+        const actingResult = await this.db.execute(
+          sql`
+            SELECT rd.id as delegation_id, e.id as employee_id, e.user_id, e.first_name, e.last_name
+            FROM role_delegations rd
+            INNER JOIN employees e ON e.id = rd.acting_employee_id
+            WHERE rd.role_id = ${role.roleId}
+              AND rd.tenant_id = ${tenantId}
+              AND rd.status IN ('scheduled', 'active')
+              AND rd.start_at <= ${now}
+              AND rd.end_at > ${now}
+              AND rd.${sql.identifier(actingColumns[capability])} = true
+              AND e.employment_status = 'active'
+              AND e.availability_status = 'available'
+              AND e.user_id NOT IN (${sql.join(excludeUserIds.map((uid) => sql`${uid}`), sql`, `)})
+            LIMIT 1
+          `,
+        );
+
+        const actingRow = actingResult.rows?.[0] as Record<string, unknown> | undefined;
+        if (actingRow && actingRow.user_id) {
+          const reassignedUserId = String(actingRow.user_id);
+          const alternateName = `${actingRow.first_name || ''} ${actingRow.last_name || ''}`.trim() || 'Alternate Officer';
+
+          // Update the step assignment to the alternate
+          await this.db
+            .update(workflowSteps)
+            .set({
+              assignedUserId: reassignedUserId,
+              config: {
+                ...(currentStep.config || {}),
+                conflictReassigned: true,
+                conflictedUserId: session.user.id,
+                reassignedAt: now.toISOString(),
+                reassignmentReason: 'Requester-authoriser conflict',
+              },
+            })
+            .where(
+              and(
+                eq(workflowSteps.id, currentStep.id),
+                eq(workflowSteps.stepOrder, currentStep.stepOrder),
+              ),
+            );
+
+          // Notify the alternate
+          await this.db.insert(notifications).values({
+            tenantId,
+            recipientUserId: reassignedUserId,
+            type: 'action_required',
+            title: `Conflict Reassignment — ${currentStep.label || 'Step'} Action Required`,
+            body: `A workflow step has been reassigned to you because the original officer has a conflict of interest on this request.`,
+            entityType: 'workflow_instance',
+            entityId: instance.id,
+            actionUrl: `/dashboard/approvals/${instance.id}`,
+            priority: 'high',
+          });
+
+          return {
+            reassignedUserId,
+            alternateName,
+            method: 'acting_delegation',
+          };
+        }
+
+        // 2. Try same-role holders (substantive assignments)
+        const [sameRole] = await this.db
+          .select({
+            id: employees.id,
+            userId: employees.userId,
+            firstName: employees.firstName,
+            lastName: employees.lastName,
+          })
+          .from(tenantMemberships)
+          .innerJoin(roleAssignments, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+          .innerJoin(employees, and(
+            eq(employees.userId, tenantMemberships.userId),
+            eq(employees.tenantId, tenantId),
+          ))
+          .where(
+            and(
+              eq(tenantMemberships.tenantId, tenantId),
+              eq(roleAssignments.roleId, role.roleId),
+              eq(roleAssignments.isActing, false),
+              lte(roleAssignments.startDate, now),
+              or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
+              eq(employees.employmentStatus, 'active'),
+              eq(employees.availabilityStatus, 'available'),
+              ne(employees.userId, session.user.id),
+              requestInfo?.requesterUserId
+                ? ne(employees.userId, requestInfo.requesterUserId)
+                : sql`true`,
+            ),
+          )
+          .limit(1);
+
+        if (sameRole?.userId) {
+          const alternateName = `${sameRole.firstName || ''} ${sameRole.lastName || ''}`.trim() || 'Alternate Officer';
+
+          await this.db
+            .update(workflowSteps)
+            .set({
+              assignedUserId: sameRole.userId,
+              config: {
+                ...(currentStep.config || {}),
+                conflictReassigned: true,
+                conflictedUserId: session.user.id,
+                reassignedAt: now.toISOString(),
+                reassignmentReason: 'Requester-authoriser conflict',
+              },
+            })
+            .where(
+              and(
+                eq(workflowSteps.id, currentStep.id),
+                eq(workflowSteps.stepOrder, currentStep.stepOrder),
+              ),
+            );
+
+          await this.db.insert(notifications).values({
+            tenantId,
+            recipientUserId: sameRole.userId,
+            type: 'action_required',
+            title: `Conflict Reassignment — ${currentStep.label || 'Step'} Action Required`,
+            body: `A workflow step has been reassigned to you because the original officer has a conflict of interest.`,
+            entityType: 'workflow_instance',
+            entityId: instance.id,
+            actionUrl: `/dashboard/approvals/${instance.id}`,
+            priority: 'high',
+          });
+
+          return {
+            reassignedUserId: sameRole.userId,
+            alternateName,
+            method: 'same_role',
+          };
+        }
+      }
+
+      return null;
+    } catch (err) {
+      console.error('[Workflow] Failed to resolve alternate officer:', err);
+      return null;
+    }
   }
 
   // -------------------------------------------------------------------------

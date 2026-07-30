@@ -20,6 +20,7 @@ import {
   Truck, ChevronLeft, User, CalendarDays, Clock, Gauge, CheckCircle2, XCircle, AlertTriangle, FileText, UserCheck as UserCheckIcon,
 } from 'lucide-react';
 import { TripActions } from '../components/TripActions';
+import { ReleaseReadinessCheck } from '../components/ReleaseReadinessCheck';
 import { DriverTripWorkspace } from '../components/DriverTripWorkspace';
 import Link from 'next/link';
 import { resolveDashboardAccess, SystemRoles } from '@/lib/dashboard-access';
@@ -228,6 +229,11 @@ export default async function TripDetailPage({ params }: PageProps) {
 
       {isDriver && (
         <DriverTripWorkspace tripId={trip.id} />
+      )}
+
+      {/* Release Readiness Checklist */}
+      {(trip.status === 'pending' || trip.status === 'in_progress') && (
+        <ReleaseReadinessCheck tripId={trip.id} status={trip.status} />
       )}
 
       {/* Trip Summary */}
