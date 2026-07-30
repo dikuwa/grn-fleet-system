@@ -6,6 +6,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
 import { formatDateTime } from '@/lib/utils';
 
+export const dynamic = 'force-dynamic';
+
 export default async function PlatformAuditPage() {
   const db = getDb();
   const rows = await db.select({
