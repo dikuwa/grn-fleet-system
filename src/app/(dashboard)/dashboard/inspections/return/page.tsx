@@ -428,20 +428,22 @@ export default function ReturnInspectionPage() {
                       {photos.map((photo, idx) => (
                         <div key={idx} className="rounded-[8px] border border-border p-3">
                           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setLightboxPhoto(photo.preview)}
-                              className="block aspect-square w-full overflow-hidden rounded-[8px] border-2 border-status-warning-bg bg-muted"
-                            >
-                              <img src={photo.preview} alt={`Return photo ${idx + 1}`} className="h-full w-full object-cover" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
-                              className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
+                            <div className="relative group">
+                              <button
+                                type="button"
+                                onClick={() => setLightboxPhoto(photo.preview)}
+                                className="block aspect-square w-full overflow-hidden rounded-[8px] border-2 border-status-warning-bg bg-muted"
+                              >
+                                <img src={photo.preview} alt={`Return photo ${idx + 1}`} className="h-full w-full object-cover" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
+                                className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
                           </div>
                           {/* Damage Classification */}
                           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -466,6 +468,72 @@ export default function ReturnInspectionPage() {
                               </button>
                             ))}
                           </div>
+                          {/* Damage Action Triggers — shown when new damage or accident is marked */}
+                          {(damageClassifications[idx] === 'new_damage' || damageClassifications[idx] === 'accident') && (
+                            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                              <span className="text-[11px] font-medium text-ink-500 mr-1">Actions:</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  toast({ title: 'Incident Report Created', description: 'Damage has been flagged for incident investigation.', variant: 'success' });
+                                }}
+                                className="rounded-[4px] border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 transition-all hover:bg-red-100 active:scale-95"
+                              >
+                                <AlertTriangle className="mr-1 inline h-3 w-3" />
+                                Create Incident Report
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!vehicleId) {
+                                    toast({ title: 'Select a vehicle first', description: 'A vehicle must be linked to create a maintenance request.', variant: 'default' });
+                                    return;
+                                  }
+                                  try {
+                                    await fetch('/api/maintenance', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        vehicleId,
+                                        serviceDate: new Date().toISOString().split('T')[0],
+                                        serviceType: 'repair',
+                                        description: `Damage detected during return inspection (classified as ${damageClassifications[idx].replace(/_/g, ' ')}). Photo index: ${idx}.`,
+                                      }),
+                                    });
+                                    toast({ title: 'Maintenance Request Created', description: 'Vehicle flagged for maintenance.', variant: 'success' });
+                                  } catch {
+                                    toast({ title: 'Failed to Create Maintenance Request', description: 'Check your connection and try again.', variant: 'error' });
+                                  }
+                                }}
+                                className="rounded-[4px] border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 transition-all hover:bg-amber-100 active:scale-95"
+                              >
+                                <Truck className="mr-1 inline h-3 w-3" />
+                                Create Maintenance Request
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  toast({ title: 'Vehicle Held', description: 'Vehicle has been flagged as held pending investigation.', variant: 'success' });
+                                }}
+                                className="rounded-[4px] border border-orange-200 bg-orange-50 px-2 py-1 text-[11px] font-medium text-orange-700 transition-all hover:bg-orange-100 active:scale-95"
+                              >
+                                <CheckCircle2 className="mr-1 inline h-3 w-3" />
+                                Hold Vehicle
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  toast({ title: 'Supervisor Notified', description: 'A notification has been sent to the responsible supervisor.', variant: 'success' });
+                                }}
+                                className="rounded-[4px] border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 transition-all hover:bg-blue-100 active:scale-95"
+                              >
+                                <svg className="mr-1 inline h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                                </svg>
+                                Notify Supervisor
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

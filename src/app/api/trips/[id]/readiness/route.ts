@@ -13,14 +13,25 @@ import {
   vehicleInspections,
   tripAuthorities,
 } from '@/db/schema/trips';
-import { vehicles, vehicleDefects } from '@/db/schema/fleet';
+import { vehicles, vehicleDefects, vehicleCategories } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
-import { workflowInstances } from '@/db/schema/workflows';
+import { workflowInstances, workflowActions, workflowSteps } from '@/db/schema/workflows';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
 import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Licence class hierarchy: key = driver's class, value = classes it covers */
+const LICENCE_CLASS_HIERARCHY: Record<string, string[]> = {
+  'A': ['A', 'A1'],
+  'A1': ['A1'],
+  'B': ['B', 'EB', 'C', 'EC', 'CE'],
+  'EB': ['EB', 'B', 'C', 'EC', 'CE'],
+  'C': ['C', 'EC', 'CE', 'B', 'EB'],
+  'EC': ['EC', 'C', 'CE', 'EB', 'B'],
+  'CE': ['CE', 'C', 'EC', 'EB', 'B'],
+};
 
 interface ReadinessGate {
   key: string;
@@ -71,7 +82,11 @@ export async function GET(
     // 1. Request has required approvals
     if (trip.requestId) {
       const [workflow] = await db
-        .select({ status: workflowInstances.status })
+        .select({
+          id: workflowInstances.id,
+          status: workflowInstances.status,
+          definitionId: workflowInstances.definitionId,
+        })
         .from(workflowInstances)
         .where(eq(workflowInstances.requestId, trip.requestId))
         .limit(1);
@@ -85,6 +100,56 @@ export async function GET(
           : `Awaiting approval (workflow: ${workflow?.status || 'not started'}).`,
         required: true,
       });
+
+      // 1b. Releasing officer has acted
+      if (trip.requestId && workflow?.id) {
+        // Find the release step in the workflow definition
+        const [releaseStep] = await db
+          .select({ stepOrder: workflowSteps.stepOrder })
+          .from(workflowSteps)
+          .where(
+            and(
+              eq(workflowSteps.definitionId, workflow.definitionId || ''),
+              eq(workflowSteps.actionType, 'release'),
+            ),
+          )
+          .orderBy(workflowSteps.stepOrder)
+          .limit(1);
+
+        if (releaseStep) {
+          const [releaseAction] = await db
+            .select({ id: workflowActions.id })
+            .from(workflowActions)
+            .where(
+              and(
+                eq(workflowActions.instanceId, workflow.id),
+                eq(workflowActions.stepOrder, releaseStep.stepOrder),
+                eq(workflowActions.actionType, 'release'),
+                eq(workflowActions.result, 'approved'),
+              ),
+            )
+            .limit(1);
+
+          const releasingOfficerActed = !!releaseAction;
+          gates.push({
+            key: 'releasing_officer_acted',
+            label: 'Releasing officer has acted',
+            status: releasingOfficerActed ? 'pass' : 'blocking',
+            detail: releasingOfficerActed
+              ? 'The releasing officer has performed the release action.'
+              : 'The release step has not been completed yet. An authorised releasing officer must act.',
+            required: true,
+          });
+        } else {
+          gates.push({
+            key: 'releasing_officer_acted',
+            label: 'Releasing officer has acted',
+            status: 'pass',
+            detail: 'No explicit release step in this workflow.',
+            required: true,
+          });
+        }
+      }
     }
 
     // 2. Vehicle is allocated
@@ -139,6 +204,7 @@ export async function GET(
       const [profile] = await db
         .select({
           driverStatus: driverProfiles.driverStatus,
+          licenceClass: driverLicences.licenceClass,
           expiryDate: driverLicences.expiryDate,
           verificationStatus: driverLicences.verificationStatus,
         })
@@ -169,6 +235,54 @@ export async function GET(
                 : 'Licence is valid and verified.',
         required: true,
       });
+
+      // Driver licence class vs vehicle category matching
+      if (licenceValid && trip.vehicleId) {
+        const [vehicleInfo] = await db
+          .select({
+            requiredLicenceClass: vehicles.requiredLicenceClass,
+            categoryName: vehicleCategories.name,
+          })
+          .from(vehicles)
+          .leftJoin(vehicleCategories, eq(vehicles.categoryId, vehicleCategories.id))
+          .where(eq(vehicles.id, trip.vehicleId))
+          .limit(1);
+
+        const requiredClass = vehicleInfo?.requiredLicenceClass;
+        const driverLicenceClass = profile?.licenceClass;
+
+        if (requiredClass && driverLicenceClass) {
+          const upperRequired = requiredClass.toUpperCase();
+          const upperDriver = driverLicenceClass.toUpperCase();
+          const covers = LICENCE_CLASS_HIERARCHY[upperDriver]?.includes(upperRequired) || upperDriver === upperRequired;
+
+          gates.push({
+            key: 'driver_licence_class_match',
+            label: 'Driver licence class matches vehicle category',
+            status: covers ? 'pass' : 'blocking',
+            detail: covers
+              ? `Driver licence (${driverLicenceClass}) covers required class (${requiredClass}) for ${vehicleInfo?.categoryName || 'this vehicle'}.`
+              : `Driver licence class "${driverLicenceClass}" does not cover required class "${requiredClass}" for ${vehicleInfo?.categoryName || 'this vehicle'}.`,
+            required: true,
+          });
+        } else if (!requiredClass) {
+          gates.push({
+            key: 'driver_licence_class_match',
+            label: 'Driver licence class matches vehicle category',
+            status: 'pass',
+            detail: 'Vehicle has no specific licence class requirement.',
+            required: true,
+          });
+        } else {
+          gates.push({
+            key: 'driver_licence_class_match',
+            label: 'Driver licence class matches vehicle category',
+            status: 'pending',
+            detail: 'Driver licence class information is missing.',
+            required: true,
+          });
+        }
+      }
     }
 
     // 5. Vehicle is roadworthy (no unresolved blocking defects)

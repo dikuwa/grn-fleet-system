@@ -156,6 +156,8 @@ async function seedReleaseReadiness() {
     // Gates to simulate
     approvalsComplete: boolean;
     driverAssigned: boolean;
+    driverId?: string;
+    dayOffset?: number;
     licenceValid: boolean;
     noBlockingDefects: boolean;
     depInspectionDone: boolean;
@@ -166,6 +168,12 @@ async function seedReleaseReadiness() {
   }) {
     seq++;
     const reqRef = refPrefix + opts.refSuffix;
+    const offsetDays = opts.dayOffset ?? seq;
+    const tripStart = new Date(now.getTime() + offsetDays * 86400000);
+    const tripEnd = new Date(tripStart.getTime() + 3 * 86400000);
+    const activityStart = new Date(tripStart.getTime() + 3600000);
+    const activityEnd = new Date(activityStart.getTime() + 4 * 3600000);
+    const theDriver = opts.driverId ? allEmployees.find((e) => e.id === opts.driverId) || driverEmp : driverEmp;
 
     // Create transport request
     const [req] = await db
@@ -192,7 +200,7 @@ async function seedReleaseReadiness() {
 
     // Activities & passengers
     await db.insert(requestActivities).values([
-      { requestId: req.id, title: opts.purpose, venue: 'Field', startDate: new Date(now.getTime() + 1 * 86400000), endDate: new Date(now.getTime() + 1 * 86400000 + 14400000), estimatedKilometres: 200 },
+      { requestId: req.id, title: opts.purpose, venue: 'Field', startDate: activityStart, endDate: activityEnd, estimatedKilometres: 200 },
     ]);
     await db.insert(requestRoutes).values([
       { requestId: req.id, originName: 'Rundu', destinationName: 'Field Location', totalKilometres: 100, isVerified: true },
@@ -205,10 +213,8 @@ async function seedReleaseReadiness() {
     // when the allocation's driverEmployeeId is null.
     if (opts.driverAssigned) {
       await db.insert(requestDrivers).values([
-        { requestId: req.id, employeeId: driverEmp.id, driverType: 'nominated', sortOrder: 1 },
+        { requestId: req.id, employeeId: theDriver.id, driverType: 'nominated', sortOrder: 1 },
       ]);
-    } else {
-      await db.update(vehicleAllocations).set({ driverEmployeeId: null }).where(eq(vehicleAllocations.requestId, req.id));
     }
 
     // Workflow instance
@@ -233,7 +239,7 @@ async function seedReleaseReadiness() {
       actions.push({ stepOrder: 2, actionType: 'transport_review', result: 'approved', actorUserId: transportAdmin.userId!, actorEmployeeId: transportAdmin.id, comment: 'Vehicle available.' });
     }
     if (opts.workflowStep >= 3) {
-      actions.push({ stepOrder: 3, actionType: 'release', result: 'released', actorUserId: releaseOff.userId!, actorEmployeeId: releaseOff.id, comment: 'Release pending checklist.' });
+      actions.push({ stepOrder: 3, actionType: 'release', result: 'approved', actorUserId: releaseOff.userId!, actorEmployeeId: releaseOff.id, comment: 'Release pending checklist.' });
     }
 
     for (const action of actions) {
@@ -259,9 +265,9 @@ async function seedReleaseReadiness() {
       .values({
         requestId: req.id,
         vehicleId: opts.vehicleId,
-        driverEmployeeId: opts.driverAssigned ? driverEmp.id : null,
-        startAt: new Date(now.getTime() + 1 * 86400000),
-        endAt: new Date(now.getTime() + 3 * 86400000),
+        driverEmployeeId: opts.driverAssigned ? theDriver.id : null,
+        startAt: tripStart,
+        endAt: tripEnd,
         state: 'confirmed',
         allocatedByUserId: transportAdmin.userId!,
       })
@@ -308,7 +314,7 @@ async function seedReleaseReadiness() {
           fuelLevel: 'full',
           inspectorUserId: transportAdmin.userId!,
           inspectorEmployeeId: transportAdmin.id,
-          driverEmployeeId: driverEmp.id,
+          driverEmployeeId: theDriver.id,
           status: opts.depInspectionPassed ? 'completed' : 'completed',
           overallPass: opts.depInspectionPassed,
           notes: opts.depInspectionPassed ? 'All checks passed.' : 'Minor issues noted.',
@@ -345,6 +351,13 @@ async function seedReleaseReadiness() {
   // ---------------------------------------------------------------------------
   console.log('\n─── Creating release readiness scenarios ───\n');
 
+  // ---------------------------------------------------------------------------
+  // Use different drivers and day offsets per scenario to avoid the
+  // vehicle_allocations_driver_no_active_overlap exclusion constraint.
+  // ---------------------------------------------------------------------------
+  const drivers = allEmployees.filter((e) => e.id !== requester.id && e.id !== supervisor.id);
+  const getDriver = (i: number) => drivers[((i - 1) % drivers.length)].id;
+
   // SCENARIO A: Fully ready — all gates pass
   await createReadinessTrip({
     refSuffix: 'A001',
@@ -355,6 +368,8 @@ async function seedReleaseReadiness() {
     vehicleId: corolla.id,
     approvalsComplete: true,
     driverAssigned: true,
+    driverId: getDriver(1),
+    dayOffset: 1,
     licenceValid: true,
     noBlockingDefects: true,
     depInspectionDone: true,
@@ -374,6 +389,8 @@ async function seedReleaseReadiness() {
     vehicleId: hilux.id,
     approvalsComplete: true,
     driverAssigned: true,
+    driverId: getDriver(2),
+    dayOffset: 5,
     licenceValid: true,
     noBlockingDefects: true,
     depInspectionDone: false,
@@ -393,6 +410,8 @@ async function seedReleaseReadiness() {
     vehicleId: sentra?.id || corolla.id,
     approvalsComplete: true,
     driverAssigned: true,
+    driverId: getDriver(3),
+    dayOffset: 9,
     licenceValid: false,
     noBlockingDefects: false,
     depInspectionDone: false,
@@ -412,6 +431,8 @@ async function seedReleaseReadiness() {
     vehicleId: corolla.id,
     approvalsComplete: false,
     driverAssigned: true,
+    driverId: getDriver(4),
+    dayOffset: 13,
     licenceValid: true,
     noBlockingDefects: true,
     depInspectionDone: false,
@@ -431,6 +452,8 @@ async function seedReleaseReadiness() {
     vehicleId: corolla.id,
     approvalsComplete: true,
     driverAssigned: true,
+    driverId: getDriver(5),
+    dayOffset: 17,
     licenceValid: true,
     noBlockingDefects: true,
     depInspectionDone: true,
