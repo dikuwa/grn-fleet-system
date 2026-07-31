@@ -17,7 +17,7 @@ Never commit real values. Use `.env.example` placeholders and validate variables
 | `R2_ENDPOINT` | S3 endpoint | Yes | Server | `https://<account>.r2.cloudflarestorage.com` |
 | `RESEND_API_KEY` | Email sending | Yes in staging/prod | Server secret | Resend dashboard |
 | `EMAIL_FROM` | Verified sender | Yes | Server | `GovFleet <noreply@example.gov.na>` |
-| `GOOGLE_MAPS_SERVER_API_KEY` | Routes API | Yes for route calc | Server secret | Google Cloud, API-restricted |
+| `GOOGLE_MAPS_SERVER_API_KEY` | Routes API (computeRoutes) | Yes for route calc | Server secret | Google Cloud, **IP-restricted** key |
 | `NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY` | Places/maps browser SDK | Yes for autocomplete | Client-safe but origin restricted | Google Cloud |
 | `UPSTASH_REDIS_REST_URL` | Rate limiting | Yes in production | Server | Upstash console |
 | `UPSTASH_REDIS_REST_TOKEN` | Rate limiting token | Yes | Server secret | Upstash console |
@@ -47,11 +47,42 @@ Never commit real values. Use `.env.example` placeholders and validate variables
 5. Restrict Google keys even in development.
 6. Run migrations and local seed.
 
+## Google Maps configuration (Routes API)
+
+The app uses the modern **Google Routes API** (`routes.googleapis.com/directions/v2:computeRoutes`) for route calculations — the legacy Distance Matrix, Geocoding and Directions JSON endpoints are **not** used and are **not enabled** on new Google Cloud projects.
+
+### Server key (`GOOGLE_MAPS_SERVER_API_KEY`)
+
+- **Must be IP-restricted (or unrestricted), NOT HTTP-referrer-restricted.** A referrer-restricted key is rejected for server-side calls with `API_KEY_HTTP_REFERRER_BLOCKED`, which silently breaks route calculation. In Google Cloud Console → APIs & Services → Credentials, set **Application restrictions → IP addresses** (allowlist your server/edge IPs) and leave **Website restrictions** empty for this key.
+- **Enable the Routes API** (and Geocoding API for the haversine fallback) under **APIs & Services → Library** for the same project.
+- The app sends the `NEXT_PUBLIC_APP_URL` origin as the `Referer` on server calls, which also satisfies a referrer-restricted key where the app origin is allow-listed — but IP restriction is the correct long-term configuration.
+
+### Browser key (`NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY`)
+
+- Used for **Places Autocomplete** in the transport-request route form.
+- **Should be HTTP-referrer-restricted** to the production domains (e.g. `https://app.example.gov.na/*`, `http://localhost:3000/*`).
+- Must have the **Places API** enabled.
+
+### Troubleshooting
+
+The `/api/routes/calculate` endpoint returns a `code` field on failure:
+
+| Code | Meaning | Fix |
+|---|---|---|
+| `NOT_CONFIGURED` | Key missing | Set `GOOGLE_MAPS_SERVER_API_KEY` |
+| `REFERER_BLOCKED` | Key is referrer-restricted | Switch server key to IP restriction |
+| `API_NOT_ENABLED` | Routes API not enabled | Enable Routes API in Cloud Console |
+| `KEY_INVALID` | Key invalid/blocked | Regenerate or fix the key |
+| `RATE_LIMITED` | Quota exceeded | Raise quota or wait |
+| `NO_ROUTE` | No driving route found | Check place names |
+
+When Google is unreachable, the app falls back to a straight-line (haversine) distance estimate so route entry still works.
+
 ## Production rules
 
 - Use separate projects/accounts for production where feasible.
 - Rotate any secret pasted into chat, logs or source control.
 - Never prefix server secrets with `NEXT_PUBLIC_`.
-- Restrict Google browser key by production domains and server key by API/server policy.
+- Restrict Google browser key by production domains and server key by IP policy.
 - Configure billing alerts and quotas for Google Maps.
 - Do not store secrets in tenant settings tables.

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, boolean, date, integer, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, boolean, date, integer, jsonb, doublePrecision } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
 /**
@@ -18,6 +18,8 @@ export const offices = pgTable('offices', {
   email: text('email'),
   isActive: boolean('is_active').notNull().default(true),
   sortOrder: text('sort_order').default('0'),
+  latitude: doublePrecision('latitude'),
+  longitude: doublePrecision('longitude'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

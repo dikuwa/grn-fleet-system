@@ -148,6 +148,20 @@
       "when": 1785358800000,
       "tag": "0020_document_system_redesign",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785412800000,
+      "tag": "0021_notification_dismissals",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1785441600000,
+      "tag": "0022_office_coordinates",
+      "breakpoints": true
     }
   ]
 }

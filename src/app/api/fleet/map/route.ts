@@ -40,6 +40,8 @@ export async function GET(req: NextRequest) {
         officeId: offices.id,
         officeName: offices.name,
         officeAddress: offices.address,
+        officeLat: offices.latitude,
+        officeLng: offices.longitude,
         // Trip info (latest)
         hasOpenDefects: sql<boolean>`EXISTS (SELECT 1 FROM ${vehicleDefects} WHERE ${vehicleDefects.vehicleId} = ${vehicles.id} AND ${vehicleDefects.resolvedAt} IS NULL)`,
       })
@@ -60,19 +62,24 @@ export async function GET(req: NextRequest) {
 
     const defectCountMap = new Map(openDefectCounts.map((r) => [r.vehicleId, r.count]));
 
-    // Namibia-specific approximate coordinates for reference
-    // In a real deployment, offices would have lat/lng stored in the DB
+    // Namibia-specific approximate coordinates for reference.
+    // Offices may now carry their own latitude/longitude in the DB — prefer
+    // those, falling back to this lookup for offices without coordinates.
     const regionCenters: Record<string, { lat: number; lng: number }> = {
       'Head Office': { lat: -22.5609, lng: 17.0658 },
       'Rundu': { lat: -17.9333, lng: 19.7667 },
-      'Nkurenkuru': { lat: -17.6167, lng: 18.6000 },
+      'Nkurenkuru': { lat: -17.6167, lng: 18.6 },
       'Mukwe': { lat: -18.0667, lng: 21.4167 },
-      'Ndiyona': { lat: -18.2167, lng: 20.7000 },
+      'Ndiyona': { lat: -18.2167, lng: 20.7 },
     };
 
     const vehiclesMap = rows.map((v) => {
       const officeName = v.officeName || 'Unassigned';
-      const coord = regionCenters[officeName] || null;
+      // Prefer the office's own stored coordinates
+      const coord =
+        v.officeLat != null && v.officeLng != null
+          ? { lat: v.officeLat, lng: v.officeLng }
+          : regionCenters[officeName] || null;
       const openDefects = defectCountMap.get(v.id) ?? 0;
 
       return {

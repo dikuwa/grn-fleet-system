@@ -20,6 +20,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx src/seed/index.ts",
+    "db:seed-e2e": "tsx src/seed/seed-e2e.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {

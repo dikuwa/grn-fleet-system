@@ -1061,7 +1061,14 @@ export class WorkflowEngine {
     if (!request) return steps;
     return Promise.all(
       steps.map(async (step) => {
-        if (!step.requiredPermission || step.actionType === 'acknowledge') return step;
+        // The acknowledge step must NOT have a pre-assigned user — the
+        // actual assigned driver is resolved dynamically at action time by
+        // looking up the allocation's driverEmployeeId.  Null out any stale
+        // assignedUserId that may have been set in the DB definition.
+        if (step.actionType === 'acknowledge') {
+          return { ...step, assignedUserId: null };
+        }
+        if (!step.requiredPermission) return step;
         const roleQuery = this.db.select({ roleId: roles.id }).from(roles);
         if (typeof (roleQuery as { innerJoin?: unknown }).innerJoin !== 'function') return step;
         const roleRows = await roleQuery

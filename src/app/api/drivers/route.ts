@@ -11,6 +11,7 @@ import { eq, and, or, ilike, asc } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { auditEvents } from '@/db/schema/audit';
+import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -151,7 +152,7 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
-    const [employee] = await db.select({ id: employees.id, isDriver: employees.isDriver, employmentStatus: employees.employmentStatus })
+    const [employee] = await db.select({ id: employees.id, isDriver: employees.isDriver, employmentStatus: employees.employmentStatus, userId: employees.userId })
       .from(employees)
       .where(and(eq(employees.id, body.employeeId), eq(employees.tenantId, session.tenantId)))
       .limit(1);
@@ -163,6 +164,10 @@ export async function POST(request: NextRequest) {
       .from(driverProfiles)
       .where(eq(driverProfiles.employeeId, employee.id))
       .limit(1);
+
+    // Even when reusing an existing profile, ensure the Driver role is assigned
+    await ensureDriverRoleAssignment(db, employee, session);
+
     if (existingProfile) {
       return NextResponse.json({ error: 'This staff member already has a driver profile' }, { status: 409 });
     }
@@ -191,6 +196,11 @@ export async function POST(request: NextRequest) {
     }).returning();
 
     await db.update(employees).set({ isDriver: true, updatedAt: new Date() }).where(eq(employees.id, employee.id));
+
+    // Driver role was already assigned by ensureDriverRoleAssignment() above.
+    // The second call is unnecessary since the function is called before the
+    // 409 check — both new and reuse paths are covered by that single call.
+
     await db.insert(auditEvents).values({
       tenantId: session.tenantId,
       tenantSequence: Date.now(),
@@ -207,5 +217,54 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[Drivers] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create driver profile' }, { status: 500 });
+  }
+}
+
+/**
+ * Ensure the employee has the "Assigned Driver" role in the role_assignment
+ * system.  This is called both when creating a new profile and when reusing
+ * an existing one (409 path) so that the workflow engine's permission check
+ * (DRIVER_LOG_CREATE) always passes for the affected user.
+ */
+async function ensureDriverRoleAssignment(
+  db: ReturnType<typeof getDb>,
+  employee: { id: string; userId: string | null },
+  session: { tenantId: string },
+) {
+  if (!employee.userId) return;
+  const [membership] = await db
+    .select({ id: tenantMemberships.id })
+    .from(tenantMemberships)
+    .where(
+      and(
+        eq(tenantMemberships.userId, employee.userId),
+        eq(tenantMemberships.tenantId, session.tenantId),
+      ),
+    )
+    .limit(1);
+  if (!membership) return;
+  const [driverRole] = await db
+    .select({ id: roles.id })
+    .from(roles)
+    .where(and(eq(roles.tenantId, session.tenantId), eq(roles.name, 'Assigned Driver')))
+    .limit(1);
+  if (!driverRole) return;
+  const [existing] = await db
+    .select({ id: roleAssignments.id })
+    .from(roleAssignments)
+    .where(
+      and(
+        eq(roleAssignments.tenantMembershipId, membership.id),
+        eq(roleAssignments.roleId, driverRole.id),
+      ),
+    )
+    .limit(1);
+  if (!existing) {
+    await db.insert(roleAssignments).values({
+      tenantMembershipId: membership.id,
+      roleId: driverRole.id,
+      startDate: new Date(),
+      reason: 'Auto-assigned via driver profile creation',
+    });
   }
 }

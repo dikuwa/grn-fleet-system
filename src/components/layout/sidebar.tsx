@@ -85,6 +85,7 @@ const navGroups: NavGroup[] = [
       { label: 'Allocations', href: '/dashboard/allocations', icon: Truck },
       { label: 'Trips', href: '/dashboard/trips', icon: Gauge, badge: 0 },
       { label: 'Active Trips', href: '/dashboard/trips/active', icon: Gauge },
+      { label: 'Release Readiness', href: '/dashboard/trips/readiness', icon: ClipboardCheck },
       { label: 'Closure Review', href: '/dashboard/trips/closure-review', icon: Clock },
       { label: 'Fuel Records', href: '/dashboard/fuel', icon: Fuel },
       { label: 'Reimbursements', href: '/dashboard/reimbursements', icon: ClipboardList },

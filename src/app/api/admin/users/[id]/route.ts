@@ -9,9 +9,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
+import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 // ---------------------------------------------------------------------------
 // GET — User detail
@@ -179,6 +181,44 @@ export async function PATCH(
           startDate: startDate ? new Date(startDate) : new Date(),
           endDate: endDate ? new Date(endDate) : null,
         });
+
+        // ── Auto-provision driver profile if the assigned role is Driver ──
+        if (role.name === 'Assigned Driver') {
+          const [employee] = await db
+            .select({ id: employees.id, tenantId: employees.tenantId, firstName: employees.firstName, lastName: employees.lastName })
+            .from(employees)
+            .where(and(eq(employees.userId, id), eq(employees.tenantId, session.tenantId)))
+            .limit(1);
+          if (employee) {
+            const [existingProfile] = await db
+              .select({ id: driverProfiles.id })
+              .from(driverProfiles)
+              .where(eq(driverProfiles.employeeId, employee.id))
+              .limit(1);
+            if (!existingProfile) {
+              const [profile] = await db.insert(driverProfiles).values({
+                employeeId: employee.id,
+                driverStatus: 'authorised',
+                availabilityStatus: 'available',
+                notes: 'Auto-provisioned from Driver role assignment. Awaiting licence upload and verification.',
+              }).returning();
+              await db.update(employees).set({ isDriver: true, updatedAt: new Date() }).where(eq(employees.id, employee.id));
+              await recordAuditEvent({
+                tenantId: session.tenantId,
+                actorUserId: session.user.id,
+                action: 'driver_profile.auto_provisioned',
+                entityType: 'driver_profile',
+                entityId: profile.id,
+                summary: `Driver profile auto-created for ${employee.firstName} ${employee.lastName} via role assignment`,
+                after: { driverStatus: 'pending_verification', roleAssigned: role.name },
+              });
+            } else {
+              // Reactivate existing profile
+              await db.update(driverProfiles).set({ driverStatus: 'authorised', updatedAt: new Date() }).where(eq(driverProfiles.id, existingProfile.id));
+              await db.update(employees).set({ isDriver: true, updatedAt: new Date() }).where(eq(employees.id, employee.id));
+            }
+          }
+        }
       }
     }
 

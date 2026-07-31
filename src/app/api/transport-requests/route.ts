@@ -481,10 +481,22 @@ export async function POST(req: NextRequest) {
     // Insert routes
     if (routes?.length > 0) {
       await db.insert(requestRoutes).values(
-        routes.map((r: { originName: string; destinationName: string; estimatedKm?: number }) => ({
+        routes.map((r: {
+          originName: string;
+          destinationName: string;
+          estimatedKm?: number;
+          originPlaceId?: string;
+          destinationPlaceId?: string;
+          originCoordinates?: { lat: number; lng: number };
+          destinationCoordinates?: { lat: number; lng: number };
+        }) => ({
           requestId: request.id,
           originName: r.originName,
           destinationName: r.destinationName,
+          originPlaceId: r.originPlaceId || null,
+          destinationPlaceId: r.destinationPlaceId || null,
+          originCoordinates: r.originCoordinates || null,
+          destinationCoordinates: r.destinationCoordinates || null,
           totalKilometres: r.estimatedKm || 0,
           additionalKilometres: 0,
           isVerified: false,

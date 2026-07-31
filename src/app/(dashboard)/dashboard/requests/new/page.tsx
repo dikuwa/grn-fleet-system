@@ -24,6 +24,7 @@ import { EmployeeCombobox, type EmployeeSearchOption } from '@/components/ui/emp
 import { EmployeeMultiSelect } from '@/components/ui/employee-multi-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { StyledSelect } from '@/components/ui/styled-select';
+import { PlacesAutocomplete } from '@/components/map/places-autocomplete';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,6 +67,10 @@ interface Route {
   originName: string;
   destinationName: string;
   estimatedKm: number;
+  originPlaceId?: string;
+  destinationPlaceId?: string;
+  originCoordinates?: { lat: number; lng: number };
+  destinationCoordinates?: { lat: number; lng: number };
 }
 
 interface RequestFormData {
@@ -656,7 +661,17 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
   const [calcError, setCalcError] = useState<string | null>(null);
 
   const addRoute = () => {
-    onChange([...routes, { id: nextId(), originName: '', destinationName: '', estimatedKm: 0 }]);
+    onChange([
+      ...routes,
+      {
+        id: nextId(),
+        originName: '',
+        destinationName: '',
+        estimatedKm: 0,
+        originPlaceId: undefined,
+        destinationPlaceId: undefined,
+      },
+    ]);
   };
 
   const updateRoute = (id: string, patch: Partial<Route>) => {
@@ -770,24 +785,36 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="text-ink-500 mb-1 block text-xs font-medium">Origin *</label>
-                    <input
-                      type="text"
+                    <PlacesAutocomplete
                       value={r.originName}
-                      onChange={(e) => updateRoute(r.id, { originName: e.target.value })}
+                      onTextChange={(text) => updateRoute(r.id, { originName: text })}
+                      onSelect={(place) =>
+                        updateRoute(r.id, {
+                          originName: place.name,
+                          originPlaceId: place.placeId || undefined,
+                          originCoordinates: place.lat && place.lng ? { lat: place.lat, lng: place.lng } : undefined,
+                        })
+                      }
                       placeholder="e.g. Rundu, Kavango East"
-                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                      ariaLabel="Route origin"
                     />
                   </div>
                   <div>
                     <label className="text-ink-500 mb-1 block text-xs font-medium">
                       Destination *
                     </label>
-                    <input
-                      type="text"
+                    <PlacesAutocomplete
                       value={r.destinationName}
-                      onChange={(e) => updateRoute(r.id, { destinationName: e.target.value })}
+                      onTextChange={(text) => updateRoute(r.id, { destinationName: text })}
+                      onSelect={(place) =>
+                        updateRoute(r.id, {
+                          destinationName: place.name,
+                          destinationPlaceId: place.placeId || undefined,
+                          destinationCoordinates: place.lat && place.lng ? { lat: place.lat, lng: place.lng } : undefined,
+                        })
+                      }
                       placeholder="e.g. Windhoek, Khomas Region"
-                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                      ariaLabel="Route destination"
                     />
                   </div>
                   <div>

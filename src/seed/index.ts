@@ -101,14 +101,14 @@ async function seed() {
   // -------------------------------------------------------------------------
   console.log('Creating offices...');
   const officeDataList = [
-    { tenantId: TENANT_ID as any, name: 'Head Office — Rundu', type: 'head_office' as const, code: 'HOR', address: 'Rundu, Kavango East', email: 'info@kavangoeast.gov.na', phone: '+264 66 123 400' },
-    { tenantId: TENANT_ID as any, name: 'Rundu Urban Constituency Office', type: 'constituency_office' as const, code: 'RUO' },
-    { tenantId: TENANT_ID as any, name: 'Rundu Rural West Constituency Office', type: 'constituency_office' as const, code: 'RRW' },
-    { tenantId: TENANT_ID as any, name: 'Rundu Rural East Constituency Office', type: 'constituency_office' as const, code: 'RRE' },
-    { tenantId: TENANT_ID as any, name: 'Mukwe Constituency Office', type: 'constituency_office' as const, code: 'MKO' },
-    { tenantId: TENANT_ID as any, name: 'Kapako Constituency Office', type: 'constituency_office' as const, code: 'KPO' },
-    { tenantId: TENANT_ID as any, name: 'Mashare Constituency Office', type: 'constituency_office' as const, code: 'MSO' },
-    { tenantId: TENANT_ID as any, name: 'Nkurenkuru Settlement Office', type: 'settlement_office' as const, code: 'NKO' },
+    { tenantId: TENANT_ID as any, name: 'Head Office — Rundu', type: 'head_office' as const, code: 'HOR', address: 'Rundu, Kavango East', email: 'info@kavangoeast.gov.na', phone: '+264 66 123 400', latitude: -17.9255, longitude: 19.753 },
+    { tenantId: TENANT_ID as any, name: 'Rundu Urban Constituency Office', type: 'constituency_office' as const, code: 'RUO', latitude: -17.9167, longitude: 19.7667 },
+    { tenantId: TENANT_ID as any, name: 'Rundu Rural West Constituency Office', type: 'constituency_office' as const, code: 'RRW', latitude: -17.9333, longitude: 19.6833 },
+    { tenantId: TENANT_ID as any, name: 'Rundu Rural East Constituency Office', type: 'constituency_office' as const, code: 'RRE', latitude: -17.9667, longitude: 19.8 },
+    { tenantId: TENANT_ID as any, name: 'Mukwe Constituency Office', type: 'constituency_office' as const, code: 'MKO', latitude: -18.0667, longitude: 21.4167 },
+    { tenantId: TENANT_ID as any, name: 'Kapako Constituency Office', type: 'constituency_office' as const, code: 'KPO', latitude: -17.8833, longitude: 19.8333 },
+    { tenantId: TENANT_ID as any, name: 'Mashare Constituency Office', type: 'constituency_office' as const, code: 'MSO', latitude: -17.95, longitude: 20.0667 },
+    { tenantId: TENANT_ID as any, name: 'Nkurenkuru Settlement Office', type: 'settlement_office' as const, code: 'NKO', latitude: -17.6167, longitude: 18.6 },
   ];
 
   const existingOffices = await db
@@ -125,6 +125,10 @@ async function seed() {
     const found = existingOfficeMap[od.name];
     if (found) {
       officeMap[od.name] = found;
+      // Keep coordinates in sync for offices that already exist (idempotent)
+      if (od.latitude != null && od.longitude != null) {
+        await db.update(offices).set({ latitude: od.latitude, longitude: od.longitude }).where(eq(offices.id, found));
+      }
     } else {
       const [created] = await db.insert(offices).values(od).returning();
       officeMap[created.name] = created.id;

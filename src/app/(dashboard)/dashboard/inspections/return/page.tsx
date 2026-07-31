@@ -474,8 +474,26 @@ export default function ReturnInspectionPage() {
                               <span className="text-[11px] font-medium text-ink-500 mr-1">Actions:</span>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  toast({ title: 'Incident Report Created', description: 'Damage has been flagged for incident investigation.', variant: 'success' });
+                                onClick={async () => {
+                                  try {
+                                    const res = await fetch('/api/incidents', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        tripId,
+                                        incidentType: 'damage',
+                                        description: `Damage detected during return inspection (classified as ${damageClassifications[idx].replace(/_/g, ' ')}). Photo index: ${idx}.`,
+                                        vehicleDamage: true,
+                                      }),
+                                    });
+                                    if (res.ok) {
+                                      toast({ title: 'Incident Report Created', description: 'Damage flagged for investigation.', variant: 'success' });
+                                    } else {
+                                      toast({ title: 'Failed to Create Incident', description: 'Try again.', variant: 'error' });
+                                    }
+                                  } catch {
+                                    toast({ title: 'Failed to Create Incident', description: 'Check your connection.', variant: 'error' });
+                                  }
                                 }}
                                 className="rounded-[4px] border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 transition-all hover:bg-red-100 active:scale-95"
                               >
@@ -512,8 +530,29 @@ export default function ReturnInspectionPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  toast({ title: 'Vehicle Held', description: 'Vehicle has been flagged as held pending investigation.', variant: 'success' });
+                                onClick={async () => {
+                                  if (!vehicleId) {
+                                    toast({ title: 'Select a vehicle first', description: 'A vehicle must be linked to hold it.', variant: 'default' });
+                                    return;
+                                  }
+                                  try {
+                                    const res = await fetch('/api/fleet', {
+                                      method: 'PATCH',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        id: vehicleId,
+                                        status: 'out_of_service',
+                                        reason: `Vehicle held pending investigation of return inspection damage (${damageClassifications[idx].replace(/_/g, ' ')}). Photo index: ${idx}.`,
+                                      }),
+                                    });
+                                    if (res.ok) {
+                                      toast({ title: 'Vehicle Held', description: 'Vehicle set to out of service pending investigation.', variant: 'success' });
+                                    } else {
+                                      toast({ title: 'Failed to Hold Vehicle', description: 'Check permissions.', variant: 'error' });
+                                    }
+                                  } catch {
+                                    toast({ title: 'Failed to Hold Vehicle', description: 'Check your connection.', variant: 'error' });
+                                  }
                                 }}
                                 className="rounded-[4px] border border-orange-200 bg-orange-50 px-2 py-1 text-[11px] font-medium text-orange-700 transition-all hover:bg-orange-100 active:scale-95"
                               >
@@ -522,8 +561,28 @@ export default function ReturnInspectionPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  toast({ title: 'Supervisor Notified', description: 'A notification has been sent to the responsible supervisor.', variant: 'success' });
+                                onClick={async () => {
+                                  try {
+                                    const res = await fetch('/api/notifications', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        recipientUserId: profile?.id,
+                                        type: 'incident_notification',
+                                        title: 'Damage Incident Requires Attention',
+                                        body: `A return inspection has classified damage as ${damageClassifications[idx].replace(/_/g, ' ')}. Trip: ${tripId || 'Unknown'}. Vehicle: ${vehicleSearch}`,
+                                        entityType: 'trip',
+                                        entityId: tripId,
+                                        actionUrl: `/dashboard/trips/${tripId || ''}`,
+                                        priority: 'high',
+                                      }),
+                                    });
+                                    if (res.ok) {
+                                      toast({ title: 'Supervisor Notified', description: 'Notification sent.', variant: 'success' });
+                                    }
+                                  } catch {
+                                    toast({ title: 'Failed to Notify', description: 'Check your connection.', variant: 'error' });
+                                  }
                                 }}
                                 className="rounded-[4px] border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 transition-all hover:bg-blue-100 active:scale-95"
                               >
