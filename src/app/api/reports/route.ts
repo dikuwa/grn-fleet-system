@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions, reimbursements, tripAuthorities, trips } from '@/db/schema/trips';
+import { fuelTransactions, reimbursements, tripAuthorities, trips, tripClosures } from '@/db/schema/trips';
 import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
-import { transportRequests } from '@/db/schema/requests';
+import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { sql, eq, and, gte, count } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
@@ -114,6 +114,14 @@ async function buildTripRows(db: ReturnType<typeof getDb>, tenantId: string, sta
       destination: tripAuthorities.destination,
       beginningOdometer: tripAuthorities.beginningOdometer,
       endingOdometer: tripAuthorities.endingOdometer,
+      routeKm: sql<number>`COALESCE((
+        SELECT SUM(rr.total_kilometres) FROM ${requestRoutes} rr
+        WHERE rr.request_id = ${trips.requestId}
+      ), 0)`.as('route_km'),
+      actualKm: sql<number>`COALESCE((
+        SELECT tc.actual_kilometres FROM ${tripClosures} tc
+        WHERE tc.trip_id = ${trips.id}
+      ), 0)`.as('actual_km'),
     })
     .from(trips)
     .innerJoin(vehicles, eq(trips.vehicleId, vehicles.id))
@@ -236,22 +244,29 @@ export async function GET(request: NextRequest) {
             { label: 'Transactions', value: String(fuelData.length) },
           ];
           break;
-        }
-        case 'trips': {
-          const tripData = await buildTripRows(db, tenantId, startDate);
-          rows = tripData;
-          columns = [
-            { key: 'authorityNumber', label: 'Trip Authority' },
-            { key: 'authorityStatus', label: 'Authority Status' },
-            { key: 'status', label: 'Status' },
-            { key: 'vehicle', label: 'Vehicle' },
-            { key: 'origin', label: 'Origin' },
-            { key: 'destination', label: 'Destination' },
-            { key: 'started', label: 'Started' },
-            { key: 'returned', label: 'Returned' },
-          ];
+        }      case 'trips': {
+        const tripData = await buildTripRows(db, tenantId, startDate);
+        rows = tripData;
+        columns = [
+          { key: 'authorityNumber', label: 'Trip Authority' },
+          { key: 'authorityStatus', label: 'Authority Status' },
+          { key: 'status', label: 'Status' },
+          { key: 'vehicle', label: 'Vehicle' },
+          { key: 'origin', label: 'Origin' },
+          { key: 'destination', label: 'Destination' },
+          { key: 'routeKm', label: 'Route (km)' },
+          { key: 'actualKm', label: 'Actual (km)' },
+          { key: 'started', label: 'Started' },
+          { key: 'returned', label: 'Returned' },
+        ];
           title = 'Trip Summary Report';
-          summary = [{ label: 'Total Trips', value: String(tripData.length) }];
+          const totalRouteKm = tripData.reduce((s, r) => s + Number(r.routeKm || 0), 0);
+          const totalActualKm = tripData.reduce((s, r) => s + Number(r.actualKm || 0), 0);
+          summary = [
+            { label: 'Total Trips', value: String(tripData.length) },
+            { label: 'Total Route (km)', value: String(totalRouteKm) },
+            { label: 'Total Actual (km)', value: String(totalActualKm) },
+          ];
           break;
         }
         case 'requests': {
@@ -399,6 +414,8 @@ export async function GET(request: NextRequest) {
             { key: 'vehicle', label: 'Vehicle' },
             { key: 'origin', label: 'Origin' },
             { key: 'destination', label: 'Destination' },
+            { key: 'routeKm', label: 'Route (km)' },
+            { key: 'actualKm', label: 'Actual (km)' },
             { key: 'beginningOdometer', label: 'Beginning Odometer' },
             { key: 'endingOdometer', label: 'Ending Odometer' },
             { key: 'started', label: 'Started' },
@@ -498,6 +515,8 @@ export async function GET(request: NextRequest) {
             { key: 'vehicle', label: 'Vehicle' },
             { key: 'origin', label: 'Origin' },
             { key: 'destination', label: 'Destination' },
+            { key: 'routeKm', label: 'Route (km)' },
+            { key: 'actualKm', label: 'Actual (km)' },
             { key: 'beginningOdometer', label: 'Beginning Odometer' },
             { key: 'endingOdometer', label: 'Ending Odometer' },
             { key: 'started', label: 'Started' },
@@ -642,7 +661,45 @@ export async function GET(request: NextRequest) {
           .innerJoin(vehicles, eq(trips.vehicleId, vehicles.id))
           .where(and(eq(vehicles.tenantId, tenantId), gte(trips.createdAt, startDate)))
           .groupBy(trips.status);
-        return NextResponse.json({ success: true, data: { tripStats } });
+
+        // Route distance (mapped km) from request routes created in the period
+        const [routeDistance] = await db
+          .select({
+            totalRouteKm:
+              sql`COALESCE(SUM(${requestRoutes.totalKilometres}), 0)`.as('total_route_km'),
+            routeCount: count(),
+          })
+          .from(requestRoutes)
+          .innerJoin(transportRequests, eq(requestRoutes.requestId, transportRequests.id))
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              gte(transportRequests.createdAt, startDate),
+            ),
+          );
+
+        // Actual km driven from trip closures in the period
+        const [actualDistance] = await db
+          .select({
+            totalActualKm:
+              sql`COALESCE(SUM(${tripClosures.actualKilometres}), 0)`.as('total_actual_km'),
+            closureCount: count(),
+          })
+          .from(tripClosures)
+          .innerJoin(trips, eq(tripClosures.tripId, trips.id))
+          .innerJoin(vehicles, eq(trips.vehicleId, vehicles.id))
+          .where(and(eq(vehicles.tenantId, tenantId), gte(trips.createdAt, startDate)));
+
+        return NextResponse.json({
+          success: true,
+          data: {
+            tripStats,
+            routeDistanceKm: Number(routeDistance?.totalRouteKm || 0),
+            routeCount: Number(routeDistance?.routeCount || 0),
+            actualDistanceKm: Number(actualDistance?.totalActualKm || 0),
+            closureCount: Number(actualDistance?.closureCount || 0),
+          },
+        });
       }
 
       case 'requests': {

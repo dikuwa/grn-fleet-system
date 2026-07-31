@@ -5,7 +5,6 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   Fuel,
   Truck,
@@ -468,6 +467,12 @@ function ReportFleet({ data }: { data: Record<string, unknown> | null }) {
 // ---------------------------------------------------------------------------
 // Trips Report Section
 // ---------------------------------------------------------------------------
+function formatKm(n: number | string): string {
+  const v = typeof n === 'string' ? parseFloat(n) : n;
+  if (isNaN(v) || v === 0) return '—';
+  return `${Math.round(v).toLocaleString()} km`;
+}
+
 function ReportTrips({ data }: { data: Record<string, unknown> | null }) {
   const tripStats = data?.tripStats as Array<{ totalTrips: number; status: string }> | undefined;
 
@@ -478,6 +483,10 @@ function ReportTrips({ data }: { data: Record<string, unknown> | null }) {
   const closed = stats.find((s) => s.status === 'closed')?.totalTrips ?? 0;
   const other = total - pending - inProgress - closed;
 
+  const routeDistanceKm = (data?.routeDistanceKm as number) ?? 0;
+  const routeCount = (data?.routeCount as number) ?? 0;
+  const actualDistanceKm = (data?.actualDistanceKm as number) ?? 0;
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -485,6 +494,38 @@ function ReportTrips({ data }: { data: Record<string, unknown> | null }) {
         <StatCard title="In Progress" value={String(inProgress)} description="Active right now" icon={<Clock className="h-5 w-5" />} />
         <StatCard title="Completed" value={String(closed)} description={total > 0 ? `${Math.round((closed / total) * 100)}% completion` : '—'} icon={<CheckCircle2 className="h-5 w-5" />} />
         <StatCard title="Pending / Other" value={String(pending + other)} description="Awaiting action" icon={<AlertTriangle className="h-5 w-5" />} />
+      </div>
+
+      {/* Route distance metrics */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="Route Distance"
+          value={formatKm(routeDistanceKm)}
+          description={`${routeCount} mapped route${routeCount === 1 ? '' : 's'}`}
+          icon={<MapPin className="h-5 w-5" />}
+        />
+        <StatCard
+          title="Distance Driven"
+          value={formatKm(actualDistanceKm)}
+          description="Actual km from closed trips"
+          icon={<Truck className="h-5 w-5" />}
+        />
+        <StatCard
+          title="Avg. Route Length"
+          value={routeCount > 0 ? `${Math.round(routeDistanceKm / routeCount).toLocaleString()} km` : '—'}
+          description="Per mapped route"
+          icon={<Gauge className="h-5 w-5" />}
+        />
+        <StatCard
+          title="Km Variance"
+          value={
+            routeDistanceKm > 0
+              ? `${Math.round(((actualDistanceKm - routeDistanceKm) / routeDistanceKm) * 100)}%`
+              : '—'
+          }
+          description="Driven vs. planned"
+          icon={<TrendingUp className="h-5 w-5" />}
+        />
       </div>
 
       <Card>

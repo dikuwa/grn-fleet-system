@@ -11,11 +11,13 @@ import {
 import { employees } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
+import { requestRoutes } from '@/db/schema/requests';
 import { requireAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { Card, CardContent } from '@/components/ui/card';
 import { AuthorityActions } from './AuthorityActions';
 import { TenantLogo } from '@/components/documents/tenant-logo';
+import { RouteMapWrapper } from '@/app/(dashboard)/dashboard/requests/[id]/route-map-wrapper';
 
 export default async function AuthorityPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -55,6 +57,7 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
       fuelType: vehicles.fuelType,
       capacity: vehicles.seatedCapacity,
       licenceExpiry: vehicles.licenceExpiryDate,
+      requestId: tripAuthorities.requestId,
     })
     .from(tripAuthorities)
     .innerJoin(tenants, eq(tenants.id, tripAuthorities.tenantId))
@@ -65,7 +68,7 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
     .limit(1);
   if (!authority) notFound();
 
-  const [passengers, drivers] = await Promise.all([
+  const [passengers, drivers, routes] = await Promise.all([
     db
       .select()
       .from(tripAuthorityPassengers)
@@ -85,6 +88,11 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
       .from(tripAuthorisedDrivers)
       .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
       .where(eq(tripAuthorisedDrivers.authorityId, authority.id)),
+    db
+      .select()
+      .from(requestRoutes)
+      .where(eq(requestRoutes.requestId, authority.requestId))
+      .orderBy(requestRoutes.createdAt),
   ]);
 
   const token = (authority.data as { verificationToken?: string } | null)?.verificationToken;
@@ -217,6 +225,42 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
               />
             </div>
 
+            {/* Route map — surfaced from the mapped routes on the approved request */}
+            {routes.length > 0 && (
+              <>
+                <SectionTitle>Route map</SectionTitle>
+                <div className="overflow-hidden rounded-[8px] border border-slate-300 print:hidden">
+                  <RouteMapWrapper routes={routes.map((r) => ({
+                    id: r.id,
+                    originName: r.originName,
+                    destinationName: r.destinationName,
+                    originCoordinates: r.originCoordinates as { lat: number; lng: number } | null,
+                    destinationCoordinates: r.destinationCoordinates as { lat: number; lng: number } | null,
+                    routePolyline: r.routePolyline,
+                    mappedDistanceKm: r.mappedDistanceKm,
+                    mappedDurationMinutes: r.mappedDurationMinutes,
+                    totalKilometres: r.totalKilometres,
+                  }))} />
+                </div>
+                <div className="grid border border-slate-300 sm:grid-cols-3 print:hidden">
+                  {routes.map((route, index) => (
+                    <OfficialField
+                      key={route.id}
+                      label={`Route ${index + 1}`}
+                      value={`${route.originName || 'Origin'} → ${route.destinationName || 'Destination'}`}
+                      strong={index === 0}
+                      wide
+                    />
+                  ))}
+                  <OfficialField
+                    label="Approved route distance"
+                    value={formatRouteDistance(routes)}
+                    wide
+                  />
+                </div>
+              </>
+            )}
+
             <SectionTitle>Odometer and conditions</SectionTitle>
             <div className="grid border border-slate-300 sm:grid-cols-3">
               <OfficialField
@@ -279,6 +323,14 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
       </Card>
     </div>
   );
+}
+
+function formatRouteDistance(
+  routes: Array<{ totalKilometres: number | null; mappedDistanceKm: number | null }>,
+): string {
+  const total = routes.reduce((sum, r) => sum + (r.totalKilometres || r.mappedDistanceKm || 0), 0);
+  if (total <= 0) return 'Not calculated';
+  return `${total.toLocaleString()} km`;
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
