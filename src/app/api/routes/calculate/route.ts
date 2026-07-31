@@ -114,11 +114,15 @@ export async function POST(req: NextRequest) {
             : routeError.code === 'RATE_LIMITED'
               ? 429
               : 422;
+        // Never echo raw Google/internal error strings for UNKNOWN failures —
+        // those may contain environment or network internals. Keep the
+        // actionable codes (REFERER_BLOCKED, API_NOT_ENABLED, …) surfaced.
+        const includeGoogleMessage = routeError.code !== 'UNKNOWN';
         return NextResponse.json(
           {
             error: routeError.message,
             code: routeError.code,
-            googleMessage: routeError.googleMessage,
+            googleMessage: includeGoogleMessage ? routeError.googleMessage : undefined,
             configured: true,
           },
           { status },

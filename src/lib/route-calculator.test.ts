@@ -31,6 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function routesApiResponse(overrides: Record<string, unknown> = {}) {
@@ -235,5 +236,98 @@ describe('route-calculator (Routes API)', () => {
     expect(result?.routes.length).toBe(2);
     expect(result?.totalDistanceKm).toBe(200 + 300);
     expect(result?.totalDurationMinutes).toBe(120 + 150);
+  });
+
+  // -----------------------------------------------------------------------
+  // Timeout / abort handling
+  // -----------------------------------------------------------------------
+
+  it('passes an abort signal with a 10s timeout to the computeRoutes fetch', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => routesApiResponse(),
+    });
+
+    await calculateRouteDetailed('Rundu, Namibia', 'Windhoek, Namibia');
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    // Armed but not yet fired
+    expect(init.signal?.aborted).toBe(false);
+  });
+
+  it('passes an abort signal with a 10s timeout to the geocode fallback fetch', async () => {
+    // Routes API returns OK with no routes → triggers the haversine fallback
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ routes: [] }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'OK',
+        results: [{ geometry: { location: { lat: -17.9255, lng: 19.753 } }, place_id: 'ChIJorigin' }],
+      }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'OK',
+        results: [{ geometry: { location: { lat: -22.5649, lng: 17.0841 } }, place_id: 'ChIJdest' }],
+      }),
+    });
+
+    await calculateRouteDetailed('Rundu, Namibia', 'Windhoek, Namibia');
+
+    // The second fetch is the first geocode call of the fallback
+    const [, init] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
+  it('falls back to a haversine estimate when computeRoutes times out', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const timeoutError = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'AbortError' });
+    mockFetch.mockRejectedValueOnce(timeoutError);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'OK',
+        results: [{ geometry: { location: { lat: -17.9255, lng: 19.753 } }, place_id: 'ChIJorigin' }],
+      }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'OK',
+        results: [{ geometry: { location: { lat: -22.5649, lng: 17.0841 } }, place_id: 'ChIJdest' }],
+      }),
+    });
+
+    const outcome = await calculateRouteDetailed('Rundu, Namibia', 'Windhoek, Namibia');
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.route.provider).toBe('haversine');
+    expect(outcome.route.distanceKm).toBeGreaterThan(400);
+    expect(outcome.route.distanceKm).toBeLessThan(800);
+  });
+
+  it('returns an UNKNOWN error without crashing when every Google call times out', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const timeoutError = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'AbortError' });
+    mockFetch.mockRejectedValue(timeoutError);
+
+    const outcome = await calculateRouteDetailed('Rundu, Namibia', 'Windhoek, Namibia');
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error.code).toBe('UNKNOWN');
+    expect(outcome.error.message).toContain('unreachable');
+    expect(outcome.error.googleMessage).toContain('aborted');
   });
 });

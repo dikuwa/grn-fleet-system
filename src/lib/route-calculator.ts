@@ -143,7 +143,9 @@ function mapGoogleFailure(res: Response, body: { error?: { message?: string; det
 
   return {
     code: 'UNKNOWN',
-    message: `Google Maps request failed (HTTP ${status}). ${googleMessage || ''}`.trim(),
+    // Keep the message generic — raw Google text can include request context
+    // (query params, key hints) that should not reach the client.
+    message: `Google Maps request failed (HTTP ${status}).`,
     googleMessage,
   };
 }
