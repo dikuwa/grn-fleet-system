@@ -6,7 +6,7 @@ import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { employees } from '@/db/schema/people';
 import { userProfiles } from '@/db/schema/auth';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { sendReactEmail } from '@/lib/email';
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await req.json();
-    const { email, name, username: inputUsername, roleId, employeeId, sendInvite } = body;
+    const { email, name, username: inputUsername, roleId, roleIds, employeeId, sendInvite, deliveryMode } = body;
 
     if (!email?.trim()) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
@@ -48,10 +48,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'This staff member already has a login account' }, { status: 409 });
     }
 
-    const [selectedRole] = roleId ? await db.select().from(roles)
-      .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId))).limit(1) : [];
-    if (roleId && !selectedRole) {
-      return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
+    // Multi-role support: accept roleIds[] (preferred) with roleId kept for
+    // backward compatibility. All roles must belong to this tenant.
+    const requestedRoleIds = Array.isArray(roleIds) && roleIds.length > 0
+      ? [...new Set(roleIds.map(String))]
+      : (roleId ? [String(roleId)] : []);
+
+    const selectedRoles = requestedRoleIds.length > 0
+      ? await db
+          .select({ id: roles.id, name: roles.name })
+          .from(roles)
+          .where(and(inArray(roles.id, requestedRoleIds), eq(roles.tenantId, session.tenantId)))
+      : [];
+    if (selectedRoles.length !== requestedRoleIds.length) {
+      return NextResponse.json({ error: 'One or more roles were not found in your organisation' }, { status: 404 });
     }
 
     // Check for duplicate email
@@ -118,13 +128,15 @@ export async function POST(req: NextRequest) {
       .set({ userId, updatedAt: now })
       .where(and(eq(employees.id, employeeId), eq(employees.tenantId, session.tenantId)));
 
-    // Assign role if specified
-    if (selectedRole) {
-        await db.insert(roleAssignments).values({
+    // Assign all selected roles
+    if (selectedRoles.length > 0) {
+      await db.insert(roleAssignments).values(
+        selectedRoles.map((r) => ({
           tenantMembershipId: membership.id,
-          roleId: selectedRole.id,
+          roleId: r.id,
           startDate: now,
-        });
+        })),
+      );
     }
 
     await db.insert(auditEvents).values({
@@ -136,12 +148,17 @@ export async function POST(req: NextRequest) {
       entityType: 'user',
       entityId: employeeId,
       summary: `Login account created for staff member ${employeeId}`,
-      after: { userId, employeeId, roleId: roleId || null },
+      after: { userId, employeeId, roleIds: selectedRoles.map((r) => r.id) },
     });
 
-    // Send invitation email if requested — uses dedicated UserInviteEmail template
-    let emailResult: { success: boolean; error?: string } = { success: false, error: 'Email not sent' };
-    if (sendInvite) {
+    // Send invitation email unless the admin chose to hand over credentials
+    // manually. deliveryMode 'manual' means the admin will share the temp
+    // password themselves; any other value (or the legacy sendInvite flag)
+    // triggers the email.
+    let emailResult: { success: boolean; error?: string; deliveredManually?: boolean } = { success: false, error: 'Email not sent' };
+    if (deliveryMode === 'manual' || sendInvite === false) {
+      emailResult = { success: false, deliveredManually: true };
+    } else {
       const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`;
 
       try {
@@ -184,7 +201,7 @@ export async function POST(req: NextRequest) {
       username,
       email: email.trim().toLowerCase(),
       tempPassword,
-      roleName: selectedRole?.name || 'No role assigned',
+      roleName: selectedRoles.map((r) => r.name).join(', ') || 'No role assigned',
       loginUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`,
     };
 

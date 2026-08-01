@@ -24,7 +24,6 @@ import {
   Ban,
   User,
   Copy,
-  Download,
   ExternalLink,
   Smartphone,
 } from 'lucide-react';
@@ -102,7 +101,7 @@ function PendingInviteRow({ invite, onAction }: { invite: PendingInvite; onActio
     } finally {
       setLoading(null);
     }
-  }, [invite.id, onAction]);
+  }, [invite.id, invite.email, onAction, toast]);
 
   const handleRevoke = useCallback(async () => {
     setShowRevokeConfirm(false);
@@ -130,7 +129,7 @@ function PendingInviteRow({ invite, onAction }: { invite: PendingInvite; onActio
     } finally {
       setLoading(null);
     }
-  }, [invite.id, onAction]);
+  }, [invite.id, invite.email, onAction, toast]);
 
   return (
     <>
@@ -232,8 +231,9 @@ export default function AdminUsersPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
   const [inviteUsername, setInviteUsername] = useState('');
-  const [inviteRoleId, setInviteRoleId] = useState('');
+  const [inviteRoleIds, setInviteRoleIds] = useState<string[]>([]);
   const [inviteEmployeeId, setInviteEmployeeId] = useState('');
+  const [deliveryMode, setDeliveryMode] = useState<'email' | 'manual'>('email');
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [inviteResult, setInviteResult] = useState<{
     success: boolean;
@@ -283,8 +283,9 @@ export default function AdminUsersPage() {
     setInviteEmail('');
     setInviteName('');
     setInviteUsername('');
-    setInviteRoleId('');
+    setInviteRoleIds([]);
     setInviteEmployeeId('');
+    setDeliveryMode('email');
     setShowInvite(true);
 
     try {
@@ -313,9 +314,10 @@ export default function AdminUsersPage() {
           email: inviteEmail.trim(),
           name: inviteName.trim() || undefined,
           username: inviteUsername.trim() || undefined,
-          roleId: inviteRoleId || undefined,
+          roleIds: inviteRoleIds,
           employeeId: inviteEmployeeId,
-          sendInvite: true,
+          sendInvite: deliveryMode === 'email',
+          deliveryMode,
         }),
       });
 
@@ -325,9 +327,12 @@ export default function AdminUsersPage() {
       setInviteResult({
         success: true,
         emailSent: json.emailSent,
-        message: json.emailSent
-          ? `Invitation sent to ${inviteEmail.trim()}.`
-          : `User created. RESEND_API_KEY not configured — provide password to user manually.`,
+        message:
+          deliveryMode === 'email'
+            ? json.emailSent
+              ? `Invitation sent to ${inviteEmail.trim()}.`
+              : `User created. RESEND_API_KEY not configured — provide password to user manually.`
+            : `Account created. Share the credentials below with the user.`,
       });
 
       // Show credential dialog if we have credentials
@@ -339,12 +344,15 @@ export default function AdminUsersPage() {
       setInviteEmail('');
       setInviteName('');
       setInviteUsername('');
-      setInviteRoleId('');
+      setInviteRoleIds([]);
       setInviteEmployeeId('');
       refetch();
       toast({
-        title: 'User Invited',
-        description: `Invitation sent to ${inviteEmail.trim()}.`,
+        title: deliveryMode === 'email' ? 'User Invited' : 'Account Created',
+        description:
+          deliveryMode === 'email'
+            ? `Invitation sent to ${inviteEmail.trim()}.`
+            : 'Credentials ready to share with the user.',
         variant: 'success',
       });
     } catch (err) {
@@ -488,15 +496,87 @@ export default function AdminUsersPage() {
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label>Role</Label>
-              <StyledSelect value={inviteRoleId} onChange={(e) => setInviteRoleId(e.target.value)}>
-                <option value="">No role</option>
-                {roles.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </StyledSelect>
+              <Label>Roles</Label>
+              <div className="border-border bg-muted/30 max-h-44 space-y-1 overflow-y-auto rounded-[8px] border p-2">
+                {roles.length === 0 ? (
+                  <p className="text-ink-400 px-2 py-1 text-xs">No roles available</p>
+                ) : (
+                  roles.map((r) => {
+                    const checked = inviteRoleIds.includes(r.id);
+                    return (
+                      <label
+                        key={r.id}
+                        className={`flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-sm transition-colors ${
+                          checked ? 'bg-brand-50 text-brand-800' : 'text-ink-700 hover:bg-muted'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="border-border text-brand-600 h-4 w-4 rounded focus:ring-brand-500"
+                          checked={checked}
+                          onChange={() => {
+                            setInviteRoleIds((prev) =>
+                              checked ? prev.filter((id) => id !== r.id) : [...prev, r.id],
+                            );
+                          }}
+                        />
+                        <span className="font-medium">{r.name}</span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <p className="text-ink-500 text-xs">
+                A staff member may hold multiple roles at the same time.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label required>How will the user receive their credentials?</Label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label
+                  className={`flex cursor-pointer items-start gap-2 rounded-[8px] border p-3 text-sm transition-colors ${
+                    deliveryMode === 'email'
+                      ? 'border-brand-500 bg-brand-50 text-brand-900'
+                      : 'border-border text-ink-700 hover:bg-muted/40'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="deliveryMode"
+                    className="border-border text-brand-600 mt-0.5 h-4 w-4 accent-brand-600"
+                    checked={deliveryMode === 'email'}
+                    onChange={() => setDeliveryMode('email')}
+                  />
+                  <span>
+                    <span className="font-medium">Send invitation email</span>
+                    <span className="text-ink-500 mt-0.5 block text-xs">
+                      Login details are emailed to the user automatically.
+                    </span>
+                  </span>
+                </label>
+                <label
+                  className={`flex cursor-pointer items-start gap-2 rounded-[8px] border p-3 text-sm transition-colors ${
+                    deliveryMode === 'manual'
+                      ? 'border-brand-500 bg-brand-50 text-brand-900'
+                      : 'border-border text-ink-700 hover:bg-muted/40'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="deliveryMode"
+                    className="border-border text-brand-600 mt-0.5 h-4 w-4 accent-brand-600"
+                    checked={deliveryMode === 'manual'}
+                    onChange={() => setDeliveryMode('manual')}
+                  />
+                  <span>
+                    <span className="font-medium">Generate credentials to share</span>
+                    <span className="text-ink-500 mt-0.5 block text-xs">
+                      Show temporary credentials now and share via WhatsApp, email or copy.
+                    </span>
+                  </span>
+                </label>
+              </div>
             </div>
 
             {inviteResult && (
