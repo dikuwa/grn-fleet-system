@@ -175,7 +175,9 @@ test.describe('Route Calculation', () => {
     expect(res.status()).toBe(422);
     const body = await res.json().catch(() => ({}));
     expect(body.error).toBeTruthy();
-    expect(body.error).toContain('Could not calculate');
+    // The route calculator returns a descriptive NO_ROUTE message, with a
+    // generic 422 fallback — accept either.
+    expect(body.error).toMatch(/Could not calculate|No driving route could be found/);
   });
 
   // -----------------------------------------------------------------------
