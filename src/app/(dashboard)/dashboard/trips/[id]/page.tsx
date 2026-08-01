@@ -1,6 +1,6 @@
 import { getDb, isDbConnected } from '@/db';
 import { trips, tripLogEntries, fuelTransactions, vehicleInspections, tripIssues, vehicleAllocations } from '@/db/schema/trips';
-import { transportRequests } from '@/db/schema/requests';
+import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { eq, and, desc } from 'drizzle-orm';
@@ -81,7 +81,7 @@ async function fetchTripDetail(id: string, tenantId: string) {
 
   if (!trip) notFound();
 
-  const [issueRecord, logEntries, fuel, inspections] = await Promise.all([
+  const [issueRecord, logEntries, fuel, inspections, routeRows] = await Promise.all([
     db
       .select({
         id: tripIssues.id,
@@ -126,13 +126,18 @@ async function fetchTripDetail(id: string, tenantId: string) {
       .from(vehicleInspections)
       .where(eq(vehicleInspections.tripId, id))
       .orderBy(desc(vehicleInspections.createdAt)),
+    trip.requestId
+      ? db.select().from(requestRoutes).where(eq(requestRoutes.requestId, trip.requestId))
+      : Promise.resolve([] as typeof requestRoutes.$inferSelect[]),
   ]);
 
   const totalFuelLitres = fuel.reduce((sum, f) => sum + Number(f.litres), 0);
   const totalFuelCost = fuel.reduce((sum, f) => sum + Number(f.amount), 0);
   const totalLogKm = logEntries.reduce((sum, e) => sum + (e.distanceKm ?? 0), 0);
+  // Planned route distance from the linked request's mapped routes
+  const routeKm = Math.round(routeRows.reduce((sum, r) => sum + (r.totalKilometres ?? r.mappedDistanceKm ?? 0), 0));
 
-  return { trip, issueRecord, logEntries, fuel, inspections, totalFuelLitres, totalFuelCost, totalLogKm };
+  return { trip, issueRecord, logEntries, fuel, inspections, totalFuelLitres, totalFuelCost, totalLogKm, routeKm };
 }
 
 export default async function TripDetailPage({ params }: PageProps) {
@@ -261,7 +266,8 @@ export default async function TripDetailPage({ params }: PageProps) {
       </Card>
 
       {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{data.routeKm > 0 ? `${data.routeKm.toLocaleString()} km` : '—'}</p><p className="text-xs text-ink-500">Planned Route</p></CardContent></Card>
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{data.totalLogKm.toLocaleString()} km</p><p className="text-xs text-ink-500">Logged Distance</p></CardContent></Card>
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{logEntries.length}</p><p className="text-xs text-ink-500">Log Entries</p></CardContent></Card>
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-info-text">{data.totalFuelLitres.toFixed(1)} L</p><p className="text-xs text-ink-500">Fuel Used</p></CardContent></Card>

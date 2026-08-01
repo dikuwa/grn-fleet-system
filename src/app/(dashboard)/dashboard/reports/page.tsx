@@ -801,6 +801,21 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
                   bars={[{ key: 'kmpl', color: '#16a34a', label: 'km/L' }]}
                   height={120}
                 />
+                <div>
+                  <p className="mb-2 text-xs font-medium text-ink-700">Driven vs Planned (km)</p>
+                  <BarChart
+                    data={fuelEfficiency.perVehicle.slice(0, 8).map((v) => ({
+                      label: v.licenceNumber,
+                      Planned: v.routeDistanceKm,
+                      Driven: v.estimatedDistanceKm,
+                    }))}
+                    bars={[
+                      { key: 'Planned', color: '#2563eb', label: 'Planned' },
+                      { key: 'Driven', color: '#16a34a', label: 'Driven' },
+                    ]}
+                    height={140}
+                  />
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>

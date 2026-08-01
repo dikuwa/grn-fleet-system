@@ -116,7 +116,19 @@ const TRANSPORT_REQUEST_SCHEMA: Schema = {
     status: { type: 'string', required: true },
     department: { type: 'string', nullable: true },
     purpose: { type: 'string', nullable: true },
-    requester: { type: 'string' },
+    requester: {
+      type: 'object',
+      required: true,
+      properties: {
+        name: { type: 'string', required: true },
+        employeeNumber: { type: 'string', nullable: true },
+        designation: { type: 'string', nullable: true },
+        department: { type: 'string', nullable: true },
+        office: { type: 'string', nullable: true },
+        phone: { type: 'string', nullable: true },
+        email: { type: 'string', nullable: true },
+      },
+    },
     totalAuthorisedKilometres: { type: 'number', nullable: true },
     specialAuthorityRequired: { type: 'boolean' },
     submittedAt: { type: 'string', nullable: true },
@@ -126,6 +138,7 @@ const TRANSPORT_REQUEST_SCHEMA: Schema = {
         type: 'object',
         properties: {
           title: { type: 'string', required: true },
+          description: { type: 'string', nullable: true },
           venue: { type: 'string', nullable: true },
           startDate: { type: 'string', required: true },
           endDate: { type: 'string', required: true },
@@ -140,6 +153,9 @@ const TRANSPORT_REQUEST_SCHEMA: Schema = {
         properties: {
           driverType: { type: 'string', required: true },
           sortOrder: { type: 'number' },
+          name: { type: 'string', nullable: true },
+          employeeNumber: { type: 'string', nullable: true },
+          department: { type: 'string', nullable: true },
         },
       },
     },
