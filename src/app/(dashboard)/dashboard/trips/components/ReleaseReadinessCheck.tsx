@@ -54,11 +54,12 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
 
   useEffect(() => {
     if (tripId && (status === 'pending' || status === 'in_progress')) {
-      fetchReadiness();
-    } else {
-      // Clear stale data when status leaves scope
-      setData(null);
+      const fetchTimer = setTimeout(fetchReadiness, 0);
+      return () => clearTimeout(fetchTimer);
     }
+    // Clear stale data when status leaves scope
+    const clearTimer = setTimeout(() => setData(null), 0);
+    return () => clearTimeout(clearTimer);
   }, [tripId, status, fetchReadiness]);
 
   // Don't render for closed/completed trips

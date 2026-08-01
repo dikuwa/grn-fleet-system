@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       success: true,
       ...cronData,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[reports/licence-expiry/run-cron] Failed:', error);
     return NextResponse.json(
       { error: 'Failed to run licence expiry check' },

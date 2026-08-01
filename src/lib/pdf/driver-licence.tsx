@@ -76,10 +76,15 @@ export function DriverLicenceDocument({ data }: { data: DriverLicenceData }) {
     status,
   } = data;
 
-  const isExpired = new Date(expiryDate) < new Date();
-  const daysLeft = Math.ceil(
-    (new Date(expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
-  );
+  // Evaluate document status at generation time (deterministic — avoids
+  // impure Date.now() calls during render).
+  const generatedTime = new Date(generatedAt).getTime();
+  const hasGeneratedTime = Number.isFinite(generatedTime);
+  const expiryTime = new Date(expiryDate).getTime();
+  const isExpired = hasGeneratedTime && expiryTime < generatedTime;
+  const daysLeft = hasGeneratedTime
+    ? Math.ceil((expiryTime - generatedTime) / (1000 * 60 * 60 * 24))
+    : 0;
 
   return (
     <Document title={`Driving Licence — ${licenceNumber}`}>

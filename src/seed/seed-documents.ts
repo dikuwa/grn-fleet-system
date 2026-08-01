@@ -634,8 +634,8 @@ async function seedDocuments() {
     { instanceId: wfInstance3.id, stepOrder: 1, actionType: 'supervisor_approve', result: 'approved', actorUserId: supervisor.userId!, actorEmployeeId: supervisor.id, createdAt: new Date(now.getTime() - 6 * 86400000 + 3600000) },
     { instanceId: wfInstance3.id, stepOrder: 2, actionType: 'transport_review', result: 'approved', actorUserId: transportAdmin.userId!, actorEmployeeId: transportAdmin.id, createdAt: new Date(now.getTime() - 6 * 86400000 + 7200000) },
     { instanceId: wfInstance3.id, stepOrder: 3, actionType: 'release', result: 'released', actorUserId: releaseOff.userId!, actorEmployeeId: releaseOff.id, signatureRef: 'typed:Erastus Hausiku', createdAt: new Date(now.getTime() - 5 * 86400000 + 3600000) },
-    { instanceId: wfInstance3.id, stepOrder: 4, actionType: 'release', result: 'released', actorUserId: nat2?.userId!, actorEmployeeId: nat2?.id, signatureRef: 'typed:Tomas Sikongo', createdAt: new Date(now.getTime() - 5 * 86400000 + 7200000) },
-    { instanceId: wfInstance3.id, stepOrder: 5, actionType: 'authorise', result: 'authorised', actorUserId: nat1?.userId!, actorEmployeeId: nat1?.id, comment: 'Authorised for national delegation. Ensure travel itinerary is followed.', signatureRef: 'typed:Rafael Kasume', createdAt: new Date(now.getTime() - 4 * 86400000 + 3600000) },
+    { instanceId: wfInstance3.id, stepOrder: 4, actionType: 'release', result: 'released', actorUserId: nat2?.userId ?? transportAdmin.userId!, actorEmployeeId: nat2?.id, signatureRef: 'typed:Tomas Sikongo', createdAt: new Date(now.getTime() - 5 * 86400000 + 7200000) },
+    { instanceId: wfInstance3.id, stepOrder: 5, actionType: 'authorise', result: 'authorised', actorUserId: nat1?.userId ?? transportAdmin.userId!, actorEmployeeId: nat1?.id, comment: 'Authorised for national delegation. Ensure travel itinerary is followed.', signatureRef: 'typed:Rafael Kasume', createdAt: new Date(now.getTime() - 4 * 86400000 + 3600000) },
   ]);
 
   const [alloc3] = await db

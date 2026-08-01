@@ -116,7 +116,8 @@ export default function DeliveryDashboardPage() {
   }, [statusFilter, channelFilter]);
 
   useEffect(() => {
-    fetchData();
+    const loadTimer = setTimeout(fetchData, 0);
+    return () => clearTimeout(loadTimer);
   }, [fetchData]);
 
   const handleRetry = useCallback(async (deliveryId: string) => {

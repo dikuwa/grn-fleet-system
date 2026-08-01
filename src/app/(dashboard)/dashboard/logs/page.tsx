@@ -191,9 +191,9 @@ export default function DailyLogsPage() {
   useEffect(() => {
     if (!tripsData || formData.tripId) return;
     const active = tripsData.filter((t: Trip) => t.status === 'in_progress' || t.status === 'issued');
-    if (active.length === 1) {
-      updateField('tripId', active[0].id);
-    }
+    if (active.length !== 1) return;
+    const autoTimer = setTimeout(() => updateField('tripId', active[0].id), 0);
+    return () => clearTimeout(autoTimer);
   }, [tripsData, formData.tripId, updateField]);
 
   return (

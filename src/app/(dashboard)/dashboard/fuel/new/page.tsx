@@ -69,8 +69,11 @@ export default function NewFuelEntryPage() {
 
   // Search vehicles dynamically
   useEffect(() => {
-    if (vehicleSearch.length < 2) { setVehicles([]); return; }
     const timer = setTimeout(async () => {
+      if (vehicleSearch.length < 2) {
+        setVehicles([]);
+        return;
+      }
       setVehicleLoading(true);
       try {
         const res = await fetch(`/api/fleet?search=${encodeURIComponent(vehicleSearch)}&limit=10`);

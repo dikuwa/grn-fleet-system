@@ -113,8 +113,9 @@ export async function GET(request: NextRequest) {
         notifiedToday: enriched.filter((l) => l.notifiedToday).length,
       },
     });
-  } catch (error: any) {
-    if (error?.message?.includes('Unauthorized') || error?.status === 401) {
+  } catch (error: unknown) {
+    const err = error as { message?: string; status?: number };
+    if (err?.message?.includes('Unauthorized') || err?.status === 401) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     console.error('[reports/licence-expiry] Failed:', error);

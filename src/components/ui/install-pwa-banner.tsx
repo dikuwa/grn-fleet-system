@@ -61,7 +61,7 @@ export function usePwaInstallState(): {
     // iOS Safari: never fires beforeinstallprompt, but supports A2HS
     const ua = navigator.userAgent;
     const isIos = /iphone|ipad|ipod/i.test(ua);
-    if (isIos) setState('ios');
+    const iosTimer = isIos ? setTimeout(() => setState('ios'), 0) : null;
 
     detectInstalled();
     window.addEventListener('beforeinstallprompt', onBeforeInstall);
@@ -69,6 +69,7 @@ export function usePwaInstallState(): {
     window.addEventListener('load', detectInstalled);
 
     return () => {
+      if (iosTimer) clearTimeout(iosTimer);
       window.removeEventListener('beforeinstallprompt', onBeforeInstall);
       window.removeEventListener('appinstalled', onInstalled);
       window.removeEventListener('load', detectInstalled);

@@ -99,8 +99,11 @@ export default function DepartureInspectionPage() {
 
   // Search vehicles dynamically
   useEffect(() => {
-    if (vehicleSearch.length < 2) { setVehicles([]); return; }
     const timer = setTimeout(async () => {
+      if (vehicleSearch.length < 2) {
+        setVehicles([]);
+        return;
+      }
       setVehicleLoading(true);
       try {
         const res = await fetch(`/api/fleet?search=${encodeURIComponent(vehicleSearch)}&limit=10`);
@@ -127,8 +130,8 @@ export default function DepartureInspectionPage() {
   // Fetch trip/vehicle info if tripId is provided
   useEffect(() => {
     if (!tripId) {
-      setTripInfo(null);
-      return;
+      const resetTimer = setTimeout(() => setTripInfo(null), 0);
+      return () => clearTimeout(resetTimer);
     }
     fetch(`/api/trips/${tripId}`)
       .then((r) => r.json())

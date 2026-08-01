@@ -758,10 +758,8 @@ describe('Shared document system components', () => {
     const { DocumentSection } = await import('./document-system');
     const section = React.createElement(
       DocumentSection,
-      {
-        title: 'Test Section',
-        children: React.createElement('text', { key: 'c' }, 'Test content'),
-      },
+      { title: 'Test Section' } as React.ComponentProps<typeof DocumentSection>,
+      React.createElement('text', { key: 'c' }, 'Test content'),
     );
     expect(section).toBeDefined();
     expect(section.props.title).toBe('Test Section');
@@ -769,11 +767,8 @@ describe('Shared document system components', () => {
 
     const noWrap = React.createElement(
       DocumentSection,
-      {
-        title: 'No Wrap',
-        wrap: false,
-        children: React.createElement('text', { key: 'c2' }, 'Content'),
-      },
+      { title: 'No Wrap', wrap: false } as React.ComponentProps<typeof DocumentSection>,
+      React.createElement('text', { key: 'c2' }, 'Content'),
     );
     expect(noWrap.props.wrap).toBe(false);
   });
