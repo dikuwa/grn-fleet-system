@@ -60,6 +60,19 @@ const envSchema = z.object({
   // Auth
   FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN: z.string().optional().default('false'),
 
+  // AI (server-side only — never prefix with NEXT_PUBLIC_)
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().optional().default('gpt-5-mini'),
+  OPENAI_REASONING_MODEL: z.string().optional().default('gpt-5.4'),
+  AI_FEATURES_ENABLED: z.string().optional().default('true'),
+  AI_PREDICTIVE_MAINTENANCE_ENABLED: z.string().optional().default('true'),
+  AI_REPORTS_ENABLED: z.string().optional().default('true'),
+  AI_REQUEST_ASSISTANT_ENABLED: z.string().optional().default('true'),
+  AI_INSPECTION_SUMMARIES_ENABLED: z.string().optional().default('true'),
+  AI_RECEIPT_OCR_ENABLED: z.string().optional().default('true'),
+  AI_MAX_OUTPUT_TOKENS: z.string().optional().default('1500'),
+  AI_REQUEST_TIMEOUT_MS: z.string().optional().default('30000'),
+
   // Feature Flags
   NEXT_PUBLIC_ENABLE_OFFLINE_DRAFTS: z.string().optional().default('true'),
   ENABLE_EXTERNAL_SHARING: z.string().optional().default('false'),

@@ -14,7 +14,8 @@ import { vehicles } from '@/db/schema/fleet';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
-import { parseFuelReceiptText, receiptValidationFlags } from '@/lib/receipt-ocr';
+import { parseFuelReceiptText, receiptValidationFlags, type ReceiptFields } from '@/lib/receipt-ocr';
+import { AI_OCR_CONFIDENCE, extractReceiptWithAi, isAiFeatureEnabled } from '@/lib/ai';
 import { ALLOWED_IMAGE_TYPES, UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
 
 export const runtime = 'nodejs';
@@ -82,48 +83,86 @@ export async function POST(request: NextRequest) {
     let fieldConfidence: Record<string, number> = {};
     let extractionConfidence = 0;
     let flags: string[] = [];
-    try {
-      const processed = await sharp(original)
-        .rotate()
-        .resize({ width: 2200, withoutEnlargement: true })
-        .greyscale()
-        .normalise()
-        .png()
-        .toBuffer();
-      const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('eng');
-      try {
-        const recognition = await worker.recognize(processed);
-        const parsed = parseFuelReceiptText(recognition.data.text, recognition.data.confidence);
-        extractionData = { ...parsed.fields };
-        fieldConfidence = parsed.confidence;
-        extractionConfidence = Math.max(0, Math.min(1, recognition.data.confidence / 100));
-        rawOcrResponse = {
-          text: recognition.data.text,
-          confidence: recognition.data.confidence,
-          engineVersion: recognition.data.version,
-        };
-        flags = receiptValidationFlags({
-          fields: parsed.fields,
-          vehicleRegistration: context.registration,
-          vehicleFuelType: context.fuelType,
-          currentOdometer: context.currentOdometer,
-          tripStart: context.tripStart,
-          tripEnd: context.tripEnd,
-        });
-        if (
-          extractionConfidence < 0.65 ||
-          Object.values(parsed.confidence).some((confidence) => confidence < 0.6) ||
-          flags.length > 0
-        ) ocrStatus = 'awaiting_verification';
-      } finally {
-        await worker.terminate();
-      }
-    } catch (ocrError) {
-      ocrStatus = 'ocr_failed';
+
+    // Engine order: OpenAI vision (preferred, server-side) → Tesseract (fallback).
+    // If both fail the receipt is still saved and marked for manual review — we
+    // never return zero values when processing fails.
+    let aiExtraction: { json: Record<string, unknown>; usage: { inputTokens: number; outputTokens: number } } | null = null;
+    if (isAiFeatureEnabled('receipt_ocr')) {
+      aiExtraction = await extractReceiptWithAi({
+        imageBuffer: original,
+        mimeType: file.type,
+        tenantId: session.tenantId,
+      });
+    }
+    if (aiExtraction) {
+      const aiFields = aiExtraction.json as Partial<ReceiptFields>;
+      extractionData = { ...aiFields };
+      fieldConfidence = Object.fromEntries(Object.keys(aiFields).map((key) => [key, AI_OCR_CONFIDENCE]));
+      extractionConfidence = AI_OCR_CONFIDENCE;
       rawOcrResponse = {
-        error: ocrError instanceof Error ? ocrError.message : 'OCR unavailable',
+        engine: 'openai',
+        usage: aiExtraction.usage,
       };
+      flags = receiptValidationFlags({
+        fields: aiFields,
+        vehicleRegistration: context.registration,
+        vehicleFuelType: context.fuelType,
+        currentOdometer: context.currentOdometer,
+        tripStart: context.tripStart,
+        tripEnd: context.tripEnd,
+      });
+      if (
+        extractionConfidence < 0.65 ||
+        flags.length > 0 ||
+        (aiFields.amount === undefined && aiFields.litres === undefined)
+      ) ocrStatus = 'awaiting_verification';
+    } else {
+      try {
+        const processed = await sharp(original)
+          .rotate()
+          .resize({ width: 2200, withoutEnlargement: true })
+          .greyscale()
+          .normalise()
+          .png()
+          .toBuffer();
+        const { createWorker } = await import('tesseract.js');
+        const worker = await createWorker('eng');
+        try {
+          const recognition = await worker.recognize(processed);
+          const parsed = parseFuelReceiptText(recognition.data.text, recognition.data.confidence);
+          extractionData = { ...parsed.fields };
+          fieldConfidence = parsed.confidence;
+          extractionConfidence = Math.max(0, Math.min(1, recognition.data.confidence / 100));
+          rawOcrResponse = {
+            engine: 'tesseract',
+            text: recognition.data.text,
+            confidence: recognition.data.confidence,
+            engineVersion: recognition.data.version,
+          };
+          flags = receiptValidationFlags({
+            fields: parsed.fields,
+            vehicleRegistration: context.registration,
+            vehicleFuelType: context.fuelType,
+            currentOdometer: context.currentOdometer,
+            tripStart: context.tripStart,
+            tripEnd: context.tripEnd,
+          });
+          if (
+            extractionConfidence < 0.65 ||
+            Object.values(parsed.confidence).some((confidence) => confidence < 0.6) ||
+            flags.length > 0
+          ) ocrStatus = 'awaiting_verification';
+        } finally {
+          await worker.terminate();
+        }
+      } catch (ocrError) {
+        ocrStatus = 'ocr_failed';
+        rawOcrResponse = {
+          engine: 'tesseract',
+          error: ocrError instanceof Error ? ocrError.message : 'OCR unavailable',
+        };
+      }
     }
 
     const [receipt] = await db.insert(fuelReceipts).values({

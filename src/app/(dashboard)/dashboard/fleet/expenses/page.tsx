@@ -9,10 +9,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import {
   Receipt, AlertTriangle, Loader2, RefreshCw,
-  DollarSign, FileText, CheckCircle2, XCircle,
-  Upload, Search, Camera, ChevronRight,
+  Camera,
 } from 'lucide-react';
-import Link from 'next/link';
 
 interface ExpenseTransaction {
   id: string;
@@ -44,6 +42,17 @@ interface MissingReceipt {
   stationName: string | null;
 }
 
+interface ScanResult {
+  status: string;
+  manualEntryRequired: boolean;
+  fields: Record<string, unknown>;
+  confidence: Record<string, number>;
+  extractionConfidence: number;
+  flags: string[];
+  matchedVehicle: { id: string; licenceNumber: string } | null;
+  error?: string;
+}
+
 interface ExpenseSummary {
   totalFuelCost: number;
   totalLitres: number;
@@ -62,7 +71,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState('90d');
-  const [scanResult, setScanResult] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fetched = useRef(false);
@@ -99,41 +108,25 @@ export default function ExpensesPage() {
     setScanResult(null);
 
     try {
-      // Upload to R2
+      // Server-side scan (OpenAI vision → Tesseract fallback)
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('category', 'receipt');
-
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json();
-        throw new Error(err.error || 'Upload failed');
-      }
-
-      await uploadRes.json();
-
-      // Try OCR via Tesseract.js (dynamically loaded)
-      let ocrText = '';
-      try {
-        const TesseractMod = await import('tesseract.js').catch(() => null);
-        if (TesseractMod && typeof TesseractMod.recognize === 'function') {
-          const result = await TesseractMod.recognize(file, 'eng');
-          ocrText = result.data?.text || 'No text extracted';
-        } else {
-          ocrText = 'OCR processing unavailable (Tesseract.js not installed)';
-        }
-      } catch {
-        ocrText = 'OCR processing unavailable (Tesseract.js not available)';
-      }
-
-      setScanResult(`Receipt uploaded: ${file.name}\n\nOCR Result:\n${ocrText.slice(0, 500)}`);
+      const res = await fetch('/api/fuel/receipts/scan', { method: 'POST', body: formData });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Scan failed');
+      setScanResult(json as ScanResult);
       await fetchData(period);
     } catch (err) {
-      setScanResult(err instanceof Error ? err.message : 'Scan failed');
+      setScanResult({
+        status: 'ocr_failed',
+        manualEntryRequired: true,
+        fields: {},
+        confidence: {},
+        extractionConfidence: 0,
+        flags: [],
+        matchedVehicle: null,
+        error: err instanceof Error ? err.message : 'Scan failed',
+      });
     } finally {
       setScanLoading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -184,14 +177,44 @@ export default function ExpensesPage() {
         </Button>
       </PageHeader>
 
-      {/* Scan Result Toast */}
+      {/* Scan Result Panel */}
       {scanResult && (
         <Card className="border-brand-200 bg-brand-50/50">
           <CardContent className="pt-3">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-brand-800 mb-1">Receipt Scan Result</p>
-                <pre className="text-xs text-brand-600 whitespace-pre-wrap font-sans">{scanResult}</pre>
+              <div className="flex-1 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium text-brand-800">Receipt Scan Result</p>
+                  <StatusBadge
+                    status={scanResult.status === 'ocr_confirmed' ? 'success' : scanResult.status === 'ocr_failed' ? 'error' : 'pending'}
+                    label={scanResult.status === 'ocr_confirmed' ? 'Extracted' : scanResult.status === 'ocr_failed' ? 'Failed' : 'Manual review required'}
+                  />
+                  {scanResult.matchedVehicle && <Badge variant="info" size="sm">Matched {scanResult.matchedVehicle.licenceNumber}</Badge>}
+                </div>
+                {scanResult.error ? (
+                  <p className="text-xs text-red-600">{scanResult.error}</p>
+                ) : (
+                  <>
+                    {scanResult.flags.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {scanResult.flags.map((flag) => <Badge key={flag} variant="warning" size="sm">{flag.replaceAll('_', ' ')}</Badge>)}
+                      </div>
+                    )}
+                    {Object.keys(scanResult.fields).length > 0 ? (
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
+                        {Object.entries(scanResult.fields).map(([key, value]) => value !== undefined && value !== null && value !== '' && (
+                          <div key={key} className="text-xs">
+                            <span className="text-brand-400 capitalize">{key.replace(/([A-Z])/g, ' $1').toLowerCase()}: </span>
+                            <span className="font-medium text-brand-800">{String(value)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-brand-600">No fields extracted — please record the fuel entry manually.</p>
+                    )}
+                    <p className="text-xs text-brand-400">Confidence {Math.round(scanResult.extractionConfidence * 100)}% · Upload the image with a fuel entry to persist it and create the financial record.</p>
+                  </>
+                )}
               </div>
               <button onClick={() => setScanResult(null)} className="text-brand-400 hover:text-brand-600">&times;</button>
             </div>

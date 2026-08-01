@@ -4,6 +4,7 @@ export interface ReceiptFields {
   transactionDate?: string;
   transactionTime?: string;
   transactionReference?: string;
+  pumpNumber?: string;
   fuelType?: string;
   amount?: number;
   currency?: string;
@@ -13,6 +14,13 @@ export interface ReceiptFields {
   registrationNumber?: string;
   receiptNumber?: string;
   vatNumber?: string;
+  attendant?: string;
+  cardNumber?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleColour?: string;
+  /** Derived amount ÷ litres when both are present and price is not. */
+  computedPricePerLitre?: number;
 }
 
 export interface ParsedReceipt {
@@ -67,20 +75,36 @@ export function parseFuelReceiptText(text: string, ocrConfidence = 0): ParsedRec
   ]);
   const vat = firstMatch(compact, [/(?:VAT)\s*(?:NO|NUMBER|#)?\s*:?\s*([A-Z0-9-]{4,})/i]);
   const fuelType = firstMatch(compact, [/\b(DIESEL|PETROL|UNLEADED|ULP\s*95|ULP\s*93)\b/i]);
+  const pumpNumber = firstMatch(compact, [/(?:PUMP|NOZZLE)\s*(?:NO|NUMBER|#)?\s*:?\s*([0-9A-Z]{1,4})/i]);
+  const attendant = firstMatch(compact, [/(?:ATTENDANT|OPERATOR|CASHIER)\s*(?:NO|NUMBER|#)?\s*:?\s*([A-Z0-9-]{2,30})/i]);
+  const cardNumber = firstMatch(compact, [/(?:CARD\s*(?:NO|NUMBER|#)?|FUEL\s*CARD)\s*:?\s*([A-Z0-9-]{6,})/i]);
+
+  const amount = amountRaw ? normaliseNumber(amountRaw) : undefined;
+  const litres = litresRaw ? normaliseNumber(litresRaw) : undefined;
+  let pricePerLitre = priceRaw ? normaliseNumber(priceRaw) : undefined;
+  let computedPricePerLitre: number | undefined;
+  if (pricePerLitre === undefined && amount !== undefined && litres !== undefined && litres > 0) {
+    computedPricePerLitre = Number((amount / litres).toFixed(2));
+  }
+  if (pricePerLitre === undefined && computedPricePerLitre !== undefined) pricePerLitre = computedPricePerLitre;
 
   const fields: ReceiptFields = {
     supplier: lines[0]?.slice(0, 120),
     transactionDate: date,
     transactionTime: time,
     transactionReference: reference,
+    pumpNumber,
     receiptNumber,
     registrationNumber: registration?.toUpperCase().replace(/\s+/g, ''),
     vatNumber: vat,
     fuelType: fuelType?.toLowerCase().replace(/\s+/g, '_'),
-    amount: amountRaw ? normaliseNumber(amountRaw) : undefined,
+    amount,
     currency: /(?:\bNAD\b|N\$)/i.test(compact) ? 'NAD' : undefined,
-    litres: litresRaw ? normaliseNumber(litresRaw) : undefined,
-    pricePerLitre: priceRaw ? normaliseNumber(priceRaw) : undefined,
+    litres,
+    pricePerLitre,
+    computedPricePerLitre,
+    attendant,
+    cardNumber,
     odometer: odometerRaw ? Number(odometerRaw) : undefined,
   };
 
@@ -121,6 +145,15 @@ export function receiptValidationFlags(input: {
   if (fields.amount !== undefined && fields.amount <= 0) flags.push('invalid_amount');
   if (fields.pricePerLitre !== undefined && (fields.pricePerLitre < 5 || fields.pricePerLitre > 100)) {
     flags.push('implausible_price_per_litre');
+  }
+  if (
+    fields.amount !== undefined &&
+    fields.litres !== undefined &&
+    fields.litres > 0 &&
+    fields.pricePerLitre !== undefined &&
+    Math.abs(fields.amount / fields.litres - fields.pricePerLitre) / fields.pricePerLitre > 0.1
+  ) {
+    flags.push('amount_litres_inconsistent');
   }
   if (fields.transactionDate) {
     const parsed = new Date(fields.transactionDate);
