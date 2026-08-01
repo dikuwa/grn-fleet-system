@@ -18,6 +18,7 @@ export default function WorkflowRoutingPage() {
   const { toast } = useToast();
   const [definitions, setDefinitions] = useState<Definition[]>([]);
   const [users, setUsers] = useState<Person[]>([]);
+  const [eligibleByPermission, setEligibleByPermission] = useState<Record<string, Person[]>>({});
   const [offices, setOffices] = useState<Option[]>([]);
   const [departments, setDepartments] = useState<Option[]>([]);
   const [regions, setRegions] = useState<Option[]>([]);
@@ -27,7 +28,7 @@ export default function WorkflowRoutingPage() {
     const response = await fetch('/api/admin/workflows');
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Unable to load workflow routing');
-    setDefinitions(result.data.definitions); setUsers(result.data.users); setOffices(result.data.offices); setDepartments(result.data.departments); setRegions(result.data.regions);
+    setDefinitions(result.data.definitions); setUsers(result.data.users); setEligibleByPermission(result.data.eligibleByPermission || {}); setOffices(result.data.offices); setDepartments(result.data.departments); setRegions(result.data.regions);
   }
   useEffect(() => { load().catch((error) => toast({ title: 'Routing unavailable', description: error.message, variant: 'error' })); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -51,7 +52,12 @@ export default function WorkflowRoutingPage() {
         <div className="grid gap-3 md:grid-cols-3">
           {([['regionId', 'All regions', regions], ['officeId', 'All offices', offices], ['departmentId', 'All departments', departments]] as const).map(([field, empty, options]) => <StyledSelect key={field} value={definition[field] || ''} onChange={(event) => updateDefinition(definition.id, { [field]: event.target.value || null })}><option value="">{empty}</option>{options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</StyledSelect>)}
         </div>
-        <div className="divide-y divide-border rounded-[8px] border border-border">{definition.steps.map((step) => <div key={step.id} className="grid gap-3 p-3 md:grid-cols-[1fr_1fr] md:items-center"><div><p className="text-sm font-medium">{step.stepOrder}. {step.label}</p><p className="text-xs text-ink-500">{step.requiredPermission}</p></div><StyledSelect value={step.assignedUserId || ''} onChange={(event) => updateStep(definition.id, step.id, event.target.value)}><option value="">Permission-based pool</option>{users.map((person) => <option key={person.userId} value={person.userId}>{person.name || person.email} — {person.email}</option>)}</StyledSelect></div>)}</div>
+        <div className="divide-y divide-border rounded-[8px] border border-border">{definition.steps.map((step) => {
+          const eligible = step.requiredPermission ? (eligibleByPermission[step.requiredPermission] || []) : users;
+          const assigned = step.assignedUserId ? users.find((person) => person.userId === step.assignedUserId) : undefined;
+          const options = assigned && !eligible.some((person) => person.userId === assigned.userId) ? [assigned, ...eligible] : eligible;
+          return <div key={step.id} className="grid gap-3 p-3 md:grid-cols-[1fr_1fr] md:items-center"><div><p className="text-sm font-medium">{step.stepOrder}. {step.label}</p><p className="text-xs text-ink-500">{step.requiredPermission || 'Any approver'}</p></div><StyledSelect value={step.assignedUserId || ''} onChange={(event) => updateStep(definition.id, step.id, event.target.value)}><option value="">Permission-based pool{step.requiredPermission ? ` (${eligible.length} eligible)` : ''}</option>{options.map((person) => <option key={person.userId} value={person.userId}>{person.name || person.email} — {person.email}</option>)}</StyledSelect></div>;
+        })}</div>
         <div className="flex justify-end"><Button onClick={() => save(definition)} loading={saving === definition.id}><Save className="h-4 w-4" /> Save Routing</Button></div>
       </CardContent>
     </Card>)}

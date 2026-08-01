@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { workflowDefinitions, workflowSteps, tenantMemberships, user, offices, departments, regions, auditEvents } from '@/db/schema';
+import { workflowDefinitions, workflowSteps, tenantMemberships, roleAssignments, rolePermissions, user, offices, departments, regions, auditEvents } from '@/db/schema';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -15,13 +15,39 @@ export async function GET(request: NextRequest) {
   const definitions = await db.select().from(workflowDefinitions).where(eq(workflowDefinitions.tenantId, session.tenantId)).orderBy(workflowDefinitions.tripScope, workflowDefinitions.version);
   const definitionIds = definitions.map((definition) => definition.id);
   const steps = definitionIds.length ? await db.select().from(workflowSteps).where(inArray(workflowSteps.definitionId, definitionIds)).orderBy(workflowSteps.stepOrder) : [];
-  const [members, officeRows, departmentRows, regionRows] = await Promise.all([
+  const [members, roleRows, officeRows, departmentRows, regionRows] = await Promise.all([
     db.select({ userId: tenantMemberships.userId, name: user.name, email: user.email }).from(tenantMemberships).innerJoin(user, eq(tenantMemberships.userId, user.id)).where(and(eq(tenantMemberships.tenantId, session.tenantId), eq(tenantMemberships.status, 'active'))),
+    db.select({ userId: user.id, name: user.name, email: user.email, permissionCode: rolePermissions.permissionCode, startDate: roleAssignments.startDate, endDate: roleAssignments.endDate })
+      .from(tenantMemberships)
+      .innerJoin(user, eq(tenantMemberships.userId, user.id))
+      .innerJoin(roleAssignments, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+      .innerJoin(rolePermissions, eq(rolePermissions.roleId, roleAssignments.roleId))
+      .where(and(eq(tenantMemberships.tenantId, session.tenantId), eq(tenantMemberships.status, 'active'))),
     db.select({ id: offices.id, name: offices.name }).from(offices).where(and(eq(offices.tenantId, session.tenantId), eq(offices.isActive, true))),
     db.select({ id: departments.id, name: departments.name }).from(departments).where(and(eq(departments.tenantId, session.tenantId), eq(departments.isActive, true))),
     db.select({ id: regions.id, name: regions.name }).from(regions).where(and(eq(regions.tenantId, session.tenantId), eq(regions.isActive, true))),
   ]);
-  return NextResponse.json({ success: true, data: { definitions: definitions.map((definition) => ({ ...definition, steps: steps.filter((step) => step.definitionId === definition.id) })), users: members, offices: officeRows, departments: departmentRows, regions: regionRows } });
+
+  // Group active users by the permissions their currently-active roles grant,
+  // so each workflow step's person dropdown can be filtered to users who
+  // actually hold that step's required permission.
+  const now = new Date();
+  const eligibleByPermission: Record<string, Array<{ userId: string; name: string | null; email: string }>> = {};
+  for (const row of roleRows) {
+    if (new Date(row.startDate) > now) continue;
+    if (row.endDate && new Date(row.endDate) < now) continue;
+    (eligibleByPermission[row.permissionCode] ??= []).push({ userId: row.userId, name: row.name, email: row.email });
+  }
+  for (const code of Object.keys(eligibleByPermission)) {
+    const seen = new Set<string>();
+    eligibleByPermission[code] = eligibleByPermission[code].filter((person) => {
+      if (seen.has(person.userId)) return false;
+      seen.add(person.userId);
+      return true;
+    });
+  }
+
+  return NextResponse.json({ success: true, data: { definitions: definitions.map((definition) => ({ ...definition, steps: steps.filter((step) => step.definitionId === definition.id) })), users: members, eligibleByPermission, offices: officeRows, departments: departmentRows, regions: regionRows } });
 }
 
 export async function PATCH(request: NextRequest) {
