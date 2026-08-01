@@ -172,10 +172,10 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
 
   useEffect(() => {
     if (!canNavigateDashboardPath('/dashboard/trips', roleNames)) return;
-    fetch('/api/reports?type=snapshot&metric=activeTrips')
+    fetch('/api/trips/attention')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.data?.activeTrips != null) setActiveTripCount(Number(d.data.activeTrips));
+        if (d?.data?.total != null) setActiveTripCount(Number(d.data.total));
       })
       .catch(() => {
         /* silent */
@@ -269,7 +269,10 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
                             {item.badge !== undefined &&
                               item.label === 'Trips' &&
                               activeTripCount > 0 && (
-                                <span className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white">
+                                <span
+                                  className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white"
+                                  title={`${activeTripCount} trip${activeTripCount === 1 ? '' : 's'} require your attention`}
+                                >
                                   {activeTripCount > 99 ? '99+' : activeTripCount}
                                 </span>
                               )}
