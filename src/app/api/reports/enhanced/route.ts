@@ -155,8 +155,11 @@ async function getVehicleUtilisation(db: ReturnType<typeof getDb>, tenantId: str
     .from(trips)
     .innerJoin(vehicles, eq(trips.vehicleId, vehicles.id))
     .where(and(eq(vehicles.tenantId, tenantId), gte(trips.startedAt, start)))
-    .groupBy(trips.vehicleId, vehicles.licenceNumber, vehicles.status)
-    .orderBy(sql`totalTripHours DESC`);
+    .groupBy(trips.vehicleId, vehicles.licenceNumber, vehicles.status);
+
+  // Sort in JS — ordering by the unquoted camelCase SQL alias breaks on
+  // Postgres/Neon (identifier is folded to lowercase), while SQLite tolerates it.
+  utilisation.sort((a, b) => Number(b.totalTripHours || 0) - Number(a.totalTripHours || 0));
 
   const totalVehicles = utilisation.length;
   const totalUtilisedHours = utilisation.reduce((s, v) => s + Number(v.totalTripHours || 0), 0);
@@ -208,8 +211,11 @@ async function getFuelEfficiency(db: ReturnType<typeof getDb>, tenantId: string,
     .from(fuelTransactions)
     .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
     .where(and(eq(vehicles.tenantId, tenantId), gte(fuelTransactions.createdAt, start)))
-    .groupBy(fuelTransactions.vehicleId, vehicles.licenceNumber)
-    .orderBy(sql`totalLitres DESC`);
+    .groupBy(fuelTransactions.vehicleId, vehicles.licenceNumber);
+
+  // Sort in JS — ordering by the unquoted camelCase SQL alias breaks on
+  // Postgres/Neon (identifier is folded to lowercase), while SQLite tolerates it.
+  efficiency.sort((a, b) => Number(b.totalLitres || 0) - Number(a.totalLitres || 0));
 
   // Get trip distances per vehicle to calculate km/L
   const tripDistances = await db
