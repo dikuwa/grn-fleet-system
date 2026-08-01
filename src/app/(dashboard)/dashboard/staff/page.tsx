@@ -2,19 +2,22 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
-import { Plus, Upload, Database, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Plus, Upload, Database, ChevronRight, ChevronLeft, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 import { isDbConnected, getDb } from '@/db';
 import { employees, departments, offices, roleDelegations, userProfiles } from '@/db/schema';
+import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { eq, ilike, or, and, asc, count, sql } from 'drizzle-orm';
 import { StatusBadge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { getServerSession } from '@/lib/session';
-import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { getSessionRoleNames, hasPermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { canPerformDashboardAction } from '@/lib/dashboard-access';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
+import { StaffRowActions } from '@/components/staff/staff-row-actions';
 
 interface SearchParams {
   q?: string;
@@ -42,6 +45,8 @@ interface StaffQueryResult {
     accountStatus: string | null;
     profilePhotoUrl: string | null;
     isActing: boolean;
+    roleNames: string | null;
+    userId: string | null;
   }>;
   totalCount: number;
   allOffices: Array<{ id: string; name: string }>;
@@ -101,6 +106,16 @@ async function fetchStaffData(params: SearchParams, tenantId: string): Promise<S
       availabilityStatus: employees.availabilityStatus,
       accountStatus: userProfiles.status,
       profilePhotoUrl: employees.profilePhotoUrl,
+      userId: employees.userId,
+      roleNames: sql<string | null>`(
+        SELECT string_agg(${roles.name}, ', ' ORDER BY ${roles.name})
+        FROM ${tenantMemberships}
+        INNER JOIN ${roleAssignments} ON ${roleAssignments.tenantMembershipId} = ${tenantMemberships.id}
+        INNER JOIN ${roles} ON ${roles.id} = ${roleAssignments.roleId}
+        WHERE ${tenantMemberships.userId} = ${employees.userId}
+          AND ${tenantMemberships.tenantId} = ${employees.tenantId}
+          AND (${roleAssignments.endDate} IS NULL OR ${roleAssignments.endDate} > now())
+      )`,
       isActing: sql<boolean>`EXISTS (
         SELECT 1 FROM ${roleDelegations}
         WHERE ${roleDelegations.actingEmployeeId} = ${employees.id}
@@ -222,6 +237,21 @@ export default async function StaffDirectoryPage({
   const totalPages = Math.ceil(totalCount / DEFAULT_PAGE_SIZE);
   const offset = (currentPage - 1) * DEFAULT_PAGE_SIZE;
 
+  // Serialized filter state so the row actions / detail links can restore the
+  // exact directory view when the user navigates back.
+  const returnQuery = new URLSearchParams();
+  if (query) returnQuery.set('q', query);
+  if (officeFilter) returnQuery.set('office', officeFilter);
+  if (departmentFilter) returnQuery.set('department', departmentFilter);
+  if (statusFilter) returnQuery.set('status', statusFilter);
+  if (availabilityFilter) returnQuery.set('availability', availabilityFilter);
+  if (currentPage > 1) returnQuery.set('page', String(currentPage));
+  const returnQueryString = returnQuery.toString();
+
+  const canManageRoles = await hasPermission(session, Permissions.TENANT_MANAGE);
+  const canManageLifecycle = await hasPermission(session, Permissions.STAFF_LIFECYCLE_MANAGE);
+  const canManageDriver = await hasPermission(session, Permissions.DRIVER_MANAGE);
+
   function buildPageUrl(overrides: Record<string, string>): string {
     const params = new URLSearchParams();
     if (query) params.set('q', query);
@@ -335,7 +365,10 @@ export default async function StaffDirectoryPage({
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <Link href={`/dashboard/staff/${row.id}`} className="text-ink-950 font-medium">
+                <Link
+                  href={`/dashboard/staff/${row.id}${returnQueryString ? `?${returnQueryString}` : ''}`}
+                  className="text-ink-950 font-medium"
+                >
                   {row.firstName} {row.lastName}
                 </Link>
                 <p className="text-ink-500 truncate text-xs">
@@ -344,14 +377,56 @@ export default async function StaffDirectoryPage({
                 <p className="text-ink-500 truncate text-xs">
                   {row.officeName || 'Office not recorded'}
                 </p>
+                {row.roleNames && (
+                  <p className="text-brand-700 mt-0.5 truncate text-xs font-medium">
+                    {row.roleNames}
+                  </p>
+                )}
               </div>
-              <Link
-                href={`/dashboard/staff/${row.id}`}
-                className="border-border text-brand-700 rounded-[8px] border px-3 py-2 text-xs font-medium"
-              >
-                View
-              </Link>
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                <StaffRowActions
+                  employeeId={row.id}
+                  employeeName={`${row.firstName} ${row.lastName}`}
+                  hasAccount={Boolean(row.userId)}
+                  userId={row.userId}
+                  archived={row.employmentStatus === 'archived'}
+                  canManageRoles={canManageRoles}
+                  canManageAvailability={canManageLifecycle}
+                  canManageDriver={canManageDriver}
+                  canArchive={canManageLifecycle}
+                  returnQuery={returnQueryString}
+                />
+                <Link
+                  href={`/dashboard/staff/${row.id}${returnQueryString ? `?${returnQueryString}` : ''}`}
+                  className="border-border text-brand-700 rounded-[8px] border px-3 py-1.5 text-xs font-medium"
+                >
+                  View
+                </Link>
+              </div>
             </div>
+            <details className="group mt-3">
+              <summary className="text-ink-500 flex cursor-pointer list-none items-center gap-1 text-xs font-medium select-none [&::-webkit-details-marker]:hidden">
+                More details
+                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-2 space-y-1.5 text-xs">
+                <p className="text-ink-500">
+                  <span className="font-medium text-ink-700">Department:</span>{' '}
+                  {row.departmentName || '—'}
+                </p>
+                <p className="text-ink-500">
+                  <span className="font-medium text-ink-700">Office:</span>{' '}
+                  {row.officeName || '—'}
+                </p>
+                <p className="text-ink-500">
+                  <span className="font-medium text-ink-700">Employee #:</span>{' '}
+                  {row.employeeNumber}
+                </p>
+                {row.isActing && (
+                  <p className="text-brand-700">Currently acting in a delegated role</p>
+                )}
+              </div>
+            </details>
             <div className="mt-3 flex flex-wrap gap-2">
               <StatusBadge
                 status={row.employmentStatus === 'active' ? 'success' : 'error'}
@@ -491,12 +566,26 @@ export default async function StaffDirectoryPage({
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/dashboard/staff/${row.id}`}
-                        className="text-brand-600 hover:text-brand-700 inline-flex items-center gap-1 text-xs font-medium transition-colors"
-                      >
-                        View <ChevronRight className="h-3 w-3" />
-                      </Link>
+                      <div className="flex items-center justify-end gap-2">
+                        <Link
+                          href={`/dashboard/staff/${row.id}${returnQueryString ? `?${returnQueryString}` : ''}`}
+                          className="text-brand-600 hover:text-brand-700 inline-flex items-center gap-1 text-xs font-medium transition-colors"
+                        >
+                          View <ChevronRight className="h-3 w-3" />
+                        </Link>
+                        <StaffRowActions
+                          employeeId={row.id}
+                          employeeName={`${row.firstName} ${row.lastName}`}
+                          hasAccount={Boolean(row.userId)}
+                          userId={row.userId}
+                          archived={row.employmentStatus === 'archived'}
+                          canManageRoles={canManageRoles}
+                          canManageAvailability={canManageLifecycle}
+                          canManageDriver={canManageDriver}
+                          canArchive={canManageLifecycle}
+                          returnQuery={returnQueryString}
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))

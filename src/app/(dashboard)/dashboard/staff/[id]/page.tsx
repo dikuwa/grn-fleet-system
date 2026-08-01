@@ -135,10 +135,21 @@ async function fetchEmployeeDetail(id: string, tenantId: string): Promise<Employ
 
 export const dynamic = 'force-dynamic';
 
+interface PageSearchParams {
+  q?: string;
+  office?: string;
+  department?: string;
+  status?: string;
+  availability?: string;
+  page?: string;
+}
+
 export default async function EmployeeDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<PageParams>;
+  searchParams: Promise<PageSearchParams>;
 }) {
   const { id } = await params;
   const session = await getServerSession();
@@ -176,6 +187,18 @@ export default async function EmployeeDetailPage({
   const { employee, driverProfile, licences, docs, assignments, availability } = data;
   const statusVariant = employee.employmentStatus === 'active' ? 'success' : employee.employmentStatus === 'suspended' ? 'pending' : 'error';
 
+  // Preserve directory filters when navigating back (state comes from the
+  // query string the directory appends to detail links).
+  const sp = await searchParams;
+  const returnParams = new URLSearchParams();
+  if (sp.q) returnParams.set('q', sp.q);
+  if (sp.office) returnParams.set('office', sp.office);
+  if (sp.department) returnParams.set('department', sp.department);
+  if (sp.status) returnParams.set('status', sp.status);
+  if (sp.availability) returnParams.set('availability', sp.availability);
+  if (sp.page) returnParams.set('page', sp.page);
+  const backToDirectoryHref = `/dashboard/staff${returnParams.toString() ? `?${returnParams.toString()}` : ''}`;
+
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Staff Directory', href: '/dashboard/staff' }, { label: `${employee.firstName} ${employee.lastName}` }]} />
@@ -184,7 +207,7 @@ export default async function EmployeeDetailPage({
           {canManageDrivers && !driverProfile && <ConvertToDriver employeeId={employee.id} employeeName={`${employee.firstName} ${employee.lastName}`} />}
           {canManageLifecycle && <EmployeeLifecycleActions employeeId={employee.id} archived={employee.employmentStatus === 'archived'} />}
           <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/staff"><ChevronLeft className="h-4 w-4" />Back to Directory</Link>
+            <Link href={backToDirectoryHref}><ChevronLeft className="h-4 w-4" />Back to Directory</Link>
           </Button>
         </div>
       </PageHeader>
