@@ -252,6 +252,22 @@ async function getFuelEfficiency(db: ReturnType<typeof getDb>, tenantId: string,
   // its route km attributed to each vehicle (accepted report-level approximation).
   const routeMap = new Map(routeDistances.map((d) => [d.vehicleId, Number(d.totalRouteKm || 0)]));
 
+  // Monthly planned route-km trend for the period
+  const routeKmTrend = await db
+    .select({
+      month: sql<string>`to_char(${vehicleAllocations.createdAt}, 'YYYY-MM')`,
+      routeKm: sql<number>`COALESCE(SUM(COALESCE(${requestRoutes.totalKilometres}, ${requestRoutes.mappedDistanceKm}, 0)), 0)`,
+      routeCount: count(),
+    })
+    .from(requestRoutes)
+    .innerJoin(vehicleAllocations, eq(requestRoutes.requestId, vehicleAllocations.requestId))
+    .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
+    .where(and(eq(vehicles.tenantId, tenantId), gte(vehicleAllocations.createdAt, start)))
+    .groupBy(sql`to_char(${vehicleAllocations.createdAt}, 'YYYY-MM')`);
+
+  // Sort in JS — the unquoted SQL alias is not resolvable on Postgres/Neon.
+  routeKmTrend.sort((a, b) => a.month.localeCompare(b.month));
+
   const fleetEfficiency = efficiency.map((v) => {
     const distance = distMap.get(v.vehicleId) || 0;
     const routeDistance = routeMap.get(v.vehicleId) || 0;
@@ -283,6 +299,7 @@ async function getFuelEfficiency(db: ReturnType<typeof getDb>, tenantId: string,
     totalRouteKm,
     totalFuelCost: fleetEfficiency.reduce((s, v) => s + v.totalAmount, 0),
     perVehicle: fleetEfficiency,
+    routeKmTrend,
   };
 }
 

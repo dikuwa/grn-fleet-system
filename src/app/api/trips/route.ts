@@ -105,6 +105,11 @@ export async function GET(request: NextRequest) {
           hasDepartureInspection: sql<boolean>`EXISTS (SELECT 1 FROM vehicle_inspections vi WHERE vi.trip_id = ${trips.id} AND vi.type = 'departure')`,
           hasReturnInspection: sql<boolean>`EXISTS (SELECT 1 FROM vehicle_inspections vi WHERE vi.trip_id = ${trips.id} AND vi.type = 'return')`,
           purpose: transportRequests.purpose,
+          routeKm: sql<number>`COALESCE((
+            SELECT SUM(COALESCE(rr.total_kilometres, rr.mapped_distance_km, 0))
+            FROM request_routes rr
+            WHERE rr.request_id = ${trips.requestId}
+          ), 0)`.as('route_km'),
         })
         .from(trips)
         .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))

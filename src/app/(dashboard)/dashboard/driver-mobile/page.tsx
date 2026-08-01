@@ -28,6 +28,7 @@ interface AssignedTrip {
   hasDepartureInspection: boolean;
   hasReturnInspection: boolean;
   routeSummary?: string;
+  routeKm?: number;
 }
 
 export default function DriverMobileDashboardPage() {
@@ -203,6 +204,12 @@ export default function DriverMobileDashboardPage() {
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
                           {new Date(trip.startAt).toLocaleDateString('en-NA', { weekday: 'short', day: '2-digit', month: 'short' })}
+                        </span>
+                      )}
+                      {trip.routeKm != null && trip.routeKm > 0 && (
+                        <span className="flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {Math.round(trip.routeKm).toLocaleString()} km
                         </span>
                       )}
                     </div>

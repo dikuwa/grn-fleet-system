@@ -646,7 +646,7 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
     | { totalVehicles: number; avgUtilisation: number; totalUtilisedHours: number; underUtilisedCount: number; underUtilisedVehicles: Array<{ licenceNumber: string; totalTrips: number; totalTripHours: number; utilisationPct: number }>; vehicleBreakdown: Array<{ licenceNumber: string; totalTrips: number; totalTripHours: number; utilisationPct: number }> }
     | undefined;
   const fuelEfficiency = enhanced?.fuelEfficiency as
-    | { fleetAvgKmPerLitre: number | null; totalLitres: number; totalDistance: number; totalRouteKm: number; totalFuelCost: number; perVehicle: Array<{ licenceNumber: string; totalLitres: number; routeDistanceKm: number; estimatedDistanceKm: number; kmPerLitre: number | null; avgCostPerLitre: number }> }
+    | { fleetAvgKmPerLitre: number | null; totalLitres: number; totalDistance: number; totalRouteKm: number; totalFuelCost: number; perVehicle: Array<{ licenceNumber: string; totalLitres: number; routeDistanceKm: number; estimatedDistanceKm: number; kmPerLitre: number | null; avgCostPerLitre: number }>; routeKmTrend: Array<{ month: string; routeKm: number; routeCount: number }> }
     | undefined;
   const lateReturns = enhanced?.lateReturns as
     | { lateCount: number; totalTrips: number; lateRate: number; avgDelayHours: number; lateTrips: Array<{ vehicleLicence: string; actualHours: number; delayHours: number }>; monthlyLateTrend: Array<{ month: string; totalTrips: number; lateTrips: number }> }
@@ -827,10 +827,18 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
                 </div>
               </>
             )}
+            {fuelEfficiency?.routeKmTrend && fuelEfficiency.routeKmTrend.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-ink-700">Route Distance Trend</p>
+                <BarChart
+                  data={fuelEfficiency.routeKmTrend.map((m) => ({ label: m.month, km: Math.round(m.routeKm) }))}
+                  bars={[{ key: 'km', color: '#2563eb', label: 'Route km' }]}
+                  height={120}
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
-
-        {/* Late Returns */}
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="h-4 w-4" /> Late Returns</CardTitle></CardHeader>
           <CardContent className="space-y-4">
