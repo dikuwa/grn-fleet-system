@@ -16,12 +16,11 @@ import { test, expect, Page } from '@playwright/test';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
-async function signIn(page: Page) {
-  const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
-  const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
+async function signInAs(page: Page, email: string, password?: string) {
+  const pw = password || process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
   const res = await page.request.post(`${BASE}/api/auth/sign-in`, {
-    data: { email, password },
+    data: { email, password: pw },
   });
   expect(res.status()).toBe(200);
   const body = await res.json();
@@ -42,6 +41,11 @@ async function signIn(page: Page) {
   return { token, user: body.user || body.session?.user };
 }
 
+async function signIn(page: Page) {
+  const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
+  return signInAs(page, email);
+}
+
 async function getCookieHeader(page: Page): Promise<string> {
   const cookies = await page.context().cookies();
   const token = cookies.find((c) => c.name === 'better-auth.session_token')?.value ?? '';
@@ -53,6 +57,12 @@ async function getCookieHeader(page: Page): Promise<string> {
 // ---------------------------------------------------------------------------
 
 test.describe('Audit Trail Workflow', () => {
+  // Each test performs several sequential API calls (create → audit query →
+  // update → audit query → delete → audit query), which is slow on a cold
+  // dev server. Run serially with a generous timeout so parallel workers and
+  // the 30s default do not flake the suite.
+  test.describe.configure({ mode: 'serial', timeout: 90000 });
+
   test.beforeEach(async ({ page }) => {
     await signIn(page);
   });
@@ -62,13 +72,18 @@ test.describe('Audit Trail Workflow', () => {
   // -----------------------------------------------------------------------
 
   test('1. fuel transaction creates fuel_created audit event', async ({ page }) => {
+    // Fuel creation is gated by the /dashboard/fuel/new dashboard grant, which
+    // only TRANSPORT_ADMIN (and DRIVER) hold — so sign in as the transport
+    // admin seed account for the create.
+    await signInAs(page, process.env.SEED_TRANSPORT_ADMIN_EMAIL || 'transport.admin@kavangoeast.test');
+
     // Get a vehicle from the fleet
     const fleetRes = await page.request.get(`${BASE}/api/fleet`, {
       headers: { cookie: await getCookieHeader(page) },
     });
     expect(fleetRes.status()).toBe(200);
     const fleetBody = await fleetRes.json().catch(() => ({}));
-    const vehicles = fleetBody?.data || fleetBody?.vehicles || fleetBody || [];
+    const vehicles = fleetBody?.rows || fleetBody?.data || fleetBody?.vehicles || fleetBody || [];
     const vehicle = Array.isArray(vehicles)
       ? vehicles.find((v: { status?: string }) => v.status === 'active' || v.status === 'available' || !v.status)
       : null;
@@ -88,6 +103,10 @@ test.describe('Audit Trail Workflow', () => {
       headers: { cookie: await getCookieHeader(page) },
     });
     expect(fuelRes.status()).toBe(200);
+
+    // The transport admin cannot read the audit log — switch back to the
+    // tenant admin (AUDIT_READ) before querying the audit API.
+    await signInAs(page, process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na');
 
     // Query the audit API for the fuel_created event
     const auditRes = await page.request.get(`${BASE}/api/audit?eventType=fuel_created&limit=10`, {
@@ -114,13 +133,17 @@ test.describe('Audit Trail Workflow', () => {
   // -----------------------------------------------------------------------
 
   test('2. maintenance event creates maintenance_created audit event', async ({ page }) => {
+    // Maintenance creation requires MAINTENANCE_MANAGE, which the tenant admin
+    // lacks — sign in as the maintenance officer seed account for the create.
+    await signInAs(page, process.env.SEED_MAINTENANCE_EMAIL || 'maintenance@kavangoeast.test');
+
     // Get a vehicle
     const fleetRes = await page.request.get(`${BASE}/api/fleet`, {
       headers: { cookie: await getCookieHeader(page) },
     });
     expect(fleetRes.status()).toBe(200);
     const fleetBody = await fleetRes.json().catch(() => ({}));
-    const vehicles = fleetBody?.data || fleetBody?.vehicles || fleetBody || [];
+    const vehicles = fleetBody?.rows || fleetBody?.data || fleetBody?.vehicles || fleetBody || [];
     const vehicle = Array.isArray(vehicles) ? vehicles[0] : null;
     test.skip(!vehicle, 'No vehicle found for maintenance audit test');
 
@@ -137,6 +160,10 @@ test.describe('Audit Trail Workflow', () => {
       headers: { cookie: await getCookieHeader(page) },
     });
     expect(maintRes.status()).toBe(201);
+
+    // The maintenance officer cannot read the audit log — switch back to the
+    // tenant admin (AUDIT_READ) before querying the audit API.
+    await signInAs(page, process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na');
 
     // Query audit for maintenance_created
     const auditRes = await page.request.get(`${BASE}/api/audit?eventType=maintenance_created&limit=10`, {
@@ -158,7 +185,11 @@ test.describe('Audit Trail Workflow', () => {
   // Region CRUD → region_created, region_updated, region_deleted audit events
   // -----------------------------------------------------------------------
 
-  test.skip('3. region CRUD produces audit events for create, update, and delete', async ({ page }) => {
+  test('3. region CRUD produces audit events for create, update, and delete', async ({ page }) => {
+    // Region CRUD requires TENANT_MANAGE — re-authenticate as the platform super
+    // admin seed account (platform.admin@grnfleet.test) for this test.
+    await signInAs(page, process.env.SEED_PLATFORM_ADMIN_EMAIL || 'platform.admin@grnfleet.test');
+
     const uniqueCode = `E2E-${Date.now()}`;
     const uniqueName = `E2E Test Region ${Date.now()}`;
 
