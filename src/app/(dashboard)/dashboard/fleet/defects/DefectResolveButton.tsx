@@ -68,8 +68,8 @@ export function DefectResolveButton({ defectId, onResolved }: DefectResolveButto
             </div>
 
             {success ? (
-              <div className="flex items-center gap-3 rounded-[8px] border border-green-200 bg-green-50 px-4 py-3">
-                <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
+              <div className="flex items-center gap-3 rounded-[8px] border border-green-200 bg-green-50 px-4 py-3 dark:border-green-800/50 dark:bg-green-950/30">
+                <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 dark:text-green-400" />
                 <p className="text-sm font-medium text-green-800">Defect resolved successfully!</p>
               </div>
             ) : (

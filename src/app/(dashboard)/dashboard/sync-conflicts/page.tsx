@@ -306,7 +306,7 @@ export default function SyncConflictsPage() {
                         {draft.userId && <p><span className="font-medium text-ink-700">User:</span> {draft.userId}</p>}
                       </div>
                       {draft.syncStatus === 'conflict' && (
-                        <div className="rounded-[6px] bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                        <div className="rounded-[6px] bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
                           <p className="font-medium">Conflict Resolution</p>
                           <p className="mt-0.5">This draft conflicted with server data. You can either:</p>
                           <ul className="mt-1 list-disc list-inside space-y-0.5">

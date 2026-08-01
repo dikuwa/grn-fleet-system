@@ -335,7 +335,7 @@ export default function SettingsPage() {
               <div className="space-y-3">
                 <label className="border-border hover:bg-muted/50 flex cursor-pointer items-center justify-between rounded-[8px] border p-3 transition-colors">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-700">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
                       <Bell className="h-4 w-4" />
                     </div>
                     <div>
@@ -352,7 +352,7 @@ export default function SettingsPage() {
                 </label>
                 <label className="border-border hover:bg-muted/50 flex cursor-pointer items-center justify-between rounded-[8px] border p-3 transition-colors">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
                       <Mail className="h-4 w-4" />
                     </div>
                     <div>

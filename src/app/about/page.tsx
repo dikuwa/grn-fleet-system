@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { APP_NAME } from '@/lib/constants';
-import { Shield, Truck, FileText, BarChart3, ArrowLeft, Users, Globe, Award } from 'lucide-react';
+import { Shield, Truck, BarChart3, ArrowLeft, Globe } from 'lucide-react';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 
 export default function AboutPage() {
@@ -75,7 +75,7 @@ export default function AboutPage() {
         <div className="mx-auto max-w-[800px] px-6">
           <div className="rounded-[10px] border border-border bg-surface p-8">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
                 <Globe className="h-5 w-5" />
               </div>
               <h2 className="text-lg font-[650] text-ink-950">Pilot Programme</h2>

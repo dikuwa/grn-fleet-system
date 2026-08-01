@@ -207,7 +207,7 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
       <div className="grid gap-4 sm:grid-cols-4">
         <Card>
           <CardContent className="pt-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
               <Users className="h-5 w-5" />
             </div>
             <div>
@@ -218,7 +218,7 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
         </Card>
         <Card>
           <CardContent className="pt-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-700">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300">
               <Globe className="h-5 w-5" />
             </div>
             <div>
@@ -229,7 +229,7 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
         </Card>
         <Card>
           <CardContent className="pt-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
               <Globe className="h-5 w-5" />
             </div>
             <div>
@@ -329,12 +329,12 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
           <div className="mx-4 w-full max-w-md rounded-[12px] border border-border bg-surface p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start gap-4">
               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${
-                editStatus === 'suspended' ? 'bg-green-50' : 'bg-red-50'
+                editStatus === 'suspended' ? 'bg-green-50 dark:bg-green-950/40' : 'bg-red-50 dark:bg-red-950/40'
               }`}>
                 {editStatus === 'suspended' ? (
-                  <ShieldCheck className="h-6 w-6 text-green-600" />
+                  <ShieldCheck className="h-6 w-6 text-green-600 dark:text-green-400" />
                 ) : (
-                  <AlertTriangle className="h-6 w-6 text-red-600" />
+                  <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
                 )}
               </div>
               <div className="flex-1">
@@ -347,7 +347,7 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
                     : `Are you sure you want to suspend ${tenant?.name}? All users associated with this tenant will lose access until it is reactivated.`}
                 </p>
                 {editStatus !== 'suspended' && (
-                  <div className="mt-3 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <div className="mt-3 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
                     <strong>Warning:</strong> This will immediately block all user sessions for this tenant.
                   </div>
                 )}

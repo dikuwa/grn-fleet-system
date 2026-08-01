@@ -197,7 +197,7 @@ export default async function ApprovalDetailPage({ params }: PageProps) {
                     <div className="flex flex-col items-center">
                       <div className={`flex h-8 w-8 items-center justify-center rounded-full ${
                         isComplete ? 'bg-status-success-bg text-status-success-text' :
-                        isCurrentStep ? 'bg-status-info-bg text-status-info-text ring-2 ring-brand-200' :
+                        isCurrentStep ? 'bg-status-info-bg text-status-info-text ring-2 ring-brand-600' :
                         'bg-muted text-ink-400'
                       }`}>
                         {isComplete ? <CheckCircle2 className="h-4 w-4" /> : isCurrentStep ? <ArrowRight className="h-4 w-4" /> : <div className="h-2 w-2 rounded-full bg-current" />}

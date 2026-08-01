@@ -361,7 +361,7 @@ export default function AdminRegionsPage() {
                       {region.isActive ? (
                         <XCircle className="h-4 w-4 text-ink-400" />
                       ) : (
-                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
                       )}
                     </Button>
                     <Button

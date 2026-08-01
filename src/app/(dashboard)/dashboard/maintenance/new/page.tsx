@@ -244,7 +244,7 @@ export default function NewMaintenancePage() {
                 onChange={(e) => updateForm({ notes: e.target.value })}
                 placeholder="Any additional notes about the service..."
                 rows={3}
-                className="h-20 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none"
+                className="h-20 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none"
               />
             </div>
           </CardContent>

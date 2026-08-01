@@ -174,7 +174,7 @@ export function StaffRowActions({
               className={`${MENU_ITEM} ${
                 archived
                   ? 'text-brand-700 hover:text-brand-800'
-                  : 'text-status-error-text hover:bg-red-50'
+                  : 'text-status-error-text hover:bg-red-50 dark:hover:bg-red-500/10'
               }`}
               onClick={() => {
                 close();

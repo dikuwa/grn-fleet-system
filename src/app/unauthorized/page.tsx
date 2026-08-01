@@ -9,7 +9,7 @@ export default function UnauthorizedPage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-md text-center">
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-[14px] bg-amber-50">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-[14px] bg-amber-50 dark:bg-amber-950/40">
           <ShieldClose className="h-8 w-8 text-amber-700" />
         </div>
         <h1 className="text-2xl font-[650] tracking-tight text-ink-950">Authentication Required</h1>

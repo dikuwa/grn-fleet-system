@@ -169,7 +169,7 @@ export function DriverStatusActions({
               onChange={(e) => setSuspendReason(e.target.value)}
               rows={3}
               placeholder="e.g. Expired licence, medical unfitness, disciplinary action..."
-              className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+              className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
             />
             <div className="flex items-start gap-2 rounded-[8px] border border-status-warning-bg bg-status-warning-bg/10 p-3">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-status-warning-text" />

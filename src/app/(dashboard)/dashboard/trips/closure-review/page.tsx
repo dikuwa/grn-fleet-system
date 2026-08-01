@@ -228,7 +228,7 @@ export default async function ClosureReviewPage() {
                   <div className="flex items-center gap-4 min-w-0">
                     <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] ${
                       trip.status === 'closure_review'
-                        ? 'bg-amber-50 text-amber-600'
+                        ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400'
                         : 'bg-muted text-ink-500'
                     }`}>
                       {trip.status === 'closure_review' ? (

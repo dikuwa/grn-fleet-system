@@ -70,20 +70,20 @@ export default function ContactPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-medium text-ink-500 mb-1">Name</label>
-                  <input type="text" required className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="Your name" />
+                  <input type="text" required className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600" placeholder="Your name" />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-ink-500 mb-1">Email</label>
-                  <input type="email" required className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="your@email.com" />
+                  <input type="email" required className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600" placeholder="your@email.com" />
                 </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink-500 mb-1">Subject</label>
-                <input type="text" className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="How can we help?" />
+                <input type="text" className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600" placeholder="How can we help?" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink-500 mb-1">Message</label>
-                <textarea rows={5} required className="w-full rounded-[8px] border border-border bg-canvas px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none" placeholder="Your message..." />
+                <textarea rows={5} required className="w-full rounded-[8px] border border-border bg-canvas px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none" placeholder="Your message..." />
               </div>
               {submitted && <p role="status" className="rounded-[8px] bg-status-success-bg px-3 py-2 text-sm text-status-success-text">Thank you for your message. We will get back to you shortly.</p>}
               <button type="submit" className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] transition-colors">

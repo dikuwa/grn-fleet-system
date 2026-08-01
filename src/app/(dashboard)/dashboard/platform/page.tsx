@@ -70,9 +70,9 @@ export default function PlatformDashboardPage() {
   const { summary, tenantBreakdown } = data;
 
   const statCards = [
-    { icon: Globe, label: 'Total Tenants', value: summary.totalTenants, sub: `${summary.activeTenants} active`, color: 'bg-blue-50 text-blue-700' },
-    { icon: CarFront, label: 'Total Vehicles', value: summary.totalVehicles, sub: 'across all tenants', color: 'bg-green-50 text-green-700' },
-    { icon: Gauge, label: 'Active Trips', value: summary.activeTrips, sub: `${Math.round(summary.activeTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-amber-50 text-amber-700', highlight: summary.activeTrips > 0 },
+    { icon: Globe, label: 'Total Tenants', value: summary.totalTenants, sub: `${summary.activeTenants} active`, color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' },
+    { icon: CarFront, label: 'Total Vehicles', value: summary.totalVehicles, sub: 'across all tenants', color: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300' },
+    { icon: Gauge, label: 'Active Trips', value: summary.activeTrips, sub: `${Math.round(summary.activeTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300', highlight: summary.activeTrips > 0 },
     { icon: Users, label: 'Total Employees', value: summary.totalEmployees, sub: `${Math.round(summary.totalEmployees / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-purple-50 text-purple-700' },
     { icon: FileText, label: 'Transport Requests', value: summary.totalRequests, sub: `${Math.round(summary.totalRequests / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-indigo-50 text-indigo-700' },
     { icon: TrendingUp, label: 'Total Trips', value: summary.totalTrips, sub: `${Math.round(summary.totalTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-teal-50 text-teal-700' },
@@ -110,7 +110,7 @@ export default function PlatformDashboardPage() {
                 </div>
                 {stat.highlight && (
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400">
-                    <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-white dark:bg-ink-300" />
                   </span>
                 )}
               </div>
@@ -150,7 +150,7 @@ export default function PlatformDashboardPage() {
         <Card>
           <CardContent className="pt-4">
             <h3 className="text-sm font-[650] text-ink-950 mb-3 flex items-center gap-2">
-              <Gauge className="h-4 w-4 text-amber-600" /> Active Trips per Tenant
+              <Gauge className="h-4 w-4 text-amber-600 dark:text-amber-400" /> Active Trips per Tenant
             </h3>
             {tenantBreakdown.activeTrips.length === 0 ? (
               <p className="text-xs text-ink-500">No active trips</p>

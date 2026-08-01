@@ -179,12 +179,12 @@ export default function ExpensesPage() {
 
       {/* Scan Result Panel */}
       {scanResult && (
-        <Card className="border-brand-200 bg-brand-50/50">
+        <Card className="border-brand-100 bg-brand-50/50 dark:border-brand-800/50 dark:bg-brand-950/20">
           <CardContent className="pt-3">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-medium text-brand-800">Receipt Scan Result</p>
+                  <p className="text-sm font-medium text-brand-800 dark:text-brand-600">Receipt Scan Result</p>
                   <StatusBadge
                     status={scanResult.status === 'ocr_confirmed' ? 'success' : scanResult.status === 'ocr_failed' ? 'error' : 'pending'}
                     label={scanResult.status === 'ocr_confirmed' ? 'Extracted' : scanResult.status === 'ocr_failed' ? 'Failed' : 'Manual review required'}
@@ -192,7 +192,7 @@ export default function ExpensesPage() {
                   {scanResult.matchedVehicle && <Badge variant="info" size="sm">Matched {scanResult.matchedVehicle.licenceNumber}</Badge>}
                 </div>
                 {scanResult.error ? (
-                  <p className="text-xs text-red-600">{scanResult.error}</p>
+                  <p className="text-xs text-red-600 dark:text-red-400">{scanResult.error}</p>
                 ) : (
                   <>
                     {scanResult.flags.length > 0 && (
@@ -204,19 +204,19 @@ export default function ExpensesPage() {
                       <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
                         {Object.entries(scanResult.fields).map(([key, value]) => value !== undefined && value !== null && value !== '' && (
                           <div key={key} className="text-xs">
-                            <span className="text-brand-400 capitalize">{key.replace(/([A-Z])/g, ' $1').toLowerCase()}: </span>
-                            <span className="font-medium text-brand-800">{String(value)}</span>
+                            <span className="text-brand-600 capitalize dark:text-brand-600">{key.replace(/([A-Z])/g, ' $1').toLowerCase()}: </span>
+                            <span className="font-medium text-brand-800 dark:text-brand-700">{String(value)}</span>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-brand-600">No fields extracted — please record the fuel entry manually.</p>
+                      <p className="text-xs text-brand-600 dark:text-brand-600">No fields extracted — please record the fuel entry manually.</p>
                     )}
-                    <p className="text-xs text-brand-400">Confidence {Math.round(scanResult.extractionConfidence * 100)}% · Upload the image with a fuel entry to persist it and create the financial record.</p>
+                    <p className="text-xs text-brand-600 dark:text-brand-600">Confidence {Math.round(scanResult.extractionConfidence * 100)}% · Upload the image with a fuel entry to persist it and create the financial record.</p>
                   </>
                 )}
               </div>
-              <button onClick={() => setScanResult(null)} className="text-brand-400 hover:text-brand-600">&times;</button>
+              <button onClick={() => setScanResult(null)} className="text-brand-600 hover:text-brand-700 dark:text-brand-600 dark:hover:text-brand-700">&times;</button>
             </div>
           </CardContent>
         </Card>
@@ -253,7 +253,7 @@ export default function ExpensesPage() {
             </CardContent></Card>
             <Card><CardContent className="pt-4">
               <div className="text-center">
-                <p className={`text-2xl font-[650] tabular-nums ${summary.receiptCoverage >= 80 ? 'text-green-600' : summary.receiptCoverage >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                <p className={`text-2xl font-[650] tabular-nums ${summary.receiptCoverage >= 80 ? 'text-green-600 dark:text-green-400' : summary.receiptCoverage >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
                   {summary.receiptCoverage}%
                 </p>
                 <p className="text-xs text-ink-500">Receipt Coverage</p>
@@ -286,9 +286,9 @@ export default function ExpensesPage() {
 
           {/* Missing Receipts Alert */}
           {missingReceipts.length > 0 && (
-            <Card className="border-amber-200 bg-amber-50/50">
+            <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-800/50 dark:bg-amber-950/20">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-amber-800 text-sm">
+                <CardTitle className="flex items-center gap-2 text-amber-800 text-sm dark:text-amber-300">
                   <AlertTriangle className="h-4 w-4" />
                   {missingReceipts.length} Transaction(s) Missing Receipt
                 </CardTitle>

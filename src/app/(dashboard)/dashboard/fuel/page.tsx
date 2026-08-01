@@ -206,7 +206,7 @@ export default async function FuelPage({ searchParams }: PageProps) {
       </PageHeader>
 
       {sp.warning === 'reimbursement_pending' && (
-        <div className="flex items-center gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+        <div className="flex items-center gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
           Fuel transaction saved but reimbursement could not be auto-created. Please link your
           employee account or contact finance to manually process the reimbursement.
         </div>
@@ -260,7 +260,7 @@ export default async function FuelPage({ searchParams }: PageProps) {
                   name="search"
                   defaultValue={result.filters.search ?? ''}
                   placeholder="GRN, station, reference..."
-                  className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
+                  className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
                 />
               </div>
             </div>

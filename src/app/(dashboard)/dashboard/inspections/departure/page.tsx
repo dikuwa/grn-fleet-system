@@ -530,7 +530,7 @@ export default function DepartureInspectionPage() {
           <Card>
             <CardContent className="pt-4">
               <div className="flex items-center gap-2">
-                <WifiOff className="h-5 w-5 text-amber-600" />
+                <WifiOff className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                 <div>
                   <p className="text-sm font-medium text-amber-800">Saved Offline</p>
                   <p className="text-xs text-ink-500">This inspection was saved as a local draft and will sync when connectivity is restored.</p>

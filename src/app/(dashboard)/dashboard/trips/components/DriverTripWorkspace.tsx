@@ -275,8 +275,8 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
                 <Label>Signature / full name</Label>
                 <Input value={String(form.signature || '')} onChange={(event) => patch('signature', event.target.value)} autoComplete="name" />
                 {form.signature && String(form.signature).length > 1 && (
-                  <div className="mt-2 rounded-[8px] border border-border bg-white p-4 text-center">
-                    <p className="font-signature text-3xl text-gray-900">{String(form.signature)}</p>
+                  <div className="mt-2 rounded-[8px] border border-border bg-white p-4 text-center dark:bg-white/5">
+                    <p className="font-signature text-3xl text-gray-900 dark:text-ink-100">{String(form.signature)}</p>
                     <p className="mt-1 text-xs text-ink-400">Signature preview — rendered in Allura font</p>
                   </div>
                 )}

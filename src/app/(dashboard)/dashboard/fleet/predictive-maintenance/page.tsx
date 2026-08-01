@@ -74,15 +74,15 @@ export default function PredictiveMaintenancePage() {
         : predictions.filter((p) => p.urgencyScore < 40);
 
   const urgencyColor = (score: number): string => {
-    if (score >= 70) return 'text-red-600';
-    if (score >= 40) return 'text-amber-600';
-    return 'text-green-600';
+    if (score >= 70) return 'text-red-600 dark:text-red-400';
+    if (score >= 40) return 'text-amber-600 dark:text-amber-400';
+    return 'text-green-600 dark:text-green-400';
   };
 
   const urgencyBg = (score: number): string => {
-    if (score >= 70) return 'bg-red-50 border-red-200';
-    if (score >= 40) return 'bg-amber-50 border-amber-200';
-    return 'bg-green-50 border-green-200';
+    if (score >= 70) return 'bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-900/60';
+    if (score >= 40) return 'bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:border-amber-900/60';
+    return 'bg-green-50 border-green-200 dark:bg-green-950/40 dark:border-green-900/60';
   };
 
   const urgencyBar = (score: number): string => {
@@ -102,7 +102,7 @@ export default function PredictiveMaintenancePage() {
         title="Predictive Maintenance"
         description="AI-powered maintenance predictions and service recommendations"
       >
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
           <BrainCircuit className="h-3 w-3" />
           Rules Engine
         </span>
@@ -136,19 +136,19 @@ export default function PredictiveMaintenancePage() {
             </CardContent></Card>
             <Card><CardContent className="pt-4">
               <div className="text-center">
-                <p className="text-2xl font-[650] tabular-nums text-red-600">{summary.urgent}</p>
+                <p className="text-2xl font-[650] tabular-nums text-red-600 dark:text-red-400">{summary.urgent}</p>
                 <p className="text-xs text-ink-500">Urgent (&ge;70)</p>
               </div>
             </CardContent></Card>
             <Card><CardContent className="pt-4">
               <div className="text-center">
-                <p className="text-2xl font-[650] tabular-nums text-amber-600">{summary.soon}</p>
+                <p className="text-2xl font-[650] tabular-nums text-amber-600 dark:text-amber-400">{summary.soon}</p>
                 <p className="text-xs text-ink-500">Service Soon (40–69)</p>
               </div>
             </CardContent></Card>
             <Card><CardContent className="pt-4">
               <div className="text-center">
-                <p className="text-2xl font-[650] tabular-nums text-green-600">{summary.normal}</p>
+                <p className="text-2xl font-[650] tabular-nums text-green-600 dark:text-green-400">{summary.normal}</p>
                 <p className="text-xs text-ink-500">Normal (&lt;40)</p>
               </div>
             </CardContent></Card>
@@ -177,7 +177,7 @@ export default function PredictiveMaintenancePage() {
           {/* Predictions List */}
           <div className="space-y-3">
             {filtered.map((p) => (
-              <Card key={p.vehicleId} className={`border-l-4 ${urgencyBg(p.urgencyScore).split(' ')[1]} ${urgencyBg(p.urgencyScore).split(' ')[0]}`}>
+              <Card key={p.vehicleId} className={`border-l-4 ${urgencyBg(p.urgencyScore)}`}>
                 <CardContent className="pt-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
@@ -207,7 +207,7 @@ export default function PredictiveMaintenancePage() {
                         {p.factors.map((f) => (
                           <div key={f.name} className="rounded-[6px] bg-canvas p-2">
                             <p className="text-[10px] font-medium text-ink-500">{f.name}</p>
-                            <p className={`text-sm font-[650] ${f.score >= 60 ? 'text-red-600' : f.score >= 30 ? 'text-amber-600' : 'text-green-600'}`}>
+                            <p className={`text-sm font-[650] ${f.score >= 60 ? 'text-red-600 dark:text-red-400' : f.score >= 30 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
                               {f.score}
                             </p>
                             <p className="text-[10px] text-ink-400 truncate" title={f.detail}>

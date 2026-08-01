@@ -363,7 +363,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
               userData.tenantStatus === 'active' ? 'bg-status-success-bg text-status-success-text' :
               userData.tenantStatus === 'suspended' ? 'bg-status-error-bg text-status-error-text' :
               userData.tenantStatus === 'locked' ? 'bg-red-100 text-red-700' :
-              userData.tenantStatus === 'pending_activation' ? 'bg-amber-50 text-amber-700' :
+              userData.tenantStatus === 'pending_activation' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' :
               'bg-muted text-ink-400'
             }`}>
               {statusConf.icon}
@@ -493,12 +493,12 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                 <div
                   key={assignment.id}
                   className={`flex items-center justify-between rounded-[8px] border p-3 ${
-                    assignment.isActing ? 'border-amber-200 bg-amber-50/50' : 'border-border'
+                    assignment.isActing ? 'border-amber-200 bg-amber-50/50 dark:border-amber-800/50 dark:bg-amber-950/20' : 'border-border'
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     {assignment.isActing ? (
-                      <UserPlus className="h-4 w-4 text-amber-600" />
+                      <UserPlus className="h-4 w-4 text-amber-600 dark:text-amber-400" />
                     ) : (
                       <Shield className="h-4 w-4 text-brand-600" />
                     )}
@@ -645,7 +645,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                 value={delegateReason}
                 onChange={(e) => setDelegateReason(e.target.value)}
                 placeholder="e.g. On annual leave from 15–30 August 2026"
-                className="h-20 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none"
+                className="h-20 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none"
               />
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t border-border">

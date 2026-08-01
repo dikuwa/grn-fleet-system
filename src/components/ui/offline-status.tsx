@@ -55,7 +55,7 @@ export function OfflineIndicator() {
     <div
       data-testid="offline-indicator"
       className={`fixed right-4 bottom-4 z-50 flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur-sm transition-all ${
-        isOnline ? 'bg-amber-100 text-amber-800' : 'bg-status-error-bg text-status-error-text'
+        isOnline ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300' : 'bg-status-error-bg text-status-error-text'
       }`}
     >
       {isOnline ? (
@@ -77,7 +77,7 @@ export function DraftBanner({ draftCount }: { draftCount: number }) {
   if (draftCount === 0) return null;
 
   return (
-    <div className="flex items-center gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+    <div className="flex items-center gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
       <Database className="h-3.5 w-3.5" />
       {draftCount} offline draft{draftCount !== 1 ? 's' : ''} saved locally. They will sync when you
       are back online.

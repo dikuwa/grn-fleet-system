@@ -241,7 +241,7 @@ export default async function AdminDashboardPage() {
                 <p className="text-xs text-ink-500">Active Delegations</p>
                 <p className="text-2xl font-[650] tabular-nums text-ink-950">{stats.pendingDelegations}</p>
               </div>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
                 <Clock className="h-5 w-5" />
               </div>
             </div>
@@ -289,13 +289,13 @@ export default async function AdminDashboardPage() {
                 </Link>
               )}
               {stats.expiringLicences > 0 && (
-                <Link href="/dashboard/reports/licence-expiry" className="flex items-center justify-between rounded-[8px] border border-amber-200/30 bg-amber-50/5 p-3 text-sm hover:bg-amber-50/10 transition-colors">
+                <Link href="/dashboard/reports/licence-expiry" className="flex items-center justify-between rounded-[8px] border border-amber-200/30 bg-amber-50/5 p-3 text-sm hover:bg-amber-50/10 transition-colors dark:border-amber-800/30 dark:bg-amber-950/10 dark:hover:bg-amber-950/20">
                   <span className="font-medium text-amber-700">{stats.expiringLicences} licence(s) expiring within 30 days</span>
                   <ChevronRight className="h-4 w-4 text-ink-400" />
                 </Link>
               )}
               {stats.pendingUsers > 0 && (
-                <Link href="/dashboard/admin/users" className="flex items-center justify-between rounded-[8px] border border-brand-200/30 bg-brand-50/5 p-3 text-sm hover:bg-brand-50/10 transition-colors">
+                <Link href="/dashboard/admin/users" className="flex items-center justify-between rounded-[8px] border border-brand-100/60 bg-brand-50/5 p-3 text-sm hover:bg-brand-50/10 transition-colors">
                   <span className="font-medium text-brand-700">{stats.pendingUsers} user(s) with pending invites</span>
                   <ChevronRight className="h-4 w-4 text-ink-400" />
                 </Link>
@@ -311,7 +311,7 @@ export default async function AdminDashboardPage() {
           .filter((section) => section.enabled)
           .map((section) => (
             <Link key={section.href} href={section.href} className="group block">
-              <Card className="h-full transition-all hover:border-brand-300 hover:shadow-sm">
+              <Card className="h-full transition-all hover:border-brand-600 hover:shadow-sm">
                 <CardContent className="pt-6">
                   <div className="flex items-start gap-4">
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-brand-700 group-hover:bg-brand-100 transition-colors">

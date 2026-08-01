@@ -297,7 +297,7 @@ const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>
         ref={ref}
         type={type}
         className={cn(
-          'border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 disabled:bg-muted h-10 w-full rounded-[8px] border px-3 text-sm [color-scheme:light] focus:ring-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]',
+          'border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 disabled:bg-muted h-10 w-full rounded-[8px] border px-3 text-sm [color-scheme:light] focus:ring-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]',
           error && 'border-status-error-text focus:ring-status-error-text',
           className,
         )}

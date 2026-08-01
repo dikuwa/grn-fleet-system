@@ -158,7 +158,7 @@ function CreateProgrammeDialog({
           <div className="space-y-1.5">
             <Label>Description</Label>
             <textarea
-              className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 min-h-[80px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+              className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 min-h-[80px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
               placeholder="Describe the activity, objectives, and expected outcomes..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -205,7 +205,7 @@ function CreateProgrammeDialog({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 rounded-[8px] border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            <div className="flex items-start gap-2 rounded-[8px] border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800/40 dark:bg-red-950/20 dark:text-red-300">
               <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>
             </div>

@@ -10,6 +10,10 @@
   --color-brand-800: #1f4e8c;
   --color-brand-700: #2862aa;
   --color-brand-600: #3478c8;
+  --color-brand-500: #4c8ac7;
+  --color-brand-400: #6f9fd4;
+  --color-brand-300: #a9c9ea;
+  --color-brand-200: #c3d9f2;
   --color-brand-100: #dcebfa;
   --color-brand-50: #f1f7fd;
 
@@ -19,8 +23,14 @@
 
   /* Neutral palette */
   --color-ink-950: #111827;
+  --color-ink-800: #1f2937;
   --color-ink-700: #374151;
+  --color-ink-600: #4b5563;
   --color-ink-500: #6b7280;
+  --color-ink-400: #9ca3af;
+  --color-ink-300: #d1d5db;
+  --color-ink-200: #e5e7eb;
+  --color-ink-100: #f3f4f6;
   --color-surface: #ffffff;
   --color-canvas: #f6f8fb;
   --color-muted: #f0f3f7;
@@ -39,6 +49,8 @@
   --color-status-cancelled-text: #475467;
   --color-status-emergency-bg: #fff1f3;
   --color-status-emergency-text: #c01048;
+  --color-status-warning-bg: #fffaeb;
+  --color-status-warning-text: #a16207;
 
   /* Typography */
   --font-family-onest: 'Onest', sans-serif;
@@ -66,6 +78,10 @@
   --color-brand-800: #2b6cb0;
   --color-brand-700: #78b4ff;
   --color-brand-600: #78b4ff;
+  --color-brand-500: #5f8cc0;
+  --color-brand-400: #4a6f9c;
+  --color-brand-300: #3a5a80;
+  --color-brand-200: #2f4a6e;
   --color-brand-100: #263d5d;
   --color-brand-50: #1b2b43;
 
@@ -73,8 +89,14 @@
   --color-teal-50: #0d1f1c;
 
   --color-ink-950: #f4f6fa;
+  --color-ink-800: #e6ebf2;
   --color-ink-700: #d4d9e2;
+  --color-ink-600: #b9c1cd;
   --color-ink-500: #a7afbd;
+  --color-ink-400: #8b93a3;
+  --color-ink-300: #6b7280;
+  --color-ink-200: #4b5563;
+  --color-ink-100: #374151;
   --color-surface: #171c25;
   --color-canvas: #0e131a;
   --color-muted: #202733;
@@ -92,6 +114,8 @@
   --color-status-cancelled-text: #9ca3af;
   --color-status-emergency-bg: #2a0a18;
   --color-status-emergency-text: #fb7185;
+  --color-status-warning-bg: #2a1f0a;
+  --color-status-warning-text: #fbbf24;
 }
 
 /* Smooth theme transition — scoped to body and immediate children only */

@@ -495,7 +495,7 @@ export default function ReturnInspectionPage() {
                                     toast({ title: 'Failed to Create Incident', description: 'Check your connection.', variant: 'error' });
                                   }
                                 }}
-                                className="rounded-[4px] border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 transition-all hover:bg-red-100 active:scale-95"
+                                className="rounded-[4px] border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 transition-all hover:bg-red-100 active:scale-95 dark:border-red-800/50 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/50"
                               >
                                 <AlertTriangle className="mr-1 inline h-3 w-3" />
                                 Create Incident Report
@@ -523,7 +523,7 @@ export default function ReturnInspectionPage() {
                                     toast({ title: 'Failed to Create Maintenance Request', description: 'Check your connection and try again.', variant: 'error' });
                                   }
                                 }}
-                                className="rounded-[4px] border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 transition-all hover:bg-amber-100 active:scale-95"
+                                className="rounded-[4px] border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 transition-all hover:bg-amber-100 active:scale-95 dark:border-amber-800/50 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50"
                               >
                                 <Truck className="mr-1 inline h-3 w-3" />
                                 Create Maintenance Request
@@ -584,7 +584,7 @@ export default function ReturnInspectionPage() {
                                     toast({ title: 'Failed to Notify', description: 'Check your connection.', variant: 'error' });
                                   }
                                 }}
-                                className="rounded-[4px] border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 transition-all hover:bg-blue-100 active:scale-95"
+                                className="rounded-[4px] border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 transition-all hover:bg-blue-100 active:scale-95 dark:border-blue-800/50 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-900/50"
                               >
                                 <svg className="mr-1 inline h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
@@ -834,7 +834,7 @@ export default function ReturnInspectionPage() {
             <Card>
               <CardContent className="pt-4">
                 <div className="flex items-center gap-2">
-                  <WifiOff className="h-5 w-5 text-amber-600" />
+                  <WifiOff className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                   <div>
                     <p className="text-sm font-medium text-amber-800">Saved Offline</p>
                     <p className="text-xs text-ink-500">This inspection was saved as a local draft and will sync when connectivity is restored.</p>

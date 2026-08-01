@@ -3,14 +3,11 @@ import { APP_NAME } from '@/lib/constants';
 import {
   ArrowLeft,
   FileText,
-  Shield,
   Truck,
   ClipboardCheck,
   Fuel,
   Wrench,
   BarChart3,
-  Bell,
-  Smartphone,
   CheckCircle2,
 } from 'lucide-react';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
@@ -75,7 +72,7 @@ export default function ServicesPage() {
                     <ul className="mt-3 space-y-2">
                       {module.outcomes.map((o) => (
                         <li key={o} className="flex items-start gap-2 text-xs text-ink-500">
-                          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
+                          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-600" />
                           {o}
                         </li>
                       ))}

@@ -253,7 +253,7 @@ export default async function AllocationsPage({ searchParams }: PageProps) {
                   name="search"
                   defaultValue={result.filters.search ?? ''}
                   placeholder="GRN number, make, model, request..."
-                  className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
+                  className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
                 />
               </div>
             </div>

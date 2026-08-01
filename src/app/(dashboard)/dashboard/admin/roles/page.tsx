@@ -393,7 +393,7 @@ export default function AdminRolesPage() {
             placeholder="Search roles..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border pr-3 pl-3 text-sm focus:ring-2 focus:outline-none"
+            className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border pr-3 pl-3 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
         <ClientFilterReset isFiltered={Boolean(searchQuery)} onClear={() => setSearchQuery('')} />
@@ -510,7 +510,7 @@ export default function AdminRolesPage() {
                     value={editDescription}
                     onChange={(e) => setEditDescription(e.target.value)}
                     disabled={editRole.isSystem}
-                    className="border-border bg-surface focus:ring-brand-200 min-h-[60px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                    className="border-border bg-surface focus:ring-brand-600 min-h-[60px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                     placeholder="What this role can do..."
                   />
                 </div>
@@ -603,7 +603,7 @@ export default function AdminRolesPage() {
                 <textarea
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
-                  className="border-border bg-surface focus:ring-brand-200 min-h-[60px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                  className="border-border bg-surface focus:ring-brand-600 min-h-[60px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                   placeholder="What this role can do..."
                 />
               </div>

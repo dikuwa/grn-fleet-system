@@ -176,9 +176,9 @@ export default function DriverSelfServicePage() {
         <>
           {/* Licence Expiry Alert Banner */}
           {expiryAlerts.length > 0 && (
-            <div className={expiryAlerts.some(a => a.includes('expired')) ? 'rounded-[8px] border border-status-error-border bg-status-error-bg p-4' : 'rounded-[8px] border border-amber-200 bg-amber-50 p-4'}>
+            <div className={expiryAlerts.some(a => a.includes('expired')) ? 'rounded-[8px] border border-status-error-border bg-status-error-bg p-4' : 'rounded-[8px] border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/40 dark:bg-amber-950/20'}>
               <div className="flex items-start gap-3">
-                <AlertCircle className={`h-5 w-5 mt-0.5 ${expiryAlerts.some(a => a.includes('expired')) ? 'text-status-error-text' : 'text-amber-600'}`} />
+                <AlertCircle className={`h-5 w-5 mt-0.5 ${expiryAlerts.some(a => a.includes('expired')) ? 'text-status-error-text' : 'text-amber-600 dark:text-amber-400'}`} />
                 <div className="min-w-0">
                   <p className={`text-sm font-medium ${expiryAlerts.some(a => a.includes('expired')) ? 'text-status-error-text' : 'text-amber-800'}`}>
                     Driving Licence{expiryAlerts.length > 1 ? 's' : ''} Need{expiryAlerts.length === 1 ? 's' : ''} Attention
@@ -208,7 +208,7 @@ export default function DriverSelfServicePage() {
             <Card>
               <CardContent className="pt-6">
                 <div className="flex flex-col items-center text-center">
-                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-brand-50 text-3xl font-bold text-brand-700">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-brand-50 text-3xl font-bold text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
                     {driverInfo.employee.firstName[0]}{driverInfo.employee.lastName[0]}
                   </div>
                   <h2 className="mt-4 text-lg font-semibold text-ink-950">
@@ -251,19 +251,19 @@ export default function DriverSelfServicePage() {
               <CardContent>
                 <div className="grid grid-cols-2 gap-2">
                   <Link href="/dashboard/logs" prefetch={true} className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
-                    <PenSquare className="h-5 w-5 text-amber-600" />
+                    <PenSquare className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                     <span className="text-xs font-medium text-ink-700">Daily Log</span>
                   </Link>
                   <Link href="/dashboard/fuel/new" prefetch={true} className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
-                    <Gauge className="h-5 w-5 text-purple-600" />
+                    <Gauge className="h-5 w-5 text-purple-600 dark:text-purple-400" />
                     <span className="text-xs font-medium text-ink-700">Fuel Entry</span>
                   </Link>
                   <Link href="/dashboard/inspections" prefetch={true} className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
-                    <ClipboardCheck className="h-5 w-5 text-brand-600" />
+                    <ClipboardCheck className="h-5 w-5 text-brand-600 dark:text-brand-400" />
                     <span className="text-xs font-medium text-ink-700">Inspections</span>
                   </Link>
                   <Link href="/dashboard/requests/new" prefetch={true} className="flex flex-col items-center gap-1.5 rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
-                    <FileText className="h-5 w-5 text-blue-600" />
+                    <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                     <span className="text-xs font-medium text-ink-700">New Request</span>
                   </Link>
                 </div>
@@ -284,7 +284,7 @@ export default function DriverSelfServicePage() {
                 ) : (
                   <div className="divide-y divide-border">
                     {notifications.slice(0, 3).map((n) => (
-                      <div key={n.id} className={`px-5 py-2.5 ${!n.isRead ? 'bg-brand-50/50' : ''}`}>
+                      <div key={n.id} className={`px-5 py-2.5 ${!n.isRead ? 'bg-brand-50/50 dark:bg-brand-950/30' : ''}`}>
                         <p className="text-xs font-medium text-ink-950">{n.title}</p>
                         {n.body && <p className="text-xs text-ink-500 mt-0.5">{n.body}</p>}
                       </div>
@@ -424,7 +424,7 @@ export default function DriverSelfServicePage() {
                           <Link key={t.id} href={`/dashboard/trips/${t.id}`} prefetch={true} className="flex items-center justify-between rounded-[8px] border border-border bg-canvas p-3 hover:border-brand-200 transition-colors">
                             <div className="flex items-center gap-3">
                               <Gauge className={`h-8 w-8 p-1.5 rounded-[6px] ${
-                                t.status === 'in_progress' ? 'bg-green-50 text-green-600' :
+                                t.status === 'in_progress' ? 'bg-green-50 text-green-600 dark:bg-green-950/40 dark:text-green-400' :
                                 t.status === 'closed' ? 'bg-muted text-ink-500' :
                                 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300'
                               }`} />

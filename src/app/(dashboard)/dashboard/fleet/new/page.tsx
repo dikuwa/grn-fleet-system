@@ -229,7 +229,7 @@ export default function NewVehiclePage() {
                   value={form.licenceNumber}
                   onChange={(e) => update({ licenceNumber: e.target.value })}
                   placeholder="e.g. GRN 1234"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Register Number">
@@ -238,7 +238,7 @@ export default function NewVehiclePage() {
                   value={form.vehicleRegisterNumber}
                   onChange={(e) => update({ vehicleRegisterNumber: e.target.value })}
                   placeholder="NaTIS register number"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="VIN">
@@ -247,7 +247,7 @@ export default function NewVehiclePage() {
                   value={form.vin}
                   onChange={(e) => update({ vin: e.target.value })}
                   placeholder="17-char VIN"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Engine Number">
@@ -256,7 +256,7 @@ export default function NewVehiclePage() {
                   value={form.engineNumber}
                   onChange={(e) => update({ engineNumber: e.target.value })}
                   placeholder="Engine serial number"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
             </div>
@@ -274,7 +274,7 @@ export default function NewVehiclePage() {
                   value={form.make}
                   onChange={(e) => update({ make: e.target.value })}
                   placeholder="e.g. Toyota"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Model" required>
@@ -283,7 +283,7 @@ export default function NewVehiclePage() {
                   value={form.model}
                   onChange={(e) => update({ model: e.target.value })}
                   placeholder="e.g. Hilux"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Series">
@@ -292,7 +292,7 @@ export default function NewVehiclePage() {
                   value={form.seriesName}
                   onChange={(e) => update({ seriesName: e.target.value })}
                   placeholder="e.g. 2.8 GD-6"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Manufacture Year">
@@ -301,7 +301,7 @@ export default function NewVehiclePage() {
                   value={form.manufactureYear}
                   onChange={(e) => update({ manufactureYear: e.target.value ? Number(e.target.value) : '' })}
                   placeholder="e.g. 2024"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Vehicle Category">
@@ -310,7 +310,7 @@ export default function NewVehiclePage() {
                   value={form.vehicleCategory}
                   onChange={(e) => update({ vehicleCategory: e.target.value })}
                   placeholder="e.g. Light passenger motor vehicle"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Body Style">
@@ -319,7 +319,7 @@ export default function NewVehiclePage() {
                   value={form.vehicleDescription}
                   onChange={(e) => update({ vehicleDescription: e.target.value })}
                   placeholder="e.g. Double Cab, Sedan, Bus"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Drive Type">
@@ -340,7 +340,7 @@ export default function NewVehiclePage() {
                   value={form.colour}
                   onChange={(e) => update({ colour: e.target.value })}
                   placeholder="e.g. White"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Fuel Type">
@@ -378,7 +378,7 @@ export default function NewVehiclePage() {
                   value={form.tareKg}
                   onChange={(e) => update({ tareKg: e.target.value ? Number(e.target.value) : '' })}
                   placeholder="Empty vehicle weight"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="GVM (kg)">
@@ -387,7 +387,7 @@ export default function NewVehiclePage() {
                   value={form.grossVehicleMassKg}
                   onChange={(e) => update({ grossVehicleMassKg: e.target.value ? Number(e.target.value) : '' })}
                   placeholder="Maximum loaded weight"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Seated Capacity">
@@ -396,7 +396,7 @@ export default function NewVehiclePage() {
                   value={form.seatedCapacity}
                   onChange={(e) => update({ seatedCapacity: e.target.value ? Number(e.target.value) : '' })}
                   placeholder="Number of seats"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Standing Capacity">
@@ -405,7 +405,7 @@ export default function NewVehiclePage() {
                   value={form.standingCapacity}
                   onChange={(e) => update({ standingCapacity: e.target.value ? Number(e.target.value) : '' })}
                   placeholder="Standing passengers"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
             </div>
@@ -423,7 +423,7 @@ export default function NewVehiclePage() {
                   value={form.registeringAuthority}
                   onChange={(e) => update({ registeringAuthority: e.target.value })}
                   placeholder="e.g. NaTIS, MVA"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="National Classification">
@@ -432,7 +432,7 @@ export default function NewVehiclePage() {
                   value={form.nationalVehicleClassification}
                   onChange={(e) => update({ nationalVehicleClassification: e.target.value })}
                   placeholder="e.g. LDV, M1, N1"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Roadworthy Test Date">
@@ -496,7 +496,7 @@ export default function NewVehiclePage() {
                   value={form.currentOdometer}
                   onChange={(e) => update({ currentOdometer: e.target.value ? Number(e.target.value) : 0 })}
                   placeholder="Kilometres"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
               <Field label="Fuel Card Number">
@@ -505,7 +505,7 @@ export default function NewVehiclePage() {
                   value={form.fuelCardNumber}
                   onChange={(e) => update({ fuelCardNumber: e.target.value })}
                   placeholder="Fuel card number"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
             </div>
@@ -516,7 +516,7 @@ export default function NewVehiclePage() {
                   onChange={(e) => update({ notes: e.target.value })}
                   rows={3}
                   placeholder="Any additional notes about this vehicle..."
-                  className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                 />
               </Field>
             </div>

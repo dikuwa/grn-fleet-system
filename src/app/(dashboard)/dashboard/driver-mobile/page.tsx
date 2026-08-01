@@ -92,7 +92,7 @@ export default function DriverMobileDashboardPage() {
     <div className="space-y-4 md:space-y-6">
       {/* Offline Banner */}
       {!isOnline && (
-        <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+        <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
           <WifiOff className="h-4 w-4 shrink-0" />
           <span>You are offline. Inspection data will be saved locally and synced when connectivity returns.</span>
         </div>
@@ -109,7 +109,7 @@ export default function DriverMobileDashboardPage() {
       >
         <div className="flex items-center gap-2">
           <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-            isOnline ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+            isOnline ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
           }`}>
             {isOnline ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
             {isOnline ? 'Online' : 'Offline'}
@@ -135,7 +135,7 @@ export default function DriverMobileDashboardPage() {
           href="/dashboard/logs"
           className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center hover:border-brand-200 hover:shadow-sm transition-all"
         >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
             <PenSquare className="h-6 w-6" />
           </div>
           <span className="text-xs font-medium text-ink-700">Daily Log</span>
@@ -144,7 +144,7 @@ export default function DriverMobileDashboardPage() {
           href="/dashboard/fuel/new"
           className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center hover:border-brand-200 hover:shadow-sm transition-all"
         >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-50 text-green-700">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300">
             <ClipboardList className="h-6 w-6" />
           </div>
           <span className="text-xs font-medium text-ink-700">Fuel Entry</span>
@@ -153,7 +153,7 @@ export default function DriverMobileDashboardPage() {
           href="/dashboard/inspections"
           className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center hover:border-brand-200 hover:shadow-sm transition-all"
         >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-700">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
             <ClipboardCheck className="h-6 w-6" />
           </div>
           <span className="text-xs font-medium text-ink-700">Inspection History</span>
@@ -232,7 +232,7 @@ export default function DriverMobileDashboardPage() {
                         <Link
                           href={`/dashboard/trips/${trip.id}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="flex h-7 items-center rounded-full bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+                          className="flex h-7 items-center rounded-full bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition-colors dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50"
                         >
                           Trip Status
                         </Link>
@@ -240,14 +240,14 @@ export default function DriverMobileDashboardPage() {
                       <Link
                         href={`/dashboard/fuel/new`}
                         onClick={(e) => e.stopPropagation()}
-                        className="flex h-7 items-center rounded-full bg-blue-50 px-2.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+                        className="flex h-7 items-center rounded-full bg-blue-50 px-2.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition-colors dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-900/50"
                       >
                         Fuel
                       </Link>
                       <Link
                         href={`/dashboard/inspections?vehicleId=${trip.vehicleId || ''}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="flex h-7 items-center rounded-full bg-gray-50 px-2.5 text-[11px] font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+                        className="flex h-7 items-center rounded-full bg-gray-50 px-2.5 text-[11px] font-medium text-gray-700 hover:bg-gray-100 transition-colors dark:bg-white/10 dark:text-ink-300 dark:hover:bg-white/15"
                       >
                         Inspections
                       </Link>

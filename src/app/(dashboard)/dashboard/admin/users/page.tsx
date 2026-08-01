@@ -135,7 +135,7 @@ function PendingInviteRow({ invite, onAction }: { invite: PendingInvite; onActio
     <>
       <div className="hover:bg-muted/50 flex items-center justify-between px-5 py-3.5 transition-colors">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-sm font-semibold text-amber-700">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-sm font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
             {(invite.name || invite.email)[0].toUpperCase()}
           </div>
           <div className="min-w-0">
@@ -583,8 +583,8 @@ export default function AdminUsersPage() {
               <div
                 className={`flex items-start gap-2 rounded-[8px] border p-3 text-sm ${
                   inviteResult.success
-                    ? 'border-green-200 bg-green-50 text-green-800'
-                    : 'border-red-200 bg-red-50 text-red-800'
+                    ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-800/50 dark:bg-green-950/30 dark:text-green-300'
+                    : 'border-red-200 bg-red-50 text-red-800 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300'
                 }`}
               >
                 {inviteResult.success ? (

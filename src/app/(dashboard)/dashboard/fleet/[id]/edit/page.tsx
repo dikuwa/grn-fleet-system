@@ -244,16 +244,16 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
             <h3 className="mb-4 text-sm font-semibold text-ink-950">Vehicle Identity</h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Licence / Plate Number">
-                <input type="text" value={form.licenceNumber} onChange={(e) => update({ licenceNumber: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <input type="text" value={form.licenceNumber} onChange={(e) => update({ licenceNumber: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" />
               </Field>
               <Field label="Register Number">
-                <input type="text" value={form.vehicleRegisterNumber} onChange={(e) => update({ vehicleRegisterNumber: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <input type="text" value={form.vehicleRegisterNumber} onChange={(e) => update({ vehicleRegisterNumber: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" />
               </Field>
               <Field label="VIN">
-                <input type="text" value={form.vin} onChange={(e) => update({ vin: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <input type="text" value={form.vin} onChange={(e) => update({ vin: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" />
               </Field>
               <Field label="Engine Number">
-                <input type="text" value={form.engineNumber} onChange={(e) => update({ engineNumber: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <input type="text" value={form.engineNumber} onChange={(e) => update({ engineNumber: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" />
               </Field>
             </div>
           </CardContent>
@@ -264,12 +264,12 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
           <CardContent className="pt-4">
             <h3 className="mb-4 text-sm font-semibold text-ink-950">Vehicle Description</h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Make"><input type="text" value={form.make} onChange={(e) => update({ make: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="Model"><input type="text" value={form.model} onChange={(e) => update({ model: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="Series"><input type="text" value={form.seriesName} onChange={(e) => update({ seriesName: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="Year"><input type="number" value={form.manufactureYear} onChange={(e) => update({ manufactureYear: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="Vehicle Category"><input type="text" value={form.vehicleCategory} onChange={(e) => update({ vehicleCategory: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="Body Style"><input type="text" value={form.vehicleDescription} onChange={(e) => update({ vehicleDescription: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
+              <Field label="Make"><input type="text" value={form.make} onChange={(e) => update({ make: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="Model"><input type="text" value={form.model} onChange={(e) => update({ model: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="Series"><input type="text" value={form.seriesName} onChange={(e) => update({ seriesName: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="Year"><input type="number" value={form.manufactureYear} onChange={(e) => update({ manufactureYear: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="Vehicle Category"><input type="text" value={form.vehicleCategory} onChange={(e) => update({ vehicleCategory: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="Body Style"><input type="text" value={form.vehicleDescription} onChange={(e) => update({ vehicleDescription: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
               <Field label="Drive Type">
                 <StyledSelect value={form.driveType} onChange={(e) => update({ driveType: e.target.value })}>
                   <option value="">Select...</option>
@@ -279,7 +279,7 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
                   <option value="AWD">AWD</option>
                 </StyledSelect>
               </Field>
-              <Field label="Colour"><input type="text" value={form.colour} onChange={(e) => update({ colour: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
+              <Field label="Colour"><input type="text" value={form.colour} onChange={(e) => update({ colour: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
               <Field label="Fuel Type">
                 <StyledSelect value={form.fuelType} onChange={(e) => update({ fuelType: e.target.value })}>
                   <option value="petrol">Petrol</option>
@@ -303,10 +303,10 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
           <CardContent className="pt-4">
             <h3 className="mb-4 text-sm font-semibold text-ink-950">Weight &amp; Capacity</h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Tare (kg)"><input type="number" value={form.tareKg} onChange={(e) => update({ tareKg: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="GVM (kg)"><input type="number" value={form.grossVehicleMassKg} onChange={(e) => update({ grossVehicleMassKg: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="Seated Capacity"><input type="number" value={form.seatedCapacity} onChange={(e) => update({ seatedCapacity: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="Standing Capacity"><input type="number" value={form.standingCapacity} onChange={(e) => update({ standingCapacity: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
+              <Field label="Tare (kg)"><input type="number" value={form.tareKg} onChange={(e) => update({ tareKg: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="GVM (kg)"><input type="number" value={form.grossVehicleMassKg} onChange={(e) => update({ grossVehicleMassKg: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="Seated Capacity"><input type="number" value={form.seatedCapacity} onChange={(e) => update({ seatedCapacity: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="Standing Capacity"><input type="number" value={form.standingCapacity} onChange={(e) => update({ standingCapacity: e.target.value ? Number(e.target.value) : '' })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
             </div>
           </CardContent>
         </Card>
@@ -316,8 +316,8 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
           <CardContent className="pt-4">
             <h3 className="mb-4 text-sm font-semibold text-ink-950">Registration &amp; Compliance</h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Registering Authority"><input type="text" value={form.registeringAuthority} onChange={(e) => update({ registeringAuthority: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="National Classification"><input type="text" value={form.nationalVehicleClassification} onChange={(e) => update({ nationalVehicleClassification: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
+              <Field label="Registering Authority"><input type="text" value={form.registeringAuthority} onChange={(e) => update({ registeringAuthority: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="National Classification"><input type="text" value={form.nationalVehicleClassification} onChange={(e) => update({ nationalVehicleClassification: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
               <Field label="Roadworthy Date"><StyledDateInput type="date" value={form.roadworthyTestDate} onChange={(e) => update({ roadworthyTestDate: e.target.value })} /></Field>
               <Field label="Licence Expiry"><StyledDateInput type="date" value={form.licenceExpiryDate} onChange={(e) => update({ licenceExpiryDate: e.target.value })} /></Field>
             </div>
@@ -353,12 +353,12 @@ export default function EditVehiclePage({ params }: { params: Promise<{ id: stri
                   <option value="out_of_service">Out of Service</option>
                 </StyledSelect>
               </Field>
-              <Field label="Current Odometer (km)"><input type="number" value={form.currentOdometer} onChange={(e) => update({ currentOdometer: e.target.value ? Number(e.target.value) : 0 })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
-              <Field label="Fuel Card Number"><input type="text" value={form.fuelCardNumber} onChange={(e) => update({ fuelCardNumber: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" /></Field>
+              <Field label="Current Odometer (km)"><input type="number" value={form.currentOdometer} onChange={(e) => update({ currentOdometer: e.target.value ? Number(e.target.value) : 0 })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
+              <Field label="Fuel Card Number"><input type="text" value={form.fuelCardNumber} onChange={(e) => update({ fuelCardNumber: e.target.value })} className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" /></Field>
             </div>
             <div className="mt-4">
               <Field label="Notes">
-                <textarea value={form.notes} onChange={(e) => update({ notes: e.target.value })} rows={3} className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <textarea value={form.notes} onChange={(e) => update({ notes: e.target.value })} rows={3} className="w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600" />
               </Field>
             </div>
           </CardContent>

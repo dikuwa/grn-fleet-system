@@ -101,7 +101,7 @@ export function DatePicker({
             type="button"
             className={cn(
               'border-border bg-surface flex h-10 w-full items-center justify-between rounded-[8px] border px-3 text-sm',
-              'focus:ring-brand-400 focus:ring-2 focus:ring-offset-1 focus:outline-none',
+              'focus:ring-brand-600 focus:ring-2 focus:ring-offset-1 focus:outline-none',
               'disabled:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
               'dark:focus:ring-offset-ink-950',
               !value && 'text-ink-400',
@@ -142,7 +142,7 @@ export function DatePicker({
                 onChange={handleInputChange}
                 placeholder="dd/mm/yyyy"
                 inputMode="numeric"
-                className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-400 h-9 w-full rounded-[7px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-9 w-full rounded-[7px] border px-3 text-sm focus:ring-2 focus:outline-none"
                 aria-label="Type date in dd/mm/yyyy format"
               />
             </div>

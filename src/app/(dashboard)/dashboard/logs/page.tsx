@@ -270,7 +270,7 @@ export default function DailyLogsPage() {
         </Card>
         <Card>
           <CardContent className="pt-4 text-center">
-            <Clock className="h-5 w-5 mx-auto mb-1 text-amber-600" />
+            <Clock className="h-5 w-5 mx-auto mb-1 text-amber-600 dark:text-amber-400" />
             <p className="text-lg font-semibold">{formData.distanceKm || '—'}</p>
             <p className="text-[10px] text-ink-500">Distance (km)</p>
           </CardContent>
@@ -407,7 +407,7 @@ export default function DailyLogsPage() {
             <div className="space-y-1.5">
               <Label>Remarks / Notes</Label>
               <textarea
-                className="min-h-[80px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-y"
+                className="min-h-[80px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-y"
                 placeholder="Any issues, incidents, or observations..."
                 value={formData.remarks}
                 onChange={(e) => updateField('remarks', e.target.value)}

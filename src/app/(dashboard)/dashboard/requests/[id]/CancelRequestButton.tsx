@@ -82,7 +82,7 @@ export function CancelRequestButton({ requestId, currentStatus, disabled }: Canc
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Optional: provide a reason for cancellation..."
-            className="h-24 w-full rounded-[8px] border border-border bg-surface p-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none"
+            className="h-24 w-full rounded-[8px] border border-border bg-surface p-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none"
           />
           {error && (
             <p className="text-xs text-status-error-text">{error}</p>

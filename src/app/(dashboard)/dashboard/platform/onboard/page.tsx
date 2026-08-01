@@ -356,7 +356,7 @@ export default function OnboardTenantPage() {
             <div className="space-y-1.5">
               <Label>Address</Label>
               <textarea
-                className="min-h-[60px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-200 resize-y"
+                className="min-h-[60px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-600 resize-y"
                 placeholder="Physical address of the transport office"
                 value={form.address}
                 onChange={(e) => updateField('address', e.target.value)}

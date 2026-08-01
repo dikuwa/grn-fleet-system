@@ -141,7 +141,7 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
                 min={0}
                 value={maxViews}
                 onChange={(e) => setMaxViews(Number(e.target.value))}
-                className="border-border bg-surface text-ink-950 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                className="border-border bg-surface text-ink-950 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
               />
             </div>
 

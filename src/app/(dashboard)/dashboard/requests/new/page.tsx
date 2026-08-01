@@ -167,7 +167,7 @@ function BasicInfoStep({
               value={data.assistedReason}
               onChange={(event) => onChange({ assistedReason: event.target.value })}
               rows={2}
-              className="border-border bg-surface text-ink-950 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+              className="border-border bg-surface text-ink-950 focus:ring-brand-600 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
             />
           </div>
         )}
@@ -181,7 +181,7 @@ function BasicInfoStep({
               key={s}
               className={`flex cursor-pointer items-center gap-2 rounded-[8px] border px-4 py-3 text-sm transition-colors ${
                 data.scope === s
-                  ? 'border-brand-500 bg-brand-50 text-brand-700'
+                  ? 'border-brand-600 bg-brand-50 text-brand-700'
                   : 'border-border text-ink-700 hover:border-ink-300'
               }`}
             >
@@ -195,7 +195,7 @@ function BasicInfoStep({
               />
               <span
                 className={`h-3 w-3 rounded-full border-2 ${
-                  data.scope === s ? 'border-brand-500 bg-brand-500' : 'border-ink-300'
+                  data.scope === s ? 'border-brand-600 bg-brand-600' : 'border-ink-300'
                 }`}
               />
               <span className="capitalize">{s}</span>
@@ -229,7 +229,7 @@ function BasicInfoStep({
           onChange={(e) => onChange({ purpose: e.target.value })}
           rows={3}
           placeholder="Describe the purpose of this transport request..."
-          className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+          className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
         />
       </div>
 
@@ -242,7 +242,7 @@ function BasicInfoStep({
           value={data.department}
           onChange={(e) => onChange({ department: e.target.value })}
           placeholder="e.g. Technical Services, Community Development"
-          className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
+          className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
         />
       </div>
 
@@ -252,7 +252,7 @@ function BasicInfoStep({
           id="specialAuthority"
           checked={data.specialAuthorityRequired}
           onChange={(e) => onChange({ specialAuthorityRequired: e.target.checked })}
-          className="border-border text-brand-600 focus:ring-brand-200 mt-0.5 h-4 w-4 rounded"
+          className="border-border text-brand-600 focus:ring-brand-600 mt-0.5 h-4 w-4 rounded"
         />
         <div>
           <label
@@ -278,7 +278,7 @@ function BasicInfoStep({
             onChange={(e) => onChange({ specialAuthorityReason: e.target.value })}
             rows={2}
             placeholder="Explain why special authority is needed..."
-            className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
       )}
@@ -351,7 +351,7 @@ function ActivitiesStep({
                       value={a.title}
                       onChange={(e) => updateActivity(a.id, { title: e.target.value })}
                       placeholder="e.g. Field inspection — Divundu"
-                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -361,7 +361,7 @@ function ActivitiesStep({
                       value={a.venue}
                       onChange={(e) => updateActivity(a.id, { venue: e.target.value })}
                       placeholder="Venue name"
-                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -372,7 +372,7 @@ function ActivitiesStep({
                       onChange={(e) =>
                         updateActivity(a.id, { estimatedKilometres: Number(e.target.value) })
                       }
-                      className="border-border bg-surface text-ink-950 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                      className="border-border bg-surface text-ink-950 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -405,7 +405,7 @@ function ActivitiesStep({
                       onChange={(e) => updateActivity(a.id, { description: e.target.value })}
                       rows={2}
                       placeholder="Optional description..."
-                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 w-full rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -826,7 +826,7 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
                       value={r.estimatedKm || ''}
                       onChange={(e) => updateRoute(r.id, { estimatedKm: Number(e.target.value) })}
                       placeholder="e.g. 500"
-                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-200 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                      className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
                   <div className="flex items-end">
@@ -852,7 +852,7 @@ function ReviewStep({ data, reference }: { data: RequestFormData; reference: str
 
   return (
     <div className="space-y-4">
-      <div className="border-brand-200 bg-brand-50 rounded-[10px] border px-4 py-3">
+      <div className="border-brand-100 bg-brand-50 rounded-[10px] border px-4 py-3">
         <p className="text-brand-700 text-sm font-medium">
           Reference: <span className="font-mono tabular-nums">{reference}</span>
         </p>
@@ -1118,7 +1118,7 @@ export default function NewRequestPage() {
                 {s.label}
               </button>
               {i < STEPS.length - 1 && (
-                <div className={`mx-1 h-px w-4 ${i < step ? 'bg-brand-500' : 'bg-border'}`} />
+                <div className={`mx-1 h-px w-4 ${i < step ? 'bg-brand-600' : 'bg-border'}`} />
               )}
             </div>
           );

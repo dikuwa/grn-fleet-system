@@ -44,7 +44,7 @@ export default function HomePage() {
           <div className="max-w-3xl">
             <h1 className="text-4xl font-[650] tracking-tight text-white md:text-5xl">
               Digital Fleet Management for{' '}
-              <span className="text-brand-100 dark:text-brand-300">Every Organisation</span>
+              <span className="text-brand-100 dark:text-brand-600">Every Organisation</span>
             </h1>
             <p className="mt-4 text-lg font-medium text-white/90">
               Government, Municipalities, Mines, Logistics and Private Fleets

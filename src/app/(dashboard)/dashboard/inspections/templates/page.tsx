@@ -354,7 +354,7 @@ export default function InspectionTemplatesPage() {
                     onChange={(e) => setFormName(e.target.value)}
                     required
                     placeholder="e.g. Standard Departure Checklist"
-                    className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                    className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
                   />
                 </div>
 

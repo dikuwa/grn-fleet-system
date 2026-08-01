@@ -200,7 +200,7 @@ export default function CompliancePage() {
             <Card>
               <CardContent className="pt-4">
                 <div className="text-center">
-                  <p className="text-2xl font-[650] text-green-600 tabular-nums">
+                  <p className="text-2xl font-[650] text-green-600 tabular-nums dark:text-green-400">
                     {summary.compliant}
                   </p>
                   <p className="text-ink-500 text-xs">Compliant</p>
@@ -210,7 +210,7 @@ export default function CompliancePage() {
             <Card>
               <CardContent className="pt-4">
                 <div className="text-center">
-                  <p className="text-2xl font-[650] text-amber-600 tabular-nums">
+                  <p className="text-2xl font-[650] text-amber-600 tabular-nums dark:text-amber-400">
                     {summary.attentionNeeded}
                   </p>
                   <p className="text-ink-500 text-xs">Attention Needed</p>
@@ -220,7 +220,7 @@ export default function CompliancePage() {
             <Card>
               <CardContent className="pt-4">
                 <div className="text-center">
-                  <p className="text-2xl font-[650] text-red-600 tabular-nums">
+                  <p className="text-2xl font-[650] text-red-600 tabular-nums dark:text-red-400">
                     {summary.nonCompliant}
                   </p>
                   <p className="text-ink-500 text-xs">Non-Compliant</p>
@@ -267,7 +267,7 @@ export default function CompliancePage() {
                           <span className="text-ink-500">{u.name}</span>
                         </div>
                         <span
-                          className={`text-xs font-medium ${u.status === 'expired' ? 'text-red-600' : 'text-amber-600'}`}
+                          className={`text-xs font-medium ${u.status === 'expired' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}
                         >
                           {daysLabel(u.daysRemaining)}
                         </span>
@@ -329,11 +329,11 @@ export default function CompliancePage() {
                       <div
                         className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] ${
                           v.overallStatus === 'compliant'
-                            ? 'bg-green-50 text-green-700'
+                            ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300'
                             : v.overallStatus === 'non_compliant'
-                              ? 'bg-red-50 text-red-700'
+                              ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300'
                               : v.overallStatus === 'attention_needed'
-                                ? 'bg-amber-50 text-amber-700'
+                                ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
                                 : 'bg-muted text-ink-500'
                         }`}
                       >

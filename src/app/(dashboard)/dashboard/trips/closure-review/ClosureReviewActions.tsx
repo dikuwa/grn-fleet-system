@@ -88,7 +88,7 @@ export function ClosureReviewActions({ tripId, tripStatus, hasReturnInspection }
         </Button>
       )}
       {actionResult && !actionResult.success && (
-        <span className="text-[10px] text-red-600">{actionResult.message}</span>
+        <span className="text-[10px] text-red-600 dark:text-red-400">{actionResult.message}</span>
       )}
     </div>
   );
