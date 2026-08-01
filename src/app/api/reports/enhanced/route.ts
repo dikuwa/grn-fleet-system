@@ -145,8 +145,11 @@ async function getVehicleUtilisation(db: ReturnType<typeof getDb>, tenantId: str
     .select({
       vehicleId: trips.vehicleId,
       licenceNumber: vehicles.licenceNumber,
+      // SUM() of per-trip durations — the aggregate form is required by
+      // Postgres/Neon (bare column refs in a GROUP BY query are rejected),
+      // while SQLite tolerated the non-aggregate expression.
       totalTripHours: sql<number>`COALESCE(
-        EXTRACT(EPOCH FROM (COALESCE(${trips.closedAt}, ${trips.returnedAt}, ${trips.startedAt}, ${trips.createdAt}) - ${trips.createdAt})) / 3600,
+        SUM(EXTRACT(EPOCH FROM (COALESCE(${trips.closedAt}, ${trips.returnedAt}, ${trips.startedAt}, ${trips.createdAt}) - ${trips.createdAt}))) / 3600,
         0
       )`,
       totalTrips: count(),
