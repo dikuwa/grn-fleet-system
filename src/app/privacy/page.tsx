@@ -45,7 +45,7 @@ export default function PrivacyPage() {
               <li>Processing and approving transport requests</li>
               <li>Allocating vehicles and managing trips</li>
               <li>Recording inspections, fuel usage, and driver logs</li>
-              <li>Generating operational reports for government oversight</li>
+              <li>Generating operational reports for organisational oversight and accountability</li>
               <li>Maintaining audit trails for accountability</li>
             </ul>
 
