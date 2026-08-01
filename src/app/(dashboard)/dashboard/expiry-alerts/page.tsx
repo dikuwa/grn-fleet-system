@@ -1,16 +1,21 @@
 import { getDb, isDbConnected } from '@/db';
 import { vehicles } from '@/db/schema/fleet';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
-import { eq, and, asc, lte, or, sql } from 'drizzle-orm';
+import {eq, and, asc, lte, or} from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  Database, CalendarClock, Truck, User, Shield, AlertTriangle, ChevronRight,
+  Database,
+  Truck,
+  User,
+  Shield,
+  AlertTriangle,
+  ChevronRight
 } from 'lucide-react';
-import { formatDate } from '@/lib/utils';
+
 import { getServerSession } from '@/lib/session';
 import Link from 'next/link';
 

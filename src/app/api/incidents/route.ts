@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tripIncidents } from '@/db/schema/trips';
-import { vehicles } from '@/db/schema/fleet';
+
 import { auditEvents } from '@/db/schema/audit';
 import { notifications } from '@/db/schema/notifications';
 import { requireRequestAuth } from '@/lib/auth-helpers';

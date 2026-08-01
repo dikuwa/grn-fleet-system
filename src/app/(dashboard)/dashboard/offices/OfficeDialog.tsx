@@ -9,7 +9,7 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { Plus } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
-export function OfficeDialog({ tenantId }: { tenantId: string }) {
+export function OfficeDialog() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -46,7 +46,7 @@ export function OfficeDialog({ tenantId }: { tenantId: string }) {
     } finally {
       setSaving(false);
     }
-  }, [name, code, type, address, router]);
+  }, [name, code, type, address, router, toast]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

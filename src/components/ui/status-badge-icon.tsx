@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { getStatusIconConfig, type StatusIconConfig } from '@/lib/status-icons';
+import { getStatusIconConfig } from '@/lib/status-icons';
 import { Badge } from '@/components/ui/badge';
 import { Clock3, type LucideIcon } from 'lucide-react';
 

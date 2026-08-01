@@ -25,14 +25,14 @@ import {
   Truck,
   User,
   AlertTriangle,
-  Ban,
-  CheckCircle2,
+
+
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
-import { getSessionPermissions, hasPermission } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
-import { notFound } from 'next/navigation';
+
+
+
 import Link from 'next/link';
 import { DriverStatusActions } from './DriverStatusActions';
 

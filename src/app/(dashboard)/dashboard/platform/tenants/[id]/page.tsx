@@ -10,9 +10,23 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StyledSelect } from '@/components/ui/styled-select';
 import {
-  Building2, Loader2, ChevronLeft, Save, CheckCircle2, Database,
-  Globe, Clock, Users, Palette, Mail, Phone, MapPin, Image as ImageIcon,
-  AlertTriangle, ShieldAlert, ShieldCheck, Activity,
+  Building2,
+  Loader2,
+  ChevronLeft,
+  Save,
+  Database,
+  Globe,
+  Clock,
+  Users,
+  Palette,
+  Mail,
+  Phone,
+  MapPin,
+  Image as ImageIcon,
+  AlertTriangle,
+  ShieldAlert,
+  ShieldCheck,
+  Activity
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { TenantActivityLog } from './TenantActivityLog';

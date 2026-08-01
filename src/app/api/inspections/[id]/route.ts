@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicleInspections, inspectionItemResults, inspectionTemplateItems, inspectionPhotos } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { employees } from '@/db/schema/people';
+
 import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';

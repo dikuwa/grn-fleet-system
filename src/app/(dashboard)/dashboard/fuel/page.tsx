@@ -4,7 +4,7 @@ import { maintenanceEvents, vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
-import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';

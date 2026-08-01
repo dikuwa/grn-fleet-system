@@ -8,7 +8,7 @@ import { Input, Label } from '@/components/ui/input';
 import { Plus } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
-export function DepartmentDialog({ tenantId }: { tenantId: string }) {
+export function DepartmentDialog() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -42,7 +42,7 @@ export function DepartmentDialog({ tenantId }: { tenantId: string }) {
     } finally {
       setSaving(false);
     }
-  }, [name, code, router]);
+  }, [name, code, router, toast]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

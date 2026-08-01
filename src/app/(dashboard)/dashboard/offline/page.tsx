@@ -17,20 +17,19 @@ import type { OfflineDraft } from '@/lib/offline-drafts';
 import { SystemRoles } from '@/lib/dashboard-access';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 import {
-  WifiOff,
+
   RefreshCw,
   Database,
   Trash2,
   Eye,
   X,
-  CheckCircle2,
+
   AlertTriangle,
   Loader2,
   Clock,
   RotateCcw,
 } from 'lucide-react';
 
-type SortKey = 'updatedAt' | 'draftType' | 'syncStatus';
 type SyncStatus = 'all' | 'pending' | 'failed' | 'conflict' | 'synced';
 
 const DRAFT_TYPE_LABELS: Record<string, string> = {

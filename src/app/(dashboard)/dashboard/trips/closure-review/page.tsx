@@ -1,19 +1,25 @@
 import { getDb, isDbConnected } from '@/db';
-import { trips, tripClosures, vehicleAllocations, vehicleInspections } from '@/db/schema/trips';
+import {trips, tripClosures, vehicleInspections} from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { eq, and, desc, inArray } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import {Card, CardContent} from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  Database, Clock, Truck, User, MapPin, ChevronRight,
-  CheckCircle2, XCircle, AlertTriangle, FileText,
+  Database,
+  Clock,
+  User,
+  MapPin,
+  ChevronRight,
+  CheckCircle2,
+  AlertTriangle,
+  FileText
 } from 'lucide-react';
-import { formatDate, formatDateTime } from '@/lib/utils';
+import {formatDateTime} from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';

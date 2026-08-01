@@ -1,16 +1,15 @@
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+
 import { EmptyState } from '@/components/ui/empty-state';
 import { isDbConnected, getDb } from '@/db';
 import { offices, departments, employees } from '@/db/schema';
 import { eq, and, asc, count, isNotNull } from 'drizzle-orm';
-import { Building2, MapPin, Database, Plus, ChevronRight, Layers } from 'lucide-react';
+import {Building2, MapPin, Database, ChevronRight, Layers} from 'lucide-react';
 import { getServerSession } from '@/lib/session';
 import { OfficeDialog } from './OfficeDialog';
 import { DepartmentDialog } from './DepartmentDialog';
-import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -87,8 +86,8 @@ export default async function OfficesPage() {
         title="Offices & Departments"
         description={`${allOffices.length} offices · ${allDepartments.length} departments`}
       >
-        <OfficeDialog tenantId={session.tenantId} />
-        <DepartmentDialog tenantId={session.tenantId} />
+        <OfficeDialog />
+        <DepartmentDialog />
       </PageHeader>
 
       <div className="grid gap-6 lg:grid-cols-2">

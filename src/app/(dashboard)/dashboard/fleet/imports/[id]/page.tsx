@@ -7,8 +7,14 @@ import { StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  Database, Truck, ChevronLeft, FileSpreadsheet, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Hash,
+  Database,
+  ChevronLeft,
+  FileSpreadsheet,
+  Upload,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Hash
 } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';

@@ -294,24 +294,6 @@ export default function AdminUserDetailPage({ params }: PageProps) {
     }
   };
 
-  const handleRemoveDelegation = async (assignmentId: string) => {
-    setIsSaving(true);
-    try {
-      const res = await fetch(`/api/admin/users/${id}/delegate?assignmentId=${assignmentId}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to remove delegation');
-      toast({ title: 'Delegation Removed', description: 'Acting assignment removed successfully.', variant: 'success' });
-      refetch();
-    } catch (err) {
-      toast({ title: 'Failed to Remove', description: err instanceof Error ? err.message : 'Failed to remove delegation', variant: 'error' });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">

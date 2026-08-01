@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicles, vehicleDefects, maintenanceEvents } from '@/db/schema/fleet';
 import { vehicleAllocations } from '@/db/schema/trips';
-import { eq, and, ne, gte, lte, isNull, lt, gt } from 'drizzle-orm';
+import {eq, and, ne, gte, isNull, lt, gt} from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 
 interface Blocker {

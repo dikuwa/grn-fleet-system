@@ -14,7 +14,6 @@ import {
   ClipboardList, Save, WifiOff, CheckCircle2, Clock, MapPin,
   Gauge, X,
 } from 'lucide-react';
-import { useToast } from '@/lib/use-toast';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 interface Trip {
@@ -61,7 +60,6 @@ export default function DailyLogsPage() {
   const [formData, setFormData] = useState<LogFormData>(emptyForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
-  const { toast } = useToast();
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [showDrafts, setShowDrafts] = useState(false);
   const { data: profile } = useQuery({

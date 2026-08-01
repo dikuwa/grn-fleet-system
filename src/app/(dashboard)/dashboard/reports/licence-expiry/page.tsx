@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
+
 import { StatCard } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

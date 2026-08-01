@@ -1,10 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import {Card, CardContent} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Shield, Plus, Loader2, CheckCircle2, XCircle, Save, Pencil } from 'lucide-react';
+import {Shield, Plus, Loader2, Save, Pencil} from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
@@ -242,7 +241,6 @@ const PERMISSION_GROUPS: PermissionGroup[] = [
 // ---------------------------------------------------------------------------
 
 export default function AdminRolesPage() {
-  const router = useRouter();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
 

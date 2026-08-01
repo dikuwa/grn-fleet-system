@@ -96,7 +96,7 @@ export default function ReimbursementDetailPage() {
     } finally {
       setActionLoading(false);
     }
-  }, [params.id, fetchData, actionComment]);
+  }, [params.id, fetchData, actionComment, toast]);
 
   if (loading) {
     return (

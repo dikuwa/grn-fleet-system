@@ -25,8 +25,7 @@ export async function GET(req: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-    const { searchParams } = new URL(req.url);
-    const status = searchParams.get('status') || 'pending'; // pending | all
+    const status = req.nextUrl.searchParams.get('status') || 'pending'; // pending | all
 
     // Users whose email is not verified = pending invites
     const whereClause = status === 'pending'
@@ -50,7 +49,7 @@ export async function GET(req: NextRequest) {
       .where(
         and(
           eq(tenantMemberships.tenantId, session.tenantId),
-          eq(user.emailVerified, false),
+          ...(whereClause ? [whereClause] : []),
         ),
       )
       .orderBy(desc(user.createdAt))

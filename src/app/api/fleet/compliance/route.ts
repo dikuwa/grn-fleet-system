@@ -3,7 +3,7 @@ import { getDb } from '@/db';
 import { vehicles, vehicleDocuments } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import {eq, sql} from 'drizzle-orm';
 
 /**
  * GET /api/fleet/compliance

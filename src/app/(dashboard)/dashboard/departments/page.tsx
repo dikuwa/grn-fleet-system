@@ -1,6 +1,6 @@
 import { getDb, isDbConnected } from '@/db';
 import { departments, employees } from '@/db/schema';
-import { eq, and, count, isNotNull, sql, asc } from 'drizzle-orm';
+import {eq, and, sql, asc} from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -104,7 +104,7 @@ async function DepartmentsContent({ session }: { session: { tenantId: string } }
         title="Departments & Directorates"
         description={`${deptRows.length} departments · ${totalStaff} active staff`}
       >
-        <DepartmentDialog tenantId={session.tenantId} />
+        <DepartmentDialog />
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/offices">
             <ChevronLeft className="h-4 w-4" />

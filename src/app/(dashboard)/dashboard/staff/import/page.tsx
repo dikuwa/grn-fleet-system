@@ -110,6 +110,8 @@ export default function StaffImportPage() {
       });
   }, [toast]);
 
+  const totalValidRows = rows.filter((r) => r.errors.length === 0).length;
+
   const handleCommitImport = useCallback(async () => {
     setIsCommitting(true);
     setStep('committing');
@@ -149,9 +151,8 @@ export default function StaffImportPage() {
     } finally {
       setIsCommitting(false);
     }
-  }, [rows, columnMapping, session]);
+  }, [rows, columnMapping, session, toast, totalValidRows]);
 
-  const totalValidRows = rows.filter((r) => r.errors.length === 0).length;
   const totalErrorRows = rows.filter((r) => r.errors.length > 0).length;
   const previewRows = rows.slice(
     (currentPreviewPage - 1) * previewPageSize,

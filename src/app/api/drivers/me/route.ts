@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import {requireRequestAuth} from '@/lib/auth-helpers';
+
 import { eq, and, desc } from 'drizzle-orm';
 
 /**

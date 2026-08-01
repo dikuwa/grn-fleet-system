@@ -356,6 +356,7 @@ export default async function StaffDirectoryPage({
             <div className="flex items-start gap-3">
               <div className="bg-brand-50 text-brand-800 flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[8px] text-xs font-semibold">
                 {row.profilePhotoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- dynamic signed R2 URL
                   <img src={row.profilePhotoUrl} alt="" className="h-full w-full object-cover" />
                 ) : (
                   <>

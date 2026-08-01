@@ -15,11 +15,10 @@ import {
   XCircle,
   Edit3,
   Trash2,
-  ChevronRight,
+
   GripVertical,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
-import Link from 'next/link';
 
 interface TemplateItem {
   id: string;
@@ -100,6 +99,7 @@ export default function InspectionTemplatesPage() {
 
   useEffect(() => {
     fetchTemplates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchTemplates is intentionally called on tab change only
   }, [activeTab]);
 
   async function fetchTemplates() {

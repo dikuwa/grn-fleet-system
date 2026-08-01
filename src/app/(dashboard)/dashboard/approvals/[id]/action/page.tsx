@@ -50,7 +50,7 @@ export default function ApprovalActionPage() {
       toast({ title: 'Action Failed', description: msg, variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [params.id, router, comment]);
+  }, [params.id, router, comment, toast]);
 
   return (
     <div className="space-y-6">

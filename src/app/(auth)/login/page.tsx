@@ -45,7 +45,7 @@ function LoginForm() {
       }
 
       router.push(redirectTo);
-    } catch (err) {
+    } catch {
       setError('Unable to sign in. Please check your connection and try again.');
       setLoading(false);
     }

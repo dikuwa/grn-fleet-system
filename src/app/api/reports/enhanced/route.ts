@@ -17,10 +17,10 @@ import { trips, tripClosures, fuelTransactions, vehicleAllocations } from '@/db/
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
-import { employees } from '@/db/schema/people';
+
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { sql, eq, and, gte, lte, count, desc } from 'drizzle-orm';
+import {sql, eq, and, gte, count, desc} from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // Date helpers

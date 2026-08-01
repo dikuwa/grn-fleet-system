@@ -6,13 +6,21 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
-import { useSession } from '@/lib/auth-client';
 import { statusConfig } from '@/lib/request-status';
 import {
-  Gauge, ClipboardCheck, ClipboardList, Truck,
-  ChevronRight, Clock, MapPin, Wifi, WifiOff,
-  AlertTriangle, Camera, PenSquare, CheckCircle2,
-  Loader2, RefreshCw, Car, FileText,
+  Gauge,
+  ClipboardCheck,
+  ClipboardList,
+  ChevronRight,
+  Clock,
+  MapPin,
+  Wifi,
+  WifiOff,
+  AlertTriangle,
+  PenSquare,
+  Loader2,
+  RefreshCw,
+  Car
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -32,7 +40,6 @@ interface AssignedTrip {
 }
 
 export default function DriverMobileDashboardPage() {
-  const { data: session } = useSession();
   const [trips, setTrips] = useState<AssignedTrip[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

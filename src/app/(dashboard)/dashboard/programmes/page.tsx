@@ -38,14 +38,6 @@ interface ProgrammeActivity {
   requestScope: string;
 }
 
-function formatDate(d: string) {
-  return new Date(d).toLocaleDateString('en-NA', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
 function formatDateShort(d: string) {
   return new Date(d).toLocaleDateString('en-NA', {
     day: 'numeric',
@@ -136,7 +128,7 @@ function CreateProgrammeDialog({
         setIsSubmitting(false);
       }
     },
-    [title, description, venue, startDate, endDate, estimatedKm, onOpenChange, onCreated],
+    [title, description, venue, startDate, endDate, estimatedKm, onOpenChange, onCreated, toast],
   );
 
   return (

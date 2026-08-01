@@ -29,16 +29,6 @@ const REIMBURSEMENT_STATE_LABELS: Record<string, string> = {
   rejected: 'Rejected',
 };
 
-const REIMBURSEMENT_STATE_VARIANTS: Record<
-  string,
-  'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'
-> = {
-  pending: 'pending',
-  approved: 'info',
-  paid: 'success',
-  rejected: 'error',
-};
-
 async function fetchReimbursements(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);

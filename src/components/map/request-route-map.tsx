@@ -100,7 +100,7 @@ export default function RouteMap({ routes }: RouteMapProps) {
           }
 
           if (polylineCoords.length > 0) {
-            const polylineLayer = L.polyline(polylineCoords, {
+            L.polyline(polylineCoords, {
               color,
               weight: 3,
               opacity: 0.8,

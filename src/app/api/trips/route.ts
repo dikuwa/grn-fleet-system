@@ -11,7 +11,7 @@ import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees, driverProfiles } from '@/db/schema/people';
-import { eq, and, desc, asc, like, or, sql, type SQL } from 'drizzle-orm';
+import {eq, and, desc, like, or, sql, type SQL} from 'drizzle-orm';
 import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { provisionTripAuthority } from '@/lib/trip-authority';

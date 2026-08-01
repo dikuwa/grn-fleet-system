@@ -14,7 +14,7 @@ import {
   DocumentPage,
   DocumentRow,
   DocumentSection,
-  DocumentTable,
+
   DocumentVerificationBlock,
   DocumentVerificationFooter,
 } from './document-system';

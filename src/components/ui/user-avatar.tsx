@@ -30,6 +30,7 @@ export function UserAvatar({ src, name, className, imageClassName }: UserAvatarP
       aria-label={name}
     >
       {showImage ? (
+        // eslint-disable-next-line @next/next/no-img-element -- avatar may be a data/signed URL
         <img
           src={src!}
           alt=""

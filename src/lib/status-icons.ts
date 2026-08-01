@@ -12,7 +12,7 @@
 import {
   CirclePlay,
   Navigation,
-  Activity,
+
   ClockAlert,
   ClipboardCheck,
   SearchCheck,
@@ -22,7 +22,7 @@ import {
   Clock3,
   Hourglass,
   CircleX,
-  CircleMinus,
+
   BadgeCheck,
   Ban,
   FileEdit,

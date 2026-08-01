@@ -11,7 +11,7 @@ import { userProfiles } from '@/db/schema/auth';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+
 import bcrypt from 'bcryptjs';
 
 export async function POST(request: NextRequest) {

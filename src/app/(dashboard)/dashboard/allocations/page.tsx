@@ -32,15 +32,6 @@ const ALLOCATION_STATE_LABELS: Record<string, string> = {
   released: 'Released',
 };
 
-const ALLOCATION_STATE_VARIANTS: Record<
-  string,
-  'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'
-> = {
-  provisional: 'pending',
-  confirmed: 'info',
-  cancelled: 'cancelled',
-  released: 'success',
-};
 
 async function fetchAllocations(sp: Record<string, string | undefined>, tenantId: string) {
   const db = getDb();
@@ -289,7 +280,6 @@ export default async function AllocationsPage({ searchParams }: PageProps) {
       ) : (
         <div className="space-y-3">
           {result.rows.map((alloc) => {
-            const stateVariant = ALLOCATION_STATE_VARIANTS[alloc.state] ?? 'info';
             const requesterName =
               alloc.requesterFirstName && alloc.requesterLastName
                 ? `${alloc.requesterFirstName} ${alloc.requesterLastName}`

@@ -117,7 +117,7 @@ export default function NewAllocationPage() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [requestId, startDate, endDate, selectedVehicleId, router]);
+  }, [requestId, startDate, endDate, selectedVehicleId, router, toast]);
 
   return (
     <div className="space-y-6">

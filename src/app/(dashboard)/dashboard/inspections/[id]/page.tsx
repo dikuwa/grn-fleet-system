@@ -7,7 +7,7 @@ import {
 } from '@/db/schema/trips';
 import { maintenanceEvents, vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { trips } from '@/db/schema/trips';
-import { employees } from '@/db/schema/people';
+
 import { getServerSession } from '@/lib/session';
 import { eq, and, desc } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
@@ -568,6 +568,7 @@ export default async function InspectionDetailPage({ params }: PageProps) {
                     className="block aspect-square bg-muted flex items-center justify-center overflow-hidden"
                   >
                     {photo.signedUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- dynamic signed R2 URL, not optimisable by next/image
                       <img
                         src={photo.signedUrl}
                         alt={photo.caption || 'Inspection photo'}

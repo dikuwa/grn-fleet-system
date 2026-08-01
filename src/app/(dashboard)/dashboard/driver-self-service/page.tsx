@@ -8,10 +8,20 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatDate } from '@/lib/utils';
 import {
-  User, Car, ClipboardCheck, Gauge, FileText,
-  AlertTriangle, Loader2, RefreshCw, ChevronRight,
-  Clock, MapPin, CheckCircle2, XCircle, Shield,
-  IdCard, CalendarClock, Bell, PenSquare, AlertCircle,
+  User,
+  ClipboardCheck,
+  Gauge,
+  FileText,
+  AlertTriangle,
+  Loader2,
+  RefreshCw,
+  ChevronRight,
+  XCircle,
+  Shield,
+  IdCard,
+  Bell,
+  PenSquare,
+  AlertCircle
 } from 'lucide-react';
 import Link from 'next/link';
 import { LicenceUploadPanel } from '@/app/(dashboard)/dashboard/staff/[id]/LicenceUploadPanel';
@@ -122,7 +132,7 @@ export default function DriverSelfServicePage() {
       }
     }
     setExpiryAlerts(alerts);
-  }, [driverInfo, formatDate]);
+  }, [driverInfo]);
 
   useEffect(() => {
     if (fetched.current) return;

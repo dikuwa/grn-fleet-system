@@ -13,7 +13,7 @@ import {
   Clock,
   RefreshCw,
   Loader2,
-  Ban,
+
   Smartphone,
   Bell,
   AlertTriangle,

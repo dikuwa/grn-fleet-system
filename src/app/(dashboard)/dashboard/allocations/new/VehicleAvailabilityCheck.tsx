@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import {useState, useEffect} from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, XCircle } from 'lucide-react';
 
 interface Blocker {

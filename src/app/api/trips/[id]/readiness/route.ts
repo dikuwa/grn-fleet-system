@@ -14,7 +14,7 @@ import {
   tripAuthorities,
 } from '@/db/schema/trips';
 import { vehicles, vehicleDefects, vehicleCategories } from '@/db/schema/fleet';
-import { transportRequests } from '@/db/schema/requests';
+
 import { workflowInstances, workflowActions, workflowSteps } from '@/db/schema/workflows';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
 import { eq, and, desc, isNull, sql } from 'drizzle-orm';

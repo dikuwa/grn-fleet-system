@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
-import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
+import {employees, driverProfiles} from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';

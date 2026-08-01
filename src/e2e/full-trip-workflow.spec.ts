@@ -86,7 +86,6 @@ async function tryAction(
 // ---------------------------------------------------------------------------
 
 test.describe.skip('Full Regional Trip Workflow (superseded by role-isolation-workflow.spec.ts)', () => {
-  let session: { token: string; user: { id?: string } };
   let requestId: string;
   let instanceId: string;
   let vehicleId: string;
@@ -94,7 +93,7 @@ test.describe.skip('Full Regional Trip Workflow (superseded by role-isolation-wo
   let tripId: string;
 
   test.beforeEach(async ({ page }) => {
-    session = await signIn(page);
+    await signIn(page);
   });
 
   // -----------------------------------------------------------------------

@@ -8,7 +8,6 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Mail, Send, CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
-import Link from 'next/link';
 import { numericCount } from '@/lib/statistics';
 
 export const dynamic = 'force-dynamic';

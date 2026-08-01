@@ -143,13 +143,8 @@ export async function POST(
 // DELETE — Remove an acting assignment
 // ---------------------------------------------------------------------------
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function DELETE(request: NextRequest) {
   try {
-    const { id } = await params;
-
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;

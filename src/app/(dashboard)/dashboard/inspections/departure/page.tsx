@@ -83,7 +83,7 @@ export default function DepartureInspectionPage() {
   const [vehicleLoading, setVehicleLoading] = useState(false);
   const [vehicleDropdown, setVehicleDropdown] = useState(false);
   const [trips, setTrips] = useState<Array<{ id: string; reference: string; status: string }>>([]);
-  const [tripLoading, setTripLoading] = useState(false);
+  const [tripLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
   const [inspectorAcknowledged, setInspectorAcknowledged] = useState(false);
@@ -147,7 +147,7 @@ export default function DepartureInspectionPage() {
         }
       })
       .catch(() => {});
-  }, [tripId]);
+  }, [tripId, vehicleId]);
 
   const updateResult = (id: string, result: 'pass' | 'fail' | 'na') => {
     setChecklist((prev) => prev.map((item) => (item.id === id ? { ...item, result } : item)));
@@ -421,6 +421,7 @@ export default function DepartureInspectionPage() {
                       onClick={() => setLightboxPhoto(photo.preview)}
                       className="block aspect-square w-full overflow-hidden rounded-[8px] border border-border bg-muted"
                     >
+                      {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
                       <img src={photo.preview} alt={`Photo ${idx + 1}`} className="h-full w-full object-cover" />
                     </button>
                     <button
@@ -484,6 +485,7 @@ export default function DepartureInspectionPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
+            {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
             <img
               src={lightboxPhoto}
               alt="Inspection photo enlarged"

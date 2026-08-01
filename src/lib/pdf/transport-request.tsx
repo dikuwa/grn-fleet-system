@@ -1,5 +1,5 @@
 import React from 'react';
-import { Document, Text, View } from '@react-pdf/renderer';
+import {Document, Text} from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 import {
   formatDocumentStatus,
@@ -17,7 +17,7 @@ import {
   DocumentTable,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
-  documentStyles,
+
 } from './document-system';
 
 // ---------------------------------------------------------------------------

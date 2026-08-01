@@ -218,6 +218,7 @@ export default function AuditLogPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchEvents is deliberately not memoised; refetch is driven by selectedType/debouncedSearch
   }, [selectedType, debouncedSearch]);
 
   const handleLoadMore = async () => {

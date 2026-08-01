@@ -5,12 +5,19 @@ import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { eq, and, desc, ne, sql } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Badge, StatusBadge } from '@/components/ui/badge';
+import {Card, CardContent} from '@/components/ui/card';
+import {StatusBadge} from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  Database, Gauge, Truck, User, Clock, MapPin, ChevronRight, AlertTriangle, RefreshCw,
+  Database,
+  Gauge,
+  User,
+  Clock,
+  MapPin,
+  ChevronRight,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';

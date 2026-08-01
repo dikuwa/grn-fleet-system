@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user, account, session } from '@/db/schema/better-auth';
 import { userProfiles } from '@/db/schema/auth';
-import { auditEvents } from '@/db/schema/audit';
+
 import { eq, or, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { rateLimit } from '@/lib/rate-limit';
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
     // Log audit event
     try {
       // Find tenant for audit context
-      const { tenantMemberships, tenants } = await import('@/db/schema/tenants');
+      const { tenantMemberships } = await import('@/db/schema/tenants');
       const [membership] = await db
         .select({ tenantId: tenantMemberships.tenantId })
         .from(tenantMemberships)

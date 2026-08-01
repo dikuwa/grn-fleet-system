@@ -12,7 +12,7 @@ interface AllocationActionsProps {
   hasTrip: boolean;
 }
 
-export function AllocationActions({ allocationId, requestId, vehicleId, hasTrip }: AllocationActionsProps) {
+export function AllocationActions({ allocationId, hasTrip }: AllocationActionsProps) {
   const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState('');
@@ -48,7 +48,7 @@ export function AllocationActions({ allocationId, requestId, vehicleId, hasTrip 
     } finally {
       setIsCreating(false);
     }
-  }, [allocationId, requestId, vehicleId, router]);
+  }, [allocationId, router]);
 
   if (hasTrip) return null;
 

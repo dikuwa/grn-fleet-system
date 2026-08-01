@@ -240,7 +240,7 @@ async function handleSignOut(request: NextRequest) {
       // Log audit event
       if (sessionRecord) {
         try {
-          const { tenantMemberships, tenants } = await import('@/db/schema/tenants');
+          const { tenantMemberships } = await import('@/db/schema/tenants');
           const { auditEvents } = await import('@/db/schema/audit');
           const [membership] = await db
             .select({ tenantId: tenantMemberships.tenantId })

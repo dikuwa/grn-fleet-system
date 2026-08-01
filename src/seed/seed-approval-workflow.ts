@@ -87,7 +87,6 @@ async function seedApprovalWorkflow() {
   const driver1 = empMap['KERC008']; // Michael Mwala
   const driver2 = empMap['KERC009']; // Selma Nangula
   const transportAdmin = empMap['KERC011']; // Ndapewa Hamutenya
-  const auditor = empMap['KERC010']; // Johannes Shivute
 
   const requiredEmps = [requester, supervisor, controlAdmin, regionalAuthoriser, director, cro, driver1, transportAdmin];
   for (const emp of requiredEmps) {

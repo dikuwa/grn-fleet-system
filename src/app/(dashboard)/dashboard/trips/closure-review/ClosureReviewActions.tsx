@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { CheckSquare, RotateCcw, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import {CheckSquare, RotateCcw, CheckCircle2} from 'lucide-react';
 
 interface ClosureReviewActionsProps {
   tripId: string;

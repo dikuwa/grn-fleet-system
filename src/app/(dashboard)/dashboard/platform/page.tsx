@@ -6,8 +6,18 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  Building2, CarFront, Gauge, Users, FileText, Fuel, Loader2,
-  Database, Globe, TrendingUp, BarChart3, Activity, RefreshCcw,
+  Building2,
+  CarFront,
+  Gauge,
+  Users,
+  FileText,
+  Fuel,
+  Loader2,
+  Database,
+  Globe,
+  TrendingUp,
+  Activity,
+  RefreshCcw
 } from 'lucide-react';
 import Link from 'next/link';
 

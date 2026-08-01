@@ -93,7 +93,7 @@ export default function ReturnInspectionPage() {
   const [vehicleLoading, setVehicleLoading] = useState(false);
   const [vehicleDropdown, setVehicleDropdown] = useState(false);
   const [trips, setTrips] = useState<Array<{ id: string; reference: string; status: string }>>([]);
-  const [tripLoading, setTripLoading] = useState(false);
+  const [tripLoading] = useState(false);
 
   // Search vehicles dynamically
   useEffect(() => {
@@ -403,6 +403,7 @@ export default function ReturnInspectionPage() {
                           className="block aspect-square w-full overflow-hidden rounded-[8px] border-2 border-brand-200 bg-muted"
                         >
                           {photo.signedUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- dynamic signed R2 URL
                             <img
                               src={photo.signedUrl}
                               alt={photo.caption || 'Departure photo'}
@@ -438,6 +439,7 @@ export default function ReturnInspectionPage() {
                                 onClick={() => setLightboxPhoto(photo.preview)}
                                 className="block aspect-square w-full overflow-hidden rounded-[8px] border-2 border-status-warning-bg bg-muted"
                               >
+                                {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
                                 <img src={photo.preview} alt={`Return photo ${idx + 1}`} className="h-full w-full object-cover" />
                               </button>
                               <button
@@ -726,6 +728,7 @@ export default function ReturnInspectionPage() {
                       onClick={() => setLightboxPhoto(photo.preview)}
                       className="block aspect-square w-full overflow-hidden rounded-[8px] border border-border bg-muted"
                     >
+                      {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
                       <img src={photo.preview} alt={`Photo ${idx + 1}`} className="h-full w-full object-cover" />
                     </button>
                     <button
@@ -789,6 +792,7 @@ export default function ReturnInspectionPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
+            {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
             <img
               src={lightboxPhoto}
               alt="Inspection photo enlarged"

@@ -2,15 +2,20 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import {Card, CardContent} from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatDate } from '@/lib/utils';
+
 import {
-  Wrench, AlertTriangle, Loader2, RefreshCw,
-  Gauge, CalendarClock, Car, TrendingUp,
-  ChevronRight, Clock, BrainCircuit,
+  AlertTriangle,
+  Loader2,
+  RefreshCw,
+  Gauge,
+  CalendarClock,
+  Car,
+  TrendingUp,
+  BrainCircuit
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -40,7 +45,6 @@ export default function PredictiveMaintenancePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filterUrgency, setFilterUrgency] = useState<string>('all');
-  const [expandedVehicle, setExpandedVehicle] = useState<string | null>(null);
   const fetched = useRef(false);
 
   const fetchData = useCallback(async () => {

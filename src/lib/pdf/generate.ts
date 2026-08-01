@@ -27,7 +27,7 @@ import {
   inspectionItemResults,
   inspectionTemplateItems,
 } from '@/db/schema/trips';
-import { transportRequests, requestRoutes, requestDrivers, requestPassengers, requestActivities, requestAttachments } from '@/db/schema/requests';
+import {transportRequests, requestRoutes} from '@/db/schema/requests';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { employees } from '@/db/schema/people';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
@@ -519,15 +519,15 @@ export async function generateDocumentPdf(
       break;
     }
     case 'fuel_summary': {
-      buffer = await generateDocumentPdfFromSnapshot(documentId, 'Fuel Summary');
+      buffer = await generateDocumentPdfFromSnapshot(documentId);
       break;
     }
     case 'trip_completion': {
-      buffer = await generateDocumentPdfFromSnapshot(documentId, 'Trip Completion Report');
+      buffer = await generateDocumentPdfFromSnapshot(documentId);
       break;
     }
     case 'maintenance_report': {
-      buffer = await generateDocumentPdfFromSnapshot(documentId, 'Maintenance Report');
+      buffer = await generateDocumentPdfFromSnapshot(documentId);
       break;
     }
     default: {
@@ -571,7 +571,6 @@ export async function generateDocumentPdf(
  */
 async function generateDocumentPdfFromSnapshot(
   documentId: string,
-  _documentLabel: string,
 ): Promise<Uint8Array | null> {
   const db = getDb();
 

@@ -418,6 +418,7 @@ export default function NewInspectionPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {photos.map((photo, idx) => (
                     <div key={idx} className="relative rounded-[8px] border border-border overflow-hidden group">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
                       <img src={photo.preview} alt={`Photo ${idx + 1}`} className="h-24 w-full object-cover" />
                       <button
                         type="button"

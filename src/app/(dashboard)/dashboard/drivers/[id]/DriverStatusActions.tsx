@@ -28,7 +28,7 @@ interface DriverStatusActionsProps {
 export function DriverStatusActions({
   employeeId,
   driverStatus,
-  suspensionReason,
+
   employeeName,
 }: DriverStatusActionsProps) {
   const router = useRouter();

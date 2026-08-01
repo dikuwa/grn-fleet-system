@@ -4,12 +4,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { EmptyState } from '@/components/ui/empty-state';
+
 import {
-  MapPin, Car, AlertTriangle, Loader2,
-  RefreshCw, WifiOff,
+  Car,
+  AlertTriangle,
+  Loader2,
+  RefreshCw,
+  WifiOff
 } from 'lucide-react';
-import Link from 'next/link';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 

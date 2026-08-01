@@ -8,8 +8,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { roles, rolePermissions, roleAssignments, permissions } from '@/db/schema/tenants';
-import { eq, and, inArray, asc, count } from 'drizzle-orm';
+import {roles, rolePermissions, roleAssignments} from '@/db/schema/tenants';
+import {eq, and, inArray, asc} from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 

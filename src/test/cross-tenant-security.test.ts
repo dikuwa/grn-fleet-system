@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { getDb } from '@/db';
-import { eq, and } from 'drizzle-orm';
+import {eq} from 'drizzle-orm';
 import { tenants } from '@/db/schema/tenants';
 import { trips } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';

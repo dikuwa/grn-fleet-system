@@ -117,6 +117,8 @@ export default function VehicleImportPage() {
       });
   }, [toast]);
 
+  const totalValidRows = rows.filter((r) => r.errors.length === 0).length;
+
   const handleCommitImport = useCallback(async () => {
     setIsCommitting(true);
     setStep('committing');
@@ -151,9 +153,8 @@ export default function VehicleImportPage() {
     } finally {
       setIsCommitting(false);
     }
-  }, [rows, columnMapping]);
+  }, [rows, columnMapping, toast, totalValidRows]);
 
-  const totalValidRows = rows.filter((r) => r.errors.length === 0).length;
   const totalErrorRows = rows.filter((r) => r.errors.length > 0).length;
   const previewRows = rows.slice(
     (currentPreviewPage - 1) * previewPageSize,

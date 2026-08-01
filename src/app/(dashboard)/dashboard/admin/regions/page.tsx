@@ -8,8 +8,17 @@ import { Input, FieldWrapper } from '@/components/ui/input';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  MapPin, Plus, Loader2, Save, X, CheckCircle2, AlertTriangle,
-  Trash2, Edit2, RefreshCw, GripVertical, XCircle,
+  MapPin,
+  Plus,
+  Loader2,
+  Save,
+  X,
+  CheckCircle2,
+  Trash2,
+  Edit2,
+  RefreshCw,
+  GripVertical,
+  XCircle
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import {

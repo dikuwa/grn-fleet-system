@@ -1,7 +1,7 @@
 import React from 'react';
 import { Font, Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
-import { formatDocumentStatus } from '@/lib/human-readable';
+
 
 Font.register({
   family: 'Onest',
@@ -192,6 +192,7 @@ export function DocumentHeader({
     <View style={documentStyles.header} fixed>
       {/* Left: Logo */}
       <View style={documentStyles.headerLogoZone}>
+        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
         {branding?.logoUrl ? <Image src={branding.logoUrl} style={documentStyles.logo} /> : null}
       </View>
       {/* Centre: Organisation details */}
@@ -217,6 +218,7 @@ export function DocumentHeader({
           Version {version} · {issueDate}
         </Text>
         <Text style={documentStyles.statusBadge}>{status}</Text>
+        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
         {qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
       </View>
     </View>
@@ -298,6 +300,7 @@ export function DocumentSignature({
 }) {
   return (
     <View style={documentStyles.signature}>
+      {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
       {signatureUrl ? <Image src={signatureUrl} style={documentStyles.signatureImage} /> : null}
       <Text style={documentStyles.signatureName}>{name}</Text>
       <Text style={documentStyles.muted}>{role}</Text>
@@ -322,6 +325,7 @@ export function DocumentVerificationBlock({
   return (
     <View style={documentStyles.verificationBlock} wrap={false}>
       <View style={documentStyles.verifyQrCol}>
+        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
         {qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
       </View>
       <View style={documentStyles.verifyDetailsCol}>

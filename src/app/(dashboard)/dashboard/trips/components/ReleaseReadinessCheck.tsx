@@ -71,7 +71,6 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
   const isBlocked = data?.summary.locked;
   const blockingGates = data?.gates.filter((g) => g.status === 'blocking') || [];
   const pendingGates = data?.gates.filter((g) => g.status === 'pending') || [];
-  const passedGates = data?.gates.filter((g) => g.status === 'pass') || [];
 
   return (
     <Card className="border-2 border-brand-200">

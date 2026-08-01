@@ -17,7 +17,7 @@ import {
   EyeOff,
   Loader2,
   Save,
-  CheckCircle2,
+
   XCircle,
   KeyRound,
   Camera,
@@ -277,6 +277,7 @@ export default function UserProfilePage() {
               <div className="relative mb-4">
                 {previewUrl ? (
                   <div className="bg-brand-50 h-24 w-24 overflow-hidden rounded-full">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- local preview blob URL */}
                     <img
                       src={previewUrl}
                       alt="New profile photo preview"
