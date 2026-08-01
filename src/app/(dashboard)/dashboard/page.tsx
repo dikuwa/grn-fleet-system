@@ -6,6 +6,7 @@ import {
   CheckSquare,
   ClipboardCheck,
   FileText,
+  Route as RouteIcon,
   Shield,
   Truck,
   Users,
@@ -17,6 +18,7 @@ import {
   maintenanceEvents,
   notifications,
   notificationReads,
+  requestRoutes,
   tenants,
   transportRequests,
   trips,
@@ -53,6 +55,17 @@ const quickLinks = [
 async function countRows(query: Promise<Array<{ count: number }>>) {
   const rows = await query;
   return Number(rows[0]?.count || 0);
+}
+
+/** Sum of mapped route kilometres across all request routes for a tenant. */
+async function totalRouteKm(tenantId: string): Promise<number> {
+  const db = getDb();
+  const rows = await db
+    .select({ km: sql<number>`COALESCE(SUM(COALESCE(${requestRoutes.totalKilometres}, ${requestRoutes.mappedDistanceKm}, 0)), 0)` })
+    .from(requestRoutes)
+    .innerJoin(transportRequests, eq(requestRoutes.requestId, transportRequests.id))
+    .where(eq(transportRequests.tenantId, tenantId));
+  return Math.round(Number(rows[0]?.km || 0));
 }
 
 async function getRoleMetrics(tenantId: string, userId: string, roleNames: string[]): Promise<Metric[]> {
@@ -106,6 +119,7 @@ async function getRoleMetrics(tenantId: string, userId: string, roleNames: strin
     return [
       { label: 'Active requests', value: await countRows(db.select({ count }).from(transportRequests).where(and(eq(transportRequests.tenantId, tenantId), ne(transportRequests.status, 'closed')))), href: '/dashboard/requests', icon: <FileText className="h-5 w-5" /> },
       { label: 'Active trips', value: await countRows(db.select({ count }).from(trips).where(and(eq(trips.tenantId, tenantId), ne(trips.status, 'closed')))), href: '/dashboard/trips', icon: <Truck className="h-5 w-5" /> },
+      { label: 'Route distance (km)', value: await totalRouteKm(tenantId), href: '/dashboard/reports', icon: <RouteIcon className="h-5 w-5" /> },
       { label: 'Open defects', value: await countRows(db.select({ count }).from(vehicleDefects).innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id)).where(and(eq(vehicles.tenantId, tenantId), isNull(vehicleDefects.resolvedAt)))), href: '/dashboard/fleet/defects', icon: <Wrench className="h-5 w-5" /> },
     ];
   }

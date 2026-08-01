@@ -284,23 +284,29 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
           {/* Left: Journey Details */}
           <DocumentSection title="Journey details">
             {journeyLegs.length > 0 ? (
-              <DocumentTable
-                columns={[
-                  { key: 'origin', label: 'From' },
-                  { key: 'destination', label: 'To' },
-                  { key: 'departure', label: 'Departure' },
-                  { key: 'ret', label: 'Return' },
-                  { key: 'km', label: 'Km' },
-                ]}
-                rows={journeyLegs.map((leg, i) => ({
-                  origin: leg.origin || 'Not specified',
-                  destination: leg.destination || 'Not specified',
-                  departure: leg.departureDate || 'Not set',
-                  ret: leg.returnDate || 'Not set',
-                  km: leg.estimatedKm ? `${leg.estimatedKm.toLocaleString('en-NA')} km` : '—',
-                }))}
-                emptyLabel="No route legs recorded"
-              />
+              <>
+                <DocumentTable
+                  columns={[
+                    { key: 'origin', label: 'From' },
+                    { key: 'destination', label: 'To' },
+                    { key: 'departure', label: 'Departure' },
+                    { key: 'ret', label: 'Return' },
+                    { key: 'km', label: 'Km' },
+                  ]}
+                  rows={journeyLegs.map((leg) => ({
+                    origin: leg.origin || 'Not specified',
+                    destination: leg.destination || 'Not specified',
+                    departure: leg.departureDate || 'Not set',
+                    ret: leg.returnDate || 'Not set',
+                    km: leg.estimatedKm ? `${leg.estimatedKm.toLocaleString('en-NA')} km` : '—',
+                  }))}
+                  emptyLabel="No route legs recorded"
+                />
+                <Text style={{ marginTop: 3, fontSize: 6.5, color: '#374151' }}>
+                  Total distance:{' '}
+                  {data.totalKm ? `${data.totalKm.toLocaleString('en-NA')} km` : 'Not estimated'}
+                </Text>
+              </>
             ) : (
               <DocumentFieldGrid
                 fields={[
