@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, boolean, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, boolean, jsonb, integer } from 'drizzle-orm/pg-core';
 
 /**
  * Tenants (regional councils, ministries, agencies)
@@ -9,7 +9,19 @@ export const tenants = pgTable('tenants', {
   code: text('code').notNull().unique(),
   slug: text('slug').notNull().unique(),
   type: text('type').notNull().default('regional_council'),
-  status: text('status').notNull().default('active'),
+
+  // ── Subscription/entitlement status (SaaS-ready) ──
+  // status: ACTIVE, SUSPENDED, TRIAL, ARCHIVED
+  status: text('status').notNull().default('ACTIVE'),
+  // planCode: INTERNAL_DEFAULT (billing is not implemented yet)
+  planCode: text('plan_code').notNull().default('INTERNAL_DEFAULT'),
+  // subscriptionStatus: NOT_CONFIGURED (no payment provider wired up)
+  subscriptionStatus: text('subscription_status').notNull().default('NOT_CONFIGURED'),
+  trialEndsAt: timestamp('trial_ends_at', { withTimezone: true }),
+  vehicleLimit: integer('vehicle_limit'),
+  userLimit: integer('user_limit'),
+  storageLimit: integer('storage_limit'), // in GB
+
   timezone: text('timezone').notNull().default('Africa/Windhoek'),
   locale: text('locale').notNull().default('en-NA'),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),

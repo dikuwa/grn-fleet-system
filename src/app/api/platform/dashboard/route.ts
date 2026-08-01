@@ -30,9 +30,9 @@ export async function GET(req: NextRequest) {
     const [tenantStats] = await db
       .select({
         total: count(),
-        active: sql<number>`COUNT(*) FILTER (WHERE ${tenants.status} = 'active')`,
-        suspended: sql<number>`COUNT(*) FILTER (WHERE ${tenants.status} = 'suspended')`,
-        inactive: sql<number>`COUNT(*) FILTER (WHERE ${tenants.status} = 'inactive')`,
+        active: sql<number>`COUNT(*) FILTER (WHERE LOWER(${tenants.status}) = 'active')`,
+        suspended: sql<number>`COUNT(*) FILTER (WHERE LOWER(${tenants.status}) = 'suspended')`,
+        inactive: sql<number>`COUNT(*) FILTER (WHERE ${tenants.status} IS NULL OR LOWER(${tenants.status}) NOT IN ('active','suspended','trial'))`,
       })
       .from(tenants);
 

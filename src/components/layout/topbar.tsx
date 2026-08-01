@@ -10,6 +10,7 @@ import {
   Settings,
   ChevronDown,
   Building2,
+  Download,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -28,6 +29,10 @@ import {
 import { GlobalSearch } from '@/components/layout/global-search';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import { SystemRoles } from '@/lib/dashboard-access';
+import {
+  usePwaInstallState,
+  IosInstallDialog,
+} from '@/components/ui/install-pwa-banner';
 
 interface TopbarProps {
   onMenuClick: () => void;
@@ -39,7 +44,9 @@ interface TopbarProps {
 export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
   const router = useRouter();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [showIosInstall, setShowIosInstall] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
+  const pwa = usePwaInstallState();
   useNotificationBroadcast();
 
   const { data: profile = null } = useQuery<UserProfileData>({
@@ -202,6 +209,23 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
                   </div>
                 )}
 
+                {pwa.state !== 'installed' && pwa.state !== 'unsupported' && (
+                  <button
+                    onClick={async () => {
+                      if (pwa.state === 'can-install') {
+                        await pwa.promptInstall();
+                      } else if (pwa.state === 'ios') {
+                        setShowIosInstall(true);
+                      }
+                      setShowAccountMenu(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors dark:text-ink-300 dark:hover:bg-white/[0.06]"
+                  >
+                    <Download className="h-4 w-4" />
+                    Install GovFleet App
+                  </button>
+                )}
+
                 <div className="border-t border-border my-1" />
 
                 <button
@@ -216,6 +240,8 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
           )}
         </div>
       </div>
+
+      <IosInstallDialog open={showIosInstall} onClose={() => setShowIosInstall(false)} />
     </header>
   );
 }

@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       );
     }
     if (status) {
-      conditions.push(eq(tenants.status, status));
+      conditions.push(eq(tenants.status, status.toUpperCase()));
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -173,7 +173,7 @@ export async function POST(request: NextRequest) {
         code: code.trim().toUpperCase(),
         slug: slug.trim().toLowerCase(),
         type: type || 'regional_council',
-        status: 'active',
+        status: 'ACTIVE',
         timezone: timezone || 'Africa/Windhoek',
         locale: locale || 'en-NA',
       })

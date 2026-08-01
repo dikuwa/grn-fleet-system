@@ -42,7 +42,8 @@ export default function ServicesPage() {
             Platform Services
           </h1>
           <p className="mt-4 text-lg text-white/80">
-            End-to-end digital fleet management capabilities for government operations.
+            End-to-end digital fleet management for any organisation — government, municipalities,
+            mines, logistics and private fleets.
           </p>
         </div>
       </section>
@@ -92,7 +93,8 @@ export default function ServicesPage() {
         <div className="mx-auto max-w-[600px] px-6 text-center">
           <h2 className="text-2xl font-[650] tracking-tight text-ink-950">Ready to Get Started?</h2>
           <p className="mt-4 text-sm text-ink-500">
-            Contact the GovFleet team to discuss how the platform can support your organisation&apos;s fleet operations.
+            Contact the GovFleet team to discuss how the platform can support your organisation&apos;s fleet operations —
+            from a regional council to a mining logistics fleet.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-4">
             <Link

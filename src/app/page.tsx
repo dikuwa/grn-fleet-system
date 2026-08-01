@@ -44,11 +44,15 @@ export default function HomePage() {
           <div className="max-w-3xl">
             <h1 className="text-4xl font-[650] tracking-tight text-white md:text-5xl">
               Digital Fleet Management for{' '}
-              <span className="text-brand-100">Namibia&apos;s Government</span>
+              <span className="text-brand-100 dark:text-brand-300">Every Organisation</span>
             </h1>
+            <p className="mt-4 text-lg font-medium text-white/90">
+              Government, Municipalities, Mines, Logistics and Private Fleets
+            </p>
             <p className="mt-6 text-lg leading-relaxed text-white/80">
               GovFleet Namibia replaces paper-based transport requests, approvals, vehicle allocation,
-              inspections, logs, fuel records and trip closure with one traceable digital workflow.
+              inspections, fuel records, trip logs, maintenance and trip closure with one secure and
+              traceable digital workflow.
             </p>
             <div className="mt-8 flex flex-wrap gap-4">
               <Link
@@ -136,11 +140,13 @@ export default function HomePage() {
         <div className="mx-auto max-w-[1200px] px-6">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-[650] tracking-tight text-ink-950">
-              Kavango East Pilot
+              Proven in Government, Built for Any Fleet
             </h2>
             <p className="mt-4 text-ink-500">
-              The Kavango East Regional Council is the pilot tenant. This platform is proposed as a
-              fleet-management solution and does not imply official national adoption.
+              The platform launched with the Kavango East Regional Council as the pilot tenant and is
+              designed for any organisation that manages vehicles or transport workflows — public
+              institutions, regional councils, municipalities, public enterprises, mines, logistics
+              providers, NGOs and private companies.
             </p>
             <Link
               href="/contact"

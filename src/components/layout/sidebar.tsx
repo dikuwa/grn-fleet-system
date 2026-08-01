@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -23,6 +23,7 @@ import {
   Bell,
   Settings,
   ChevronLeft,
+  ChevronRight,
   Globe,
   MapPin,
   Shield,
@@ -33,12 +34,9 @@ import {
   Clock,
   Mail,
   Send,
-  Layers,
   Database,
   Link2,
   GitBranch,
-  PanelLeftClose,
-  PanelLeftOpen,
   AlertTriangle,
   type LucideIcon,
 } from 'lucide-react';
@@ -115,10 +113,9 @@ const navGroups: NavGroup[] = [
     label: 'People & Offices',
     items: [
       { label: 'Staff Directory', href: '/dashboard/staff', icon: Users },
+      { label: 'Organisation Structure', href: '/dashboard/organisation', icon: Building2 },
       { label: 'Acting Roles', href: '/dashboard/delegations', icon: CalendarClock },
       { label: 'Drivers', href: '/dashboard/drivers', icon: CarFront },
-      { label: 'Offices', href: '/dashboard/offices', icon: Building2 },
-      { label: 'Departments', href: '/dashboard/departments', icon: Layers },
     ],
   },
   {
@@ -192,7 +189,7 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
         collapsed ? 'w-[72px]' : 'w-[248px]',
       )}
     >
-      {/* Fixed header: branding + collapse toggle */}
+      {/* Fixed header: branding (collapse toggle moved to edge chevron) */}
       <div
         className={cn(
           'border-border flex shrink-0 items-center border-b px-4 dark:border-[#2a2a48]',
@@ -207,25 +204,19 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
             {APP_SHORT_NAME}
           </span>
         )}
-        {!collapsed && (
-          <button
-            onClick={onToggle}
-            className="text-ink-400 hover:bg-muted hover:text-ink-700 dark:hover:text-ink-200 dark:text-ink-500 ml-auto flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors dark:hover:bg-white/[0.06]"
-            aria-label="Collapse navigation"
-          >
-            <PanelLeftClose className="h-4 w-4" />
-          </button>
-        )}
-        {collapsed && (
-          <button
-            onClick={onToggle}
-            className="text-ink-400 hover:bg-muted hover:text-ink-700 dark:hover:text-ink-200 dark:text-ink-500 flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors dark:hover:bg-white/[0.06]"
-            aria-label="Expand navigation"
-          >
-            <PanelLeftOpen className="h-4 w-4" />
-          </button>
-        )}
       </div>
+
+      {/* Edge collapse chevron — vertically centred on the sidebar's right border,
+          overlapping the divider, fixed while the nav scrolls. Desktop only;
+          mobile uses the drawer. */}
+      <button
+        onClick={onToggle}
+        aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+        title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+        className="bg-surface border-border text-ink-500 hover:bg-muted hover:text-ink-800 dark:bg-[#1b1b39] dark:text-ink-300 dark:hover:bg-white/[0.08] dark:hover:text-ink-100 absolute top-1/2 right-0 z-20 hidden h-7 w-7 -translate-y-1/2 translate-x-1/2 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 active:scale-95 md:flex"
+      >
+        {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+      </button>
 
       {/* Scrollable navigation area */}
       <nav

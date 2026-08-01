@@ -107,16 +107,22 @@ export const dashboardRoutePolicy: readonly DashboardRouteRule[] = [
     navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: true,
   },
   {
-    prefix: '/dashboard/offices',
+    prefix: '/dashboard/organisation',
     capability: 'tenant:organisation-manage',
     grants: [grant([R.TENANT_ADMIN], 'tenant_manage', 'tenant', MANAGE)],
     navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: true,
   },
   {
+    prefix: '/dashboard/offices',
+    capability: 'tenant:organisation-manage',
+    grants: [grant([R.TENANT_ADMIN], 'tenant_manage', 'tenant', MANAGE)],
+    navigationVisible: false, directUrlBehaviour: '403', notificationLinkEligible: true,
+  },
+  {
     prefix: '/dashboard/departments',
     capability: 'tenant:organisation-manage',
     grants: [grant([R.TENANT_ADMIN], 'tenant_manage', 'tenant', MANAGE)],
-    navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: true,
+    navigationVisible: false, directUrlBehaviour: '403', notificationLinkEligible: true,
   },
   {
     prefix: '/dashboard/delegations',

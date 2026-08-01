@@ -99,7 +99,7 @@ export async function GET(request: NextRequest) {
 
     // Compute summary from grouped results
     const totalTenants = tenantResult.reduce((sum, r) => sum + Number(r.count), 0);
-    const activeTenants = tenantResult.find((r) => r.status === 'active')?.count ?? 0;
+    const activeTenants = tenantResult.find((r) => r.status.toUpperCase() === 'ACTIVE')?.count ?? 0;
     const totalVehicles = vehicleResult.reduce((sum, r) => sum + Number(r.count), 0);
     const totalTrips = tripResult.reduce((sum, r) => sum + Number(r.count), 0);
     const totalActiveTrips = Number(activeTripResult[0]?.count ?? 0);

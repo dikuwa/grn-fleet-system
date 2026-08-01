@@ -3,7 +3,8 @@ export const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 export const APP_NAME = 'GovFleet Namibia';
 export const APP_SHORT_NAME = 'GovFleet';
-export const APP_DESCRIPTION = 'Namibia Government Fleet Management System';
+export const APP_DESCRIPTION =
+  'Digital fleet management for government, municipalities, mines, logistics and private fleets — transport requests, approvals, allocation, inspections, fuel, maintenance and trip closure in one secure workflow.';
 
 export const SIDEBAR_EXPANDED_WIDTH = 248;
 export const SIDEBAR_COLLAPSED_WIDTH = 72;

@@ -128,7 +128,9 @@ export async function POST(request: NextRequest) {
         code: org.code.trim().toUpperCase(),
         slug: org.slug.trim().toLowerCase(),
         type: org.type || 'regional_council',
-        status: 'active',
+        status: 'ACTIVE',
+        planCode: 'INTERNAL_DEFAULT',
+        subscriptionStatus: 'NOT_CONFIGURED',
         timezone: org.timezone || 'Africa/Windhoek',
         locale: org.locale || 'en-NA',
       })

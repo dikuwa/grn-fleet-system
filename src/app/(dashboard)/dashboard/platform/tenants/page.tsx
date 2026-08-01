@@ -203,7 +203,7 @@ export default function PlatformTenantsPage() {
           />
         </div>
         <div className="flex gap-1">
-          {['', 'active', 'suspended', 'inactive'].map((s) => (
+          {['', 'ACTIVE', 'SUSPENDED', 'TRIAL'].map((s) => (
             <button
               key={s}
               onClick={() => {
@@ -294,9 +294,9 @@ export default function PlatformTenantsPage() {
                         <span className="text-ink-950 truncate text-sm font-medium">{t.name}</span>
                         <Badge
                           variant={
-                            t.status === 'active'
+                            t.status?.toUpperCase() === 'ACTIVE'
                               ? 'success'
-                              : t.status === 'suspended'
+                              : t.status?.toUpperCase() === 'SUSPENDED'
                                 ? 'error'
                                 : 'cancelled'
                           }

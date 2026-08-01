@@ -30,7 +30,7 @@ export default function AboutPage() {
             About {APP_NAME}
           </h1>
           <p className="mt-4 text-lg text-white/80">
-            Modernising government fleet operations through digital workflow automation.
+            Modernising fleet operations — public and private — through digital workflow automation.
           </p>
         </div>
       </section>
@@ -42,9 +42,11 @@ export default function AboutPage() {
             <h2 className="text-2xl font-[650] tracking-tight text-ink-950">Our Mission</h2>
             <p className="mt-4 text-ink-500 leading-relaxed">
               GovFleet Namibia replaces paper-based transport requests, approvals, vehicle allocations,
-              inspections, fuel records, and trip closure with one traceable digital platform. We aim to
-              improve accountability, reduce administrative overhead, and provide real-time visibility into
-              government fleet operations across all regions.
+              inspections, fuel records, maintenance and trip closure with one traceable digital
+              platform. We aim to improve accountability, reduce administrative overhead, and provide
+              real-time visibility into fleet operations — for government institutions, regional
+              councils, municipalities, public enterprises, mines, logistics providers, NGOs and
+              private companies alike.
             </p>
           </div>
         </div>
@@ -79,17 +81,17 @@ export default function AboutPage() {
               <h2 className="text-lg font-[650] text-ink-950">Pilot Programme</h2>
             </div>
             <p className="mt-4 text-sm leading-relaxed text-ink-500">
-              The Kavango East Regional Council is serving as the pilot tenant for this platform. 
-              The pilot aims to validate the digital workflow across all stages of fleet operations 
-              before potential national rollout. This platform is proposed as a fleet-management 
-              solution and does not imply official national adoption at this stage.
+              The Kavango East Regional Council is serving as the pilot tenant for this platform.
+              The pilot validates the digital workflow across all stages of fleet operations, and the
+              platform is built for any organisation that manages vehicles or transport workflows —
+              government, municipalities, mines, logistics and private fleets.
             </p>
             <div className="mt-6">
               <Link
                 href="/contact"
                 className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] transition-colors"
               >
-                Enquire About the Pilot
+                Request a Demonstration
               </Link>
             </div>
           </div>
@@ -109,8 +111,8 @@ export default function AboutPage() {
               <p className="mt-1 text-sm text-white/60">Approval Steps</p>
             </div>
             <div className="text-center">
-              <p className="text-3xl font-[650] text-white">1</p>
-              <p className="mt-1 text-sm text-white/60">Pilot Region</p>
+              <p className="text-3xl font-[650] text-white">10+</p>
+              <p className="mt-1 text-sm text-white/60">Sectors Served</p>
             </div>
             <div className="text-center">
               <p className="text-3xl font-[650] text-white">24/7</p>

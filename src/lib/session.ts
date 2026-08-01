@@ -15,8 +15,9 @@
 import { headers } from 'next/headers';
 import { getDb } from '@/db';
 import { user as userTable, session, tenantMemberships, tenants } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { parseCookies } from '@/lib/utils';
+import { canTenantOperate, getTenantEntitlements } from '@/lib/entitlements';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -99,12 +100,25 @@ async function resolveUserTenant(
         and(
           eq(tenantMemberships.userId, userId),
           eq(tenantMemberships.status, 'active'),
-          eq(tenants.status, 'active'),
+          // Case-insensitive: statuses may be legacy lowercase or the
+          // normalised SaaS uppercase (ACTIVE/SUSPENDED/TRIAL/ARCHIVED).
+          // TRIAL tenants are allowed through so the entitlement gate below
+          // can decide on trial expiry; SUSPENDED/ARCHIVED are blocked.
+          sql`LOWER(${tenants.status}) IN ('active', 'trial')`,
         ),
       )
       .limit(1);
 
     if (membership.length === 0) return null;
+
+    // Entitlement gate: block suspended/archived/expired-trial tenants
+    // at the session boundary (server-side, not just in the UI).
+    const entitlements = await getTenantEntitlements(membership[0].tenantId);
+    if (entitlements) {
+      const gate = canTenantOperate(entitlements);
+      if (!gate.ok) return null;
+    }
+
     return membership[0];
   } catch {
     return null;

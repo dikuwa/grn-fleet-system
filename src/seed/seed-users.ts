@@ -96,6 +96,9 @@ async function seedUsers() {
     status: 'active',
   }).onConflictDoNothing();
 
+  // Normalise tenant status to the SaaS vocabulary (idempotent)
+  await db.update(tenants).set({ status: 'ACTIVE' }).where(eq(tenants.id, TENANT_ID));
+
   console.log('✅ Admin user created!');
   console.log(`   Email:    ${adminEmail}`);
   console.log(`   Password: ${adminPassword}`);
