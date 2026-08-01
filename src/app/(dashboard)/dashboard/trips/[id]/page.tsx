@@ -1,5 +1,5 @@
 import { getDb, isDbConnected } from '@/db';
-import { trips, tripLogEntries, fuelTransactions, vehicleInspections, tripIssues, vehicleAllocations } from '@/db/schema/trips';
+import { trips, tripIncidents, tripLogEntries, fuelTransactions, vehicleInspections, tripIssues, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
@@ -81,7 +81,7 @@ async function fetchTripDetail(id: string, tenantId: string) {
 
   if (!trip) notFound();
 
-  const [issueRecord, logEntries, fuel, inspections, routeRows] = await Promise.all([
+  const [issueRecord, logEntries, fuel, inspections, routeRows, incidents] = await Promise.all([
     db
       .select({
         id: tripIssues.id,
@@ -129,6 +129,9 @@ async function fetchTripDetail(id: string, tenantId: string) {
     trip.requestId
       ? db.select().from(requestRoutes).where(eq(requestRoutes.requestId, trip.requestId))
       : Promise.resolve([] as typeof requestRoutes.$inferSelect[]),
+    db.select().from(tripIncidents)
+      .where(and(eq(tripIncidents.tripId, id), eq(tripIncidents.tenantId, tenantId)))
+      .orderBy(desc(tripIncidents.occurredAt)),
   ]);
 
   const totalFuelLitres = fuel.reduce((sum, f) => sum + Number(f.litres), 0);
@@ -137,7 +140,7 @@ async function fetchTripDetail(id: string, tenantId: string) {
   // Planned route distance from the linked request's mapped routes
   const routeKm = Math.round(routeRows.reduce((sum, r) => sum + (r.totalKilometres ?? r.mappedDistanceKm ?? 0), 0));
 
-  return { trip, issueRecord, logEntries, fuel, inspections, totalFuelLitres, totalFuelCost, totalLogKm, routeKm };
+  return { trip, issueRecord, logEntries, fuel, inspections, incidents, totalFuelLitres, totalFuelCost, totalLogKm, routeKm };
 }
 
 export default async function TripDetailPage({ params }: PageProps) {
@@ -178,7 +181,7 @@ export default async function TripDetailPage({ params }: PageProps) {
     );
   }
 
-  const { trip, issueRecord, logEntries, fuel, inspections } = data;
+  const { trip, issueRecord, logEntries, fuel, inspections, incidents } = data;
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/trips', roleNames);
   if (access.recordScope === 'assigned') {
@@ -266,12 +269,13 @@ export default async function TripDetailPage({ params }: PageProps) {
       </Card>
 
       {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{data.routeKm > 0 ? `${data.routeKm.toLocaleString()} km` : '—'}</p><p className="text-xs text-ink-500">Planned Route</p></CardContent></Card>
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{data.totalLogKm.toLocaleString()} km</p><p className="text-xs text-ink-500">Logged Distance</p></CardContent></Card>
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{logEntries.length}</p><p className="text-xs text-ink-500">Log Entries</p></CardContent></Card>
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-info-text">{data.totalFuelLitres.toFixed(1)} L</p><p className="text-xs text-ink-500">Fuel Used</p></CardContent></Card>
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{formatCurrency(data.totalFuelCost)}</p><p className="text-xs text-ink-500">Fuel Cost</p></CardContent></Card>
+        <Card><CardContent className="pt-4 text-center"><p className={`text-2xl font-[650] tabular-nums ${incidents.length ? 'text-status-error-text' : 'text-ink-950'}`}>{incidents.length}</p><p className="text-xs text-ink-500">Trip Events</p></CardContent></Card>
       </div>
 
       {/* Trip Timeline */}
@@ -288,6 +292,37 @@ export default async function TripDetailPage({ params }: PageProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Authoritative operational event timeline */}
+      {incidents.length > 0 && (
+        <Card className="border-status-error-text/30">
+          <CardHeader><CardTitle>Incident, Accident and Defect Timeline ({incidents.length})</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            {incidents.map((incident) => (
+              <article key={incident.id} className="rounded-lg border border-border p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-ink-950">{incident.officialNumber || 'Number pending'}</p>
+                    <p className="text-xs capitalize text-ink-500">{incident.incidentType.replaceAll('_', ' ')} · {formatDateTime(incident.occurredAt)}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant={incident.severity === 'critical' || incident.severity === 'serious' ? 'error' : 'pending'} size="sm">{incident.severity}</Badge>
+                    <Badge variant={incident.status === 'resolved' ? 'success' : 'info'} size="sm">{incident.status.replaceAll('_', ' ')}</Badge>
+                    {incident.detailsRequired && <Badge variant="pending" size="sm">Additional details required</Badge>}
+                  </div>
+                </div>
+                <p className="mt-2 text-sm text-ink-700">{incident.description}</p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
+                  {incident.location && <span>{incident.location}</span>}
+                  {incident.odometerReading != null && <span>{incident.odometerReading.toLocaleString()} km</span>}
+                  <span className="capitalize">{incident.continuationState.replaceAll('_', ' ')}</span>
+                  {incident.offlineCreatedAt && <span>Created offline · synced</span>}
+                </div>
+              </article>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Inspections */}
       {inspections.length > 0 && (

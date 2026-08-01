@@ -9,6 +9,8 @@ const DOCUMENT_LABELS: Record<string, string> = {
   vehicle_history: 'Vehicle History',
   audit_report: 'Audit Report',
   defect_report: 'Defect Report',
+  trip_incident_report: 'Trip Incident / Accident / Defect Report',
+  accident_report: 'Motor Vehicle Accident Report',
   reimbursement: 'Reimbursement Record',
 };
 

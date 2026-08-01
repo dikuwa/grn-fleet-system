@@ -327,7 +327,9 @@ export const tripIncidents = pgTable(
       .notNull()
       .references(() => trips.id, { onDelete: 'cascade' }),
     clientSyncId: text('client_sync_id'),
+    officialNumber: text('official_number'),
     incidentType: text('incident_type').notNull(),
+    severity: text('severity').notNull().default('minor'),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
     location: text('location'),
     odometerReading: integer('odometer_reading'),
@@ -338,6 +340,19 @@ export const tripIncidents = pgTable(
     policeReference: text('police_reference'),
     emergencyServicesContacted: boolean('emergency_services_contacted').notNull().default(false),
     safeToContinue: boolean('safe_to_continue').notNull().default(true),
+    continuationState: text('continuation_state').notNull().default('safe_to_continue'),
+    vehicleSafe: boolean('vehicle_safe'),
+    passengerSafe: boolean('passenger_safe'),
+    numberInjured: integer('number_injured').notNull().default(0),
+    detailsRequired: boolean('details_required').notNull().default(false),
+    dailyLogEntryId: uuid('daily_log_entry_id'),
+    journeyLegReference: text('journey_leg_reference'),
+    origin: text('origin'),
+    destination: text('destination'),
+    weather: text('weather'),
+    roadCondition: text('road_condition'),
+    thirdPartyDetails: jsonb('third_party_details').$type<Record<string, unknown>>(),
+    notificationState: jsonb('notification_state').$type<Record<string, unknown>>(),
     actionTaken: text('action_taken'),
     attachmentKeys: jsonb('attachment_keys').$type<string[]>().default([]),
     administratorResponse: text('administrator_response'),
@@ -349,7 +364,25 @@ export const tripIncidents = pgTable(
   },
   (table) => [
     uniqueIndex('uq_trip_incidents_tenant_sync').on(table.tenantId, table.clientSyncId),
+    uniqueIndex('uq_trip_incidents_tenant_number').on(table.tenantId, table.officialNumber),
     index('idx_trip_incidents_trip_status').on(table.tripId, table.status),
+    index('idx_trip_incidents_tenant_severity').on(table.tenantId, table.severity),
+  ],
+);
+
+/** Tenant-scoped, atomically incremented authoritative event numbering. */
+export const tripIncidentSequences = pgTable(
+  'trip_incident_sequences',
+  {
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    sequenceYear: integer('sequence_year').notNull(),
+    currentValue: integer('current_value').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_trip_incident_sequence_tenant_year').on(table.tenantId, table.sequenceYear),
   ],
 );
 

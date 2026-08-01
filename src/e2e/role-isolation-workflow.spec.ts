@@ -70,7 +70,11 @@ async function openAs(
 }
 
 test.describe.serial('Approved multi-role workflow and isolation', () => {
-  test.setTimeout(300_000);
+  // Remote Neon authentication and the stateful regional lifecycle both make
+  // dozens of sequential requests. Keep the budget aligned with the dedicated
+  // lifecycle smoke test so a healthy but cold branch is not retried midway
+  // through a workflow, leaving its allocation behind for the retry.
+  test.setTimeout(600_000);
   test('every operational account logs in and receives role-scoped API access', async ({
     browser,
   }) => {

@@ -88,9 +88,12 @@ test.describe('Active Trips Tracking', () => {
   test('active trips page link navigates to trip detail', async ({ page }) => {
     await page.goto('/dashboard/trips/active', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    const tripCard = page.locator('a[href^="/dashboard/trips/"]:not([href="/dashboard/trips/active"]):not([href="/dashboard/trips/closure-review"])').first();
+    const tripCard = page.getByTestId('active-trip-card').first();
     if (await tripCard.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await tripCard.click();
+      await Promise.all([
+        page.waitForURL(/\/dashboard\/trips\/(?!active(?:\/|$))[^/]+$/, { timeout: 10000 }),
+        tripCard.click(),
+      ]);
       await expect(page.locator('h1').first()).toBeVisible({ timeout: 10000 });
       expect(page.url()).toContain('/dashboard/trips/');
       expect(page.url()).not.toContain('/active');

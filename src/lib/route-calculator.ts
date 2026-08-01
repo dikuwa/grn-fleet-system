@@ -19,7 +19,7 @@
  *    which must therefore remain enabled alongside the Routes API.
  */
 
-import { env, hasEnvVar } from '@/env';
+import { env } from '@/env';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +77,8 @@ export type RouteCalculationOutcome =
  * Check whether the Google Maps Routes API is configured.
  */
 export function isRouteCalculatorConfigured(): boolean {
-  return hasEnvVar('GOOGLE_MAPS_SERVER_API_KEY');
+  const key = env.GOOGLE_MAPS_SERVER_API_KEY;
+  return key !== undefined && key !== '' && key !== 'disabled';
 }
 
 /**

@@ -627,6 +627,7 @@ async function generateDocumentPdfFromSnapshot(
         transactionCount?: number;
         pendingReimbursements?: number;
       } | null | undefined;
+      const eventSummary = snapshot.eventSummary as TripCompletionData['eventSummary'];
 
       const data: TripCompletionData = {
         tripId: doc.entityId || doc.id,
@@ -657,6 +658,7 @@ async function generateDocumentPdfFromSnapshot(
               pendingReimbursements: fuelSnap.pendingReimbursements ?? 0,
             }
           : null,
+        eventSummary,
         tenantName: tenant?.name,
         branding: resolvedBranding,
         documentVersion: doc.documentVersion,

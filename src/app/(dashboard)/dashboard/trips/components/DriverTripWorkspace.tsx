@@ -88,12 +88,16 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
   const [working, setWorking] = useState(false);
   const [action, setAction] = useState<Action>(null);
   const [error, setError] = useState('');
+  const [incidentFiles, setIncidentFiles] = useState<File[]>([]);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
   const [form, setForm] = useState<Record<string, string | boolean>>({
     fuelLevel: 'half',
     entryType: 'official_stop',
-    incidentType: 'breakdown',
-    safeToContinue: true,
+    incidentType: 'mechanical_defect',
+    severity: 'minor',
+    continuationState: 'safe_to_continue',
+    vehicleSafe: true,
+    passengerSafe: true,
   });
 
   const load = useCallback(async () => {
@@ -175,7 +179,7 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
       if (!online && (action === 'progress' || action === 'incident')) {
         await saveDraft({
           draftType: action === 'progress' ? 'trip_progress' : 'trip_incident',
-          formData: { tripId, ...payload },
+          formData: { tripId, ...payload, ...(action === 'incident' ? { attachmentFiles: incidentFiles } : {}) },
           userId: profile?.id || null,
           tenantId: profile?.tenantId || null,
           syncStatus: 'pending',
@@ -183,6 +187,20 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
         toast({ title: 'Saved for sync', description: 'This update will be sent when connectivity returns.', variant: 'success' });
         setAction(null);
         return;
+      }
+
+      if (action === 'incident' && incidentFiles.length > 0) {
+        const attachmentKeys: string[] = [];
+        for (const file of incidentFiles) {
+          const uploadBody = new FormData();
+          uploadBody.append('file', file);
+          uploadBody.append('category', 'trip-incident');
+          const upload = await fetch('/api/upload', { method: 'POST', body: uploadBody });
+          const uploaded = await upload.json().catch(() => ({}));
+          if (!upload.ok || !uploaded.data?.key) throw new Error(uploaded.error || 'Incident attachment upload failed');
+          attachmentKeys.push(uploaded.data.key);
+        }
+        payload.attachmentKeys = attachmentKeys;
       }
 
       const response = await fetch(endpoint, {
@@ -194,7 +212,8 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
       if (!response.ok) throw new Error(json.error || 'The trip update could not be saved');
       toast({ title: 'Trip updated', description: 'The official timeline and audit trail were updated.', variant: 'success' });
       setAction(null);
-      setForm({ fuelLevel: 'half', entryType: 'official_stop', incidentType: 'breakdown', safeToContinue: true });
+      setIncidentFiles([]);
+      setForm({ fuelLevel: 'half', entryType: 'official_stop', incidentType: 'mechanical_defect', severity: 'minor', continuationState: 'safe_to_continue', vehicleSafe: true, passengerSafe: true });
       await load();
       router.refresh();
     } catch (submitError) {
@@ -202,7 +221,7 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
     } finally {
       setWorking(false);
     }
-  }, [action, data, form, load, online, profile, router, toast, tripId]);
+  }, [action, data, form, incidentFiles, load, online, profile, router, toast, tripId]);
 
   if (loading) return <div className="h-48 animate-pulse rounded-xl border border-border bg-muted" />;
   if (!data?.authority) return null;
@@ -248,7 +267,7 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
               <>
                 <Button variant="secondary" className="w-full sm:w-auto" onClick={() => setAction('progress')}><MapPin className="h-4 w-4" />Add Stop</Button>
                 <Button variant="secondary" className="w-full sm:w-auto" asChild><Link href={`/dashboard/fuel/new?tripId=${tripId}&vehicle=${encodeURIComponent(data.trip.licenceNumber)}`}><Camera className="h-4 w-4" />Fuel Receipt</Link></Button>
-                <Button variant="emergency" className="w-full sm:w-auto" onClick={() => setAction('incident')}><AlertTriangle className="h-4 w-4" />Report Incident</Button>
+                <Button variant="emergency" className="w-full sm:w-auto" onClick={() => setAction('incident')}><AlertTriangle className="h-4 w-4" />Report incident, damage or defect</Button>
               </>
             )}
           </div>
@@ -315,12 +334,31 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
 
           {action === 'incident' && (
             <div className="space-y-4">
-              <div><Label required>Incident type</Label><StyledSelect value={String(form.incidentType)} onChange={(event) => patch('incidentType', event.target.value)}><option value="accident">Accident</option><option value="breakdown">Breakdown</option><option value="tyre_damage">Tyre damage</option><option value="vehicle_defect">Vehicle defect</option><option value="passenger_emergency">Passenger emergency</option><option value="road_closure">Road closure</option><option value="other">Other</option></StyledSelect></div>
+              {form.severity === 'critical' && (
+                <div role="alert" className="rounded-lg border-2 border-status-error-text bg-status-error-bg p-3 text-sm font-semibold text-status-error-text">
+                  Stop the vehicle safely where possible. Do not continue driving. Contact emergency services and the Transport Office using the approved contact details.
+                </div>
+              )}
+              <div><Label required>Event type</Label><StyledSelect value={String(form.incidentType)} onChange={(event) => patch('incidentType', event.target.value)}>
+                <optgroup label="Vehicle and mechanical"><option value="mechanical_defect">Mechanical defect</option><option value="electrical_defect">Electrical defect</option><option value="tyre_failure">Tyre failure</option><option value="breakdown">Breakdown</option><option value="physical_vehicle_damage">Physical vehicle damage</option><option value="warning_light">Warning light</option><option value="fuel_leak_issue">Fuel leak or fuel issue</option><option value="fire_smoke">Fire or smoke</option></optgroup>
+                <optgroup label="Accident and people"><option value="accident_collision">Accident or collision</option><option value="near_miss">Near miss</option><option value="passenger_injury">Passenger injury</option><option value="driver_injury">Driver injury</option><option value="third_party_injury">Third-party injury</option><option value="third_party_vehicle_damage">Third-party vehicle damage</option><option value="property_damage">Property damage</option></optgroup>
+                <optgroup label="Route and safety"><option value="unsafe_road_condition">Unsafe road condition</option><option value="route_obstruction">Route obstruction</option><option value="weather_hazard">Weather hazard</option><option value="security_incident">Security incident</option><option value="theft_attempted_theft">Theft or attempted theft</option><option value="traffic_offence">Traffic offence</option><option value="police_intervention">Police intervention</option><option value="other_safety_incident">Other safety incident</option></optgroup>
+              </StyledSelect></div>
+              <div><Label required>Severity</Label><StyledSelect value={String(form.severity)} onChange={(event) => patch('severity', event.target.value)}><option value="minor">Minor</option><option value="moderate">Moderate</option><option value="serious">Serious</option><option value="critical">Critical</option></StyledSelect></div>
               <div><Label required>Description</Label><Textarea value={String(form.description || '')} onChange={(event) => patch('description', event.target.value)} /></div>
               <div><Label>Location</Label><Input value={String(form.location || '')} onChange={(event) => patch('location', event.target.value)} /></div>
-              <BooleanDeclaration label="Vehicle remains safe to continue?" value={form.safeToContinue === true} onChange={(value) => patch('safeToContinue', value)} />
+              <div><Label required>Journey continuation</Label><StyledSelect value={String(form.continuationState)} onChange={(event) => patch('continuationState', event.target.value)}><option value="safe_to_continue">Safe to continue</option><option value="continue_with_caution">Safe to continue with caution</option><option value="temporary_repair_completed">Temporary repair completed</option><option value="waiting_for_assistance">Waiting for assistance</option><option value="recovery_required">Recovery required</option><option value="replacement_vehicle_required">Replacement vehicle required</option><option value="trip_suspended">Trip suspended</option><option value="trip_terminated">Trip terminated</option></StyledSelect></div>
+              <BooleanDeclaration label="Vehicle safe?" value={form.vehicleSafe === true} onChange={(value) => patch('vehicleSafe', value)} />
+              <BooleanDeclaration label="Passengers safe?" value={form.passengerSafe === true} onChange={(value) => patch('passengerSafe', value)} />
               <BooleanDeclaration label="Any injuries?" value={form.injuries === true} onChange={(value) => patch('injuries', value)} />
+              {form.injuries === true && <div><Label required>Number injured</Label><Input inputMode="numeric" type="number" min="1" value={String(form.numberInjured || '1')} onChange={(event) => patch('numberInjured', event.target.value)} /></div>}
               <BooleanDeclaration label="Vehicle damage?" value={form.vehicleDamage === true} onChange={(value) => patch('vehicleDamage', value)} />
+              <div>
+                <Label>Photos or supporting files</Label>
+                <Input type="file" accept="image/*,.pdf" multiple onChange={(event) => setIncidentFiles(Array.from(event.target.files || []))} />
+                {incidentFiles.length > 0 && <p className="mt-1 text-xs text-ink-500">{incidentFiles.length} file{incidentFiles.length === 1 ? '' : 's'} retained {online ? 'for upload' : 'on this device until sync succeeds'}.</p>}
+              </div>
+              <label className="flex min-h-11 items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm"><input type="checkbox" className="h-5 w-5 accent-brand-700" checked={form.rapidReport === true} onChange={(event) => patch('rapidReport', event.target.checked)} />Emergency report — save now and complete additional details later</label>
             </div>
           )}
 
@@ -343,7 +381,7 @@ function actionTitle(action: Action) {
     start: 'Start Official Trip',
     return: 'Record Vehicle Return',
     progress: 'Add Trip Progress',
-    incident: 'Report Incident',
+    incident: 'Report incident, damage or defect',
   }[action ?? 'progress'];
 }
 

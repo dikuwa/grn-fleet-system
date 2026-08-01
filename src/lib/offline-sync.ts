@@ -8,9 +8,8 @@
  * the `useOfflineSync` hook in a component that stays mounted.
  */
 
-import { listDrafts, getDraft, markDraftSynced, markDraftFailed, removeSyncedDrafts } from '@/lib/offline-drafts';
+import { listDrafts, getDraft, markDraftSynced, markDraftFailed, removeSyncedDrafts, updateDraft } from '@/lib/offline-drafts';
 import type { OfflineDraft } from '@/lib/offline-drafts';
-import { DEFAULT_TENANT_ID } from '@/lib/constants';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,21 +55,9 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
 
     case 'request':
       return {
-        url: '/api/trip-logs',
+        url: '/api/transport-requests',
         method: 'POST',
-        transform: (d) => ({
-          tripId: fd(d.formData, 'tripId', ''),
-          logDate: fd(d.formData, 'logDate', new Date().toISOString().slice(0, 10)),
-          odometerOut: Number(fd(d.formData, 'odometerOut', '0')) || null,
-          odometerIn: Number(fd(d.formData, 'odometerIn', '0')) || null,
-          departureTime: fd<string | null>(d.formData, 'departureTime', null),
-          arrivalTime: fd<string | null>(d.formData, 'arrivalTime', null),
-          origin: fd<string | null>(d.formData, 'origin', null),
-          destination: fd<string | null>(d.formData, 'destination', null),
-          distanceKm: Number(fd(d.formData, 'distanceKm', '0')) || null,
-          remarks: fd<string | null>(d.formData, 'remarks', null),
-          clientSyncId: d.id,
-        }),
+        transform: (d) => ({ ...d.formData, clientSubmissionId: d.id }),
       };
 
     case 'trip_log':
@@ -123,7 +110,6 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
           fuelLevel: fd(d.formData, 'fuelLevel', 'full'),
           checklist: fd<Array<Record<string, unknown>>>(d.formData, 'checklist', []),
           notes: fd<string | null>(d.formData, 'notes', null),
-          tenantId: d.tenantId || DEFAULT_TENANT_ID,
           inspectorAcknowledged: fd(d.formData, 'inspectorAcknowledged', false),
           driverAcknowledged: fd(d.formData, 'driverAcknowledged', false),
         }),
@@ -162,6 +148,24 @@ export async function syncSingleDraft(
 
   try {
     const payload = endpoint.transform(draft);
+    if (draft.draftType === 'trip_incident') {
+      const files = fd<File[]>(draft.formData, 'attachmentFiles', []);
+      const attachmentKeys = fd<string[]>(draft.formData, 'attachmentKeys', []);
+      for (let index = attachmentKeys.length; index < files.length; index++) {
+        const uploadBody = new FormData();
+        uploadBody.append('file', files[index]);
+        uploadBody.append('category', 'trip-incident');
+        const upload = await fetch('/api/upload', { method: 'POST', body: uploadBody });
+        const uploaded = await upload.json().catch(() => ({}));
+        if (!upload.ok || !uploaded.data?.key) throw new Error(uploaded.error || 'Incident attachment upload failed during sync');
+        attachmentKeys.push(uploaded.data.key);
+        await updateDraft(draft.id, {
+          formData: { ...draft.formData, attachmentFiles: files, attachmentKeys: [...attachmentKeys] },
+        });
+      }
+      payload.attachmentKeys = attachmentKeys;
+      delete payload.attachmentFiles;
+    }
     if (draft.draftType === 'inspection_departure' || draft.draftType === 'inspection_return') {
       const files = fd<File[]>(draft.formData, 'photos', []);
       const photoKeys: string[] = [];

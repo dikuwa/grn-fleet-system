@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Allura, Onest } from 'next/font/google';
+import { Allura, IBM_Plex_Mono, Onest } from 'next/font/google';
 import { APP_NAME, APP_DESCRIPTION } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import './globals.css';
@@ -14,6 +14,12 @@ const allura = Allura({
   weight: '400',
   display: 'swap',
   variable: '--font-allura',
+});
+const ibmPlexMono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  variable: '--font-ibm-plex-mono',
 });
 
 export const metadata: Metadata = {
@@ -80,7 +86,7 @@ export default function RootLayout({
   `;
 
   return (
-    <html lang="en" className={cn(onest.variable, allura.variable)} suppressHydrationWarning>
+    <html lang="en" className={cn(onest.variable, allura.variable, ibmPlexMono.variable)} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <link rel="manifest" href="/manifest.json" />

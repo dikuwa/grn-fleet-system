@@ -17,6 +17,8 @@ import {
   reimbursements,
   vehicleInspections,
   tripClosures,
+  tripIncidents,
+  tripAuthorities,
 } from '@/db/schema/trips';
 import { validateDocumentSnapshot, hasSchema } from '@/lib/document-validation';
 import {
@@ -45,6 +47,8 @@ export type DocumentType =
   | 'fuel_summary'
   | 'inspection_report'
   | 'trip_completion'
+  | 'trip_incident_report'
+  | 'accident_report'
   | 'maintenance_report'
   | 'vehicle_history'
   | 'audit_report';
@@ -494,6 +498,9 @@ async function buildTripCompletionSnapshot(tripId: string) {
     .limit(1);
 
   const fuelSummary = await buildFuelSummarySnapshot(tripId);
+  const incidents = await db.select().from(tripIncidents)
+    .where(and(eq(tripIncidents.tripId, tripId), eq(tripIncidents.tenantId, trip.tenantId)))
+    .orderBy(tripIncidents.occurredAt);
 
   const [vehicle] = await db
     .select({
@@ -540,6 +547,82 @@ async function buildTripCompletionSnapshot(tripId: string) {
         }
       : null,
     fuelSummary,
+    eventSummary: {
+      total: incidents.length,
+      incidents: incidents.filter((event) => !['mechanical_defect', 'electrical_defect', 'vehicle_defect', 'tyre_failure', 'tyre_damage'].includes(event.incidentType)).length,
+      defects: incidents.filter((event) => ['mechanical_defect', 'electrical_defect', 'vehicle_defect', 'tyre_failure', 'tyre_damage'].includes(event.incidentType)).length,
+      accidents: incidents.filter((event) => ['accident', 'accident_collision'].includes(event.incidentType)).length,
+      injuries: incidents.reduce((sum, event) => sum + event.numberInjured, 0),
+      critical: incidents.filter((event) => event.severity === 'critical').length,
+      events: incidents.map((event) => ({
+        number: event.officialNumber,
+        type: event.incidentType,
+        severity: event.severity,
+        occurredAt: event.occurredAt.toISOString(),
+        continuationState: event.continuationState,
+        status: event.status,
+        policeReference: event.policeReference,
+        description: event.description,
+      })),
+    },
+  };
+}
+
+async function buildTripIncidentSnapshot(incidentId: string) {
+  const db = getDb();
+  const [record] = await db.select({
+    incident: tripIncidents,
+    requestReference: transportRequests.reference,
+    authorityNumber: tripAuthorities.authorityNumber,
+    vehicleRegistration: vehicles.licenceNumber,
+    vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+    vehicleMake: vehicles.make,
+    vehicleModel: vehicles.model,
+  }).from(tripIncidents)
+    .innerJoin(trips, eq(trips.id, tripIncidents.tripId))
+    .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
+    .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
+    .leftJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+    .where(and(eq(tripIncidents.id, incidentId), eq(tripIncidents.tenantId, trips.tenantId)))
+    .limit(1);
+  if (!record) return null;
+  const event = record.incident;
+  return {
+    reference: event.officialNumber,
+    eventType: event.incidentType,
+    severity: event.severity,
+    status: event.status,
+    occurredAt: event.occurredAt.toISOString(),
+    location: event.location,
+    origin: event.origin,
+    destination: event.destination,
+    odometerReading: event.odometerReading,
+    description: event.description,
+    immediateAction: event.actionTaken,
+    continuationState: event.continuationState,
+    vehicleSafe: event.vehicleSafe,
+    passengerSafe: event.passengerSafe,
+    injuries: event.injuries,
+    numberInjured: event.numberInjured,
+    vehicleDamage: event.vehicleDamage,
+    thirdPartyInvolvement: event.thirdPartyInvolvement,
+    thirdPartyDetails: event.thirdPartyDetails,
+    policeReference: event.policeReference,
+    emergencyServicesContacted: event.emergencyServicesContacted,
+    detailsRequired: event.detailsRequired,
+    tripReferences: {
+      transportRequest: record.requestReference,
+      tripAuthority: record.authorityNumber,
+    },
+    vehicle: {
+      registration: record.vehicleRegistration,
+      registerNumber: record.vehicleRegisterNumber,
+      make: record.vehicleMake,
+      model: record.vehicleModel,
+    },
+    attachments: event.attachmentKeys || [],
+    offlineCreatedAt: event.offlineCreatedAt?.toISOString(),
+    serverRecordedAt: event.createdAt.toISOString(),
   };
 }
 
@@ -555,6 +638,7 @@ const BUILDERS: Record<string, (id: string) => Promise<Record<string, unknown> |
   maintenance: buildMaintenanceReportSnapshot,
   vehicle: buildVehicleHistorySnapshot,
   tenant: buildAuditReportSnapshot,
+  trip_incident: buildTripIncidentSnapshot,
 };
 const DOCUMENT_BUILDERS: Partial<
   Record<DocumentType, (id: string) => Promise<Record<string, unknown> | null>>

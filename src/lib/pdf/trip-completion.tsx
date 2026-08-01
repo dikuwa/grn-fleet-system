@@ -48,6 +48,24 @@ export interface TripCompletionData {
     transactionCount: number;
     pendingReimbursements: number;
   } | null;
+  eventSummary?: {
+    total: number;
+    incidents: number;
+    defects: number;
+    accidents: number;
+    injuries: number;
+    critical: number;
+    events: Array<{
+      number?: string | null;
+      type: string;
+      severity: string;
+      occurredAt: string;
+      continuationState: string;
+      status: string;
+      policeReference?: string | null;
+      description: string;
+    }>;
+  };
 
   tenantName?: string;
   tenantDocumentFooter?: string;
@@ -203,6 +221,29 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
             </DocumentSection>
           )}
         </DocumentRow>
+
+        <DocumentSection title="Trip incidents, accidents and defects" wrap={false}>
+          <DocumentFieldGrid
+            fields={[
+              { label: 'All events', value: String(data.eventSummary?.total ?? 0) },
+              { label: 'Incidents', value: String(data.eventSummary?.incidents ?? 0) },
+              { label: 'Defects', value: String(data.eventSummary?.defects ?? 0) },
+              { label: 'Accidents', value: String(data.eventSummary?.accidents ?? 0) },
+              { label: 'Injuries', value: String(data.eventSummary?.injuries ?? 0) },
+              { label: 'Critical events', value: String(data.eventSummary?.critical ?? 0) },
+            ]}
+          />
+          {(data.eventSummary?.events || []).map((event) => (
+            <DocumentFieldGrid key={event.number || `${event.type}-${event.occurredAt}`} fields={[
+              { label: 'Event number', value: event.number || 'Pending' },
+              { label: 'Type / severity', value: `${humanizeKey(event.type)} · ${humanizeKey(event.severity)}` },
+              { label: 'Date', value: formatHumanDate(event.occurredAt, branding?.locale) },
+              { label: 'Journey state', value: humanizeKey(event.continuationState) },
+              { label: 'Police reference', value: event.policeReference || 'Not applicable' },
+              { label: 'Outcome', value: `${humanizeKey(event.status)} — ${event.description}` },
+            ]} />
+          ))}
+        </DocumentSection>
 
         {/* Verification block */}
         <DocumentVerificationBlock

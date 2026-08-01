@@ -100,10 +100,10 @@ export function DocumentContent({
   );
 
   return (
-    <div className="space-y-5" data-testid="human-readable-document">
+    <div className="space-y-5 font-document" data-testid="human-readable-document">
       {scalarEntries.length > 0 && (
         <section>
-          <h3 className="border-b border-slate-300 pb-1 text-xs font-bold tracking-wide text-[#1F2A44] uppercase">
+          <h3 className="border-b border-[#B42318] pb-1 text-xs font-bold tracking-wide text-[#B42318] uppercase">
             {documentTypeLabel(documentType)} Details
           </h3>
           <div className="grid gap-x-6 sm:grid-cols-2">
@@ -121,7 +121,7 @@ export function DocumentContent({
       )}
       {structuredEntries.map(([key, value]) => (
         <section key={key}>
-          <h3 className="mb-1.5 border-b border-slate-300 pb-1 text-xs font-bold tracking-wide text-[#1F2A44] uppercase">
+          <h3 className="mb-1.5 border-b border-[#B42318] pb-1 text-xs font-bold tracking-wide text-[#B42318] uppercase">
             {humanizeKey(key)}
           </h3>
           <HumanValue name={key} value={value} />

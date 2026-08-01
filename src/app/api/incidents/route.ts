@@ -7,14 +7,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { tripIncidents } from '@/db/schema/trips';
+import { tripIncidentSequences, tripIncidents, trips } from '@/db/schema/trips';
 
 import { auditEvents } from '@/db/schema/audit';
 import { notifications } from '@/db/schema/notifications';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { requirePermission } from '@/lib/auth-helpers';
-import { eq, and, desc } from 'drizzle-orm';
+import { generateDocument } from '@/lib/document-generator';
+import { eq, and, desc, sql } from 'drizzle-orm';
 
 /**
  * GET /api/incidents?tripId=xxx
@@ -78,6 +79,8 @@ export async function POST(req: NextRequest) {
       safeToContinue = true,
       actionTaken,
       attachmentKeys,
+      severity = 'minor',
+      continuationState = safeToContinue ? 'safe_to_continue' : 'waiting_for_assistance',
     } = body;
 
     if (!tripId) {
@@ -89,14 +92,31 @@ export async function POST(req: NextRequest) {
     if (!incidentType) {
       return NextResponse.json({ error: 'Incident type is required' }, { status: 400 });
     }
+    const [trip] = await db.select({ id: trips.id }).from(trips)
+      .where(and(eq(trips.id, tripId), eq(trips.tenantId, session.tenantId))).limit(1);
+    if (!trip) return NextResponse.json({ error: 'Trip not found in your organisation' }, { status: 404 });
+    if (!['minor', 'moderate', 'serious', 'critical'].includes(severity)) {
+      return NextResponse.json({ error: 'Severity must be minor, moderate, serious or critical' }, { status: 422 });
+    }
+    const eventDate = occurredAt ? new Date(occurredAt) : new Date();
+    if (Number.isNaN(eventDate.getTime())) return NextResponse.json({ error: 'A valid event date is required' }, { status: 422 });
+    const year = eventDate.getUTCFullYear();
+    const [sequence] = await db.insert(tripIncidentSequences).values({ tenantId: session.tenantId, sequenceYear: year, currentValue: 1 })
+      .onConflictDoUpdate({
+        target: [tripIncidentSequences.tenantId, tripIncidentSequences.sequenceYear],
+        set: { currentValue: sql`${tripIncidentSequences.currentValue} + 1`, updatedAt: new Date() },
+      }).returning({ currentValue: tripIncidentSequences.currentValue });
+    const officialNumber = `${['accident', 'accident_collision'].includes(incidentType) && ['serious', 'critical'].includes(severity) ? 'ACC' : 'TID'}-${year}-${String(sequence.currentValue).padStart(5, '0')}`;
 
     const [incident] = await db
       .insert(tripIncidents)
       .values({
         tenantId: session.tenantId,
         tripId,
+        officialNumber,
         incidentType,
-        occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
+        severity,
+        occurredAt: eventDate,
         location: location || null,
         odometerReading: odometerReading ? Number(odometerReading) : null,
         description,
@@ -106,6 +126,10 @@ export async function POST(req: NextRequest) {
         policeReference: policeReference || null,
         emergencyServicesContacted,
         safeToContinue,
+        continuationState,
+        vehicleSafe: safeToContinue,
+        passengerSafe: !injuries,
+        numberInjured: injuries ? 1 : 0,
         actionTaken: actionTaken || null,
         attachmentKeys: attachmentKeys || [],
         status: 'reported',
@@ -122,7 +146,7 @@ export async function POST(req: NextRequest) {
       action: 'create',
       entityType: 'trip_incident',
       entityId: incident.id,
-      summary: `Incident: ${incidentType} — ${description.slice(0, 120)}${description.length > 120 ? '...' : ''}`,
+      summary: `${officialNumber}: ${incidentType} (${severity}) — ${description.slice(0, 120)}${description.length > 120 ? '...' : ''}`,
       sourceChannel: 'web',
     });
 
@@ -131,13 +155,23 @@ export async function POST(req: NextRequest) {
       tenantId: session.tenantId,
       recipientUserId: session.user.id,
       type: 'incident_created',
-      title: `Incident Reported — ${incidentType.replace(/_/g, ' ')}`,
+      title: `${officialNumber} — ${incidentType.replace(/_/g, ' ')}`,
       body: `${description.slice(0, 200)}. Trip: ${tripId.slice(0, 8)}.`,
       entityType: 'trip_incident',
       entityId: incident.id,
       actionUrl: `/dashboard/trips/${tripId}`,
       priority: 'high',
     });
+
+    await generateDocument({
+      documentType: ['accident', 'accident_collision'].includes(incidentType) && ['serious', 'critical'].includes(severity)
+        ? 'accident_report'
+        : 'trip_incident_report',
+      entityType: 'trip_incident',
+      entityId: incident.id,
+      tenantId: session.tenantId,
+      generatedByUserId: session.user.id,
+    }).catch((documentError) => console.error('[incidents] Incident document generation failed:', documentError));
 
     return NextResponse.json({ data: incident }, { status: 201 });
   } catch (error) {

@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   tripAuthorities,
   tripExpenses,
+  tripIncidentSequences,
   tripIncidents,
   tripProgressEntries,
   trips,
   vehicleAllocations,
 } from '@/db/schema/trips';
+import { maintenanceEvents, vehicleDefects, vehicleStatusEvents, vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import {
   auditEvents,
@@ -20,6 +22,7 @@ import {
 import { hasPermission, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { setAuthorityStatus } from '@/lib/trip-authority';
+import { generateDocument } from '@/lib/document-generator';
 
 const progressTypes = [
   'official_stop',
@@ -35,7 +38,29 @@ const progressTypes = [
   'route_deviation',
 ] as const;
 const expenseCategories = ['petrol', 'diesel', 'oil', 'toll', 'parking', 'accommodation', 'repairs', 'emergency_parts', 'other'];
-const incidentTypes = ['accident', 'breakdown', 'tyre_damage', 'theft', 'fuel_card_issue', 'passenger_emergency', 'road_closure', 'traffic_offence', 'vehicle_defect', 'other'];
+const incidentTypes = [
+  'mechanical_defect', 'electrical_defect', 'tyre_failure', 'breakdown',
+  'physical_vehicle_damage', 'accident_collision', 'near_miss', 'warning_light',
+  'fuel_leak_issue', 'fire_smoke', 'theft_attempted_theft', 'passenger_injury',
+  'driver_injury', 'third_party_injury', 'third_party_vehicle_damage', 'property_damage',
+  'traffic_offence', 'police_intervention', 'unsafe_road_condition', 'route_obstruction',
+  'weather_hazard', 'security_incident', 'other_safety_incident',
+  // Historical client values remain accepted during the migration window.
+  'accident', 'tyre_damage', 'theft', 'fuel_card_issue', 'passenger_emergency',
+  'road_closure', 'vehicle_defect', 'other',
+] as const;
+const severities = ['minor', 'moderate', 'serious', 'critical'] as const;
+const continuationStates = [
+  'safe_to_continue', 'continue_with_caution', 'temporary_repair_completed',
+  'waiting_for_assistance', 'recovery_required', 'replacement_vehicle_required',
+  'trip_suspended', 'trip_terminated',
+] as const;
+const defectTypes = new Set([
+  'mechanical_defect', 'electrical_defect', 'tyre_failure', 'breakdown',
+  'warning_light', 'fuel_leak_issue', 'fire_smoke', 'vehicle_defect', 'tyre_damage',
+  'physical_vehicle_damage', 'accident_collision', 'third_party_vehicle_damage', 'property_damage',
+]);
+const forcedCriticalTypes = new Set(['fuel_leak_issue', 'fire_smoke']);
 
 async function notifyTransportAdministrators(
   tenantId: string,
@@ -85,6 +110,7 @@ export async function POST(
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
+        vehicleId: trips.vehicleId,
         beginningOdometer: tripAuthorities.beginningOdometer,
         endingOdometer: tripAuthorities.endingOdometer,
       })
@@ -229,25 +255,79 @@ export async function POST(
     if (action === 'incident') {
       const incidentType = String(body.incidentType || '');
       const description = String(body.description || '').trim();
-      if (!incidentTypes.includes(incidentType) || description.length < 10) {
+      if (!incidentTypes.includes(incidentType as (typeof incidentTypes)[number]) || description.length < 10) {
         return NextResponse.json({ error: 'Select an incident type and provide a useful description' }, { status: 422 });
       }
-      const safeToContinue = body.safeToContinue === true;
+      let severity = severities.includes(String(body.severity) as (typeof severities)[number])
+        ? String(body.severity)
+        : 'minor';
+      if (forcedCriticalTypes.has(incidentType) || /\b(brake|brakes|steering|fuel leak|fire|structural damage)\b/i.test(description)) severity = 'critical';
+      if (body.injuries === true && severity === 'minor') severity = 'moderate';
+      const continuationState = continuationStates.includes(String(body.continuationState) as (typeof continuationStates)[number])
+        ? String(body.continuationState)
+        : body.safeToContinue === true ? 'safe_to_continue' : 'waiting_for_assistance';
+      const requestedContinuation = ['safe_to_continue', 'continue_with_caution', 'temporary_repair_completed'].includes(continuationState);
+      if (severity === 'critical' && requestedContinuation) {
+        return NextResponse.json({ error: 'Critical safety events require Transport Office or technical clearance before the journey can continue' }, { status: 422 });
+      }
+      if (body.vehicleSafe === false && requestedContinuation) {
+        return NextResponse.json({ error: 'A vehicle declared unsafe cannot be marked as continuing the journey' }, { status: 422 });
+      }
+      const safeToContinue = requestedContinuation;
+      const numberInjured = body.injuries === true ? Math.max(1, Number(body.numberInjured) || 1) : 0;
+      const rapidReport = body.rapidReport === true;
+      const year = occurredAt.getUTCFullYear();
+      const [sequence] = await db.insert(tripIncidentSequences).values({
+        tenantId: session.tenantId,
+        sequenceYear: year,
+        currentValue: 1,
+      }).onConflictDoUpdate({
+        target: [tripIncidentSequences.tenantId, tripIncidentSequences.sequenceYear],
+        set: {
+          currentValue: sql`${tripIncidentSequences.currentValue} + 1`,
+          updatedAt: new Date(),
+        },
+      }).returning({ currentValue: tripIncidentSequences.currentValue });
+      const numberPrefix = ['accident', 'accident_collision'].includes(incidentType) && ['serious', 'critical'].includes(severity)
+        ? 'ACC'
+        : 'TID';
+      const officialNumber = `${numberPrefix}-${year}-${String(sequence.currentValue).padStart(5, '0')}`;
       const [incident] = await db.insert(tripIncidents).values({
         tenantId: session.tenantId,
         tripId: id,
         clientSyncId,
+        officialNumber,
         incidentType,
+        severity,
         occurredAt,
         location: body.location ? String(body.location) : null,
         odometerReading: body.odometerReading ? Number(body.odometerReading) : null,
         description,
         injuries: body.injuries === true,
+        numberInjured,
         vehicleDamage: body.vehicleDamage === true,
         thirdPartyInvolvement: body.thirdPartyInvolvement === true,
         policeReference: body.policeReference ? String(body.policeReference) : null,
         emergencyServicesContacted: body.emergencyServicesContacted === true,
         safeToContinue,
+        continuationState,
+        vehicleSafe: body.vehicleSafe === true,
+        passengerSafe: body.passengerSafe !== false,
+        detailsRequired: rapidReport,
+        dailyLogEntryId: body.dailyLogEntryId ? String(body.dailyLogEntryId) : null,
+        journeyLegReference: body.journeyLegReference ? String(body.journeyLegReference) : null,
+        origin: body.origin ? String(body.origin) : null,
+        destination: body.destination ? String(body.destination) : null,
+        weather: body.weather ? String(body.weather) : null,
+        roadCondition: body.roadCondition ? String(body.roadCondition) : null,
+        thirdPartyDetails: body.thirdPartyInvolvement === true && typeof body.thirdPartyDetails === 'object'
+          ? body.thirdPartyDetails as Record<string, unknown>
+          : null,
+        notificationState: {
+          transportOffice: true,
+          supervisor: severity !== 'minor',
+          maintenance: defectTypes.has(incidentType),
+        },
         actionTaken: body.actionTaken ? String(body.actionTaken) : null,
         attachmentKeys: Array.isArray(body.attachmentKeys) ? body.attachmentKeys.map(String) : [],
         reportedByUserId: session.user.id,
@@ -259,6 +339,41 @@ export async function POST(
           .limit(1);
         return NextResponse.json({ success: true, data: existing, idempotentReplay: true });
       }
+      if (defectTypes.has(incidentType)) {
+        const isBlocking = severity === 'critical';
+        const [defect] = await db.insert(vehicleDefects).values({
+          vehicleId: context.vehicleId,
+          tripId: id,
+          severity: severity === 'moderate' ? 'major' : severity,
+          description: `${officialNumber}: ${description}`,
+          isBlocking,
+          reportedByUserId: session.user.id,
+        }).returning({ id: vehicleDefects.id });
+        if (isBlocking) {
+          const [vehicle] = await db.select({ status: vehicles.status }).from(vehicles)
+            .where(and(eq(vehicles.id, context.vehicleId), eq(vehicles.tenantId, session.tenantId))).limit(1);
+          await db.update(vehicles).set({ status: 'maintenance', updatedAt: new Date(), updatedBy: session.user.id })
+            .where(and(eq(vehicles.id, context.vehicleId), eq(vehicles.tenantId, session.tenantId)));
+          await db.insert(vehicleStatusEvents).values({
+            vehicleId: context.vehicleId,
+            previousStatus: vehicle?.status,
+            newStatus: 'maintenance',
+            reason: `Critical trip event ${officialNumber}`,
+            changedByUserId: session.user.id,
+            referenceEntityType: 'trip_incident',
+            referenceEntityId: incident.id,
+          });
+          await db.insert(maintenanceEvents).values({
+            vehicleId: context.vehicleId,
+            serviceDate: occurredAt.toISOString().slice(0, 10),
+            serviceOdometer: body.odometerReading ? Number(body.odometerReading) : null,
+            serviceType: 'repair',
+            description: `Safety-critical follow-up for ${officialNumber}`,
+            notes: `Created automatically from defect ${defect.id}. Vehicle requires authorised technical clearance.`,
+            createdByUserId: session.user.id,
+          });
+        }
+      }
       if (['in_progress', 'delayed', 'route_deviation_pending_review'].includes(context.authorityStatus)) {
         await setAuthorityStatus({
           authorityId: context.authorityId,
@@ -268,12 +383,12 @@ export async function POST(
       }
       await notifyTransportAdministrators(session.tenantId, {
         type: 'trip_incident',
-        title: `${safeToContinue ? 'Incident' : 'Urgent incident'} reported`,
-        body: description,
+        title: `${severity === 'critical' ? 'Critical' : severity} event ${officialNumber}`,
+        body: `${description}${rapidReport ? ' — additional details required' : ''}`,
         entityType: 'trip',
         entityId: id,
         actionUrl: `/dashboard/trips/${id}`,
-        priority: safeToContinue ? 'high' : 'emergency',
+        priority: severity === 'critical' ? 'emergency' : severity === 'serious' ? 'urgent' : 'high',
       });
       await db.insert(auditEvents).values({
         tenantId: session.tenantId,
@@ -284,10 +399,19 @@ export async function POST(
         action: 'report',
         entityType: 'trip_incident',
         entityId: incident.id,
-        summary: `${incidentType.replaceAll('_', ' ')} incident reported`,
-        after: { tripId: id, safeToContinue, injuries: body.injuries, vehicleDamage: body.vehicleDamage },
+        summary: `${officialNumber}: ${incidentType.replaceAll('_', ' ')} (${severity}) reported`,
+        after: { tripId: id, officialNumber, severity, continuationState, safeToContinue, injuries: body.injuries, vehicleDamage: body.vehicleDamage, detailsRequired: rapidReport },
         sourceChannel: clientSyncId ? 'offline_sync' : 'web',
       });
+      await generateDocument({
+        documentType: ['accident', 'accident_collision'].includes(incidentType) && ['serious', 'critical'].includes(severity)
+          ? 'accident_report'
+          : 'trip_incident_report',
+        entityType: 'trip_incident',
+        entityId: incident.id,
+        tenantId: session.tenantId,
+        generatedByUserId: session.user.id,
+      }).catch((documentError) => console.error('[trips/operations] Incident document generation failed:', documentError));
       return NextResponse.json({ success: true, data: incident }, { status: 201 });
     }
 

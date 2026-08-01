@@ -4,47 +4,57 @@ import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 
 
 Font.register({
-  family: 'Onest',
+  family: 'IBM Plex Mono',
   fonts: [
     {
-      src: 'https://fonts.gstatic.com/s/onest/v9/gNMZW3F-SZuj7zOT0IfSjTS16cPh9R-Zsg.ttf',
+      src: 'https://raw.githubusercontent.com/IBM/plex/master/packages/plex-mono/fonts/complete/ttf/IBMPlexMono-Regular.ttf',
       fontWeight: 400,
     },
     {
-      src: 'https://fonts.gstatic.com/s/onest/v9/gNMZW3F-SZuj7zOT0IfSjTS16cPhEhiZsg.ttf',
+      src: 'https://raw.githubusercontent.com/IBM/plex/master/packages/plex-mono/fonts/complete/ttf/IBMPlexMono-SemiBold.ttf',
       fontWeight: 700,
     },
   ],
 });
+
+Font.register({
+  family: 'Allura',
+  src: 'https://fonts.gstatic.com/s/allura/v23/9oRPNYsQpS4zjuAPjA.ttf',
+});
+
+const OFFICIAL_RED = '#B42318';
+const OFFICIAL_RED_LIGHT = '#D92D20';
 
 export const documentStyles = StyleSheet.create({
   page: {
     paddingTop: 24,
     paddingHorizontal: 30,
     paddingBottom: 54,
-    fontFamily: 'Onest',
+    fontFamily: 'IBM Plex Mono',
     fontSize: 8,
     lineHeight: 1.3,
-    color: '#111827',
+    color: '#171717',
+    borderWidth: 1.2,
+    borderColor: OFFICIAL_RED,
   },
   // ── Three-zone header ──
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     borderBottomWidth: 1.2,
-    borderBottomColor: '#1F2A44',
+    borderBottomColor: OFFICIAL_RED,
     paddingBottom: 6,
     marginBottom: 7,
   },
-  headerLogoZone: { width: '24%', justifyContent: 'center' },
+  headerLogoZone: { width: '22%', justifyContent: 'center' },
   logo: { width: 'auto', height: 38, objectFit: 'contain', maxWidth: 52 },
-  headerOrgZone: { width: '44%', justifyContent: 'center' },
-  organisation: { fontSize: 9, fontWeight: 700, color: '#1F2A44' },
+  headerOrgZone: { width: '56%', justifyContent: 'center', alignItems: 'center' },
+  organisation: { fontSize: 9, fontWeight: 700, color: '#171717', textAlign: 'center' },
   orgDetail: { color: '#4B5563', fontSize: 6.5, marginTop: 1 },
-  headerTitleZone: { width: '32%', alignItems: 'flex-end', justifyContent: 'center' },
-  title: { fontSize: 13, fontWeight: 700, color: '#1F2A44', textAlign: 'right' },
-  reference: { fontSize: 8, fontWeight: 700, marginTop: 1.5, textAlign: 'right' },
-  meta: { color: '#4B5563', fontSize: 6.5, marginTop: 1, textAlign: 'right' },
+  headerTitleZone: { width: '22%', alignItems: 'flex-end', justifyContent: 'center' },
+  title: { fontSize: 11, fontWeight: 700, color: OFFICIAL_RED, textAlign: 'center' },
+  reference: { fontSize: 8, fontWeight: 700, marginTop: 1.5, textAlign: 'center' },
+  meta: { color: '#4B5563', fontSize: 6.5, marginTop: 1, textAlign: 'center' },
   muted: { color: '#4B5563', fontSize: 6.5 },
   statusBadge: {
     alignSelf: 'flex-end',
@@ -60,12 +70,15 @@ export const documentStyles = StyleSheet.create({
   // ── Sections ──
   section: { marginBottom: 6 },
   sectionTitle: {
-    color: '#1F2A44',
+    color: OFFICIAL_RED,
     fontSize: 8,
     fontWeight: 700,
     textTransform: 'uppercase',
     borderBottomWidth: 0.7,
-    borderBottomColor: '#D9DEE7',
+    borderWidth: 0.9,
+    borderColor: OFFICIAL_RED_LIGHT,
+    paddingHorizontal: 3,
+    paddingTop: 2,
     paddingBottom: 2,
     marginBottom: 2.5,
   },
@@ -83,7 +96,7 @@ export const documentStyles = StyleSheet.create({
     width: '50%',
     flexDirection: 'row',
     borderBottomWidth: 0.4,
-    borderBottomColor: '#E8EBF0',
+    borderBottomColor: '#E6A7A2',
     paddingVertical: 2,
     paddingRight: 5,
   },
@@ -92,15 +105,15 @@ export const documentStyles = StyleSheet.create({
   // ── Tables ──
   tableHeader: {
     flexDirection: 'row',
-    backgroundColor: '#F1F3F6',
+    backgroundColor: '#FFF5F4',
     borderBottomWidth: 0.7,
-    borderBottomColor: '#D9DEE7',
+    borderBottomColor: OFFICIAL_RED,
     paddingVertical: 2.5,
   },
   tableRow: {
     flexDirection: 'row',
     borderBottomWidth: 0.4,
-    borderBottomColor: '#E8EBF0',
+    borderBottomColor: '#E6A7A2',
     paddingVertical: 2.5,
   },
   tableCell: { flex: 1, paddingHorizontal: 2.5, fontSize: 6.5 },
@@ -110,7 +123,7 @@ export const documentStyles = StyleSheet.create({
   verificationBlock: {
     marginTop: 6,
     borderWidth: 0.7,
-    borderColor: '#D9DEE7',
+    borderColor: OFFICIAL_RED,
     padding: 6,
     flexDirection: 'row',
     gap: 8,
@@ -118,7 +131,7 @@ export const documentStyles = StyleSheet.create({
   verifyQrCol: { width: 52, justifyContent: 'center' },
   qrSmall: { width: 48, height: 48 },
   verifyDetailsCol: { flex: 1, justifyContent: 'center' },
-  verifyTitle: { fontSize: 7, fontWeight: 700, color: '#1F2A44', marginBottom: 2 },
+  verifyTitle: { fontSize: 7, fontWeight: 700, color: OFFICIAL_RED, marginBottom: 2 },
   verifyLabel: { fontSize: 5.8, color: '#4B5563' },
   verifyValue: { fontSize: 6.5, color: '#111827', marginBottom: 2 },
   // ── Watermark ──
@@ -128,8 +141,8 @@ export const documentStyles = StyleSheet.create({
     left: '15%',
     transform: 'rotate(-30deg)',
     fontSize: 52,
-    color: '#E5E7EB',
-    opacity: 0.5,
+    color: '#F2C7C3',
+    opacity: 0.32,
     fontWeight: 700,
     letterSpacing: 8,
   },
@@ -140,7 +153,7 @@ export const documentStyles = StyleSheet.create({
     left: 30,
     right: 30,
     borderTopWidth: 0.6,
-    borderTopColor: '#D9DEE7',
+    borderTopColor: OFFICIAL_RED,
     paddingTop: 3,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -153,11 +166,11 @@ export const documentStyles = StyleSheet.create({
     flex: 1,
     minHeight: 38,
     borderTopWidth: 0.6,
-    borderTopColor: '#D9DEE7',
+    borderTopColor: OFFICIAL_RED,
     paddingTop: 2.5,
   },
   signatureImage: { height: 20, maxWidth: 90, objectFit: 'contain', objectPosition: 'left' },
-  signatureName: { fontSize: 7, fontWeight: 700 },
+  signatureName: { fontSize: 13, fontFamily: 'Allura' },
   // ── Misc ──
   spacer: { height: 4 },
 })
@@ -197,6 +210,11 @@ export function DocumentHeader({
       </View>
       {/* Centre: Organisation details */}
       <View style={documentStyles.headerOrgZone}>
+        <Text style={{ fontSize: 7, fontWeight: 700, textAlign: 'center' }}>REPUBLIC OF NAMIBIA</Text>
+        <Text style={documentStyles.title}>{title.toUpperCase()}</Text>
+        <Text style={{ fontSize: 5.5, marginTop: 2, textAlign: 'center' }}>
+          OFFICE / MINISTRY / DEPARTMENT / MUNICIPALITY
+        </Text>
         <Text style={documentStyles.organisation}>
           {branding?.organisationName || 'Government Fleet'}
         </Text>
@@ -212,7 +230,8 @@ export function DocumentHeader({
       </View>
       {/* Right: Document identity */}
       <View style={documentStyles.headerTitleZone}>
-        <Text style={documentStyles.title}>{title.toUpperCase()}</Text>
+        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
+        {branding?.sealUrl ? <Image src={branding.sealUrl} style={documentStyles.logo} /> : null}
         <Text style={documentStyles.reference}>{reference}</Text>
         <Text style={documentStyles.meta}>
           Version {version} · {issueDate}

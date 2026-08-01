@@ -55,6 +55,7 @@
   /* Typography */
   --font-family-onest: 'Onest', sans-serif;
   --font-family-signature: 'Allura', cursive;
+  --font-family-document: 'IBM Plex Mono', 'Space Mono', 'DM Mono', 'Courier Prime', monospace;
 
   /* Spacing */
   --spacing-input: 40px;

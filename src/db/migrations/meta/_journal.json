@@ -162,6 +162,27 @@
       "when": 1785441600000,
       "tag": "0022_office_coordinates",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785499200000,
+      "tag": "0023_tenant_saas_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785520800000,
+      "tag": "0024_role_delegation_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785571200000,
+      "tag": "0025_authoritative_trip_incidents",
+      "breakpoints": true
     }
   ]
 }

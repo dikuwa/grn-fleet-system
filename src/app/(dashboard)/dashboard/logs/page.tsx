@@ -11,9 +11,10 @@ import { Badge } from '@/components/ui/badge';
 import { saveDraft, listDrafts, deleteDraft, countUnsyncedDrafts } from '@/lib/offline-drafts';
 import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
-  ClipboardList, Save, WifiOff, CheckCircle2, Clock, MapPin,
+  AlertTriangle, ClipboardList, Save, WifiOff, CheckCircle2, Clock, MapPin,
   Gauge, X,
 } from 'lucide-react';
+import Link from 'next/link';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 interface Trip {
@@ -440,6 +441,13 @@ export default function DailyLogsPage() {
                 <X className="h-4 w-4" />
               </Button>
             </div>
+            {formData.tripId && (
+              <Button type="button" variant="emergency" className="w-full" asChild>
+                <Link href={`/dashboard/trips/${formData.tripId}`}>
+                  <AlertTriangle className="h-4 w-4" /> Report incident, damage or defect
+                </Link>
+              </Button>
+            )}
           </form>
         </CardContent>
       </Card>

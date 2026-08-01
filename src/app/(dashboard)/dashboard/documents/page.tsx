@@ -53,6 +53,8 @@ const DOCUMENT_TYPE_ICONS: Record<string, typeof FileText> = {
   trip_completion: FileText,
   maintenance_report: FileText,
   audit_report: FileText,
+  trip_incident_report: FileText,
+  accident_report: FileText,
 };
 
 const DOCUMENT_TYPE_LABELS: Record<string, string> = {
@@ -64,6 +66,8 @@ const DOCUMENT_TYPE_LABELS: Record<string, string> = {
   trip_completion: 'Trip Completion',
   maintenance_report: 'Maintenance Report',
   audit_report: 'Audit Report',
+  trip_incident_report: 'Trip Incident / Defect Report',
+  accident_report: 'Motor Vehicle Accident Report',
 };
 
 export default async function DocumentsPage({ searchParams }: PageProps) {

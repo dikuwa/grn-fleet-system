@@ -192,6 +192,7 @@ export default async function ActiveTripsPage() {
               <Link
                 key={trip.id}
                 href={`/dashboard/trips/${trip.id}`}
+                data-testid="active-trip-card"
                 className="block rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm"
               >
                 <div className="flex items-center justify-between gap-4">

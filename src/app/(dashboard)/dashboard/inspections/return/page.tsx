@@ -78,6 +78,7 @@ export default function ReturnInspectionPage() {
   const [departurePhotos, setDeparturePhotos] = useState<Array<{ id: string; signedUrl: string | null; caption: string | null; inspectionId: string }>>([]);
   const [departurePhotosLoading, setDeparturePhotosLoading] = useState(false);
   const [damageClassifications, setDamageClassifications] = useState<Record<number, string>>({});
+  const [tripEvents, setTripEvents] = useState<Array<{ id: string; officialNumber: string | null; incidentType: string; severity: string; occurredAt: string; location: string | null; description: string; continuationState: string; attachmentKeys: string[] | null }>>([]);
 
   const DAMAGE_CLASSIFICATIONS = [
     { value: 'pre-existing', label: 'Pre-existing', color: 'text-blue-600 bg-blue-50 border-blue-200' },
@@ -141,8 +142,9 @@ export default function ReturnInspectionPage() {
             licenceNumber: data.trip.licenceNumber || '',
           });
         }
+        setTripEvents(Array.isArray(data.incidents) ? data.incidents : []);
       })
-      .catch(() => {});
+      .catch(() => setTripEvents([]));
 
     // Fetch departure photos for comparison
     const loadingTimer = setTimeout(() => setDeparturePhotosLoading(true), 0);
@@ -372,6 +374,27 @@ export default function ReturnInspectionPage() {
             <input type="hidden" name="vehicleId" value={vehicleId} />
           </CardContent>
         </Card>
+
+        {tripEvents.length > 0 && (
+          <Card className="border-status-error-text/30">
+            <CardHeader>
+              <CardTitle>Trip Events Requiring Inspection Attention ({tripEvents.length})</CardTitle>
+              <p className="text-xs text-ink-500">Review the driver’s authoritative event records; do not retype them into the checklist.</p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {tripEvents.map((event) => (
+                <article key={event.id} className="rounded-lg border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-ink-950">{event.officialNumber || 'Number pending'} · {event.incidentType.replaceAll('_', ' ')}</p>
+                    <span className="rounded-full bg-status-error-bg px-2 py-1 text-xs font-medium capitalize text-status-error-text">{event.severity}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-ink-700">{event.description}</p>
+                  <p className="mt-1 text-xs capitalize text-ink-500">{new Date(event.occurredAt).toLocaleString('en-NA')} · {event.location || 'Location not recorded'} · {event.continuationState.replaceAll('_', ' ')}</p>
+                </article>
+              ))}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Pre-Departure vs Return Photo Comparison */}
         {departurePhotos.length > 0 && (
