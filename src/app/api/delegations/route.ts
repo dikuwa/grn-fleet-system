@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { employees, roleDelegations, roles } from '@/db/schema';
+import { employees, roleDelegations, roles, offices, departments } from '@/db/schema';
+import { regions } from '@/db/schema/fleet';
 import { and, asc, eq, gt, inArray, lt, or } from 'drizzle-orm';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -28,6 +29,9 @@ export async function GET(request: NextRequest) {
     actingFirstName: employees.firstName,
     actingLastName: employees.lastName,
     actingTitle: roleDelegations.actingTitle,
+    officeId: roleDelegations.officeId,
+    departmentId: roleDelegations.departmentId,
+    regionId: roleDelegations.regionId,
     startAt: roleDelegations.startAt,
     endAt: roleDelegations.endAt,
     reason: roleDelegations.reason,
@@ -56,6 +60,9 @@ export async function POST(request: NextRequest) {
     substantiveHolderEmployeeId?: string;
     actingEmployeeId: string;
     actingTitle: string;
+    officeId?: string;
+    departmentId?: string;
+    regionId?: string;
     startAt: string;
     endAt: string;
     reason: string;
@@ -78,7 +85,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Valid start and end dates are required' }, { status: 400 });
   }
   const db = getDb();
-  const [[employee], [role], existing] = await Promise.all([
+  const [[employee], [role], existing, [office], [department], [region]] = await Promise.all([
     db.select().from(employees).where(and(eq(employees.id, body.actingEmployeeId), eq(employees.tenantId, auth.session.tenantId))).limit(1),
     db.select().from(roles).where(and(eq(roles.id, body.roleId), eq(roles.tenantId, auth.session.tenantId))).limit(1),
     db.select({
@@ -93,8 +100,23 @@ export async function POST(request: NextRequest) {
       lt(roleDelegations.startAt, endAt),
       gt(roleDelegations.endAt, startAt),
     )),
+    body.officeId
+      ? db.select({ id: offices.id }).from(offices)
+          .where(and(eq(offices.id, body.officeId), eq(offices.tenantId, auth.session.tenantId))).limit(1)
+      : Promise.resolve([undefined] as const),
+    body.departmentId
+      ? db.select({ id: departments.id }).from(departments)
+          .where(and(eq(departments.id, body.departmentId), eq(departments.tenantId, auth.session.tenantId))).limit(1)
+      : Promise.resolve([undefined] as const),
+    body.regionId
+      ? db.select({ id: regions.id }).from(regions)
+          .where(and(eq(regions.id, body.regionId), eq(regions.tenantId, auth.session.tenantId))).limit(1)
+      : Promise.resolve([undefined] as const),
   ]);
   if (!employee || !role) return NextResponse.json({ error: 'Employee or role was not found in your organisation' }, { status: 404 });
+  if (body.officeId && !office) return NextResponse.json({ error: 'Office scope was not found in your organisation' }, { status: 404 });
+  if (body.departmentId && !department) return NextResponse.json({ error: 'Department scope was not found in your organisation' }, { status: 404 });
+  if (body.regionId && !region) return NextResponse.json({ error: 'Region scope was not found in your organisation' }, { status: 404 });
   if (!employee.userId && (body.canApprove || body.canSign)) {
     return NextResponse.json({ error: 'An acting approver or signatory must have an active user account' }, { status: 400 });
   }
@@ -118,6 +140,9 @@ export async function POST(request: NextRequest) {
     substantiveHolderEmployeeId: body.substantiveHolderEmployeeId || null,
     actingEmployeeId: body.actingEmployeeId,
     actingTitle: body.actingTitle.trim(),
+    officeId: body.officeId || null,
+    departmentId: body.departmentId || null,
+    regionId: body.regionId || null,
     startAt,
     endAt,
     reason: body.reason.trim(),

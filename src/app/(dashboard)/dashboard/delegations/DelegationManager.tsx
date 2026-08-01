@@ -11,7 +11,13 @@ import { Loader2, Plus } from 'lucide-react';
 
 interface Option { id: string; label: string }
 
-export function DelegationManager({ roles, employees }: { roles: Option[]; employees: Option[] }) {
+export interface DelegationScopeOptions {
+  offices: Option[];
+  departments: Option[];
+  regions: Option[];
+}
+
+export function DelegationManager({ roles, employees, scope }: { roles: Option[]; employees: Option[]; scope?: DelegationScopeOptions }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
@@ -27,6 +33,9 @@ export function DelegationManager({ roles, employees }: { roles: Option[]; emplo
         substantiveHolderEmployeeId: formData.get('substantiveHolderEmployeeId') || undefined,
         actingEmployeeId: formData.get('actingEmployeeId'),
         actingTitle: formData.get('actingTitle'),
+        officeId: formData.get('officeId') || undefined,
+        departmentId: formData.get('departmentId') || undefined,
+        regionId: formData.get('regionId') || undefined,
         startAt: formData.get('startAt'),
         endAt: formData.get('endAt'),
         reason: formData.get('reason'),
@@ -58,6 +67,13 @@ export function DelegationManager({ roles, employees }: { roles: Option[]; emplo
                 <div className="space-y-1.5"><Label>Substantive holder</Label><StyledSelect name="substantiveHolderEmployeeId" placeholder="Not recorded">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.label}</option>)}</StyledSelect></div>
                 <div className="space-y-1.5"><Label required>Acting employee</Label><StyledSelect name="actingEmployeeId" required placeholder="Select employee">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.label}</option>)}</StyledSelect></div>
                 <div className="space-y-1.5"><Label required>Acting title</Label><Input name="actingTitle" placeholder="Acting Regional Director" required /></div>
+                {scope && (
+                  <>
+                    <div className="space-y-1.5"><Label>Office scope</Label><StyledSelect name="officeId" placeholder="Whole organisation">{scope.offices.map((office) => <option key={office.id} value={office.id}>{office.label}</option>)}</StyledSelect></div>
+                    <div className="space-y-1.5"><Label>Department scope</Label><StyledSelect name="departmentId" placeholder="All departments">{scope.departments.map((department) => <option key={department.id} value={department.id}>{department.label}</option>)}</StyledSelect></div>
+                    <div className="space-y-1.5"><Label>Region scope</Label><StyledSelect name="regionId" placeholder="All regions">{scope.regions.map((region) => <option key={region.id} value={region.id}>{region.label}</option>)}</StyledSelect></div>
+                  </>
+                )}
                 <div className="space-y-1.5"><Label required>Start</Label><StyledDateInput name="startAt" type="datetime-local" required /></div>
                 <div className="space-y-1.5"><Label required>End</Label><StyledDateInput name="endAt" type="datetime-local" required /></div>
               </div>

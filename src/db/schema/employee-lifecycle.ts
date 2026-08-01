@@ -1,6 +1,7 @@
 import { pgTable, uuid, text, timestamp, boolean, date, jsonb, integer } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { employees, offices, departments } from './people';
+import { regions } from './fleet';
 
 export const employeeAssignments = pgTable('employee_assignments', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -42,6 +43,9 @@ export const roleDelegations = pgTable('role_delegations', {
   id: uuid('id').primaryKey().defaultRandom(),
   tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   organisationalUnit: text('organisational_unit'),
+  officeId: uuid('office_id').references(() => offices.id, { onDelete: 'set null' }),
+  departmentId: uuid('department_id').references(() => departments.id, { onDelete: 'set null' }),
+  regionId: uuid('region_id').references(() => regions.id, { onDelete: 'set null' }),
   roleId: uuid('role_id').notNull(),
   substantiveHolderEmployeeId: uuid('substantive_holder_employee_id').references(() => employees.id),
   actingEmployeeId: uuid('acting_employee_id').notNull().references(() => employees.id),
