@@ -121,8 +121,10 @@ async function getApprovalTurnaround(db: ReturnType<typeof getDb>, tenantId: str
     .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
     .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
     .where(and(eq(transportRequests.tenantId, tenantId), gte(workflowActions.createdAt, start)))
-    .groupBy(sql`to_char(${workflowActions.createdAt}, 'YYYY-MM')`)
-    .orderBy(sql`month`);
+    .groupBy(sql`to_char(${workflowActions.createdAt}, 'YYYY-MM')`);
+
+  // Sort in JS — the unquoted SQL alias is not resolvable on Postgres/Neon.
+  monthlyTrend.sort((a, b) => a.month.localeCompare(b.month));
 
   return {
     avgTotalHours: Math.round(avgTotalHours * 10) / 10,
@@ -359,8 +361,10 @@ async function getLateReturns(db: ReturnType<typeof getDb>, tenantId: string, st
         sql`${trips.returnedAt} IS NOT NULL`,
       ),
     )
-    .groupBy(sql`to_char(${trips.startedAt}, 'YYYY-MM')`)
-    .orderBy(sql`month`);
+    .groupBy(sql`to_char(${trips.startedAt}, 'YYYY-MM')`);
+
+  // Sort in JS — the unquoted SQL alias is not resolvable on Postgres/Neon.
+  monthlyLateTrend.sort((a, b) => a.month.localeCompare(b.month));
 
   return {
     lateCount,
@@ -421,8 +425,10 @@ async function getRejectionMetrics(db: ReturnType<typeof getDb>, tenantId: strin
     })
     .from(transportRequests)
     .where(and(eq(transportRequests.tenantId, tenantId), gte(transportRequests.createdAt, start)))
-    .groupBy(sql`to_char(${transportRequests.createdAt}, 'YYYY-MM')`)
-    .orderBy(sql`month`);
+    .groupBy(sql`to_char(${transportRequests.createdAt}, 'YYYY-MM')`);
+
+  // Sort in JS — the unquoted SQL alias is not resolvable on Postgres/Neon.
+  monthlyRejectionTrend.sort((a, b) => a.month.localeCompare(b.month));
 
   const total = Number(rejectionSummary?.totalRequests || 0);
   const rejected = Number(rejectionSummary?.rejectedCount || 0);
