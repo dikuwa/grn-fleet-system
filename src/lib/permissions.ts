@@ -246,6 +246,12 @@ export const RoleDefinitions = {
       Permissions.INSPECTION_PERFORM,
       Permissions.INSPECTION_VIEW,
       Permissions.TRIP_VIEW,
+      // Release officers perform inspections and upload inspection photos,
+      // so they need the file permissions just like inspectors do.  They also
+      // need to look up fleet vehicles while performing an inspection.
+      Permissions.VEHICLE_VIEW,
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
     ],
   },
   DEPUTY_DIRECTOR: {

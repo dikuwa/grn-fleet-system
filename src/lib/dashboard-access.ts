@@ -288,6 +288,9 @@ export const dashboardRoutePolicy: readonly DashboardRouteRule[] = [
     grants: [
       grant([R.TENANT_ADMIN, R.TRANSPORT_ADMIN], 'tenant_manage', 'tenant', MANAGE),
       grant([R.MAINTENANCE], 'tenant_read', 'tenant', VIEW),
+      // Inspection performers need to look up the fleet when recording an
+      // inspection against a specific vehicle.
+      grant([R.RELEASE_OFFICER, R.INSPECTOR], 'assigned_read', 'assigned', VIEW),
       grant([R.AUDITOR], 'tenant_read_only', 'tenant', READ_EXPORT),
     ],
     navigationVisible: true, directUrlBehaviour: '403', notificationLinkEligible: true,

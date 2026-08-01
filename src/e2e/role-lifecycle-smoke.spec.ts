@@ -32,7 +32,12 @@ function fullChecklist(template: typeof DEPARTURE_INSPECTION_ITEMS) {
 }
 
 test.describe('Role lifecycle smoke', () => {
-  test.setTimeout(180_000);
+  // This spec executes ~30 sequential API calls (create request, 5 workflow
+  // approvals, driver provisioning, 2 inspections, issue/start/return/close)
+  // against the configured database. Against remote Neon (eu-central-1) each
+  // request takes 5-21s, so a generous budget is required — this test does
+  // more serial work than role-isolation (300s) or route-flow (240s).
+  test.setTimeout(360_000);
 
   test('complete request-to-trip lifecycle exercises every key role', async () => {
     const requester = await login('requester@kavangoeast.test');

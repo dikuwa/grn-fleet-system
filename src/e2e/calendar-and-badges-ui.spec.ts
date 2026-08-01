@@ -68,10 +68,12 @@ test('trip count badge uses the universal notification red token', async ({ brow
     viewport: { width: 1440, height: 900 },
   });
   const page = await context.newPage();
-  await page.route('**/api/reports?type=snapshot&metric=activeTrips', async (route) => {
+  // The sidebar Trips badge now fetches /api/trips/attention and reads
+  // data.total (live attention count, not the old snapshot metric).
+  await page.route('**/api/trips/attention', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ data: { activeTrips: 6 } }),
+      body: JSON.stringify({ data: { total: 6 } }),
     });
   });
   await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });

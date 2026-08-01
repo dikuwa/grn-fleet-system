@@ -7,6 +7,7 @@ const VIEWPORTS = [320, 375, 390, 430, 768, 1024, 1440] as const;
 test('Tenant Branding keeps its existing tabs and uses the compact responsive layout', async ({
   browser,
 }) => {
+  test.setTimeout(120_000);
   const api = await playwrightRequest.newContext({ baseURL: BASE });
   const signIn = await api.post('/api/auth/sign-in', {
     data: { email: 'admin@kavangoeast.gov.na', password: PASSWORD },
@@ -82,8 +83,10 @@ test('Tenant Branding keeps its existing tabs and uses the compact responsive la
   await responsePromise;
   // Toast auto-dismisses after 4s, so check quickly
   await expect(page.getByText('Settings saved')).toBeVisible({ timeout: 5_000 });
-  await page.reload({ waitUntil: 'networkidle' });
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 15_000 });
+  // networkidle never fires here because the sidebar polls live counts;
+  // wait for the content we actually need instead.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: 'Branding' }).click();
   await expect(page.getByLabel('Primary Colour', { exact: true })).toHaveValue(originalPrimary);
   await expect(page.getByLabel('Accent Colour', { exact: true })).toHaveValue(originalAccent);

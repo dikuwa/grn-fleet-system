@@ -176,6 +176,31 @@ function getProvider(): SmsProvider | null {
 }
 
 /**
+ * Bound an outbound SMS with a hard timeout so a slow provider call can
+ * never hang a request (e.g. a notification POST).  Failures degrade to
+ * { success: false } like any other provider error.
+ */
+const SMS_SEND_TIMEOUT_MS = 10_000;
+
+async function withSendTimeout(promise: Promise<SmsResult>): Promise<SmsResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<SmsResult>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ success: false, error: `SMS send timed out after ${SMS_SEND_TIMEOUT_MS}ms` }),
+      SMS_SEND_TIMEOUT_MS,
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    // Absorb any late rejection from the losing promise so it cannot surface
+    // as an unhandledRejection after the race has already settled.
+    promise.catch(() => {});
+  }
+}
+
+/**
  * Send an SMS message via the configured provider.
  */
 export async function sendSms(data: SmsData): Promise<SmsResult> {
@@ -185,7 +210,7 @@ export async function sendSms(data: SmsData): Promise<SmsResult> {
     return { success: false, error };
   }
 
-  return provider.send(data);
+  return withSendTimeout(provider.send(data));
 }
 
 /**

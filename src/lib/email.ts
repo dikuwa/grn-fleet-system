@@ -409,6 +409,32 @@ function renderInlineHtml(data: NotificationEmailData): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Bound an outbound email send with a hard timeout so a slow or black-holed
+ * SMTP/HTTP call can never hang a request (e.g. an approval action or a
+ * notification POST).  Failures degrade to { success: false } like any other
+ * send error, so callers already handle them.
+ */
+const EMAIL_SEND_TIMEOUT_MS = 10_000;
+
+async function withSendTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${EMAIL_SEND_TIMEOUT_MS}ms`)),
+      EMAIL_SEND_TIMEOUT_MS,
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    // Absorb any late rejection from the losing promise so it cannot surface
+    // as an unhandledRejection after the race has already settled.
+    promise.catch(() => {});
+  }
+}
+
+/**
  * Send a notification email via Resend.
  * Uses React Email templates via renderToString, falls back to inline HTML.
  */
@@ -430,12 +456,15 @@ export async function sendNotificationEmail(
   }
 
   try {
-    const result = await client.emails.send({
-      from: `${data.tenantName || 'GovFleet'} <${getFromAddress()}>`,
-      to: data.to,
-      subject: `[${data.type.toUpperCase()}] ${data.title}`,
-      html,
-    });
+    const result = await withSendTimeout<{ data?: { id?: string } }>(
+      client.emails.send({
+        from: `${data.tenantName || 'GovFleet'} <${getFromAddress()}>`,
+        to: data.to,
+        subject: `[${data.type.toUpperCase()}] ${data.title}`,
+        html,
+      }),
+      'Email send',
+    );
 
     return { success: true, id: result.data?.id };
   } catch (err) {
@@ -459,12 +488,15 @@ export async function sendPlainEmail(
   }
 
   try {
-    const result = await client.emails.send({
-      from: `GovFleet <${getFromAddress()}>`,
-      to,
-      subject,
-      text,
-    });
+    const result = await withSendTimeout<{ data?: { id?: string } }>(
+      client.emails.send({
+        from: `GovFleet <${getFromAddress()}>`,
+        to,
+        subject,
+        text,
+      }),
+      'Email send',
+    );
 
     return { success: true, id: result.data?.id };
   } catch (err) {
@@ -489,12 +521,15 @@ export async function sendReactEmail(
 
   try {
     const html = await renderReactEmail(element);
-    const result = await client.emails.send({
-      from: `GovFleet <${getFromAddress()}>`,
-      to,
-      subject,
-      html,
-    });
+    const result = await withSendTimeout<{ data?: { id?: string } }>(
+      client.emails.send({
+        from: `GovFleet <${getFromAddress()}>`,
+        to,
+        subject,
+        html,
+      }),
+      'Email send',
+    );
 
     return { success: true, id: result.data?.id };
   } catch (err) {

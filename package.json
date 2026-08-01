@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
+    "verify:deploy": "node scripts/verify-deploy.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

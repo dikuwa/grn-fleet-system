@@ -12,7 +12,7 @@ import {
   transportRequests,
   workflowDefinitions,
 } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { publicRequestCsrfAllowed, resolveSecureRequestSession, SECURE_REQUEST_COOKIE, secureHash } from '@/lib/secure-request';
 import { WorkflowEngine } from '@/lib/workflow-engine';
 import { onRequestSubmitted } from '@/lib/document-generator';
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const destination = body.destination.trim();
   const db = getDb();
   const [[tenant], [employee]] = await Promise.all([
-    db.select().from(tenants).where(and(eq(tenants.id, secureSession.tenantId), eq(tenants.slug, tenantSlug), eq(tenants.status, 'active'))).limit(1),
+    db.select().from(tenants).where(and(eq(tenants.id, secureSession.tenantId), eq(tenants.slug, tenantSlug), sql`lower(${tenants.status}) = 'active'`)).limit(1),
     db.select({
       id: employees.id,
       firstName: employees.firstName,

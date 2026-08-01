@@ -1,6 +1,6 @@
 import { getDb } from '@/db';
 import { tenants, tenantMemberships } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 
 /**
  * Verify that a user belongs to a specific tenant
@@ -80,7 +80,7 @@ export async function requireTenantAccess(
   const [tenant] = await db
     .select()
     .from(tenants)
-    .where(and(eq(tenants.id, tenantId), eq(tenants.status, 'active')))
+    .where(and(eq(tenants.id, tenantId), sql`lower(${tenants.status}) = 'active'`))
     .limit(1);
 
   if (!tenant) {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, secureRequestVerifications, tenants } from '@/db/schema';
-import { and, eq, ilike, or } from 'drizzle-orm';
+import { and, eq, ilike, or, sql } from 'drizzle-orm';
 import { rateLimit } from '@/lib/rate-limit';
 import { generateOtp, maskDestination, publicRequestCsrfAllowed, secureHash } from '@/lib/secure-request';
 import { sendPlainEmail } from '@/lib/email';
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     .innerJoin(employees, eq(employees.tenantId, tenants.id))
     .where(and(
       eq(tenants.slug, tenantSlug),
-      eq(tenants.status, 'active'),
+      sql`lower(${tenants.status}) = 'active'`,
       eq(employees.employeeNumber, employeeNumber),
       eq(employees.employmentStatus, 'active'),
       or(

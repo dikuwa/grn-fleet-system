@@ -86,7 +86,7 @@ async function getRoleMetrics(tenantId: string, userId: string, roleNames: strin
 
   if (has(SystemRoles.PLATFORM_ADMIN)) {
     return [
-      { label: 'Active tenants', value: await countRows(db.select({ count }).from(tenants).where(eq(tenants.status, 'active'))), href: '/dashboard/platform/tenants', icon: <Building2 className="h-5 w-5" /> },
+      { label: 'Active tenants', value: await countRows(db.select({ count }).from(tenants).where(sql`lower(${tenants.status}) = 'active'`)), href: '/dashboard/platform/tenants', icon: <Building2 className="h-5 w-5" /> },
     ];
   }
 

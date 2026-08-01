@@ -1,0 +1,31 @@
+name: Verify Deploy
+
+# Auto-verifies that the latest push to master is deployed and healthy.
+# Vercel deploys on push via the GitHub integration; this job polls the
+# GitHub deployment status API until the production deployment is ready,
+# then checks the live landing page and sign-in endpoint.
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  verify:
+    name: Verify production deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify deployment (poll + health check)
+        run: node scripts/verify-deploy.mjs --timeout 600
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: dikuwa/grn-fleet-system
+          LIVE_URL: https://grn-fleet-system.vercel.app
+          LOGIN_EMAIL: requester@kavangoeast.test
+          LOGIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD }}

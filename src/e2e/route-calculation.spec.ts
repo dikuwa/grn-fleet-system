@@ -48,6 +48,9 @@ async function getCookieHeader(page: Page): Promise<string> {
 }
 
 test.describe('Route Calculation', () => {
+  // Test 6 creates a request and renders the Leaflet map — give the suite
+  // room under parallel load instead of the 30s default.
+  test.setTimeout(120_000);
   let session: { token: string; user: { id?: string } };
 
   // Sign in once before all tests — avoids rate limiting (429) from repeated auth calls

@@ -20,8 +20,12 @@ import {
   trips,
   offices,
   departments,
+  roles,
+  rolePermissions,
+  permissions,
 } from '@/db/schema';
-import { eq, and, inArray, like } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
+import { Permissions, RoleDefinitions } from '@/lib/permissions';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -35,6 +39,60 @@ async function seedE2e() {
     process.exit(1);
   }
   console.log('✅ Tenant found, ensuring E2E test data...');
+
+  // ── Ensure the permission catalog exists (FK target for role_permissions) ──
+  // Mirrors the main seed so role_permissions inserts never violate the
+  // permission_code FK when new codes are added to src/lib/permissions.ts.
+  const allPermissionCodes = Object.values(Permissions);
+  for (const code of allPermissionCodes) {
+    await db.insert(permissions).values({
+      code,
+      name: code.replace(/[:-]/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+      description: `Permission to ${code.replace(/[:-]/g, ' ')}`,
+      group: code.split(':')[0],
+    }).onConflictDoNothing();
+  }
+
+  // ── Sync system role permissions from RoleDefinitions (idempotent) ──
+  // Keeps the E2E database in lockstep with src/lib/permissions.ts so tests
+  // exercise the same grants the main seed produces (e.g. FILE_UPLOAD for
+  // release officers) without requiring a full db:seed before each run.
+  const rolePermMap: Record<string, readonly string[]> = {
+    [RoleDefinitions.PLATFORM_SUPER_ADMIN.name]: RoleDefinitions.PLATFORM_SUPER_ADMIN.permissions,
+    [RoleDefinitions.PLATFORM_SUPPORT.name]: RoleDefinitions.PLATFORM_SUPPORT.permissions,
+    [RoleDefinitions.PLATFORM_AUDITOR.name]: RoleDefinitions.PLATFORM_AUDITOR.permissions,
+    [RoleDefinitions.TENANT_ADMIN.name]: RoleDefinitions.TENANT_ADMIN.permissions,
+    [RoleDefinitions.TRANSPORT_ADMIN.name]: RoleDefinitions.TRANSPORT_ADMIN.permissions,
+    [RoleDefinitions.REQUESTER.name]: RoleDefinitions.REQUESTER.permissions,
+    [RoleDefinitions.SUPERVISOR.name]: RoleDefinitions.SUPERVISOR.permissions,
+    [RoleDefinitions.CONTROL_ADMIN_OFFICER.name]: RoleDefinitions.CONTROL_ADMIN_OFFICER.permissions,
+    [RoleDefinitions.DEPUTY_DIRECTOR.name]: RoleDefinitions.DEPUTY_DIRECTOR.permissions,
+    [RoleDefinitions.DIRECTOR.name]: RoleDefinitions.DIRECTOR.permissions,
+    [RoleDefinitions.CHIEF_REGIONAL_OFFICER.name]: RoleDefinitions.CHIEF_REGIONAL_OFFICER.permissions,
+    [RoleDefinitions.DRIVER.name]: RoleDefinitions.DRIVER.permissions,
+    [RoleDefinitions.INSPECTOR.name]: RoleDefinitions.INSPECTOR.permissions,
+    [RoleDefinitions.MAINTENANCE_OFFICER.name]: RoleDefinitions.MAINTENANCE_OFFICER.permissions,
+    [RoleDefinitions.TENANT_AUDITOR.name]: RoleDefinitions.TENANT_AUDITOR.permissions,
+  };
+  const roleRecords = await db
+    .select({ id: roles.id, name: roles.name })
+    .from(roles)
+    .where(eq(roles.tenantId, TENANT_ID as any));
+  for (const role of roleRecords) {
+    const perms = rolePermMap[role.name];
+    if (perms) {
+      await db.delete(rolePermissions).where(eq(rolePermissions.roleId, role.id));
+      if (perms.length > 0) {
+        await db.insert(rolePermissions).values(
+          perms.map((permCode: string) => ({
+            roleId: role.id,
+            permissionCode: permCode,
+          })),
+        );
+      }
+    }
+  }
+  console.log('  Synced role permissions from RoleDefinitions');
 
   // Ensure offices exist
   const [headOffice] = await db.select({ id: offices.id }).from(offices)
@@ -122,41 +180,33 @@ async function seedE2e() {
   console.log('  Reset stale vehicle statuses to available');
 
   // ── Clean up stale test data from previous E2E runs ──
-  // Find vehicles whose licence numbers start with 'E2E-' (created by the
-  // test itself) and remove their stale allocations + trips.
-  const e2eVehicles = await db.select({ id: vehicles.id })
+  // Previous runs can leave allocations in provisional/confirmed/issued and
+  // trips in open states.  Those stale records make the driver-overlap check
+  // (allocations state in provisional/confirmed/issued) reject legitimate new
+  // assignments with a 409 on the next run.  Cancel every stale allocation and
+  // close every stale trip for the whole tenant so the suite starts clean.
+  // vehicle_allocations has no tenantId column — scope via the tenant's vehicles.
+  const staleAllocStates = ['provisional', 'confirmed', 'issued'];
+  const tenantVehicleIds = db
+    .select({ id: vehicles.id })
     .from(vehicles)
+    .where(eq(vehicles.tenantId, TENANT_ID as any));
+  await db.update(vehicleAllocations)
+    .set({ state: 'cancelled' })
     .where(and(
-      eq(vehicles.tenantId, TENANT_ID as any),
-      like(vehicles.licenceNumber, 'E2E-%'),
+      inArray(vehicleAllocations.vehicleId, tenantVehicleIds),
+      inArray(vehicleAllocations.state, staleAllocStates),
     ));
-  const e2eVehicleIds = e2eVehicles.map((v) => v.id);
-
-  if (e2eVehicleIds.length > 0) {
-    // Close stale allocations (any state except cancelled)
-    const staleStates = ['provisional', 'confirmed', 'released'];
-    for (const state of staleStates) {
-      await db.update(vehicleAllocations)
-        .set({ state: 'cancelled' })
-        .where(and(
-          eq(vehicleAllocations.state, state),
-          inArray(vehicleAllocations.vehicleId, e2eVehicleIds),
-        ));
-    }
-    console.log(`  Cleaned allocations for ${e2eVehicleIds.length} E2E vehicle(s)`);
-
-    // Close stale trips
-    const staleTripStatuses = ['pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review'];
-    for (const tripStatus of staleTripStatuses) {
-      await db.update(trips)
-        .set({ status: 'closed' })
-        .where(and(
-          eq(trips.status, tripStatus),
-          inArray(trips.vehicleId, e2eVehicleIds),
-        ));
-    }
-    console.log(`  Closed stale trips for ${e2eVehicleIds.length} E2E vehicle(s)`);
+  const staleTripStatuses = ['pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review'];
+  for (const tripStatus of staleTripStatuses) {
+    await db.update(trips)
+      .set({ status: 'closed' })
+      .where(and(
+        eq(trips.tenantId, TENANT_ID as any),
+        eq(trips.status, tripStatus),
+      ));
   }
+  console.log('  Cleaned stale tenant-wide allocations and trips');
 
   console.log('✅ E2E seed complete!');
 }

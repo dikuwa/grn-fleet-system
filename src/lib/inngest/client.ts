@@ -49,6 +49,29 @@ export const Events = {
 // ---------------------------------------------------------------------------
 
 /**
+ * Bound an Inngest send with a hard timeout so a slow or black-holed network
+ * call can never hang a request (e.g. transport-request creation awaits these
+ * scheduling helpers). Failures degrade to a silent no-op — reminders are
+ * best-effort.
+ */
+const INNGEST_SEND_TIMEOUT_MS = 5_000;
+
+async function sendWithTimeout(promise: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, INNGEST_SEND_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    // Absorb any late rejection from the losing promise so it cannot surface
+    // as an unhandledRejection after the race has already settled.
+    promise.catch(() => {});
+  }
+}
+
+/**
  * Schedule a workflow step reminder after a given number of hours.
  * Silently skipped if Inngest is not configured.
  */
@@ -59,11 +82,13 @@ export async function scheduleStepReminder(
 ): Promise<void> {
   if (!areBackgroundJobsConfigured()) return;
 
-  await inngest!.send({
-    name: Events.WORKFLOW_REMINDER,
-    data: { workflowInstanceId, stepOrder },
-    ts: Date.now() + delayHours * 60 * 60 * 1000,
-  });
+  await sendWithTimeout(
+    inngest!.send({
+      name: Events.WORKFLOW_REMINDER,
+      data: { workflowInstanceId, stepOrder },
+      ts: Date.now() + delayHours * 60 * 60 * 1000,
+    }),
+  );
 }
 
 /**
@@ -77,11 +102,13 @@ export async function scheduleStepEscalation(
 ): Promise<void> {
   if (!areBackgroundJobsConfigured()) return;
 
-  await inngest!.send({
-    name: Events.WORKFLOW_ESCALATION,
-    data: { workflowInstanceId, stepOrder },
-    ts: Date.now() + delayHours * 60 * 60 * 1000,
-  });
+  await sendWithTimeout(
+    inngest!.send({
+      name: Events.WORKFLOW_ESCALATION,
+      data: { workflowInstanceId, stepOrder },
+      ts: Date.now() + delayHours * 60 * 60 * 1000,
+    }),
+  );
 }
 
 /**
@@ -94,8 +121,10 @@ export async function sendApprovalCompletedEvent(
 ): Promise<void> {
   if (!areBackgroundJobsConfigured()) return;
 
-  await inngest!.send({
-    name: Events.APPROVAL_COMPLETED,
-    data: { workflowInstanceId, result, actorUserId },
-  });
+  await sendWithTimeout(
+    inngest!.send({
+      name: Events.APPROVAL_COMPLETED,
+      data: { workflowInstanceId, result, actorUserId },
+    }),
+  );
 }

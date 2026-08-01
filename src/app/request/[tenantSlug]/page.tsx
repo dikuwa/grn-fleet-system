@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getDb } from '@/db';
 import { tenants } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { APP_SHORT_NAME } from '@/lib/constants';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { SecureRequestForm } from './SecureRequestForm';
@@ -13,7 +13,9 @@ export default async function TenantSecureRequestPage({ params }: { params: Prom
   const { tenantSlug } = await params;
   const db = getDb();
   const [tenant] = await db.select({ name: tenants.name, slug: tenants.slug }).from(tenants)
-    .where(and(eq(tenants.slug, tenantSlug), eq(tenants.status, 'active'))).limit(1);
+    // Status is stored uppercase (ACTIVE) — compare case-insensitively so the
+    // public page works regardless of storage casing.
+    .where(and(eq(tenants.slug, tenantSlug), sql`lower(${tenants.status}) = 'active'`)).limit(1);
   if (!tenant) notFound();
   return (
     <main className="min-h-screen bg-canvas">

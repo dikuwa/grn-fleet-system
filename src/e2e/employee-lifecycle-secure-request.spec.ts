@@ -13,9 +13,16 @@ test.describe('Employee lifecycle and secure request surfaces', () => {
     await page.goto('/request/kavango-east', { waitUntil: 'domcontentloaded' });
 
     await expect(page).toHaveURL(/\/request\/kavango-east$/);
-    await expect(page.getByRole('heading', { name: 'Employee transport request' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /select theme/i })).toBeVisible();
-    await expect(page.getByText(/same response is shown whether or not/i)).toBeVisible();
+    // SSR page: allow time for the initial cold render on first navigation.
+    await expect(page.getByRole('heading', { name: 'Employee transport request' })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByRole('button', { name: /select theme/i })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByText(/same response is shown whether or not/i)).toBeVisible({
+      timeout: 10_000,
+    });
 
     const dimensions = await page.evaluate(() => ({
       content: document.documentElement.scrollWidth,

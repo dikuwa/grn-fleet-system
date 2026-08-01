@@ -1424,43 +1424,48 @@ export class WorkflowEngine {
         }
       }
 
-      // Try to send email (fire-and-forget) with correct template type mapping
-      try {
-        const { sendNotificationEmail } = await import('@/lib/email');
-        const { employees } = await import('@/db/schema/people');
-        const [emp] = request.requesterUserId
-          ? await this.db
-              .select({ email: employees.email, firstName: employees.firstName })
-              .from(employees)
-              .where(eq(employees.userId, request.requesterUserId))
-              .limit(1)
-          : [undefined];
+      // Send email fire-and-forget — never block the approval on an outbound
+      // network call (Resend + React Email template loading can take seconds
+      // on a cold path). In-app notifications above are already persisted,
+      // which is what tests and the UI rely on.
+      void (async () => {
+        try {
+          const { sendNotificationEmail } = await import('@/lib/email');
+          const { employees } = await import('@/db/schema/people');
+          const [emp] = request.requesterUserId
+            ? await this.db
+                .select({ email: employees.email, firstName: employees.firstName })
+                .from(employees)
+                .where(eq(employees.userId, request.requesterUserId))
+                .limit(1)
+            : [undefined];
 
-        // Map workflow results to email template types
-        const emailTypeMap: Record<string, string> = {
-          approved: 'request_approved',
-          rejected: 'request_rejected',
-          returned: 'request_returned',
-          released: 'vehicle_released',
-          authorised: 'trip_authorised',
-          overridden: 'emergency_override',
-        };
-        const emailType = emailTypeMap[result] || 'notification';
+          // Map workflow results to email template types
+          const emailTypeMap: Record<string, string> = {
+            approved: 'request_approved',
+            rejected: 'request_rejected',
+            returned: 'request_returned',
+            released: 'vehicle_released',
+            authorised: 'trip_authorised',
+            overridden: 'emergency_override',
+          };
+          const emailType = emailTypeMap[result] || 'notification';
 
-        if (emp?.email) {
-          await sendNotificationEmail({
-            to: emp.email,
-            type: emailType,
-            title,
-            body,
-            recipientName: emp.firstName || 'Staff Member',
-            requestReference: instance.requestId,
-            actionUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/dashboard/requests/${instance.requestId}`,
-          });
+          if (emp?.email) {
+            await sendNotificationEmail({
+              to: emp.email,
+              type: emailType,
+              title,
+              body,
+              recipientName: emp.firstName || 'Staff Member',
+              requestReference: instance.requestId,
+              actionUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/dashboard/requests/${instance.requestId}`,
+            });
+          }
+        } catch {
+          // Email is optional — silently skip on failure
         }
-      } catch {
-        // Email is optional — silently skip on failure
-      }
+      })();
     } catch (err) {
       console.error('[Workflow] Notification failed:', err);
     }

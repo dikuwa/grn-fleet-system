@@ -45,7 +45,10 @@ function createTestImageBuffer(): Buffer {
 }
 
 async function signIn(page: Page) {
-  const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
+  // Release Officer holds FILE_UPLOAD + INSPECTION_PERFORM and the
+  // /dashboard/inspections/new dashboard grant, so both the upload and the
+  // inspection-creation calls in this spec pass their authorisation gates.
+  const email = process.env.SEED_INSPECTOR_EMAIL || 'release.officer@kavangoeast.test';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
   let res = await page.request.post(`${BASE}/api/auth/sign-in`, {

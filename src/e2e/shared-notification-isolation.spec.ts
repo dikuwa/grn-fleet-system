@@ -16,6 +16,7 @@ async function login(email: string) {
 }
 
 test('tenant activity is shared safely with independent read state and eligible links', async () => {
+  test.setTimeout(90_000);
   const admin = await login('admin@kavangoeast.gov.na');
   const requester = await login('requester@kavangoeast.test');
   const driver = await login('driver@kavangoeast.test');

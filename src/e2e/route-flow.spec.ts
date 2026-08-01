@@ -47,8 +47,14 @@ test.describe('Route flow with maps and reporting', () => {
     const authoriser = await login('regional.authoriser@kavangoeast.test');
 
     // Trip-authority validity check at trip-start requires now >= validFrom.
-    const start = new Date(Date.now() - 60 * 60 * 1000);
-    const end = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    // Use a window 4-6h in the future: route-flow never calls trip-start, and
+    // this must NOT overlap role-lifecycle-smoke's requester-driver window
+    // (now-1h -> now+2h) which runs in a parallel worker — the driver-overlap
+    // check rejects any second assignment of the same employee in an
+    // overlapping period, so a wide 2h+ gap keeps both specs deterministic
+    // even with clock drift between parallel workers.
+    const start = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    const end = new Date(Date.now() + 6 * 60 * 60 * 1000);
 
     // ── 1. Requester creates a transport request WITH mapped routes ─────
     const createRes = await requester.post('/api/transport-requests', {
