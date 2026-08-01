@@ -636,6 +636,7 @@ async function generateDocumentPdfFromSnapshot(
           licenceNumber: vehicleSnapshot?.licenceNumber || 'N/A',
           registrationNumber: vehicleSnapshot?.registrationNumber,
         },
+        routeKm: (snapshot.routeKm as number | null | undefined) ?? undefined,
         issuedAt: snapshot.issuedAt as string | undefined,
         startedAt: snapshot.startedAt as string | undefined,
         returnedAt: snapshot.returnedAt as string | undefined,

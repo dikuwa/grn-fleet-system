@@ -13,9 +13,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, tripClosures, fuelTransactions } from '@/db/schema/trips';
+import { trips, tripClosures, fuelTransactions, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { transportRequests } from '@/db/schema/requests';
+import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { employees } from '@/db/schema/people';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
@@ -225,14 +225,32 @@ async function getFuelEfficiency(db: ReturnType<typeof getDb>, tenantId: string,
 
   const distMap = new Map(tripDistances.map((d) => [d.vehicleId, Number(d.totalDistance || 0)]));
 
+  // Planned route distance per vehicle (summed from mapped request routes)
+  const routeDistances = await db
+    .select({
+      vehicleId: vehicleAllocations.vehicleId,
+      totalRouteKm: sql<number>`COALESCE(SUM(COALESCE(${requestRoutes.totalKilometres}, ${requestRoutes.mappedDistanceKm}, 0)), 0)`,
+    })
+    .from(requestRoutes)
+    .innerJoin(vehicleAllocations, eq(requestRoutes.requestId, vehicleAllocations.requestId))
+    .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
+    .where(and(eq(vehicles.tenantId, tenantId), gte(vehicleAllocations.createdAt, start)))
+    .groupBy(vehicleAllocations.vehicleId);
+
+  // NOTE: a request allocated to more than one vehicle in the period will have
+  // its route km attributed to each vehicle (accepted report-level approximation).
+  const routeMap = new Map(routeDistances.map((d) => [d.vehicleId, Number(d.totalRouteKm || 0)]));
+
   const fleetEfficiency = efficiency.map((v) => {
     const distance = distMap.get(v.vehicleId) || 0;
+    const routeDistance = routeMap.get(v.vehicleId) || 0;
     const litres = Number(v.totalLitres || 0);
     return {
       vehicleId: v.vehicleId,
       licenceNumber: v.licenceNumber,
       totalLitres: Math.round(litres * 10) / 10,
       totalAmount: Math.round(Number(v.totalAmount || 0) * 100) / 100,
+      routeDistanceKm: Math.round(routeDistance),
       estimatedDistanceKm: distance,
       kmPerLitre: litres > 0 ? Math.round((distance / litres) * 10) / 10 : null,
       avgCostPerLitre: Math.round(Number(v.avgCostPerLitre || 0) * 100) / 100,
@@ -242,12 +260,16 @@ async function getFuelEfficiency(db: ReturnType<typeof getDb>, tenantId: string,
 
   const totalLitres = fleetEfficiency.reduce((s, v) => s + v.totalLitres, 0);
   const totalDistance = fleetEfficiency.reduce((s, v) => s + v.estimatedDistanceKm, 0);
+  // Fleet-wide planned route km for the period (all allocated vehicles, not just
+  // those with fuel activity) so the summary matches the Trips report scope.
+  const totalRouteKm = routeDistances.reduce((s, d) => s + Number(d.totalRouteKm || 0), 0);
   const fleetAvgKmPerLitre = totalLitres > 0 ? Math.round((totalDistance / totalLitres) * 10) / 10 : null;
 
   return {
     fleetAvgKmPerLitre,
     totalLitres: Math.round(totalLitres * 10) / 10,
     totalDistance: Math.round(totalDistance / 10) * 10,
+    totalRouteKm,
     totalFuelCost: fleetEfficiency.reduce((s, v) => s + v.totalAmount, 0),
     perVehicle: fleetEfficiency,
   };

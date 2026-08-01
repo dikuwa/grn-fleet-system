@@ -646,7 +646,7 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
     | { totalVehicles: number; avgUtilisation: number; totalUtilisedHours: number; underUtilisedCount: number; underUtilisedVehicles: Array<{ licenceNumber: string; totalTrips: number; totalTripHours: number; utilisationPct: number }>; vehicleBreakdown: Array<{ licenceNumber: string; totalTrips: number; totalTripHours: number; utilisationPct: number }> }
     | undefined;
   const fuelEfficiency = enhanced?.fuelEfficiency as
-    | { fleetAvgKmPerLitre: number | null; totalLitres: number; totalDistance: number; totalFuelCost: number; perVehicle: Array<{ licenceNumber: string; totalLitres: number; kmPerLitre: number | null; avgCostPerLitre: number }> }
+    | { fleetAvgKmPerLitre: number | null; totalLitres: number; totalDistance: number; totalRouteKm: number; totalFuelCost: number; perVehicle: Array<{ licenceNumber: string; totalLitres: number; routeDistanceKm: number; estimatedDistanceKm: number; kmPerLitre: number | null; avgCostPerLitre: number }> }
     | undefined;
   const lateReturns = enhanced?.lateReturns as
     | { lateCount: number; totalTrips: number; lateRate: number; avgDelayHours: number; lateTrips: Array<{ vehicleLicence: string; actualHours: number; delayHours: number }>; monthlyLateTrend: Array<{ month: string; totalTrips: number; lateTrips: number }> }
@@ -775,7 +775,7 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><Fuel className="h-4 w-4" /> Fuel Efficiency</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div className="rounded-[8px] bg-muted p-3">
                 <p className="text-[11px] text-ink-500 uppercase tracking-wider">Fleet Avg</p>
                 <p className="text-xl font-bold text-ink-950">{fuelEfficiency?.fleetAvgKmPerLitre != null ? `${fuelEfficiency.fleetAvgKmPerLitre} km/L` : '—'}</p>
@@ -785,17 +785,47 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
                 <p className="text-xl font-bold text-ink-950">{fuelEfficiency?.totalDistance != null ? `${(fuelEfficiency.totalDistance / 1000).toFixed(1)}k km` : '—'}</p>
               </div>
               <div className="rounded-[8px] bg-muted p-3">
+                <p className="text-[11px] text-ink-500 uppercase tracking-wider">Route Distance</p>
+                <p className="text-xl font-bold text-ink-950">{fuelEfficiency?.totalRouteKm != null ? `${(fuelEfficiency.totalRouteKm / 1000).toFixed(1)}k km` : '—'}</p>
+              </div>
+              <div className="rounded-[8px] bg-muted p-3">
                 <p className="text-[11px] text-ink-500 uppercase tracking-wider">Total Cost</p>
                 <p className="text-xl font-bold text-ink-950">{fuelEfficiency?.totalFuelCost != null ? formatCurrency(fuelEfficiency.totalFuelCost) : '—'}</p>
               </div>
             </div>
 
             {fuelEfficiency?.perVehicle && fuelEfficiency.perVehicle.length > 0 && (
-              <BarChart
-                data={fuelEfficiency.perVehicle.slice(0, 8).map((v) => ({ label: v.licenceNumber, kmpl: v.kmPerLitre ?? 0 }))}
-                bars={[{ key: 'kmpl', color: '#16a34a', label: 'km/L' }]}
-                height={120}
-              />
+              <>
+                <BarChart
+                  data={fuelEfficiency.perVehicle.slice(0, 8).map((v) => ({ label: v.licenceNumber, kmpl: v.kmPerLitre ?? 0 }))}
+                  bars={[{ key: 'kmpl', color: '#16a34a', label: 'km/L' }]}
+                  height={120}
+                />
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left py-2 px-2 text-xs font-medium text-ink-500 uppercase tracking-wider">Vehicle</th>
+                        <th className="text-right py-2 px-2 text-xs font-medium text-ink-500 uppercase tracking-wider">Route km</th>
+                        <th className="text-right py-2 px-2 text-xs font-medium text-ink-500 uppercase tracking-wider">Driven km</th>
+                        <th className="text-right py-2 px-2 text-xs font-medium text-ink-500 uppercase tracking-wider">Litres</th>
+                        <th className="text-right py-2 px-2 text-xs font-medium text-ink-500 uppercase tracking-wider">km/L</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fuelEfficiency.perVehicle.slice(0, 8).map((v) => (
+                        <tr key={v.licenceNumber} className="border-b border-border/50 hover:bg-muted/50">
+                          <td className="py-2 px-2 font-medium text-ink-950">{v.licenceNumber}</td>
+                          <td className="py-2 px-2 text-right text-ink-700 tabular-nums">{v.routeDistanceKm ? v.routeDistanceKm.toLocaleString() : '—'}</td>
+                          <td className="py-2 px-2 text-right text-ink-700 tabular-nums">{v.estimatedDistanceKm ? v.estimatedDistanceKm.toLocaleString() : '—'}</td>
+                          <td className="py-2 px-2 text-right text-ink-700 tabular-nums">{v.totalLitres.toLocaleString()}</td>
+                          <td className="py-2 px-2 text-right text-ink-700 tabular-nums">{v.kmPerLitre != null ? v.kmPerLitre : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

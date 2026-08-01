@@ -34,6 +34,7 @@ export interface TripCompletionData {
   startedAt?: string;
   returnedAt?: string;
   closedAt?: string;
+  routeKm?: number;
   closure?: {
     authorisedKm?: number | null;
     actualKm?: number | null;
@@ -160,6 +161,7 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
             <DocumentSection title="Closure details" wrap={false}>
               <DocumentFieldGrid
                 fields={[
+                  { label: 'Route distance', value: formatHumanValue(data.routeKm, 'kilometres') },
                   { label: 'Authorised kilometres', value: formatHumanValue(data.closure.authorisedKm, 'kilometres') },
                   { label: 'Actual kilometres', value: formatHumanValue(data.closure.actualKm, 'kilometres') },
                   {

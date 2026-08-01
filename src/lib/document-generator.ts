@@ -504,6 +504,20 @@ async function buildTripCompletionSnapshot(tripId: string) {
     .where(eq(vehicles.id, trip.vehicleId))
     .limit(1);
 
+  // Planned route distance from the linked request's mapped routes
+  let routeKm: number | null = null;
+  if (trip.requestId) {
+    const routeRows = await db
+      .select()
+      .from(requestRoutes)
+      .where(eq(requestRoutes.requestId, trip.requestId));
+    if (routeRows.length > 0) {
+      routeKm = Math.round(
+        routeRows.reduce((s, r) => s + (r.totalKilometres ?? r.mappedDistanceKm ?? 0), 0),
+      );
+    }
+  }
+
   return {
     tripId: trip.id,
     status: trip.status,
@@ -515,6 +529,7 @@ async function buildTripCompletionSnapshot(tripId: string) {
     startedAt: trip.startedAt?.toISOString(),
     returnedAt: trip.returnedAt?.toISOString(),
     closedAt: trip.closedAt?.toISOString(),
+    routeKm,
     closure: closure
       ? {
           authorisedKm: closure.authorisedKilometres,

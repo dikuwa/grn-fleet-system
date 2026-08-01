@@ -68,6 +68,17 @@ async function totalRouteKm(tenantId: string): Promise<number> {
   return Math.round(Number(rows[0]?.km || 0));
 }
 
+/** Sum of mapped route kilometres for the current user's own requests. */
+async function myRouteKm(tenantId: string, userId: string): Promise<number> {
+  const db = getDb();
+  const rows = await db
+    .select({ km: sql<number>`COALESCE(SUM(COALESCE(${requestRoutes.totalKilometres}, ${requestRoutes.mappedDistanceKm}, 0)), 0)` })
+    .from(requestRoutes)
+    .innerJoin(transportRequests, eq(requestRoutes.requestId, transportRequests.id))
+    .where(and(eq(transportRequests.tenantId, tenantId), eq(transportRequests.requesterUserId, userId)));
+  return Math.round(Number(rows[0]?.km || 0));
+}
+
 async function getRoleMetrics(tenantId: string, userId: string, roleNames: string[]): Promise<Metric[]> {
   const db = getDb();
   const has = (role: string) => roleNames.includes(role);
@@ -83,12 +94,14 @@ async function getRoleMetrics(tenantId: string, userId: string, roleNames: strin
     return [
       { label: 'Active employees', value: await countRows(db.select({ count }).from(employees).where(and(eq(employees.tenantId, tenantId), eq(employees.employmentStatus, 'active')))), href: '/dashboard/staff', icon: <Users className="h-5 w-5" /> },
       { label: 'Fleet drivers', value: await countRows(db.select({ count }).from(employees).where(and(eq(employees.tenantId, tenantId), eq(employees.isDriver, true), eq(employees.employmentStatus, 'active')))), href: '/dashboard/drivers', icon: <Truck className="h-5 w-5" /> },
+      { label: 'Route distance (km)', value: await totalRouteKm(tenantId), href: '/dashboard/reports', icon: <RouteIcon className="h-5 w-5" /> },
     ];
   }
 
   if (has(SystemRoles.REQUESTER)) {
     return [
       { label: 'My active requests', value: await countRows(db.select({ count }).from(transportRequests).where(and(eq(transportRequests.tenantId, tenantId), eq(transportRequests.requesterUserId, userId), ne(transportRequests.status, 'closed')))), href: '/dashboard/requests', icon: <FileText className="h-5 w-5" /> },
+      { label: 'My route distance (km)', value: await myRouteKm(tenantId, userId), href: '/dashboard/requests', icon: <RouteIcon className="h-5 w-5" /> },
     ];
   }
 

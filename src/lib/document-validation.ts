@@ -225,6 +225,7 @@ const TRIP_COMPLETION_SCHEMA: Schema = {
     startedAt: { type: 'string', nullable: true },
     returnedAt: { type: 'string', nullable: true },
     closedAt: { type: 'string', nullable: true },
+    routeKm: { type: 'number', nullable: true },
     closure: {
       type: 'object',
       nullable: true,
