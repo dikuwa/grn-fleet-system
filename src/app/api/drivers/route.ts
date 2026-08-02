@@ -86,6 +86,7 @@ export async function GET(request: NextRequest) {
       licenceClass: string;
       expiryDate: string;
       verificationStatus: string;
+      isActive: boolean;
     }> = [];
 
     if (profileIds.length > 0) {
@@ -98,6 +99,7 @@ export async function GET(request: NextRequest) {
           licenceClass: driverLicences.licenceClass,
           expiryDate: driverLicences.expiryDate,
           verificationStatus: driverLicences.verificationStatus,
+          isActive: driverLicences.isActive,
         })
         .from(driverLicences)
         .where(or(...conditions2)!)
@@ -111,10 +113,22 @@ export async function GET(request: NextRequest) {
       licencesByProfile.set(licence.driverProfileId, list);
     }
 
-    // Build enriched driver records
+    // Build enriched driver records with licence-expiry alert data so the
+    // roster can surface expiring/expired licences without extra round-trips.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const enrichedDrivers = driverEmployees.map((emp) => {
       const profile = profileMap.get(emp.id);
       const licences = profile ? licencesByProfile.get(profile.id) || [] : [];
+
+      const activeLicences = licences.filter((l) => l.verificationStatus === 'verified' || l.isActive);
+      const expiries = activeLicences
+        .map((l) => ({ id: l.id, licenceClass: l.licenceClass, expiryDate: l.expiryDate, daysUntil: Math.ceil((new Date(l.expiryDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) }))
+        .sort((a, b) => a.daysUntil - b.daysUntil);
+      const nextExpiry = expiries[0] ?? null;
+      const hasExpiredLicence = expiries.some((e) => e.daysUntil < 0);
+      const hasExpiringLicence = expiries.some((e) => e.daysUntil >= 0 && e.daysUntil <= 60);
+      const hasValidLicence = expiries.length > 0 && !hasExpiredLicence;
 
       return {
         ...emp,
@@ -123,6 +137,10 @@ export async function GET(request: NextRequest) {
         activeLicenceCount: licences.filter(
           (l) => l.verificationStatus === 'verified' && new Date(l.expiryDate) > new Date(),
         ).length,
+        nextExpiry,
+        hasExpiredLicence,
+        hasExpiringLicence,
+        hasValidLicence,
         licences,
       };
     });

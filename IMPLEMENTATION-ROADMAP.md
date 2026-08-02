@@ -223,6 +223,14 @@ Implemented the three-concept separation per the strict implementation prompt. S
 7. **Kavango East data correction** (seed) — Tenant-scoped normalisation of case-variant statuses to `ACTIVE`; never activates archived/suspended; no accounts created; availability and driver authorisation untouched; single audit entry. ✅
 8. **Status Updates** — 2.4 Staff management / employee module → IMPLEMENTED; Kavango East correction applied. Acceptance criteria 1–18 all satisfied (new/imported staff default Active; badge consistency; status/account/availability independence; no duplicate person records; audit + tenant isolation verified).
 
+### Session 30 ✅ — Driver Roster with Licence-Expiry Alerts, user:manage-status Boundary, Organisation Status Counts, Enhanced Import Preview
+
+1. **`user:manage-status` permission boundary** (`src/lib/permissions.ts`, lifecycle + admin users routes) — New `USER_VIEW` / `USER_MANAGE_STATUS` / `USER_INVITE` permissions added to the enum, granted in TRANSPORT_ADMIN + TENANT_ADMIN workspace policies and RoleDefinitions. `deactivate_account` / `reactivate_account` in `/api/employees/[id]/lifecycle` and `tenantStatus` PATCH in `/api/admin/users/[id]` are now gated behind `USER_MANAGE_STATUS` — staff-lifecycle rights alone can never toggle a login account. ✅
+2. **Driver roster with licence-expiry alerts** (`/api/drivers` + `/dashboard/drivers`) — API now resolves each driver's active licences and computes `nextExpiry` (class, expiry date, days remaining), `hasExpiredLicence`, `hasExpiringLicence` (≤ 60 days), `hasValidLicence`, `noLicence`. Rebuilt roster page: summary cards (Total / Expired / Expiring ≤ 60d / Valid), licence-status filter dropdown, per-driver expiry badges (error → emergency → warning → success by days left), active-licence count, no-licence fallback, search + refresh + filter-reset. ✅
+3. **Organisation structure staff-status counts** — `StaffStatusBreakdown` component (active · inactive · archived chips) now rendered in the Organisation page tables + mobile cards (offices and departments) and in the standalone Offices page hierarchy nodes (office + department cards). Counts are computed server-side via grouped `employmentStatus` subqueries, tenant-scoped. ✅
+4. **Bulk import preview with row-level errors** (`/dashboard/staff/import`) — Preview now shows a defaults summary card (Employment status → Active, Availability → Available, Account → Not created, Driver profile → No), per-row default chips in the table, expandable per-row error details, and a downloadable CSV error file for rows that failed validation. ✅
+5. **Validation** — `pnpm tsc --noEmit` 0 errors; `pnpm lint` 0 errors (3 pre-existing warnings in untouched files); `pnpm vitest run` 265/265 passed. Code review clean — fixed one syntax slip (permission gate inside type annotation) and wired `statusBreakdown` into office hierarchy nodes (was unused).
+
 ---
 
 ## How to Use This Roadmap

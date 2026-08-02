@@ -141,6 +141,13 @@ export async function PATCH(
     const body = await request.json();
     const { name, tenantStatus, addRoleId, removeRoleId, startDate, endDate } = body;
 
+    // Account status changes (activate / suspend) require the dedicated
+    // user:manage-status capability, keeping them in User Management.
+    if (tenantStatus !== undefined) {
+      const statusPerm = await requirePermission(session, Permissions.USER_MANAGE_STATUS);
+      if (statusPerm instanceof NextResponse) return statusPerm;
+    }
+
     const db = getDb();
 
     // Verify membership

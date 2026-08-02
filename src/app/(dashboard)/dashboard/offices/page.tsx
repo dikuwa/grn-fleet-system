@@ -1,6 +1,7 @@
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { StaffStatusBreakdown } from '../organisation/organisation-tabs';
 
 import { EmptyState } from '@/components/ui/empty-state';
 import { isDbConnected, getDb } from '@/db';
@@ -19,22 +20,44 @@ async function fetchOfficesData(tenantId: string) {
   const allDepartments = await dbo.select().from(departments).where(and(eq(departments.tenantId, tenantId), eq(departments.isActive, true))).orderBy(asc(departments.name));
 
   const officeCounts = await dbo
-    .select({ officeId: employees.officeId, count: count() })
+    .select({ officeId: employees.officeId, status: employees.employmentStatus, count: count() })
     .from(employees)
-    .where(and(eq(employees.tenantId, tenantId), eq(employees.employmentStatus, 'active'), isNotNull(employees.officeId)))
-    .groupBy(employees.officeId);
+    .where(and(eq(employees.tenantId, tenantId), isNotNull(employees.officeId)))
+    .groupBy(employees.officeId, employees.employmentStatus);
 
-  const countMap = new Map(officeCounts.map((r) => [r.officeId, Number(r.count)]));
+  const statusBreakdown = new Map<string | null, { active: number; inactive: number; archived: number }>();
+  for (const row of officeCounts) {
+    const entry = statusBreakdown.get(row.officeId) ?? { active: 0, inactive: 0, archived: 0 };
+    if (row.status === 'active') entry.active += Number(row.count);
+    else if (row.status === 'inactive') entry.inactive += Number(row.count);
+    else if (row.status === 'archived') entry.archived += Number(row.count);
+    statusBreakdown.set(row.officeId, entry);
+  }
+
+  const countMap = new Map(
+    [...statusBreakdown.entries()].map(([officeId, entry]) => [officeId, entry.active]),
+  );
 
   const deptCounts = await dbo
-    .select({ departmentId: employees.departmentId, count: count() })
+    .select({ departmentId: employees.departmentId, status: employees.employmentStatus, count: count() })
     .from(employees)
-    .where(and(eq(employees.tenantId, tenantId), eq(employees.employmentStatus, 'active'), isNotNull(employees.departmentId)))
-    .groupBy(employees.departmentId);
+    .where(and(eq(employees.tenantId, tenantId), isNotNull(employees.departmentId)))
+    .groupBy(employees.departmentId, employees.employmentStatus);
 
-  const deptCountMap = new Map(deptCounts.map((r) => [r.departmentId, Number(r.count)]));
+  const deptStatusBreakdown = new Map<string | null, { active: number; inactive: number; archived: number }>();
+  for (const row of deptCounts) {
+    const entry = deptStatusBreakdown.get(row.departmentId) ?? { active: 0, inactive: 0, archived: 0 };
+    if (row.status === 'active') entry.active += Number(row.count);
+    else if (row.status === 'inactive') entry.inactive += Number(row.count);
+    else if (row.status === 'archived') entry.archived += Number(row.count);
+    deptStatusBreakdown.set(row.departmentId, entry);
+  }
 
-  return { allOffices, allDepartments, countMap, deptCountMap };
+  const deptCountMap = new Map(
+    [...deptStatusBreakdown.entries()].map(([departmentId, entry]) => [departmentId, entry.active]),
+  );
+
+  return { allOffices, allDepartments, countMap, deptCountMap, statusBreakdown, deptStatusBreakdown };
 }
 
 export default async function OfficesPage() {
@@ -75,9 +98,10 @@ export default async function OfficesPage() {
     );
   }
 
-  const { allOffices, allDepartments, countMap, deptCountMap } = data;
+  const { allOffices, allDepartments, countMap, deptCountMap, statusBreakdown, deptStatusBreakdown } = data;
   const rootOffices = allOffices.filter((o) => !o.parentId);
   const childOffices = allOffices.filter((o) => o.parentId);
+  const breakdownFor = (id: string) => statusBreakdown.get(id) ?? { active: 0, inactive: 0, archived: 0 };
 
   return (
     <div className="space-y-6">
@@ -104,6 +128,7 @@ export default async function OfficesPage() {
                     office={office}
                     subOffices={childOffices.filter((c) => c.parentId === office.id)}
                     countMap={countMap}
+                    breakdownFor={breakdownFor}
                     allChildOffices={childOffices}
                     depth={0}
                   />
@@ -121,14 +146,15 @@ export default async function OfficesPage() {
             ) : (
               <div className="divide-y divide-border">
                 {allDepartments.map((dept) => (
-                  <div key={dept.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-[8px] bg-brand-50">
+                  <div key={dept.id} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-brand-50">
                         <Layers className="h-4 w-4 text-brand-700" />
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-ink-950">{dept.name}</p>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-ink-950">{dept.name}</p>
                         {dept.code && <p className="text-xs text-ink-500">Code: {dept.code}</p>}
+                        <StaffStatusBreakdown {...(deptStatusBreakdown.get(dept.id) ?? { active: 0, inactive: 0, archived: 0 })} />
                       </div>
                     </div>
                     <Badge variant="default">{deptCountMap.get(dept.id) || 0}</Badge>
@@ -144,11 +170,12 @@ export default async function OfficesPage() {
 }
 
 function OfficeNode({
-  office, subOffices, countMap, allChildOffices, depth,
+  office, subOffices, countMap, breakdownFor, allChildOffices, depth,
 }: {
   office: (typeof offices.$inferSelect);
   subOffices: (typeof offices.$inferSelect)[];
   countMap: Map<string | null, number>;
+  breakdownFor: (id: string) => { active: number; inactive: number; archived: number };
   allChildOffices: (typeof offices.$inferSelect)[];
   depth: number;
 }) {
@@ -172,6 +199,9 @@ function OfficeNode({
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-ink-950 truncate">{office.name}</p>
           <p className="text-xs text-ink-500 capitalize">{office.type.replace(/_/g, ' ')}{office.code && ` · ${office.code}`}</p>
+          <div className="mt-1">
+            <StaffStatusBreakdown {...breakdownFor(office.id)} />
+          </div>
         </div>
         <Badge variant="default">{countMap.get(office.id) || 0}</Badge>
         {subOffices.length > 0 && <ChevronRight className="h-4 w-4 text-ink-400" />}
@@ -184,6 +214,7 @@ function OfficeNode({
               office={child}
               subOffices={allChildOffices.filter((c) => c.parentId === child.id)}
               countMap={countMap}
+              breakdownFor={breakdownFor}
               allChildOffices={allChildOffices}
               depth={depth + 1}
             />

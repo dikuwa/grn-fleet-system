@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { Fragment, useState, useRef, useCallback } from 'react';
 import { parseImportFile } from '@/lib/file-import';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
+import { normaliseEmployeeStatus, employeeStatusConfig, normaliseAvailability } from '@/lib/employee-status';
 
 type Step = 'upload' | 'mapping' | 'preview' | 'committing' | 'complete';
 
@@ -61,6 +62,7 @@ export default function StaffImportPage() {
   const [entityMapping, setEntityMapping] = useState<{ department: Record<string, string>; office: Record<string, string> }>({ department: {}, office: {} });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewPageSize = 10;
+  const [expandedErrorRow, setExpandedErrorRow] = useState<number | null>(null);
 
   const loadOrganisationOptions = useCallback(async () => {
     const [departmentData, officeData] = await Promise.all([fetch('/api/departments').then((response) => response.json()), fetch('/api/offices').then((response) => response.json())]);
@@ -208,6 +210,54 @@ export default function StaffImportPage() {
   }, []);
 
   const totalValidRows = rows.filter((r) => r.errors.length === 0).length;
+
+  /** Per-row computed defaults, mirroring the server-side import rules. */
+  const getRowDefaults = useCallback((row: ImportRow) => {
+    const statusRaw = (() => {
+      const statusHeader = Object.entries(columnMapping).find(([, v]) => v === 'employment_status')?.[0];
+      return row.data[statusHeader || '']?.trim() || '';
+    })();
+    const status = normaliseEmployeeStatus(statusRaw || 'active');
+    const statusDisplay = status ? employeeStatusConfig[status] : null;
+    const driverRaw = (() => {
+      const driverHeader = Object.entries(columnMapping).find(([, v]) => v === 'is_driver')?.[0];
+      return row.data[driverHeader || '']?.trim() || '';
+    })();
+    const isDriver = ['true', 'yes', '1', 'y'].includes(driverRaw.toLowerCase());
+    const availabilityRaw = (() => {
+      const availabilityHeader = Object.entries(columnMapping).find(([, v]) => v === 'availability_status')?.[0];
+      return row.data[availabilityHeader || '']?.trim() || '';
+    })();
+    const availability = normaliseAvailability(availabilityRaw || 'available');
+    return { status, statusDisplay, isDriver, availability };
+  }, [columnMapping]);
+
+  /** Download a CSV listing every row that failed validation, with its errors. */
+  const downloadErrorFile = useCallback(() => {
+    const errorRows = rows.filter((r) => r.errors.length > 0);
+    if (errorRows.length === 0) return;
+    const nameHeader = Object.entries(columnMapping).find(([, v]) => v === 'first_name')?.[0] || '';
+    const surnameHeader = Object.entries(columnMapping).find(([, v]) => v === 'last_name')?.[0] || '';
+    const empNoHeader = Object.entries(columnMapping).find(([, v]) => v === 'employee_number')?.[0] || '';
+    const lines = [
+      'Row Number,Employee Number,Name,Validation Errors',
+      ...errorRows.map((r) => {
+        const name = `${r.data[nameHeader] || ''} ${r.data[surnameHeader] || ''}`.trim();
+        const empNo = r.data[empNoHeader] || '';
+        const escaped = [r.rowNumber, empNo, name, r.errors.join(' | ')]
+          .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+          .join(',');
+        return escaped;
+      }),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `govfleet-import-errors-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [rows, columnMapping]);
 
   const handleCommitImport = useCallback(async () => {
     setIsCommitting(true);
@@ -508,6 +558,8 @@ export default function StaffImportPage() {
                       <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Name</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Email</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Job Title</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Employment Status</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Driver</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Status</th>
                     </tr>
                   </thead>
@@ -518,16 +570,47 @@ export default function StaffImportPage() {
                       const lastName = row.data[Object.entries(columnMapping).find(([, v]) => v === 'last_name')?.[0] || ''];
                       const email = row.data[Object.entries(columnMapping).find(([, v]) => v === 'email')?.[0] || ''];
                       const jobTitle = row.data[Object.entries(columnMapping).find(([, v]) => v === 'job_title')?.[0] || ''];
+                      const defaults = getRowDefaults(row);
+                      const isExpanded = expandedErrorRow === row.rowNumber;
 
                       return (
-                        <tr key={row.rowNumber} className={`hover:bg-canvas/50 transition-colors ${row.errors.length > 0 ? 'bg-status-error-bg/30' : ''}`}>
-                          <td className="px-3 py-2 text-xs text-ink-500">{row.rowNumber}</td>
-                          <td className="px-3 py-2 text-xs tabular-nums text-ink-700">{empNo || '—'}</td>
-                          <td className="px-3 py-2 text-sm text-ink-700">{firstName} {lastName}</td>
-                          <td className="px-3 py-2 text-sm text-ink-500">{email || '—'}</td>
-                          <td className="px-3 py-2 text-sm text-ink-500">{jobTitle || '—'}</td>
-                          <td className="px-3 py-2">{row.errors.length > 0 ? <div className="flex items-center gap-1"><XCircle className="h-3.5 w-3.5 text-status-error-text" /><span className="text-xs text-status-error-text">{row.errors.length} error{row.errors.length !== 1 ? 's' : ''}</span></div> : <CheckCircle2 className="h-3.5 w-3.5 text-status-success-text" />}</td>
-                        </tr>
+                        <Fragment key={row.rowNumber}>
+                          <tr
+                            className={`transition-colors ${row.errors.length > 0 ? 'cursor-pointer bg-status-error-bg/30 hover:bg-status-error-bg/50' : 'hover:bg-canvas/50'}`}
+                            onClick={
+                              row.errors.length > 0
+                                ? () => setExpandedErrorRow(isExpanded ? null : row.rowNumber)
+                                : undefined
+                            }
+                            title={row.errors.length > 0 ? (isExpanded ? 'Hide errors' : 'Show errors') : undefined}
+                          >
+                            <td className="px-3 py-2 text-xs text-ink-500">{row.rowNumber}</td>
+                            <td className="px-3 py-2 text-xs tabular-nums text-ink-700">{empNo || '—'}</td>
+                            <td className="px-3 py-2 text-sm text-ink-700">{firstName} {lastName}</td>
+                            <td className="px-3 py-2 text-sm text-ink-500">{email || '—'}</td>
+                            <td className="px-3 py-2 text-sm text-ink-500">{jobTitle || '—'}</td>
+                            <td className="px-3 py-2">
+                              {defaults.statusDisplay ? (
+                                <StatusBadge status={defaults.statusDisplay.variant as 'success' | 'warning' | 'error'} label={defaults.statusDisplay.label} />
+                              ) : (
+                                <span className="text-status-error-text text-xs">Invalid</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-xs">
+                              {defaults.isDriver ? <StatusBadge status="info" label="Yes" /> : <span className="text-ink-500">No</span>}
+                            </td>
+                            <td className="px-3 py-2">{row.errors.length > 0 ? <div className="flex items-center gap-1"><XCircle className="h-3.5 w-3.5 text-status-error-text" /><span className="text-xs text-status-error-text">{row.errors.length} error{row.errors.length !== 1 ? 's' : ''}</span></div> : <CheckCircle2 className="h-3.5 w-3.5 text-status-success-text" />}</td>
+                          </tr>
+                          {isExpanded && row.errors.length > 0 && (
+                            <tr className="bg-status-error-bg/20">
+                              <td colSpan={8} className="px-3 py-3">
+                                <ul className="list-inside list-disc space-y-1 text-xs text-status-error-text">
+                                  {row.errors.map((err, i) => (<li key={i}>{err}</li>))}
+                                </ul>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -548,7 +631,16 @@ export default function StaffImportPage() {
 
           {totalErrorRows > 0 && (
             <Card>
-              <CardHeader><CardTitle>Validation Errors</CardTitle><StatusBadge status="error" label={`${totalErrorRows} rows affected`} /></CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <CardTitle>Validation Errors</CardTitle>
+                  <StatusBadge status="error" label={`${totalErrorRows} rows affected`} />
+                </div>
+                <Button variant="secondary" size="sm" onClick={downloadErrorFile}>
+                  <Download className="h-4 w-4" />
+                  Download Error File
+                </Button>
+              </CardHeader>
               <CardContent>
                 <div className="space-y-2">
                   {rows.filter((r) => r.errors.length > 0).slice(0, 5).map((row) => (
@@ -559,7 +651,7 @@ export default function StaffImportPage() {
                       </ul>
                     </div>
                   ))}
-                  {totalErrorRows > 5 && <p className="text-xs text-ink-500">...and {totalErrorRows - 5} more rows with errors</p>}
+                  {totalErrorRows > 5 && <p className="text-xs text-ink-500">...and {totalErrorRows - 5} more rows with errors. Click any highlighted row in the preview to expand its errors.</p>}
                 </div>
               </CardContent>
             </Card>

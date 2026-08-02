@@ -38,6 +38,9 @@ export interface OrganisationOffice {
   isActive: boolean;
   parentName: string | null;
   employeeCount: number;
+  activeCount: number;
+  inactiveCount: number;
+  archivedCount: number;
   deptCount: number;
 }
 
@@ -52,9 +55,42 @@ export interface OrganisationDepartment {
   isActive: boolean;
   headName: string | null;
   staffCount: number;
+  activeCount: number;
+  inactiveCount: number;
+  archivedCount: number;
   officeCount: number;
   officeNames: string | null;
   officeIds: string[];
+}
+
+/** Compact staff status breakdown used in organisation tables and cards. */
+export function StaffStatusBreakdown({
+  active = 0,
+  inactive = 0,
+  archived = 0,
+}: {
+  active?: number;
+  inactive?: number;
+  archived?: number;
+}) {
+  const parts: Array<{ label: string; count: number; className: string }> = [
+    { label: 'active', count: active, className: 'text-status-success-text' },
+    { label: 'inactive', count: inactive, className: 'text-status-warning-text' },
+    { label: 'archived', count: archived, className: 'text-ink-400' },
+  ];
+  const shown = parts.filter((p) => p.count > 0);
+  if (shown.length === 0) return <span className="text-ink-400 text-xs">0 active</span>;
+  return (
+    <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
+      {shown.map((p, i) => (
+        <span key={p.label} className="flex items-center gap-1">
+          {i > 0 && <span className="text-ink-300">·</span>}
+          <span className={`tabular-nums font-semibold ${p.className}`}>{p.count}</span>
+          <span className="text-ink-500">{p.label}</span>
+        </span>
+      ))}
+    </span>
+  );
 }
 
 interface OrganisationTabsProps {
@@ -538,9 +574,16 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                         <td className="text-ink-500 px-4 py-3">{office.address ?? '—'}</td>
                         <td className="text-ink-500 px-4 py-3">{office.parentName ?? '—'}</td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-ink-950 dark:text-ink-100 font-semibold">
-                            {office.employeeCount}
-                          </span>
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-ink-950 dark:text-ink-100 font-semibold">
+                              {office.employeeCount}
+                            </span>
+                            <StaffStatusBreakdown
+                              active={office.activeCount}
+                              inactive={office.inactiveCount}
+                              archived={office.archivedCount}
+                            />
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-center">
                           <span className="text-ink-950 dark:text-ink-100 font-semibold">
@@ -610,6 +653,11 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                         <span className="flex items-center gap-1">
                           <Users className="h-3 w-3" /> {office.employeeCount} staff
                         </span>
+                        <StaffStatusBreakdown
+                          active={office.activeCount}
+                          inactive={office.inactiveCount}
+                          archived={office.archivedCount}
+                        />
                         <span className="flex items-center gap-1">
                           <GitBranch className="h-3 w-3" /> {office.deptCount} depts
                         </span>
@@ -682,9 +730,16 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                           {dept.headName ?? '—'}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-ink-950 dark:text-ink-100 font-semibold">
-                            {dept.staffCount}
-                          </span>
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-ink-950 dark:text-ink-100 font-semibold">
+                              {dept.staffCount}
+                            </span>
+                            <StaffStatusBreakdown
+                              active={dept.activeCount}
+                              inactive={dept.inactiveCount}
+                              archived={dept.archivedCount}
+                            />
+                          </div>
                         </td>
                         <td className="text-ink-500 px-4 py-3">
                           {dept.officeCount > 0
@@ -750,6 +805,11 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                         <span className="flex items-center gap-1">
                           <Users className="h-3 w-3" /> {dept.staffCount} staff
                         </span>
+                        <StaffStatusBreakdown
+                          active={dept.activeCount}
+                          inactive={dept.inactiveCount}
+                          archived={dept.archivedCount}
+                        />
                         <span className="flex items-center gap-1">
                           <Building2 className="h-3 w-3" /> {dept.officeCount} offices
                         </span>

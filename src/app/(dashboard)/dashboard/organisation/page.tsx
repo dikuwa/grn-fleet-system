@@ -39,7 +39,7 @@ export default async function OrganisationStructurePage() {
   let queryError = false;
 
   try {
-    // ── Offices with hierarchy, location, employee counts, represented departments ──
+    // ── Offices with hierarchy, location, employee status counts, represented departments ──
     officeRows = (await db
       .select({
         id: offices.id,
@@ -56,6 +56,24 @@ export default async function OrganisationStructurePage() {
             AND ${employees.tenantId} = ${session.tenantId}
             AND ${employees.employmentStatus} = 'active'
         )`,
+        activeCount: sql<number>`(
+          SELECT count(*)::int FROM ${employees}
+          WHERE ${employees.officeId} = ${offices.id}
+            AND ${employees.tenantId} = ${session.tenantId}
+            AND ${employees.employmentStatus} = 'active'
+        )`,
+        inactiveCount: sql<number>`(
+          SELECT count(*)::int FROM ${employees}
+          WHERE ${employees.officeId} = ${offices.id}
+            AND ${employees.tenantId} = ${session.tenantId}
+            AND ${employees.employmentStatus} = 'inactive'
+        )`,
+        archivedCount: sql<number>`(
+          SELECT count(*)::int FROM ${employees}
+          WHERE ${employees.officeId} = ${offices.id}
+            AND ${employees.tenantId} = ${session.tenantId}
+            AND ${employees.employmentStatus} = 'archived'
+        )`,
         deptCount: sql<number>`(
           SELECT count(*)::int FROM ${departmentOffices}
           WHERE ${departmentOffices.officeId} = ${offices.id}
@@ -66,7 +84,7 @@ export default async function OrganisationStructurePage() {
       .where(eq(offices.tenantId, session.tenantId))
       .orderBy(asc(offices.name))) as OrganisationOffice[];
 
-    // ── Departments with heads, staff counts, offices where they operate ──
+    // ── Departments with heads, staff status counts, offices where they operate ──
     deptRows = (await db
       .select({
         id: departments.id,
@@ -82,6 +100,24 @@ export default async function OrganisationStructurePage() {
           WHERE ${employees.departmentId} = ${departments.id}
             AND ${employees.tenantId} = ${session.tenantId}
             AND ${employees.employmentStatus} = 'active'
+        )`,
+        activeCount: sql<number>`(
+          SELECT count(*)::int FROM ${employees}
+          WHERE ${employees.departmentId} = ${departments.id}
+            AND ${employees.tenantId} = ${session.tenantId}
+            AND ${employees.employmentStatus} = 'active'
+        )`,
+        inactiveCount: sql<number>`(
+          SELECT count(*)::int FROM ${employees}
+          WHERE ${employees.departmentId} = ${departments.id}
+            AND ${employees.tenantId} = ${session.tenantId}
+            AND ${employees.employmentStatus} = 'inactive'
+        )`,
+        archivedCount: sql<number>`(
+          SELECT count(*)::int FROM ${employees}
+          WHERE ${employees.departmentId} = ${departments.id}
+            AND ${employees.tenantId} = ${session.tenantId}
+            AND ${employees.employmentStatus} = 'archived'
         )`,
         officeCount: sql<number>`(
           SELECT count(*)::int FROM ${departmentOffices}
@@ -117,6 +153,8 @@ export default async function OrganisationStructurePage() {
   }
 
   const totalStaff = deptRows.reduce((sum, r) => sum + Number(r.staffCount ?? 0), 0);
+  const totalInactive = deptRows.reduce((sum, r) => sum + Number(r.inactiveCount ?? 0), 0);
+  const totalArchived = deptRows.reduce((sum, r) => sum + Number(r.archivedCount ?? 0), 0);
 
   return (
     <div className="space-y-6">
@@ -126,7 +164,7 @@ export default async function OrganisationStructurePage() {
       ]} />
       <PageHeader
         title="Organisation Structure"
-        description={`${officeRows.length} offices · ${deptRows.length} departments · ${totalStaff} active staff`}
+        description={`${officeRows.length} offices · ${deptRows.length} departments · ${totalStaff} active staff${totalInactive ? ` · ${totalInactive} inactive` : ''}${totalArchived ? ` · ${totalArchived} archived` : ''}`}
       >
         <div className="flex items-center gap-2">
           <span className="hidden items-center gap-1.5 rounded-[6px] bg-muted px-2.5 py-1.5 text-xs text-ink-500 sm:flex">

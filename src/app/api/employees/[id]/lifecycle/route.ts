@@ -78,6 +78,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     position?: string;
     supervisorEmployeeId?: string;
   };
+
+  // Account-status mutations live in User Management and require the
+  // dedicated user:manage-status capability — staff lifecycle rights alone
+  // are never enough to toggle a login account.
+  if (body.action === 'deactivate_account' || body.action === 'reactivate_account') {
+    const accountPerm = await requirePermission(auth.session, Permissions.USER_MANAGE_STATUS);
+    if (accountPerm instanceof NextResponse) return accountPerm;
+  }
   const db = getDb();
   const now = new Date();
   let after: Record<string, unknown> = {};
