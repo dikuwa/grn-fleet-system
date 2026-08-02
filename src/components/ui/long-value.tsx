@@ -66,7 +66,7 @@ export function LongValue({
                 side="top"
                 sideOffset={6}
                 collisionPadding={8}
-                className="bg-ink-950 z-50 hidden max-w-[min(20rem,calc(100vw-1rem))] rounded-[6px] px-2.5 py-1.5 text-xs leading-4 [overflow-wrap:anywhere] whitespace-normal text-white shadow-lg sm:block"
+                className="bg-ink-950 text-surface z-50 hidden max-w-[min(20rem,calc(100vw-1rem))] rounded-[6px] px-2.5 py-1.5 text-xs leading-4 [overflow-wrap:anywhere] whitespace-normal shadow-lg sm:block"
               >
                 {value}
                 <Tooltip.Arrow className="fill-ink-950" />

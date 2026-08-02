@@ -170,7 +170,7 @@ export default function PredictiveMaintenancePage() {
                 key={opt.value}
                 onClick={() => setFilterUrgency(opt.value)}
                 className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                  filterUrgency === opt.value ? 'bg-ink-950 text-white' : 'bg-canvas text-ink-500 hover:bg-ink-100'
+                  filterUrgency === opt.value ? 'bg-ink-950 text-surface' : 'bg-canvas text-ink-500 hover:bg-ink-100'
                 }`}
               >
                 {opt.label}

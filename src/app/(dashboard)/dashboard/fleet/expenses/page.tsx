@@ -276,7 +276,7 @@ export default function ExpensesPage() {
                 key={opt.value}
                 onClick={() => { setPeriod(opt.value); fetched.current = false; }}
                 className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                  period === opt.value ? 'bg-ink-950 text-white' : 'bg-canvas text-ink-500 hover:bg-ink-100'
+                  period === opt.value ? 'bg-ink-950 text-surface' : 'bg-canvas text-ink-500 hover:bg-ink-100'
                 }`}
               >
                 {opt.label}

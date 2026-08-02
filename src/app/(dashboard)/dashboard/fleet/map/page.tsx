@@ -308,7 +308,7 @@ export default function FleetMapPage() {
                         onClick={() => setFilterStatus(opt.value)}
                         className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                           filterStatus === opt.value
-                            ? 'bg-ink-950 text-white'
+                            ? 'bg-ink-950 text-surface'
                             : 'bg-canvas text-ink-500 hover:bg-ink-100'
                         }`}
                       >
