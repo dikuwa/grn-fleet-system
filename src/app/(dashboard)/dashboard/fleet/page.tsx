@@ -25,6 +25,7 @@ import {
 import Link from 'next/link';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { LongValue } from '@/components/ui/long-value';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
 import {
   canAccessDashboardPath,
@@ -443,26 +444,24 @@ export default async function FleetPage({ searchParams }: PageProps) {
               <Link
                 key={vehicle.id}
                 href={`/dashboard/fleet/${vehicle.id}`}
-                className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
+                className="border-border bg-surface hover:border-brand-100 block min-w-0 max-w-full rounded-[10px] border p-4 transition-all hover:shadow-sm"
               >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-center gap-4">
+                <div className="flex min-w-0 items-center justify-between gap-4">
+                  <div className="flex min-w-0 flex-1 items-center gap-4">
                     <div className="bg-brand-50 text-brand-700 flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px]">
                       <Car className="h-6 w-6" />
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-ink-950 text-sm font-[650]">
-                          {vehicle.make} {vehicle.model}
-                        </p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <LongValue value={`${vehicle.make} ${vehicle.model}`} className="flex-1" valueClassName="text-ink-950 text-sm font-[650]" ariaLabel="Vehicle description" />
                         {vehicle.manufactureYear && (
                           <span className="text-ink-500 text-xs">({vehicle.manufactureYear})</span>
                         )}
                       </div>
-                      <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                        <span className="tabular-nums">{vehicle.licenceNumber}</span>
+                      <div className="text-ink-500 mt-0.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                        <LongValue value={vehicle.licenceNumber} className="w-auto max-w-48 tabular-nums" ariaLabel="Licence reference" />
                         {vehicle.vehicleRegisterNumber && (
-                          <span>{vehicle.vehicleRegisterNumber}</span>
+                          <LongValue value={vehicle.vehicleRegisterNumber} className="w-auto max-w-48" ariaLabel="Register number" />
                         )}
                         {vehicle.colour && <span>{vehicle.colour}</span>}
                         {vehicle.categoryName && <span>{vehicle.categoryName}</span>}

@@ -1,12 +1,11 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import { useSession } from '@/lib/auth-client';
 import { parseImportFile } from '@/lib/file-import';
-import { DEFAULT_TENANT_ID } from '@/lib/constants';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { StatusBadge } from '@/components/ui/badge';
 import {
   Upload,
@@ -31,20 +30,23 @@ interface ImportRow {
 }
 
 const STAFF_TEMPLATE_COLUMNS = [
-  { key: 'employee_number', label: 'Employee Number', required: true },
-  { key: 'first_name', label: 'First Name', required: true },
-  { key: 'last_name', label: 'Last Name', required: true },
+  { key: 'employee_number', label: 'Employee Number', required: false },
   { key: 'title', label: 'Title', required: false },
-  { key: 'email', label: 'Email', required: false },
-  { key: 'phone', label: 'Phone', required: false },
+  { key: 'first_name', label: 'First Name', required: true },
+  { key: 'middle_names', label: 'Middle Names', required: false },
+  { key: 'last_name', label: 'Last Name', required: true },
+  { key: 'gender', label: 'Gender', required: false },
   { key: 'job_title', label: 'Job Title', required: false },
+  { key: 'job_grade', label: 'Job Grade', required: false },
   { key: 'department', label: 'Department', required: false },
   { key: 'office', label: 'Office', required: false },
+  { key: 'email', label: 'Email', required: false },
+  { key: 'phone', label: 'Phone', required: false },
   { key: 'employment_status', label: 'Employment Status', required: false },
+  { key: 'is_driver', label: 'Is Driver', required: false },
 ] as const;
 
 export default function StaffImportPage() {
-  const { data: session } = useSession();
   const { toast } = useToast();
   const [step, setStep] = useState<Step>('upload');
   const [fileName, setFileName] = useState<string>('');
@@ -52,17 +54,90 @@ export default function StaffImportPage() {
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [currentPreviewPage, setCurrentPreviewPage] = useState(1);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [importResult, setImportResult] = useState<{ createdRows: number; generatedNumbers: number; driversCreated: number } | null>(null);
+  const [reviewedSkippedRows, setReviewedSkippedRows] = useState(0);
+  const [organisationOptions, setOrganisationOptions] = useState<{ departments: Array<{ id: string; name: string }>; offices: Array<{ id: string; name: string }> }>({ departments: [], offices: [] });
+  const [entityMapping, setEntityMapping] = useState<{ department: Record<string, string>; office: Record<string, string> }>({ department: {}, office: {} });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewPageSize = 10;
+
+  const loadOrganisationOptions = useCallback(async () => {
+    const [departmentData, officeData] = await Promise.all([fetch('/api/departments').then((response) => response.json()), fetch('/api/offices').then((response) => response.json())]);
+    const options = { departments: departmentData.data ?? [], offices: officeData.data ?? [] };
+    setOrganisationOptions(options);
+    return options;
+  }, []);
+
+  const normaliseEntity = useCallback((value: string) => value.trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim(), []);
+
+  const refreshEntityMappings = useCallback((inputRows: ImportRow[], mapping: Record<string, string>, availableOptions = organisationOptions) => {
+    setEntityMapping((current) => {
+      const next = { department: { ...current.department }, office: { ...current.office } };
+      for (const kind of ['department', 'office'] as const) {
+        const sourceHeader = Object.entries(mapping).find(([, target]) => target === kind)?.[0];
+        if (!sourceHeader) continue;
+        const options = availableOptions[kind === 'department' ? 'departments' : 'offices'];
+        for (const row of inputRows) {
+          const sourceValue = row.data[sourceHeader]?.trim();
+          if (!sourceValue || next[kind][sourceValue] !== undefined) continue;
+          const exact = options.find((option) => normaliseEntity(option.name) === normaliseEntity(sourceValue));
+          next[kind][sourceValue] = exact?.name ?? '';
+        }
+      }
+      return next;
+    });
+  }, [normaliseEntity, organisationOptions]);
+
+  const createOrganisationRecord = useCallback(async (kind: 'department' | 'office', sourceValue: string) => {
+    try {
+      const response = await fetch(`/api/${kind === 'department' ? 'departments' : 'offices'}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(kind === 'department' ? { name: sourceValue, type: 'department' } : { name: sourceValue, type: 'other' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Failed to create ${kind}`);
+      const optionKey = kind === 'department' ? 'departments' : 'offices';
+      setOrganisationOptions((current) => ({ ...current, [optionKey]: [...current[optionKey], data.data] }));
+      setEntityMapping((current) => ({ ...current, [kind]: { ...current[kind], [sourceValue]: data.data.name } }));
+      toast({ title: kind === 'department' ? 'Department created' : 'Office created', description: `${data.data.name} is now selected for this import.`, variant: 'success' });
+    } catch (error) {
+      toast({ title: 'Record not created', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' });
+    }
+  }, [toast]);
+
+  const downloadTemplate = useCallback(async () => {
+    setIsDownloading(true);
+    try {
+      const response = await fetch('/staff-import-template.csv');
+      if (!response.ok) throw new Error('Template download failed.');
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'govfleet-staff-import-template.csv';
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast({ title: 'Template download failed', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' });
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [toast]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setFileName(file.name);
+    setEntityMapping({ department: {}, office: {} });
 
-    parseImportFile(file)
-      .then((parsed) => {
+    Promise.all([
+      parseImportFile(file),
+      organisationOptions.departments.length > 0 || organisationOptions.offices.length > 0
+        ? Promise.resolve(organisationOptions)
+        : loadOrganisationOptions(),
+    ])
+      .then(([parsed, availableOptions]) => {
         const headers = parsed.headers;
         const parsedRows: ImportRow[] = parsed.rows.map(
           (rowData: Record<string, string>, idx: number) => ({
@@ -102,13 +177,35 @@ export default function StaffImportPage() {
           return { ...row, errors };
         });
         setRows(validated);
+        refreshEntityMappings(validated, mapping, availableOptions);
 
         setStep('mapping');
       })
       .catch((err) => {
         toast({ title: 'Parse Error', description: err.message, variant: 'error' });
       });
-  }, [toast]);
+  }, [loadOrganisationOptions, organisationOptions, refreshEntityMappings, toast]);
+
+  const revalidateRows = useCallback((mapping: Record<string, string>) => {
+    setRows((current) => {
+      const seenNumbers = new Set<string>();
+      return current.map((row) => {
+        const errors: string[] = [];
+        for (const col of STAFF_TEMPLATE_COLUMNS) {
+          if (!col.required) continue;
+          const sourceHeader = Object.entries(mapping).find(([, target]) => target === col.key)?.[0];
+          if (!sourceHeader || !row.data[sourceHeader]?.trim()) errors.push(`Missing required field: ${col.label}`);
+        }
+        const employeeHeader = Object.entries(mapping).find(([, target]) => target === 'employee_number')?.[0];
+        const employeeNumber = employeeHeader ? row.data[employeeHeader]?.trim().toLowerCase() : '';
+        if (employeeNumber) {
+          if (seenNumbers.has(employeeNumber)) errors.push('Duplicate employee number in this file.');
+          seenNumbers.add(employeeNumber);
+        }
+        return { ...row, errors };
+      });
+    });
+  }, []);
 
   const totalValidRows = rows.filter((r) => r.errors.length === 0).length;
 
@@ -117,6 +214,7 @@ export default function StaffImportPage() {
     setStep('committing');
 
     try {
+      let skippedRows = 0;
       const payload = rows
         .filter((r) => r.errors.length === 0)
         .map((r) => {
@@ -124,25 +222,43 @@ export default function StaffImportPage() {
           for (const [csvCol, schemaCol] of Object.entries(columnMapping)) {
             mapped[schemaCol] = r.data[csvCol] || '';
           }
+          for (const kind of ['department', 'office'] as const) {
+            const sourceValue = mapped[kind]?.trim();
+            if (!sourceValue) continue;
+            const resolution = entityMapping[kind][sourceValue];
+            if (resolution === '__skip__') { skippedRows++; return null; }
+            mapped[kind] = resolution === '__unassigned__' ? '' : resolution || sourceValue;
+          }
           return mapped;
-        });
+        }).filter((row): row is Record<string, string> => row !== null);
+
+      if (payload.length === 0) throw new Error('Every row is marked to skip; there is nothing to import.');
+      setReviewedSkippedRows(skippedRows);
 
       const res = await fetch('/api/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rows: payload,
-          tenantId: DEFAULT_TENANT_ID,
-          userId: session?.user?.id || 'system',
+          fileName,
+          columnMapping,
+          entityMapping,
+          reviewedSkippedRows: skippedRows,
         }),
       });
 
+      const data = await res.json();
       if (!res.ok) {
-        const err = await res.json();
+        const err = data;
+        if (Array.isArray(err.rowErrors)) {
+          const byRow = new Map<number, string[]>(err.rowErrors.map((item: { rowNumber: number; errors: string[] }) => [item.rowNumber, item.errors]));
+          setRows((current) => current.map((row) => ({ ...row, errors: byRow.get(row.rowNumber) ?? row.errors })));
+        }
         throw new Error(err.error || 'Import failed');
       }
 
-      toast({ title: 'Import complete', description: `${totalValidRows} staff record(s) imported successfully`, variant: 'success' });
+      setImportResult(data);
+      toast({ title: 'Import complete', description: `${data.createdRows} staff record(s) imported successfully`, variant: 'success' });
       setStep('complete');
     } catch (err) {
       toast({ title: 'Import failed', description: err instanceof Error ? err.message : 'An error occurred during import', variant: 'error' });
@@ -151,7 +267,7 @@ export default function StaffImportPage() {
     } finally {
       setIsCommitting(false);
     }
-  }, [rows, columnMapping, session, toast, totalValidRows]);
+  }, [rows, columnMapping, entityMapping, fileName, toast]);
 
   const totalErrorRows = rows.filter((r) => r.errors.length > 0).length;
   const previewRows = rows.slice(
@@ -162,6 +278,7 @@ export default function StaffImportPage() {
 
   const allHeaders = rows.length > 0 ? Object.keys(rows[0].data) : [];
   const unmappedColumns = allHeaders.filter((h) => !columnMapping[h]);
+  const unresolvedEntities = (['department', 'office'] as const).flatMap((kind) => Object.entries(entityMapping[kind]).filter(([, resolution]) => !resolution).map(([sourceValue]) => ({ kind, sourceValue })));
 
   return (
     <div className="space-y-6">
@@ -174,24 +291,22 @@ export default function StaffImportPage() {
       />
       <PageHeader
         title="Import Staff Records"
-        description="Upload a CSV file to import employee records in bulk"
+        description="Upload a CSV or Excel file, validate it, map tenant records and review before importing"
       >
+        <Button variant="tertiary" size="sm" onClick={downloadTemplate} loading={isDownloading}>
+          <Download className="h-4 w-4" />
+          Download Template
+        </Button>
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/staff">
             <ChevronLeft className="h-4 w-4" />
             Back to Directory
           </Link>
         </Button>
-        <Button variant="tertiary" size="sm" asChild>
-          <a href="/staff-import-template.csv" download>
-            <Download className="h-4 w-4" />
-            Download Template
-          </a>
-        </Button>
       </PageHeader>
 
       {/* Step indicator */}
-      <div className="flex items-center gap-2 rounded-[10px] border border-border bg-surface p-4">
+      <div className="flex max-w-full items-center gap-2 overflow-x-auto rounded-[10px] border border-border bg-surface p-4">
         {(['upload', 'mapping', 'preview', 'complete'] as Step[]).map((s, i) => (
           <div key={s} className="flex items-center gap-2">
             <div
@@ -269,7 +384,7 @@ export default function StaffImportPage() {
                   {unmappedColumns.length > 3 && ` +${unmappedColumns.length - 3} more`}
                 </div>
               )}
-              <div className="overflow-x-auto">
+              <div className="max-w-full overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
@@ -283,7 +398,24 @@ export default function StaffImportPage() {
                       const mappedFrom = Object.entries(columnMapping).find(([, v]) => v === col.key)?.[0];
                       return (
                         <tr key={col.key} className="hover:bg-canvas/50">
-                          <td className="px-3 py-2 text-ink-700">{mappedFrom || <span className="text-ink-400 italic">Not mapped</span>}</td>
+                          <td className="min-w-48 px-3 py-2 text-ink-700">
+                            <StyledSelect
+                              value={mappedFrom || ''}
+                              onChange={(event) => {
+                                const source = event.target.value;
+                                const next = Object.fromEntries(Object.entries(columnMapping).filter(([, target]) => target !== col.key));
+                                if (source) next[source] = col.key;
+                                setColumnMapping(next);
+                                revalidateRows(next);
+                                refreshEntityMappings(rows, next);
+                              }}
+                            >
+                              <option value="">Not mapped</option>
+                              {allHeaders.map((header) => (
+                                <option key={header} value={header} disabled={Boolean(columnMapping[header] && columnMapping[header] !== col.key)}>{header}</option>
+                              ))}
+                            </StyledSelect>
+                          </td>
                           <td className="px-3 py-2"><span className="rounded bg-muted px-2 py-0.5 text-xs font-mono text-ink-700">{col.key}</span></td>
                           <td className="px-3 py-2">{col.required ? <StatusBadge status="error" label="Required" /> : <span className="text-xs text-ink-500">Optional</span>}</td>
                         </tr>
@@ -294,9 +426,32 @@ export default function StaffImportPage() {
               </div>
             </CardContent>
           </Card>
+          {(Object.keys(entityMapping.department).length > 0 || Object.keys(entityMapping.office).length > 0) && (
+            <Card>
+              <CardHeader><CardTitle>Office and Department Mapping</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                {(['department', 'office'] as const).flatMap((kind) => Object.keys(entityMapping[kind]).map((sourceValue) => {
+                  const options = organisationOptions[kind === 'department' ? 'departments' : 'offices'];
+                  return (
+                    <div key={`${kind}-${sourceValue}`} className="border-border grid gap-2 rounded-[8px] border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center">
+                      <div className="min-w-0"><p className="text-ink-500 text-xs capitalize">Imported {kind}</p><p className="text-ink-950 break-words text-sm font-medium">{sourceValue}</p></div>
+                      <StyledSelect value={entityMapping[kind][sourceValue]} onChange={(event) => setEntityMapping((current) => ({ ...current, [kind]: { ...current[kind], [sourceValue]: event.target.value } }))}>
+                        <option value="">Choose a resolution</option>
+                        {options.map((option) => <option key={option.id} value={option.name}>Map to {option.name}</option>)}
+                        <option value="__unassigned__">Leave unassigned</option>
+                        <option value="__skip__">Skip affected rows</option>
+                      </StyledSelect>
+                      <Button variant="secondary" size="sm" onClick={() => createOrganisationRecord(kind, sourceValue)}>Create New</Button>
+                    </div>
+                  );
+                }))}
+                <p className="text-ink-500 text-xs">Exact normalised matches are selected automatically. Creating a record is explicit and tenant-scoped; skipped rows are excluded only after this reviewed choice.</p>
+              </CardContent>
+            </Card>
+          )}
           <div className="flex justify-end gap-3">
             <Button variant="secondary" size="sm" onClick={() => setStep('upload')}>Back</Button>
-            <Button variant="primary" size="sm" onClick={() => setStep('preview')} disabled={rows.length === 0}>
+            <Button variant="primary" size="sm" onClick={() => { revalidateRows(columnMapping); setStep('preview'); }} disabled={rows.length === 0 || unresolvedEntities.length > 0 || STAFF_TEMPLATE_COLUMNS.some((col) => col.required && !Object.values(columnMapping).includes(col.key))}>
               Continue to Preview <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
@@ -385,12 +540,13 @@ export default function StaffImportPage() {
             <p className="text-xs text-ink-500">{fileName} · {totalValidRows} valid, {totalErrorRows} with errors</p>
             <div className="flex items-center gap-3">
               <Button variant="secondary" size="sm" onClick={() => setStep('mapping')}>Back</Button>
-              {totalValidRows > 0 && (
+              {totalValidRows > 0 && totalErrorRows === 0 && (
                 <Button variant="primary" size="sm" onClick={handleCommitImport} loading={isCommitting}>
                   <CheckCircle2 className="h-4 w-4" />
                   Import {totalValidRows} Valid Record{totalValidRows !== 1 ? 's' : ''}
                 </Button>
               )}
+              {totalErrorRows > 0 && <p className="text-status-error-text max-w-sm text-right text-xs">Resolve every validation error before importing. No partial records will be created.</p>}
             </div>
           </div>
         </div>
@@ -422,8 +578,10 @@ export default function StaffImportPage() {
             </div>
             <h3 className="text-lg font-semibold text-ink-950">Import Complete</h3>
             <p className="mt-1 text-sm text-ink-500">
-              Successfully imported {totalValidRows} employee records.
-              {totalErrorRows > 0 && ` ${totalErrorRows} rows had errors and were skipped.`}
+              Successfully imported {importResult?.createdRows ?? totalValidRows} employee records.
+              {importResult?.generatedNumbers ? ` ${importResult.generatedNumbers} employee numbers were generated safely.` : ''}
+              {importResult?.driversCreated ? ` ${importResult.driversCreated} incomplete driver profiles now require licence verification.` : ''}
+              {reviewedSkippedRows > 0 ? ` ${reviewedSkippedRows} reviewed row${reviewedSkippedRows === 1 ? '' : 's'} were skipped.` : ''}
             </p>
             <div className="mt-6 flex items-center justify-center gap-3">
               <Button variant="secondary" size="sm" asChild>

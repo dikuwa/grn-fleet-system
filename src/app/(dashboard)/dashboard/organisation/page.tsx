@@ -1,5 +1,5 @@
 import { getDb, isDbConnected } from '@/db';
-import { offices, departments, employees } from '@/db/schema';
+import { offices, departments, departmentOffices, employees } from '@/db/schema';
 import { eq, sql, asc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -57,11 +57,9 @@ export default async function OrganisationStructurePage() {
             AND ${employees.employmentStatus} = 'active'
         )`,
         deptCount: sql<number>`(
-          SELECT count(DISTINCT ${employees.departmentId})::int FROM ${employees}
-          WHERE ${employees.officeId} = ${offices.id}
-            AND ${employees.tenantId} = ${session.tenantId}
-            AND ${employees.employmentStatus} = 'active'
-            AND ${employees.departmentId} IS NOT NULL
+          SELECT count(*)::int FROM ${departmentOffices}
+          WHERE ${departmentOffices.officeId} = ${offices.id}
+            AND ${departmentOffices.tenantId} = ${session.tenantId}
         )`,
       })
       .from(offices)
@@ -74,6 +72,8 @@ export default async function OrganisationStructurePage() {
         id: departments.id,
         name: departments.name,
         code: departments.code,
+        type: departments.type,
+        parentId: departments.parentId,
         headEmployeeId: departments.headEmployeeId,
         isActive: departments.isActive,
         headName: sql<string | null>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
@@ -84,19 +84,18 @@ export default async function OrganisationStructurePage() {
             AND ${employees.employmentStatus} = 'active'
         )`,
         officeCount: sql<number>`(
-          SELECT count(DISTINCT ${employees.officeId})::int FROM ${employees}
-          WHERE ${employees.departmentId} = ${departments.id}
-            AND ${employees.tenantId} = ${session.tenantId}
-            AND ${employees.employmentStatus} = 'active'
-            AND ${employees.officeId} IS NOT NULL
+          SELECT count(*)::int FROM ${departmentOffices}
+          WHERE ${departmentOffices.departmentId} = ${departments.id}
+            AND ${departmentOffices.tenantId} = ${session.tenantId}
         )`,
         officeNames: sql<string | null>`(
-          SELECT string_agg(DISTINCT o.name, ', ' ORDER BY o.name) FROM ${offices} o
-          INNER JOIN ${employees} e ON e.office_id = o.id
-          WHERE e.department_id = ${departments.id}
-            AND e.tenant_id = ${session.tenantId}
-            AND e.employment_status = 'active'
+          SELECT string_agg(o.name, ', ' ORDER BY o.name) FROM ${departmentOffices} rel
+          INNER JOIN ${offices} o ON o.id = rel.office_id
+          WHERE rel.department_id = ${departments.id}
+            AND rel.tenant_id = ${session.tenantId}
         )`,
+        officeIds: sql<string[]>`COALESCE((SELECT array_agg(rel.office_id::text) FROM ${departmentOffices} rel WHERE rel.department_id = ${departments.id} AND rel.tenant_id = ${session.tenantId}), ARRAY[]::text[])`,
+        parentName: sql<string | null>`(SELECT d2.name FROM ${departments} d2 WHERE d2.id = ${departments.parentId} AND d2.tenant_id = ${session.tenantId})`,
       })
       .from(departments)
       .leftJoin(employees, eq(departments.headEmployeeId, employees.id))

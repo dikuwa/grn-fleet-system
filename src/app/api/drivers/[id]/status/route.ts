@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, driverProfiles, driverLicences, employeeDocuments } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gte } from 'drizzle-orm';
 import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -144,6 +144,16 @@ export async function PATCH(
     if (action === 'reactivate') {
       if (profile.driverStatus === 'authorised') {
         return NextResponse.json({ error: 'Driver is already active' }, { status: 409 });
+      }
+
+      const [verifiedLicence] = await db.select({ id: driverLicences.id }).from(driverLicences).where(and(
+        eq(driverLicences.driverProfileId, profile.id),
+        eq(driverLicences.verificationStatus, 'verified'),
+        eq(driverLicences.isVerified, true),
+        gte(driverLicences.expiryDate, new Date().toISOString().slice(0, 10)),
+      )).limit(1);
+      if (!verifiedLicence) {
+        return NextResponse.json({ error: 'This driver cannot be authorised until a current licence is complete and verified.' }, { status: 409 });
       }
 
       // Reactivate — restore licences, clear suspension fields

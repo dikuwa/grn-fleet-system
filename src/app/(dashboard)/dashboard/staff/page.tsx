@@ -18,6 +18,7 @@ import { canPerformDashboardAction } from '@/lib/dashboard-access';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { StaffRowActions } from '@/components/staff/staff-row-actions';
+import { LongValue } from '@/components/ui/long-value';
 
 interface SearchParams {
   q?: string;
@@ -372,16 +373,10 @@ export default async function StaffDirectoryPage({
                 >
                   {row.firstName} {row.lastName}
                 </Link>
-                <p className="text-ink-500 truncate text-xs">
-                  {row.employeeNumber} · {row.jobTitle || 'Position not recorded'}
-                </p>
-                <p className="text-ink-500 truncate text-xs">
-                  {row.officeName || 'Office not recorded'}
-                </p>
+                <LongValue value={`${row.employeeNumber} · ${row.jobTitle || 'Position not recorded'}`} className="text-ink-500 text-xs" ariaLabel="Employee number and job title" />
+                <LongValue value={row.officeName} fallback="Office not recorded" className="text-ink-500 text-xs" ariaLabel="Office" />
                 {row.roleNames && (
-                  <p className="text-brand-700 mt-0.5 truncate text-xs font-medium">
-                    {row.roleNames}
-                  </p>
+                  <LongValue value={row.roleNames} className="text-brand-700 mt-0.5 text-xs font-medium" ariaLabel="Roles" />
                 )}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -411,15 +406,15 @@ export default async function StaffDirectoryPage({
                 <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
               </summary>
               <div className="mt-2 space-y-1.5 text-xs">
-                <p className="text-ink-500">
+                <p className="text-ink-500 min-w-0 [overflow-wrap:anywhere]">
                   <span className="font-medium text-ink-700">Department:</span>{' '}
                   {row.departmentName || '—'}
                 </p>
-                <p className="text-ink-500">
+                <p className="text-ink-500 min-w-0 [overflow-wrap:anywhere]">
                   <span className="font-medium text-ink-700">Office:</span>{' '}
                   {row.officeName || '—'}
                 </p>
-                <p className="text-ink-500">
+                <p className="text-ink-500 min-w-0 [overflow-wrap:anywhere]">
                   <span className="font-medium text-ink-700">Employee #:</span>{' '}
                   {row.employeeNumber}
                 </p>
@@ -500,27 +495,27 @@ export default async function StaffDirectoryPage({
                 staffList.map((row) => (
                   <tr key={row.id} className="hover:bg-canvas/50 transition-colors">
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-brand-50 text-brand-800 flex h-8 w-8 items-center justify-center rounded-[6px] text-xs font-semibold">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="bg-brand-50 text-brand-800 flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-xs font-semibold">
                           {row.firstName.charAt(0)}
                           {row.lastName.charAt(0)}
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <Link
                             href={`/dashboard/staff/${row.id}`}
                             className="text-ink-950 hover:text-brand-600 font-medium transition-colors"
                           >
                             {row.firstName} {row.lastName}
                           </Link>
-                          <p className="text-ink-500 text-xs">{row.jobTitle}</p>
+                          <LongValue value={row.jobTitle} className="max-w-48 text-ink-500 text-xs" ariaLabel="Job title" />
                         </div>
                       </div>
                     </td>
-                    <td className="text-ink-500 px-4 py-3 text-xs tabular-nums">
-                      {row.employeeNumber}
+                    <td className="text-ink-500 max-w-40 px-4 py-3 text-xs tabular-nums">
+                      <LongValue value={row.employeeNumber} copyable ariaLabel="Employee number" />
                     </td>
-                    <td className="text-ink-700 px-4 py-3 text-sm">{row.departmentName || '—'}</td>
-                    <td className="text-ink-700 px-4 py-3 text-sm">{row.officeName || '—'}</td>
+                    <td className="text-ink-700 max-w-52 px-4 py-3 text-sm"><LongValue value={row.departmentName} ariaLabel="Department" /></td>
+                    <td className="text-ink-700 max-w-52 px-4 py-3 text-sm"><LongValue value={row.officeName} ariaLabel="Office" /></td>
                     <td className="px-4 py-3">
                       <StatusBadge
                         status={

@@ -41,6 +41,10 @@ export function DriverStatusActions({
 
   const isSuspended = driverStatus === 'suspended';
 
+  if (!['authorised', 'suspended'].includes(driverStatus)) {
+    return <p className="text-status-pending-text max-w-xs text-right text-xs">Complete and verify the driver licence before authorisation.</p>;
+  }
+
   const handleSuspend = async () => {
     if (!suspendReason.trim()) return;
 

@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { LongValue } from '@/components/ui/long-value';
 import { isDbConnected, getDb } from '@/db';
 import {
   employees,
@@ -212,28 +213,28 @@ export default async function EmployeeDetailPage({
         </div>
       </PageHeader>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-1">
-          <CardContent className="pt-6">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-3">
+        <Card className="min-w-0 lg:col-span-1">
+          <CardContent className="min-w-0 pt-6">
             <div className="flex flex-col items-center text-center">
               <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-brand-50 text-2xl font-bold text-brand-800">{employee.firstName.charAt(0)}{employee.lastName.charAt(0)}</div>
               <h2 className="text-lg font-semibold text-ink-950">{employee.title && `${employee.title} `}{employee.firstName} {employee.lastName}</h2>
-              <p className="mt-1 text-sm text-ink-500">{employee.jobTitle}</p>
+              <LongValue value={employee.jobTitle} fallback="Position not recorded" className="mt-1 w-full justify-center" valueClassName="text-center text-sm text-ink-500" ariaLabel="Job title" />
               <div className="mt-3"><StatusBadge status={statusVariant} label={employee.employmentStatus.charAt(0).toUpperCase() + employee.employmentStatus.slice(1)} /></div>
             </div>
-            <div className="mt-6 space-y-3 border-t border-border pt-4">
-              <div className="flex items-center gap-3 text-sm"><Mail className="h-4 w-4 text-ink-400" /><span className="text-ink-700">{employee.email || '—'}</span></div>
-              <div className="flex items-center gap-3 text-sm"><Phone className="h-4 w-4 text-ink-400" /><span className="text-ink-700">{employee.phone || '—'}</span></div>
-              <div className="flex items-center gap-3 text-sm"><Building2 className="h-4 w-4 text-ink-400" /><span className="text-ink-700">{employee.departmentName || '—'}</span></div>
-              <div className="flex items-center gap-3 text-sm"><Building2 className="h-4 w-4 text-ink-400" /><span className="text-ink-700">{employee.officeName || '—'}</span></div>
-              <div className="flex items-center gap-3 text-sm"><Calendar className="h-4 w-4 text-ink-400" /><span className="text-ink-700">Employee # {employee.employeeNumber}</span></div>
+            <div className="mt-6 min-w-0 space-y-3 border-t border-border pt-4">
+              <div className="flex min-w-0 items-center gap-3 text-sm"><Mail className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={employee.email} copyable className="flex-1 text-ink-700" ariaLabel="Email" /></div>
+              <div className="flex min-w-0 items-center gap-3 text-sm"><Phone className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={employee.phone} copyable className="flex-1 text-ink-700" ariaLabel="Phone" /></div>
+              <div className="flex min-w-0 items-center gap-3 text-sm"><Building2 className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={employee.departmentName} className="flex-1 text-ink-700" ariaLabel="Department" /></div>
+              <div className="flex min-w-0 items-center gap-3 text-sm"><Building2 className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={employee.officeName} className="flex-1 text-ink-700" ariaLabel="Office" /></div>
+              <div className="flex min-w-0 items-center gap-3 text-sm"><Calendar className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={`Employee # ${employee.employeeNumber}`} copyable copyText={employee.employeeNumber} className="flex-1 text-ink-700" ariaLabel="Employee number" /></div>
               <div className="flex items-center gap-3 text-sm"><Calendar className="h-4 w-4 text-ink-400" /><StatusBadge status={employee.availabilityStatus === 'available' ? 'success' : 'pending'} label={employee.availabilityStatus.replaceAll('_', ' ')} /></div>
               {employee.isDriver && <div className="flex items-center gap-3 text-sm"><Car className="h-4 w-4 text-ink-400" /><StatusBadge status="info" label="Driver" /></div>}
             </div>
           </CardContent>
         </Card>
 
-        <div className="space-y-6 lg:col-span-2">
+        <div className="min-w-0 space-y-6 lg:col-span-2">
           {driverProfile && (
             <Card>
               <CardHeader><CardTitle>Driver Profile</CardTitle>{canManageDrivers && <LicenceUploadPanel employeeId={employee.id} />}</CardHeader>
@@ -267,12 +268,12 @@ export default async function EmployeeDetailPage({
               <CardContent>
                 <div className="divide-y divide-border">
                   {licences.map((licence) => (
-                    <div key={licence.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium text-ink-950">Class {licence.licenceClass} — {licence.licenceNumber}</p>
-                        <p className="text-xs text-ink-500">Issued {licence.issueDate} · Expires {licence.expiryDate}{licence.allowedVehicleCategories && ` · ${licence.allowedVehicleCategories}`}</p>
+                    <div key={licence.id} className="flex min-w-0 items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <LongValue value={`Class ${licence.licenceClass} — ${licence.licenceNumber}`} copyable valueClassName="text-sm font-medium text-ink-950" ariaLabel="Licence reference" />
+                        <LongValue value={`Issued ${licence.issueDate} · Expires ${licence.expiryDate}${licence.allowedVehicleCategories ? ` · ${licence.allowedVehicleCategories}` : ''}`} valueClassName="text-xs text-ink-500" ariaLabel="Licence details" />
                       </div>
-                      <StatusBadge status={licence.verificationStatus === 'verified' ? 'success' : licence.verificationStatus === 'expired' ? 'error' : 'pending'} label={licence.verificationStatus.charAt(0).toUpperCase() + licence.verificationStatus.slice(1)} />
+                      <div className="shrink-0"><StatusBadge status={licence.verificationStatus === 'verified' ? 'success' : licence.verificationStatus === 'expired' ? 'error' : 'pending'} label={licence.verificationStatus.charAt(0).toUpperCase() + licence.verificationStatus.slice(1)} /></div>
                     </div>
                   ))}
                 </div>
@@ -288,15 +289,15 @@ export default async function EmployeeDetailPage({
               ) : (
                 <div className="divide-y divide-border">
                   {docs.map((doc) => (
-                    <div key={doc.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                      <div className="flex items-center gap-3">
-                        <FileText className="h-5 w-5 text-ink-400" />
-                        <div>
-                          <p className="text-sm font-medium text-ink-950">{doc.documentName}</p>
-                          <p className="text-xs text-ink-500">{doc.documentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}{doc.expiryDate && ` · Expires ${doc.expiryDate}`}</p>
+                    <div key={doc.id} className="flex min-w-0 items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <FileText className="h-5 w-5 shrink-0 text-ink-400" />
+                        <div className="min-w-0 flex-1">
+                          <LongValue value={doc.documentName} valueClassName="text-sm font-medium text-ink-950" ariaLabel="Document name" />
+                          <LongValue value={`${doc.documentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}${doc.expiryDate ? ` · Expires ${doc.expiryDate}` : ''}`} valueClassName="text-xs text-ink-500" ariaLabel="Document details" />
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 items-center gap-2">
                         {doc.isVerified && <StatusBadge status="success" label="Verified" />}
                         <Button variant="ghost" size="icon-sm"><Download className="h-4 w-4" /></Button>
                       </div>

@@ -29,6 +29,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
+import { LongValue } from '@/components/ui/long-value';
 import Link from 'next/link';
 import { TabsShell } from './tabs-shell';
 
@@ -244,21 +245,21 @@ export default async function VehicleDetailPage({ params }: PageProps) {
       </PageHeader>
 
       {/* Vehicle Summary Card */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="flex items-center gap-4">
+      <Card className="min-w-0">
+        <CardContent className="min-w-0 pt-4">
+          <div className="flex min-w-0 items-center gap-4">
             <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-brand-700">
               <Car className="h-8 w-8" />
             </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold text-ink-950">
-                  {vehicle.make} {vehicle.model}
-                </h2>
-                <StatusBadge
-                  status={VEHICLE_STATUS_VARIANTS[vehicle.status] ?? 'default'}
-                  label={VEHICLE_STATUS_LABELS[vehicle.status] ?? vehicle.status}
-                />
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <LongValue value={`${vehicle.make} ${vehicle.model}`} className="flex-1" valueClassName="text-lg font-semibold text-ink-950" ariaLabel="Vehicle description" />
+                <div className="shrink-0">
+                  <StatusBadge
+                    status={VEHICLE_STATUS_VARIANTS[vehicle.status] ?? 'default'}
+                    label={VEHICLE_STATUS_LABELS[vehicle.status] ?? vehicle.status}
+                  />
+                </div>
               </div>
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
                 <span className="flex items-center gap-1">
@@ -418,9 +419,11 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                             {doc.documentType.replace(/_/g, ' ')}
                           </Badge>
                         </td>
-                        <td className="px-3 py-2 text-ink-700">{doc.documentName}</td>
-                        <td className="px-3 py-2 text-xs text-ink-500">
-                          {doc.referenceNumber || '—'}
+                        <td className="max-w-64 px-3 py-2 text-ink-700">
+                          <LongValue value={doc.documentName} ariaLabel="Document name" />
+                        </td>
+                        <td className="max-w-48 px-3 py-2 text-xs text-ink-500">
+                          <LongValue value={doc.referenceNumber} copyable ariaLabel="Document reference" />
                         </td>
                         <td className="px-3 py-2 text-xs text-ink-500">
                           {doc.expiryDate ? formatDate(doc.expiryDate) : '—'}
@@ -682,9 +685,15 @@ export default async function VehicleDetailPage({ params }: PageProps) {
 
 function DetailItem({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <p className="text-xs font-medium text-ink-500">{label}</p>
-      <p className="mt-0.5 text-sm text-ink-950">{value}</p>
+      <LongValue
+        value={value}
+        className="mt-0.5"
+        valueClassName="text-sm text-ink-950"
+        ariaLabel={label}
+        copyable={value !== '—' && ['Licence Number', 'Register Number', 'VIN', 'Engine Number'].includes(label)}
+      />
     </div>
   );
 }

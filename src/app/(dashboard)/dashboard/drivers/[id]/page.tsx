@@ -214,14 +214,14 @@ export default async function DriverDetailPage({ params }: PageProps) {
               </h2>
               <p className="mt-1 text-sm text-ink-500">{employee.jobTitle}</p>
               <div className="mt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                <Badge variant={profile.driverStatus === 'authorised' ? 'success' : 'error'} size="sm">
-                  {profile.driverStatus === 'authorised' ? 'Authorised' : 'Suspended'}
+                <Badge variant={profile.driverStatus === 'authorised' ? 'success' : profile.driverStatus === 'suspended' ? 'error' : 'warning'} size="sm">
+                  {profile.driverStatus.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}
                 </Badge>
                 <StatusBadge status={employee.employmentStatus === 'active' ? 'success' : 'pending'} label={employee.employmentStatus} />
                 <Badge variant="info" size="sm">Emp #{employee.employeeNumber}</Badge>
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-center sm:justify-start gap-x-4 gap-y-1 text-xs text-ink-500">
-                {employee.email && <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{employee.email}</span>}
+                {employee.email && <span className="flex min-w-0 max-w-full items-center gap-1"><Mail className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 break-all sm:truncate" title={employee.email}>{employee.email}</span></span>}
                 {employee.phone && <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{employee.phone}</span>}
                 {employee.departmentName && <span className="flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{employee.departmentName}</span>}
                 {employee.officeName && <span className="flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{employee.officeName}</span>}

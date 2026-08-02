@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, boolean, date, integer, jsonb, doublePrecision } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, boolean, date, integer, jsonb, doublePrecision, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
 /**
@@ -14,12 +14,14 @@ export const offices = pgTable('offices', {
   type: text('type').notNull().default('constituency_office'), // head_office, constituency_office, settlement_office, directorate
   code: text('code'),
   address: text('address'),
+  town: text('town'),
   phone: text('phone'),
   email: text('email'),
   isActive: boolean('is_active').notNull().default(true),
   sortOrder: text('sort_order').default('0'),
   latitude: doublePrecision('latitude'),
   longitude: doublePrecision('longitude'),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -34,9 +36,31 @@ export const departments = pgTable('departments', {
     .references(() => tenants.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   code: text('code'),
+  type: text('type').notNull().default('department'), // directorate, department, unit
+  parentId: uuid('parent_id'),
   headEmployeeId: uuid('head_employee_id'),
   isActive: boolean('is_active').notNull().default(true),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Explicit many-to-many mapping between organisation units and offices. */
+export const departmentOffices = pgTable('department_offices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  departmentId: uuid('department_id').notNull().references(() => departments.id, { onDelete: 'cascade' }),
+  officeId: uuid('office_id').notNull().references(() => offices.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('department_offices_tenant_department_office_uidx').on(table.tenantId, table.departmentId, table.officeId),
+  index('department_offices_office_idx').on(table.tenantId, table.officeId),
+]);
+
+/** Transactional, tenant-scoped employee-number allocator. */
+export const employeeNumberCounters = pgTable('employee_number_counters', {
+  tenantId: uuid('tenant_id').primaryKey().references(() => tenants.id, { onDelete: 'cascade' }),
+  nextValue: integer('next_value').notNull().default(1),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -208,6 +232,7 @@ export const driverLicenceCorrections = pgTable('driver_licence_corrections', {
 
 export type Office = typeof offices.$inferSelect;
 export type Department = typeof departments.$inferSelect;
+export type DepartmentOffice = typeof departmentOffices.$inferSelect;
 export type Employee = typeof employees.$inferSelect;
 export type DriverProfile = typeof driverProfiles.$inferSelect;
 export type DriverLicence = typeof driverLicences.$inferSelect;

@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** Convert an active staff member into an authorised driver. */
+/** Convert an active staff member into a driver with verified or pending licence data. */
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -175,8 +175,8 @@ export async function POST(request: NextRequest) {
     const verified = body.verificationStatus === 'verified';
     const [profile] = await db.insert(driverProfiles).values({
       employeeId: employee.id,
-      driverStatus: verified ? 'authorised' : 'suspended',
-      availabilityStatus: body.availabilityStatus || 'available',
+      driverStatus: verified ? 'authorised' : 'pending_verification',
+      availabilityStatus: verified ? (body.availabilityStatus || 'available') : 'unavailable',
       internalAuthorisationRef: body.internalAuthorisationRef?.trim() || null,
       lastVerifiedAt: verified ? new Date() : null,
       verifiedByUserId: verified ? session.user.id : null,

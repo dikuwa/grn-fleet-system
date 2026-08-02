@@ -156,16 +156,16 @@ export default function DriversPage() {
                                   ? 'pending'
                                   : 'error'
                             }
-                            label={d.driverStatus.charAt(0).toUpperCase() + d.driverStatus.slice(1)}
+                            label={d.driverStatus.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}
                           />
                         </div>
-                        <div className="text-ink-500 mt-0.5 flex items-center gap-3 text-xs">
+                        <div className="text-ink-500 mt-0.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                           <span className="flex items-center gap-1">
                             <User className="h-3 w-3" />
                             {d.employeeNumber}
                           </span>
-                          {d.departmentName && <span>{d.departmentName}</span>}
-                          {d.officeName && <span>{d.officeName}</span>}
+                          {d.departmentName && <span className="max-w-full break-words sm:truncate">{d.departmentName}</span>}
+                          {d.officeName && <span className="max-w-full break-words sm:truncate">{d.officeName}</span>}
                         </div>
                       </div>
                     </div>

@@ -21,6 +21,7 @@ import {
   roleAssignments,
   offices,
   departments,
+  departmentOffices,
   employees,
   driverProfiles,
   driverLicences,
@@ -110,6 +111,9 @@ async function seed() {
     { tenantId: TENANT_ID as any, name: 'Mukwe Constituency Office', type: 'constituency_office' as const, code: 'MKO', latitude: -18.0667, longitude: 21.4167 },
     { tenantId: TENANT_ID as any, name: 'Kapako Constituency Office', type: 'constituency_office' as const, code: 'KPO', latitude: -17.8833, longitude: 19.8333 },
     { tenantId: TENANT_ID as any, name: 'Mashare Constituency Office', type: 'constituency_office' as const, code: 'MSO', latitude: -17.95, longitude: 20.0667 },
+    { tenantId: TENANT_ID as any, name: 'Ndonga-Linena Constituency Office', type: 'constituency_office' as const, code: 'NLO' },
+    { tenantId: TENANT_ID as any, name: 'Ndiyona Constituency Office', type: 'constituency_office' as const, code: 'NDO' },
+    { tenantId: TENANT_ID as any, name: 'Rundu Rural Constituency Office', type: 'constituency_office' as const, code: 'RRO' },
     { tenantId: TENANT_ID as any, name: 'Nkurenkuru Settlement Office', type: 'settlement_office' as const, code: 'NKO', latitude: -17.6167, longitude: 18.6 },
   ];
 
@@ -127,10 +131,6 @@ async function seed() {
     const found = existingOfficeMap[od.name];
     if (found) {
       officeMap[od.name] = found;
-      // Keep coordinates in sync for offices that already exist (idempotent)
-      if (od.latitude != null && od.longitude != null) {
-        await db.update(offices).set({ latitude: od.latitude, longitude: od.longitude }).where(eq(offices.id, found));
-      }
     } else {
       const [created] = await db.insert(offices).values(od).returning();
       officeMap[created.name] = created.id;
@@ -154,11 +154,23 @@ async function seed() {
   // -------------------------------------------------------------------------
   console.log('Creating departments...');
   const deptDataList = [
-    { tenantId: TENANT_ID as any, name: 'Office of the Chief Regional Officer', code: 'CRO' },
-    { tenantId: TENANT_ID as any, name: 'Transport and Fleet Management', code: 'TFM' },
-    { tenantId: TENANT_ID as any, name: 'Administration and Finance', code: 'ADM' },
-    { tenantId: TENANT_ID as any, name: 'Community Development', code: 'CD' },
-    { tenantId: TENANT_ID as any, name: 'Infrastructure and Planning', code: 'INP' },
+    { name: 'Human Resources, Finance and Administration', code: 'HRFA', type: 'directorate', parentName: null },
+    { name: 'Planning, Monitoring and Evaluation', code: 'PME', type: 'directorate', parentName: null },
+    { name: 'Rural Services and Community Development', code: 'RSCD', type: 'directorate', parentName: null },
+    { name: 'Office of the Chief Regional Officer', code: 'CRO', type: 'unit', parentName: null },
+    { name: 'Internal Audit', code: 'IA', type: 'unit', parentName: null },
+    { name: 'Public Relations and Communications', code: 'PRC', type: 'unit', parentName: null },
+    { name: 'Transport and Fleet Management', code: 'TFM', type: 'unit', parentName: null },
+    { name: 'Administration', code: 'ADMIN', type: 'department', parentName: 'Human Resources, Finance and Administration' },
+    { name: 'Human Resources', code: 'HR', type: 'department', parentName: 'Human Resources, Finance and Administration' },
+    { name: 'Finance', code: 'FIN', type: 'department', parentName: 'Human Resources, Finance and Administration' },
+    { name: 'General Services', code: 'GS', type: 'unit', parentName: 'Human Resources, Finance and Administration' },
+    { name: 'Information Technology', code: 'IT', type: 'unit', parentName: 'Human Resources, Finance and Administration' },
+    { name: 'Engineering and Technical Services', code: 'ETS', type: 'unit', parentName: 'Planning, Monitoring and Evaluation' },
+    // Existing demo units are retained because seeded staff and historical records reference them.
+    { name: 'Administration and Finance', code: 'ADM', type: 'department', parentName: null },
+    { name: 'Community Development', code: 'CD', type: 'department', parentName: 'Rural Services and Community Development' },
+    { name: 'Infrastructure and Planning', code: 'INP', type: 'department', parentName: 'Planning, Monitoring and Evaluation' },
   ];
 
   const deptMap: Record<string, string> = {};
@@ -171,7 +183,13 @@ async function seed() {
     if (existing) {
       deptMap[dd.name] = existing.id;
     } else {
-      const [created] = await db.insert(departments).values(dd).returning();
+      const [created] = await db.insert(departments).values({
+        tenantId: TENANT_ID as any,
+        name: dd.name,
+        code: dd.code,
+        type: dd.type,
+        parentId: dd.parentName ? deptMap[dd.parentName] : null,
+      }).returning();
       deptMap[created.name] = created.id;
     }
   }
@@ -325,6 +343,15 @@ async function seed() {
         isDriver: s.isDriver,
       }).returning();
       employeeIdMap[s.empNo] = created.id;
+    }
+  }
+
+  // Materialise actual department-office relationships without changing either record.
+  for (const s of staffData) {
+    const departmentId = s.dept ? deptMap[s.dept] : undefined;
+    const officeId = s.office ? officeMap[s.office] : undefined;
+    if (departmentId && officeId) {
+      await db.insert(departmentOffices).values({ tenantId: TENANT_ID as any, departmentId, officeId }).onConflictDoNothing();
     }
   }
 
