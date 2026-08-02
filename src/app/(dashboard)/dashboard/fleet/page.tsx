@@ -1,7 +1,7 @@
 import { getDb, isDbConnected } from '@/db';
 import { vehicles, vehicleCategories, vehicleDefects, maintenanceEvents } from '@/db/schema/fleet';
 import { offices } from '@/db/schema/people';
-import { eq, and, sql, like, or, isNull, type SQL } from 'drizzle-orm';
+import { eq, and, sql, like, or, isNull, inArray, type SQL } from 'drizzle-orm';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,9 +26,15 @@ import Link from 'next/link';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
-import { canAccessDashboardPath, canPerformDashboardAction } from '@/lib/dashboard-access';
+import {
+  canAccessDashboardPath,
+  canPerformDashboardAction,
+  resolveDashboardAccess,
+} from '@/lib/dashboard-access';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { groupedCountMap, sumGroupedCounts } from '@/lib/statistics';
+import { vehicleScopeCondition } from '@/lib/record-scope';
+import type { DashboardRecordScope } from '@/lib/dashboard-access';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -57,7 +63,12 @@ const VEHICLE_STATUS_LABELS: Record<string, string> = {
   written_off: 'Written Off',
 };
 
-async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: string) {
+async function fetchFleetData(
+  sp: Record<string, string | undefined>,
+  tenantId: string,
+  userId: string,
+  recordScope: DashboardRecordScope,
+) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -67,7 +78,10 @@ async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: 
   const categoryId = normalizeOptionalFilter(sp.category_id);
   const officeId = normalizeOptionalFilter(sp.office_id);
 
-  const baseConditions: SQL[] = [eq(vehicles.isActive, true), eq(vehicles.tenantId, tenantId)];
+  const baseConditions: SQL[] = [
+    eq(vehicles.isActive, true),
+    vehicleScopeCondition({ tenantId, userId, recordScope }),
+  ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
 
@@ -157,7 +171,9 @@ async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: 
             count: sql<number>`count(*)`,
           })
           .from(vehicleDefects)
-          .where(and(isNull(vehicleDefects.resolvedAt)))
+          .where(
+            and(isNull(vehicleDefects.resolvedAt), inArray(vehicleDefects.vehicleId, vehicleIds)),
+          )
           .groupBy(vehicleDefects.vehicleId)
       : Promise.resolve([]),
     vehicleIds.length > 0
@@ -167,6 +183,7 @@ async function fetchFleetData(sp: Record<string, string | undefined>, tenantId: 
             count: sql<number>`count(*)`,
           })
           .from(maintenanceEvents)
+          .where(inArray(maintenanceEvents.vehicleId, vehicleIds))
           .groupBy(maintenanceEvents.vehicleId)
       : Promise.resolve([]),
   ]);
@@ -233,11 +250,18 @@ export default async function FleetPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchFleetData>>;
   const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/fleet', roleNames);
   const canViewDefects = canAccessDashboardPath('/dashboard/fleet/defects', roleNames);
   const canImport = canPerformDashboardAction('/dashboard/fleet/import', roleNames, 'import');
   const canExport = canPerformDashboardAction('/dashboard/fleet', roleNames, 'export');
+  const lookupOnly = access.recordScope !== 'tenant';
   try {
-    result = await fetchFleetData(sp, session.tenantId);
+    result = await fetchFleetData(
+      sp,
+      session.tenantId,
+      session.user.id,
+      access.recordScope ?? 'assigned',
+    );
   } catch (error) {
     console.error('Fleet query failed:', error);
     return (
@@ -259,7 +283,14 @@ export default async function FleetPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fleet' }]} />
-      <PageHeader title="Fleet" description="Manage vehicles, view status, defects and maintenance">
+      <PageHeader
+        title={lookupOnly ? 'Vehicle Lookup' : 'Fleet'}
+        description={
+          lookupOnly
+            ? 'View vehicles connected to your assigned work.'
+            : 'Manage vehicles, view status, defects and maintenance'
+        }
+      >
         {canViewDefects && (
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/fleet/defects">
@@ -295,7 +326,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
               <LiveSearchInput
                 name="search"
                 defaultValue={result.filters.search ?? ''}
-                placeholder="Licence, VIN, make, model…"
+                placeholder={lookupOnly ? 'Licence, make or model…' : 'Licence, VIN, make, model…'}
               />
             </div>
             <div className="w-[180px]">
@@ -345,48 +376,50 @@ export default async function FleetPage({ searchParams }: PageProps) {
       </Card>
 
       {/* Fleet Summary */}
-      <div className="grid gap-4 sm:grid-cols-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-status-success-text text-2xl font-[650] tabular-nums">
-                {result.metrics.available}
-              </p>
-              <p className="text-ink-500 text-xs">Available</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-ink-950 text-2xl font-[650] tabular-nums">
-                {result.metrics.allocated}
-              </p>
-              <p className="text-ink-500 text-xs">On Trip / Allocated</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
-                {result.metrics.maintenance}
-              </p>
-              <p className="text-ink-500 text-xs">In Maintenance</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-status-error-text text-2xl font-[650] tabular-nums">
-                {result.metrics.outOfService}
-              </p>
-              <p className="text-ink-500 text-xs">Out of Service</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {!lookupOnly && (
+        <div className="grid gap-4 sm:grid-cols-4">
+          <Card>
+            <CardContent className="pt-4">
+              <div className="text-center">
+                <p className="text-status-success-text text-2xl font-[650] tabular-nums">
+                  {result.metrics.available}
+                </p>
+                <p className="text-ink-500 text-xs">Available</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4">
+              <div className="text-center">
+                <p className="text-ink-950 text-2xl font-[650] tabular-nums">
+                  {result.metrics.allocated}
+                </p>
+                <p className="text-ink-500 text-xs">On Trip / Allocated</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4">
+              <div className="text-center">
+                <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
+                  {result.metrics.maintenance}
+                </p>
+                <p className="text-ink-500 text-xs">In Maintenance</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4">
+              <div className="text-center">
+                <p className="text-status-error-text text-2xl font-[650] tabular-nums">
+                  {result.metrics.outOfService}
+                </p>
+                <p className="text-ink-500 text-xs">Out of Service</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Vehicle List */}
       {result.rows.length === 0 ? (

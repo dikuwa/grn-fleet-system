@@ -24,6 +24,8 @@ import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { groupedCountMap, numericCount, sumGroupedCounts } from '@/lib/statistics';
 import { REQUEST_STATUS_GROUPS } from '@/lib/request-status';
+import { requestScopeCondition } from '@/lib/record-scope';
+import type { DashboardRecordScope } from '@/lib/dashboard-access';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -33,7 +35,7 @@ async function fetchRequests(
   sp: Record<string, string | undefined>,
   tenantId: string,
   userId: string,
-  canViewAll: boolean,
+  recordScope: DashboardRecordScope,
 ) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
@@ -43,8 +45,7 @@ async function fetchRequests(
   const status = normalizeOptionalFilter(sp.status);
   const scope = normalizeOptionalFilter(sp.scope);
 
-  const baseConditions: SQL[] = [eq(transportRequests.tenantId, tenantId)];
-  if (!canViewAll) baseConditions.push(eq(transportRequests.requesterUserId, userId));
+  const baseConditions: SQL[] = [requestScopeCondition({ tenantId, userId, recordScope })];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
 
@@ -169,7 +170,12 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       : 'Transport Request Oversight';
   let result: Awaited<ReturnType<typeof fetchRequests>>;
   try {
-    result = await fetchRequests(sp, session.tenantId, session.user.id, canViewAll);
+    result = await fetchRequests(
+      sp,
+      session.tenantId,
+      session.user.id,
+      access.recordScope ?? 'self',
+    );
   } catch (error) {
     console.error('Requests query failed:', error);
     return (

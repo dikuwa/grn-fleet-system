@@ -13,6 +13,9 @@ export interface AppNotification {
   priority: string;
   entityType: string | null;
   actionUrl: string | null;
+  status: string;
+  mandatory: boolean;
+  eventType: string | null;
 }
 
 export interface NotificationFeed {

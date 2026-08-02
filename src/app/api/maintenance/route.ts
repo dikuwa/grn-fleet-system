@@ -3,10 +3,11 @@ import { getDb } from '@/db';
 import { maintenanceEvents } from '@/db/schema/fleet';
 import { vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { notifications } from '@/db/schema/notifications';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
+import { createScopedNotifications } from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 /**
  * POST /api/maintenance
@@ -26,7 +27,18 @@ export async function POST(req: NextRequest) {
     const db = getDb();
     const body = await req.json();
 
-    const { vehicleId, serviceDate, serviceOdometer, serviceType, description, cost, vendorName, notes, nextServiceDate, nextServiceOdometer } = body;
+    const {
+      vehicleId,
+      serviceDate,
+      serviceOdometer,
+      serviceType,
+      description,
+      cost,
+      vendorName,
+      notes,
+      nextServiceDate,
+      nextServiceOdometer,
+    } = body;
 
     // Validate required fields
     if (!vehicleId) {
@@ -36,7 +48,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Service date is required' }, { status: 400 });
     }
     if (!serviceType || !['scheduled', 'repair', 'inspection'].includes(serviceType)) {
-      return NextResponse.json({ error: 'Service type must be scheduled, repair, or inspection' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Service type must be scheduled, repair, or inspection' },
+        { status: 400 },
+      );
     }
     if (!description) {
       return NextResponse.json({ error: 'Description is required' }, { status: 400 });
@@ -50,7 +65,10 @@ export async function POST(req: NextRequest) {
       .limit(1);
 
     if (!vehicle) {
-      return NextResponse.json({ error: 'Vehicle not found in your organisation' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Vehicle not found in your organisation' },
+        { status: 404 },
+      );
     }
 
     // Create the maintenance event
@@ -68,6 +86,7 @@ export async function POST(req: NextRequest) {
         nextServiceDate: nextServiceDate || null,
         nextServiceOdometer: nextServiceOdometer ? Number(nextServiceOdometer) : null,
         createdByUserId: session.user.id,
+        assignedToUserId: session.user.id,
       })
       .returning();
 
@@ -83,17 +102,15 @@ export async function POST(req: NextRequest) {
 
     // Log vehicle status event
     const { vehicleStatusEvents } = await import('@/db/schema/fleet');
-    await db
-      .insert(vehicleStatusEvents)
-      .values({
-        vehicleId,
-        previousStatus: vehicle.status,
-        newStatus: 'maintenance',
-        reason: `Maintenance: ${description || serviceType}`,
-        changedByUserId: session.user.id,
-        referenceEntityType: 'maintenance',
-        referenceEntityId: event.id,
-      });
+    await db.insert(vehicleStatusEvents).values({
+      vehicleId,
+      previousStatus: vehicle.status,
+      newStatus: 'maintenance',
+      reason: `Maintenance: ${description || serviceType}`,
+      changedByUserId: session.user.id,
+      referenceEntityType: 'maintenance',
+      referenceEntityId: event.id,
+    });
 
     // Audit log
     await db.insert(auditEvents).values({
@@ -108,7 +125,19 @@ export async function POST(req: NextRequest) {
       sourceChannel: 'web',
     });
 
-    await db.insert(notifications).values({ tenantId: session.tenantId, recipientUserId: session.user.id, type: 'maintenance_created', title: `Maintenance Event Created — ${serviceType}`, body: `${description} — ${cost ? `N$${cost}` : 'Cost TBD'} at ${vendorName || 'unknown vendor'}. Vehicle status set to maintenance.`, entityType: 'maintenance_event', entityId: event.id, actionUrl: '/dashboard/maintenance', priority: 'normal' });
+    await createScopedNotifications({
+      tenantId: session.tenantId,
+      recipientUserIds: [session.user.id],
+      category: 'outcome',
+      eventType: 'maintenance_event_created',
+      title: `Maintenance Event Created — ${serviceType}`,
+      body: `${description} — ${cost ? `N$${cost}` : 'Cost TBD'} at ${vendorName || 'unknown vendor'}. Vehicle status set to maintenance.`,
+      entityType: 'maintenance_event',
+      entityId: event.id,
+      actionUrl: '/dashboard/maintenance',
+      workspace: WorkspaceIds.MAINTENANCE,
+      priority: 'normal',
+    });
 
     return NextResponse.json({ data: event }, { status: 201 });
   } catch (error) {

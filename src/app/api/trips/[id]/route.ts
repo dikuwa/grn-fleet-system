@@ -22,9 +22,15 @@ import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
-import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { tripScopeCondition } from '@/lib/record-scope';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -74,23 +80,21 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
       .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-      .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
+      .where(
+        and(
+          eq(trips.id, id),
+          tripScopeCondition({
+            tenantId: session.tenantId,
+            userId: session.user.id,
+            recordScope: access.recordScope ?? 'assigned',
+          }),
+        ),
+      )
       .limit(1);
 
     if (!trip) {
       return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
     }
-    if (access.recordScope === 'assigned') {
-      const [employee] = await db
-        .select({ id: employees.id })
-        .from(employees)
-        .where(and(eq(employees.tenantId, session.tenantId), eq(employees.userId, session.user.id)))
-        .limit(1);
-      if (!employee || employee.id !== trip.driverEmployeeId) {
-        return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
-      }
-    }
-
     const [authority] = await db
       .select()
       .from(tripAuthorities)

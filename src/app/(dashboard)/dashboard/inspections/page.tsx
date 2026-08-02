@@ -1,8 +1,8 @@
 import { getDb, isDbConnected } from '@/db';
 import { vehicleInspections } from '@/db/schema/trips';
-import { maintenanceEvents, vehicleDefects, vehicles } from '@/db/schema/fleet';
+import { vehicles } from '@/db/schema/fleet';
 
-import {eq, desc, and, sql, like, or, type SQL} from 'drizzle-orm';
+import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 
@@ -10,16 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StyledSelect } from '@/components/ui/styled-select';
-import {
-  Database,
-  Search,
-  ChevronRight,
-  ChevronLeft,
-  ClipboardCheck,
-
-
-
-} from 'lucide-react';
+import { Database, Search, ChevronRight, ChevronLeft, ClipboardCheck } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
@@ -29,6 +20,7 @@ import Link from 'next/link';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { numericCount } from '@/lib/statistics';
+import { inspectionScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -53,21 +45,9 @@ async function fetchInspections(
   const status = normalizeOptionalFilter(sp.status);
   const search = normalizeOptionalFilter(sp.search);
 
-  const baseConditions: SQL[] = [eq(vehicleInspections.tenantId, tenantId)];
-  if (recordScope === 'assigned' || recordScope === 'self') {
-    baseConditions.push(eq(vehicleInspections.inspectorUserId, userId));
-  } else if (recordScope === 'related') {
-    baseConditions.push(sql`(
-      exists (
-        select 1 from ${vehicleDefects}
-        where ${vehicleDefects.vehicleId} = ${vehicleInspections.vehicleId}
-      )
-      or exists (
-        select 1 from ${maintenanceEvents}
-        where ${maintenanceEvents.vehicleId} = ${vehicleInspections.vehicleId}
-      )
-    )`);
-  }
+  const baseConditions: SQL[] = [
+    inspectionScopeCondition({ tenantId, userId, recordScope: recordScope ?? 'assigned' }),
+  ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
 

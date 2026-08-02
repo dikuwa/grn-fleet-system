@@ -1,4 +1,13 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, numeric, date } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  boolean,
+  integer,
+  numeric,
+  date,
+} from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { offices } from './people';
 
@@ -33,7 +42,7 @@ export const vehicles = pgTable('vehicles', {
     .references(() => tenants.id, { onDelete: 'cascade' }),
   categoryId: uuid('category_id').references(() => vehicleCategories.id),
   officeId: uuid('office_id').references(() => offices.id),
-  
+
   // SECTION A — Vehicle identity
   licenceNumber: text('licence_number').notNull(), // Physical plate number
   vehicleRegisterNumber: text('vehicle_register_number'), // NaTIS Register number
@@ -66,7 +75,9 @@ export const vehicles = pgTable('vehicles', {
   requiredLicenceClass: text('required_licence_class'),
   grossVehicleMassCategory: text('gross_vehicle_mass_category'),
   trailerRequirement: boolean('trailer_requirement').notNull().default(false),
-  professionalAuthorisationRequired: boolean('professional_authorisation_required').notNull().default(false),
+  professionalAuthorisationRequired: boolean('professional_authorisation_required')
+    .notNull()
+    .default(false),
   specialRestriction: text('special_restriction'),
 
   // SECTION E — Fleet assignment
@@ -76,11 +87,11 @@ export const vehicles = pgTable('vehicles', {
   fuelCardPin: text('fuel_card_pin'),
   assignedRegionId: uuid('assigned_region_id'), // Regional council specific
   assignedOfficeId: uuid('assigned_office_id'), // References offices.id
-  
+
   notes: text('notes'),
   version: integer('version').notNull().default(1),
   isActive: boolean('is_active').notNull().default(true),
-  
+
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   createdBy: text('created_by'),
@@ -138,6 +149,7 @@ export const vehicleDefects = pgTable('vehicle_defects', {
   description: text('description').notNull(),
   isBlocking: boolean('is_blocking').notNull().default(false),
   reportedByUserId: text('reported_by_user_id').notNull(),
+  assignedToUserId: text('assigned_to_user_id'),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   resolvedByUserId: text('resolved_by_user_id'),
   resolutionNotes: text('resolution_notes'),
@@ -164,6 +176,7 @@ export const maintenanceEvents = pgTable('maintenance_events', {
   nextServiceOdometer: integer('next_service_odometer'),
   documentKeys: text('document_keys'), // Comma-separated or JSON array
   createdByUserId: text('created_by_user_id').notNull(),
+  assignedToUserId: text('assigned_to_user_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

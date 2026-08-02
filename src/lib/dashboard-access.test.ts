@@ -1,55 +1,99 @@
 import { describe, expect, it } from 'vitest';
 import {
   canAccessDashboardPath,
-  canNavigateDashboardPath,
   canPerformDashboardAction,
+  getWorkspaceNavigation,
   resolveDashboardAccess,
-  SystemRoles,
+  routeRegistry,
 } from './dashboard-access';
+import { SystemRoles as R, WorkspaceIds as W } from './workspaces';
 
-const R = SystemRoles;
+describe('canonical workspace route policy', () => {
+  it('has stable, unique route IDs and navigation destinations', () => {
+    const ids = routeRegistry.map((route) => route.id);
+    expect(new Set(ids).size).toBe(ids.length);
 
-describe('central dashboard route policy', () => {
-  it.each(Object.values(R))('keeps common authenticated routes for %s', (role) => {
-    expect(canAccessDashboardPath('/dashboard', [role])).toBe(true);
-    expect(canAccessDashboardPath('/dashboard/profile', [role])).toBe(true);
-    expect(canAccessDashboardPath('/dashboard/notifications', [role])).toBe(true);
+    for (const workspace of Object.values(W)) {
+      const hrefs = getWorkspaceNavigation(workspace).map((route) => route.href);
+      expect(new Set(hrefs).size, workspace).toBe(hrefs.length);
+    }
   });
 
-  it('isolates platform administration from tenant operations', () => {
-    const roles = [R.PLATFORM_ADMIN];
-    expect(canNavigateDashboardPath('/dashboard/platform', roles)).toBe(true);
-    expect(canAccessDashboardPath('/dashboard/platform/audit', roles)).toBe(true);
-    expect(canAccessDashboardPath('/dashboard/requests', roles)).toBe(false);
-    expect(canAccessDashboardPath('/dashboard/fleet', roles)).toBe(false);
+  it.each([
+    [R.REQUESTER, W.PERSONAL],
+    [R.SUPERVISOR, W.APPROVER],
+    [R.DRIVER, W.DRIVER],
+    [R.INSPECTOR, W.INSPECTOR],
+    [R.MAINTENANCE, W.MAINTENANCE],
+    [R.TRANSPORT_ADMIN, W.TRANSPORT_ADMIN],
+    [R.TENANT_ADMIN, W.TENANT_ADMIN],
+    [R.AUDITOR, W.AUDIT],
+  ])('keeps universal tenant self-service routes for %s', (role, workspace) => {
+    for (const path of [
+      '/dashboard',
+      '/dashboard/profile',
+      '/dashboard/requests/new',
+      '/dashboard/requests',
+      '/dashboard/notifications',
+    ]) {
+      expect(canAccessDashboardPath(path, [role], workspace), path).toBe(true);
+    }
   });
 
-  it('gives Tenant Administrators oversight without transport actions', () => {
+  it('isolates platform administration from every tenant workspace', () => {
+    expect(
+      canAccessDashboardPath('/dashboard/platform', [R.PLATFORM_ADMIN], W.PLATFORM_ADMIN),
+    ).toBe(true);
+    expect(
+      canAccessDashboardPath('/dashboard/requests', [R.PLATFORM_ADMIN], W.PLATFORM_ADMIN),
+    ).toBe(false);
+    expect(canAccessDashboardPath('/dashboard/platform', [R.TENANT_ADMIN], W.TENANT_ADMIN)).toBe(
+      false,
+    );
+  });
+
+  it('does not union capabilities for a multi-role user', () => {
+    const roles = [R.TENANT_ADMIN, R.TRANSPORT_ADMIN, R.DRIVER];
+    expect(canAccessDashboardPath('/dashboard/allocations', roles, W.TENANT_ADMIN)).toBe(false);
+    expect(canAccessDashboardPath('/dashboard/allocations', roles, W.TRANSPORT_ADMIN)).toBe(true);
+    expect(canAccessDashboardPath('/dashboard/driver-mobile', roles, W.TRANSPORT_ADMIN)).toBe(
+      false,
+    );
+    expect(canAccessDashboardPath('/dashboard/driver-mobile', roles, W.DRIVER)).toBe(true);
+  });
+
+  it('keeps tenant administration separate from transport operations', () => {
     const roles = [R.TENANT_ADMIN];
-    expect(resolveDashboardAccess('/dashboard/requests', roles).recordScope).toBe('tenant');
-    expect(canPerformDashboardAction('/dashboard/requests', roles, 'view')).toBe(true);
-    expect(canPerformDashboardAction('/dashboard/requests', roles, 'update')).toBe(false);
-    expect(canPerformDashboardAction('/dashboard/allocations', roles, 'create')).toBe(false);
-    expect(canPerformDashboardAction('/dashboard/trips', roles, 'update')).toBe(false);
-    expect(canPerformDashboardAction('/dashboard/trips/active', roles, 'view')).toBe(true);
-    expect(canPerformDashboardAction('/dashboard/trips/closure-review', roles, 'view')).toBe(true);
-    expect(canPerformDashboardAction('/dashboard/trips/closure-review', roles, 'approve')).toBe(false);
-    expect(canPerformDashboardAction('/dashboard/fuel', roles, 'update')).toBe(false);
-    expect(canPerformDashboardAction('/dashboard/maintenance', roles, 'create')).toBe(false);
-    expect(canPerformDashboardAction('/dashboard/fleet/import', roles, 'import')).toBe(true);
+    for (const path of [
+      '/dashboard/allocations',
+      '/dashboard/trips',
+      '/dashboard/fuel',
+      '/dashboard/maintenance',
+      '/dashboard/fleet/import',
+    ]) {
+      expect(canAccessDashboardPath(path, roles, W.TENANT_ADMIN), path).toBe(false);
+    }
+    expect(canPerformDashboardAction('/dashboard/staff', roles, 'update', W.TENANT_ADMIN)).toBe(
+      true,
+    );
   });
 
-  it('limits requesters, approvers, drivers and inspectors to their record scopes', () => {
-    expect(resolveDashboardAccess('/dashboard/requests', [R.REQUESTER]).recordScope).toBe('self');
-    expect(resolveDashboardAccess('/dashboard/approvals', [R.SUPERVISOR]).recordScope).toBe('assigned');
-    expect(resolveDashboardAccess('/dashboard/trips', [R.DRIVER]).recordScope).toBe('assigned');
-    expect(resolveDashboardAccess('/dashboard/inspections', [R.INSPECTOR]).recordScope).toBe('assigned');
-    expect(canAccessDashboardPath('/dashboard/fleet', [R.REQUESTER])).toBe(false);
-    expect(canAccessDashboardPath('/dashboard/requests', [R.DRIVER])).toBe(false);
+  it('applies assigned and related record scopes to operational workspaces', () => {
+    expect(
+      resolveDashboardAccess('/dashboard/approvals', [R.SUPERVISOR], W.APPROVER).recordScope,
+    ).toBe('assigned');
+    expect(resolveDashboardAccess('/dashboard/trips', [R.DRIVER], W.DRIVER).recordScope).toBe(
+      'assigned',
+    );
+    expect(
+      resolveDashboardAccess('/dashboard/inspections', [R.INSPECTOR], W.INSPECTOR).recordScope,
+    ).toBe('assigned');
+    expect(resolveDashboardAccess('/dashboard/fleet', [R.INSPECTOR], W.INSPECTOR).recordScope).toBe(
+      'assigned',
+    );
   });
 
-  it('keeps auditors tenant-wide and read-only', () => {
-    const roles = [R.AUDITOR];
+  it('keeps audit tenant-wide and read-only', () => {
     for (const path of [
       '/dashboard/requests',
       '/dashboard/trips',
@@ -61,28 +105,21 @@ describe('central dashboard route policy', () => {
       '/dashboard/documents',
       '/dashboard/reports',
       '/dashboard/audit',
-      '/dashboard/notifications/history',
     ]) {
-      expect(canPerformDashboardAction(path, roles, 'view'), path).toBe(true);
-      expect(canPerformDashboardAction(path, roles, 'create'), path).toBe(false);
-      expect(canPerformDashboardAction(path, roles, 'update'), path).toBe(false);
-      expect(canPerformDashboardAction(path, roles, 'delete'), path).toBe(false);
-      expect(canPerformDashboardAction(path, roles, 'import'), path).toBe(false);
+      expect(canPerformDashboardAction(path, [R.AUDITOR], 'view', W.AUDIT), path).toBe(true);
+      expect(canPerformDashboardAction(path, [R.AUDITOR], 'update', W.AUDIT), path).toBe(false);
+      expect(canPerformDashboardAction(path, [R.AUDITOR], 'delete', W.AUDIT), path).toBe(false);
     }
   });
 
-  it('combines active multi-role grants without weakening the strongest scope', () => {
-    const roles = [R.TENANT_ADMIN, R.TRANSPORT_ADMIN];
-    const access = resolveDashboardAccess('/dashboard/trips', roles);
-    expect(access.accessMode).toBe('tenant_manage');
-    expect(access.recordScope).toBe('tenant');
-    expect(access.actions).toContain('update');
-  });
-
   it('evaluates specific child routes before broad route families', () => {
-    expect(canAccessDashboardPath('/dashboard/notifications/history', [R.REQUESTER])).toBe(false);
-    expect(canAccessDashboardPath('/dashboard/notifications', [R.REQUESTER])).toBe(true);
-    expect(canAccessDashboardPath('/dashboard/fleet/import', [R.AUDITOR])).toBe(false);
-    expect(canAccessDashboardPath('/dashboard/fleet', [R.AUDITOR])).toBe(true);
+    expect(
+      canAccessDashboardPath('/dashboard/notifications/history', [R.REQUESTER], W.PERSONAL),
+    ).toBe(false);
+    expect(canAccessDashboardPath('/dashboard/notifications', [R.REQUESTER], W.PERSONAL)).toBe(
+      true,
+    );
+    expect(canAccessDashboardPath('/dashboard/fleet/import', [R.AUDITOR], W.AUDIT)).toBe(false);
+    expect(canAccessDashboardPath('/dashboard/fleet', [R.AUDITOR], W.AUDIT)).toBe(true);
   });
 });

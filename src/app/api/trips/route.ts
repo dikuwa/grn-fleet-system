@@ -10,13 +10,21 @@ import { getDb } from '@/db';
 import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
-import { employees, driverProfiles } from '@/db/schema/people';
-import {eq, and, desc, like, or, sql, type SQL} from 'drizzle-orm';
-import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { employees } from '@/db/schema/people';
+import { eq, and, desc, like, or, sql, type SQL } from 'drizzle-orm';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { provisionTripAuthority } from '@/lib/trip-authority';
-import { auditEvents, notifications } from '@/db/schema';
+import { auditEvents } from '@/db/schema';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { tripScopeCondition } from '@/lib/record-scope';
+import { createScopedNotifications } from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 /**
  * GET /api/trips
@@ -35,7 +43,8 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status')?.trim();
-    const driverAssigned = searchParams.get('driver_assigned') === 'true' || access.recordScope === 'assigned';
+    const driverAssigned =
+      searchParams.get('driver_assigned') === 'true' || access.recordScope === 'assigned';
     const search = searchParams.get('search')?.trim();
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '20', 10)));
@@ -43,44 +52,19 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
     const tenantId = session.tenantId;
-    const conditions: SQL[] = [eq(trips.tenantId, tenantId)];
-
-    // Resolve driver_assigned: find the employee → driver profile for the current user
-    let driverEmployeeId: string | null = null;
-    if (driverAssigned) {
-      const [emp] = await db
-        .select({ id: employees.id })
-        .from(employees)
-        .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, tenantId)))
-        .limit(1);
-      if (emp) {
-        const [profile] = await db
-          .select({ id: driverProfiles.id })
-          .from(driverProfiles)
-          .where(eq(driverProfiles.employeeId, emp.id))
-          .limit(1);
-        if (profile) {
-          driverEmployeeId = emp.id;
-        }
-      }
-      // If no driver profile found, return empty (the user isn't a driver)
-      if (!driverEmployeeId) {
-        return NextResponse.json({ success: true, data: [], totalCount: 0, page, totalPages: 0 });
-      }
-    }
-
-    if (driverEmployeeId) {
-      conditions.push(eq(vehicleAllocations.driverEmployeeId, driverEmployeeId));
-    }
+    const conditions: SQL[] = [
+      tripScopeCondition({
+        tenantId,
+        userId: session.user.id,
+        recordScope: access.recordScope ?? 'assigned',
+      }),
+    ];
     if (status) {
       conditions.push(eq(trips.status, status));
     }
     if (search) {
       conditions.push(
-        or(
-          like(vehicles.licenceNumber, `%${search}%`),
-          like(vehicles.make, `%${search}%`),
-        )!,
+        or(like(vehicles.licenceNumber, `%${search}%`), like(vehicles.make, `%${search}%`))!,
       );
     }
 
@@ -149,10 +133,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('[Trips API] GET failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch trips: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to fetch trips: ' + String(error) }, { status: 500 });
   }
 }
 
@@ -171,7 +152,10 @@ export async function POST(request: NextRequest) {
     const { allocationId, requestId, vehicleId } = body;
 
     if (!allocationId || !requestId || !vehicleId) {
-      return NextResponse.json({ error: 'allocationId, requestId, and vehicleId are required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'allocationId, requestId, and vehicleId are required' },
+        { status: 400 },
+      );
     }
 
     const db = getDb();
@@ -196,7 +180,10 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     if (existingTrip) {
-      return NextResponse.json({ error: 'A trip already exists for this allocation' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'A trip already exists for this allocation' },
+        { status: 409 },
+      );
     }
 
     // Create the trip
@@ -234,15 +221,17 @@ export async function POST(request: NextRequest) {
         .where(eq(vehicleAllocations.id, allocationId))
         .limit(1);
       if (driver?.userId) {
-        await db.insert(notifications).values({
+        await createScopedNotifications({
           tenantId: session.tenantId,
-          recipientUserId: driver.userId,
-          type: 'driver_acceptance_required',
+          recipientUserIds: [driver.userId],
+          category: 'action_required',
+          eventType: 'driver_acceptance_required',
           title: `Trip Authority ${provisioned.authority.authorityNumber} requires acceptance`,
           body: 'Review and accept the official authority before completing the departure inspection.',
           entityType: 'trip',
           entityId: trip.id,
           actionUrl: `/dashboard/trips/${trip.id}`,
+          workspace: WorkspaceIds.DRIVER,
           priority: 'high',
         });
       }
@@ -258,7 +247,10 @@ export async function POST(request: NextRequest) {
         after: { tripId: trip.id, status: provisioned.authority.status },
         sourceChannel: 'web',
       });
-      return NextResponse.json({ success: true, trip, authority: provisioned.authority }, { status: 201 });
+      return NextResponse.json(
+        { success: true, trip, authority: provisioned.authority },
+        { status: 201 },
+      );
     } catch (authorityError) {
       await db.delete(trips).where(eq(trips.id, trip.id));
       throw authorityError;

@@ -4,19 +4,84 @@ const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
 const matrix = [
-  { username: 'platform-admin', email: 'platform.admin@grnfleet.test', allowed: '/dashboard/platform', denied: '/dashboard/requests' },
-  { username: 'tenant-admin', email: 'admin@kavangoeast.gov.na', allowed: '/dashboard/staff', denied: '/dashboard/driver-mobile' },
-  { username: 'transport-admin', email: 'transport.admin@kavangoeast.test', allowed: '/dashboard/allocations', denied: '/dashboard/admin/users' },
-  { username: 'requester', email: 'requester@kavangoeast.test', allowed: '/dashboard/requests', denied: '/dashboard/fleet' },
-  { username: 'supervisor', email: 'supervisor@kavangoeast.test', allowed: '/dashboard/approvals', denied: '/dashboard/requests' },
-  { username: 'release-officer', email: 'release.officer@kavangoeast.test', allowed: '/dashboard/approvals', denied: '/dashboard/trips' },
-  { username: 'regional-authoriser', email: 'regional.authoriser@kavangoeast.test', allowed: '/dashboard/approvals', denied: '/dashboard/inspections' },
-  { username: 'national-release', email: 'national.release@kavangoeast.test', allowed: '/dashboard/approvals', denied: '/dashboard/trips' },
-  { username: 'national-authoriser', email: 'national.authoriser@kavangoeast.test', allowed: '/dashboard/approvals', denied: '/dashboard/fleet' },
-  { username: 'driver', email: 'driver@kavangoeast.test', allowed: '/dashboard/driver-mobile', denied: '/dashboard/requests' },
-  { username: 'inspector', email: 'inspector@kavangoeast.test', allowed: '/dashboard/inspections', denied: '/dashboard/trips' },
-  { username: 'maintenance', email: 'maintenance@kavangoeast.test', allowed: '/dashboard/maintenance', denied: '/dashboard/inspections' },
-  { username: 'auditor', email: 'auditor@kavangoeast.test', allowed: '/dashboard/audit', denied: '/dashboard/allocations' },
+  {
+    username: 'platform-admin',
+    email: 'platform.admin@grnfleet.test',
+    allowed: '/dashboard/platform',
+    denied: '/dashboard/requests',
+  },
+  {
+    username: 'tenant-admin',
+    email: 'admin@kavangoeast.gov.na',
+    allowed: '/dashboard/staff',
+    denied: '/dashboard/allocations',
+  },
+  {
+    username: 'transport-admin',
+    email: 'transport.admin@kavangoeast.test',
+    allowed: '/dashboard/allocations',
+    denied: '/dashboard/admin/users',
+  },
+  {
+    username: 'requester',
+    email: 'requester@kavangoeast.test',
+    allowed: '/dashboard/requests',
+    denied: '/dashboard/fleet',
+  },
+  {
+    username: 'supervisor',
+    email: 'supervisor@kavangoeast.test',
+    allowed: '/dashboard/approvals',
+    denied: '/dashboard/trips',
+  },
+  {
+    username: 'release-officer',
+    email: 'release.officer@kavangoeast.test',
+    allowed: '/dashboard/approvals',
+    denied: '/dashboard/trips',
+  },
+  {
+    username: 'regional-authoriser',
+    email: 'regional.authoriser@kavangoeast.test',
+    allowed: '/dashboard/approvals',
+    denied: '/dashboard/inspections',
+  },
+  {
+    username: 'national-release',
+    email: 'national.release@kavangoeast.test',
+    allowed: '/dashboard/approvals',
+    denied: '/dashboard/trips',
+  },
+  {
+    username: 'national-authoriser',
+    email: 'national.authoriser@kavangoeast.test',
+    allowed: '/dashboard/approvals',
+    denied: '/dashboard/fleet',
+  },
+  {
+    username: 'driver',
+    email: 'driver@kavangoeast.test',
+    allowed: '/dashboard/driver-mobile',
+    denied: '/dashboard/allocations',
+  },
+  {
+    username: 'inspector',
+    email: 'inspector@kavangoeast.test',
+    allowed: '/dashboard/inspections',
+    denied: '/dashboard/trips',
+  },
+  {
+    username: 'maintenance',
+    email: 'maintenance@kavangoeast.test',
+    allowed: '/dashboard/maintenance',
+    denied: '/dashboard/inspections',
+  },
+  {
+    username: 'auditor',
+    email: 'auditor@kavangoeast.test',
+    allowed: '/dashboard/audit',
+    denied: '/dashboard/allocations',
+  },
 ] as const;
 
 test.describe.serial('role route matrix', () => {
@@ -46,26 +111,17 @@ test.describe.serial('role route matrix', () => {
       await expect(page.locator('a[href="/dashboard/notifications"]').first()).toBeVisible();
       await expect(page.locator('a[href="/dashboard/profile"]').first()).toBeVisible();
 
-      if (account.email === 'driver@kavangoeast.test') {
-        // Driver: sidebar hides most links (pre-existing role config), allowed URL returns 404 by design
-        // Just verify denied route blocking
-        const deniedResponse = await page.goto(account.denied, { waitUntil: 'domcontentloaded' });
-        const deniedByStatus = (deniedResponse?.status() || 200) >= 400;
-        const deniedByRedirect = page.url().includes('/forbidden');
-        expect(deniedByStatus || deniedByRedirect).toBe(true);
-      } else {
-        await expect(page.locator(`a[href="${account.allowed}"]`).first()).toBeVisible();
-        await expect(page.locator(`a[href="${account.denied}"]`)).toHaveCount(0);
+      await expect(page.locator(`a[href="${account.allowed}"]`).first()).toBeVisible();
+      await expect(page.locator(`a[href="${account.denied}"]`)).toHaveCount(0);
 
-        const allowedResponse = await page.goto(account.allowed, { waitUntil: 'domcontentloaded' });
-        expect(allowedResponse?.status()).toBeLessThan(400);
-        expect(page.url()).toContain(account.allowed);
+      const allowedResponse = await page.goto(account.allowed, { waitUntil: 'domcontentloaded' });
+      expect(allowedResponse?.status()).toBeLessThan(400);
+      expect(page.url()).toContain(account.allowed);
 
-        const deniedResponse = await page.goto(account.denied, { waitUntil: 'domcontentloaded' });
-        const deniedByStatus = (deniedResponse?.status() || 200) >= 400;
-        const deniedByRedirect = page.url().includes('/forbidden');
-        expect(deniedByStatus || deniedByRedirect).toBe(true);
-      }
+      const deniedResponse = await page.goto(account.denied, { waitUntil: 'domcontentloaded' });
+      const deniedByStatus = (deniedResponse?.status() || 200) >= 400;
+      const deniedByRedirect = page.url().includes('/forbidden');
+      expect(deniedByStatus || deniedByRedirect).toBe(true);
 
       await context.close();
       await api.dispose();

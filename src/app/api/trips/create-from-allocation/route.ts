@@ -6,7 +6,9 @@ import { transportRequests } from '@/db/schema/requests';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { eq, and } from 'drizzle-orm';
 import { provisionTripAuthority } from '@/lib/trip-authority';
-import { auditEvents, notifications, employees } from '@/db/schema';
+import { auditEvents, employees } from '@/db/schema';
+import { createScopedNotifications } from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,12 +36,7 @@ export async function POST(req: NextRequest) {
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
-      .where(
-        and(
-          eq(vehicleAllocations.id, allocationId),
-          eq(vehicles.tenantId, session.tenantId),
-        ),
-      )
+      .where(and(eq(vehicleAllocations.id, allocationId), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
 
     if (!allocation) {
@@ -48,7 +45,9 @@ export async function POST(req: NextRequest) {
 
     if (allocation.state !== 'confirmed') {
       return NextResponse.json(
-        { error: 'Only confirmed allocations can create trips. Current state: ' + allocation.state },
+        {
+          error: 'Only confirmed allocations can create trips. Current state: ' + allocation.state,
+        },
         { status: 409 },
       );
     }
@@ -61,7 +60,10 @@ export async function POST(req: NextRequest) {
       .limit(1);
 
     if (existingTrip) {
-      return NextResponse.json({ error: 'A trip already exists for this allocation', tripId: existingTrip.id }, { status: 409 });
+      return NextResponse.json(
+        { error: 'A trip already exists for this allocation', tripId: existingTrip.id },
+        { status: 409 },
+      );
     }
 
     // Verify the transport request is approved
@@ -80,7 +82,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Transport request not found' }, { status: 404 });
     }
 
-    if (!['approved', 'approved_emergency', 'authorised', 'ready_for_issue'].includes(request.status)) {
+    if (
+      !['approved', 'approved_emergency', 'authorised', 'ready_for_issue'].includes(request.status)
+    ) {
       return NextResponse.json(
         { error: `Transport request must be approved (current: ${request.status})` },
         { status: 409 },
@@ -114,15 +118,17 @@ export async function POST(req: NextRequest) {
         .where(eq(vehicleAllocations.id, allocation.id))
         .limit(1);
       if (driver?.userId) {
-        await db.insert(notifications).values({
+        await createScopedNotifications({
           tenantId: session.tenantId,
-          recipientUserId: driver.userId,
-          type: 'driver_acceptance_required',
+          recipientUserIds: [driver.userId],
+          category: 'action_required',
+          eventType: 'driver_acceptance_required',
           title: `Trip Authority ${provisioned.authority.authorityNumber} requires acceptance`,
           body: 'Review the authority, route, passenger manifest and special conditions before departure.',
           entityType: 'trip',
           entityId: trip.id,
           actionUrl: `/dashboard/trips/${trip.id}`,
+          workspace: WorkspaceIds.DRIVER,
           priority: 'high',
         });
       }
@@ -149,9 +155,6 @@ export async function POST(req: NextRequest) {
     }
   } catch (error) {
     console.error('[trips/create-from-allocation] POST failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to create trip from allocation' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to create trip from allocation' }, { status: 500 });
   }
 }

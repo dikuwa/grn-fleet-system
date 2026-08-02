@@ -1,16 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, tripAuthorities, vehicleInspections, inspectionItemResults, inspectionTemplates, inspectionTemplateItems, inspectionPhotos, vehicleAllocations } from '@/db/schema/trips';
-import { vehicles, vehicleDefects, vehicleStatusEvents, maintenanceEvents, vehicleOdometerEvents } from '@/db/schema/fleet';
+import {
+  trips,
+  tripAuthorities,
+  vehicleInspections,
+  inspectionItemResults,
+  inspectionTemplates,
+  inspectionTemplateItems,
+  inspectionPhotos,
+  vehicleAllocations,
+} from '@/db/schema/trips';
+import {
+  vehicles,
+  vehicleDefects,
+  vehicleStatusEvents,
+  maintenanceEvents,
+  vehicleOdometerEvents,
+} from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
-import { auditEvents, notifications, roleAssignments, roles, tenantMemberships } from '@/db/schema';
-import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { auditEvents } from '@/db/schema';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onInspectionCompleted } from '@/lib/document-generator';
 import { eq, and, isNull, sql } from 'drizzle-orm';
 import { setAuthorityStatus } from '@/lib/trip-authority';
 import { employees } from '@/db/schema/people';
 import { SystemRoles } from '@/lib/dashboard-access';
+import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 export async function POST(req: NextRequest) {
   try {
@@ -42,13 +64,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Vehicle ID is required' }, { status: 400 });
     }
     if (!type || !['departure', 'return'].includes(type)) {
-      return NextResponse.json({ error: 'Inspection type must be departure or return' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Inspection type must be departure or return' },
+        { status: 400 },
+      );
     }
     if (!odometerReading) {
       return NextResponse.json({ error: 'Odometer reading is required' }, { status: 400 });
     }
-    if (!Array.isArray(checklist) || checklist.length === 0) return NextResponse.json({ error: 'The complete inspection checklist is required' }, { status: 400 });
-    if (!inspectorAcknowledged || !driverAcknowledged) return NextResponse.json({ error: 'Inspector and driver acknowledgements are required' }, { status: 400 });
+    if (!Array.isArray(checklist) || checklist.length === 0)
+      return NextResponse.json(
+        { error: 'The complete inspection checklist is required' },
+        { status: 400 },
+      );
+    if (!inspectorAcknowledged || !driverAcknowledged)
+      return NextResponse.json(
+        { error: 'Inspector and driver acknowledgements are required' },
+        { status: 400 },
+      );
 
     const db = getDb();
     const userId = session.user.id;
@@ -56,7 +89,11 @@ export async function POST(req: NextRequest) {
 
     // Verify the vehicle exists and belongs to this tenant
     const [vehicle] = await db
-      .select({ id: vehicles.id, status: vehicles.status, currentOdometer: vehicles.currentOdometer })
+      .select({
+        id: vehicles.id,
+        status: vehicles.status,
+        currentOdometer: vehicles.currentOdometer,
+      })
       .from(vehicles)
       .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, tenantId)))
       .limit(1);
@@ -66,7 +103,10 @@ export async function POST(req: NextRequest) {
     }
     const submittedOdometer = Number(odometerReading);
     if (!Number.isInteger(submittedOdometer) || submittedOdometer < vehicle.currentOdometer) {
-      return NextResponse.json({ error: `Odometer must be a whole number at or above ${vehicle.currentOdometer}` }, { status: 422 });
+      return NextResponse.json(
+        { error: `Odometer must be a whole number at or above ${vehicle.currentOdometer}` },
+        { status: 422 },
+      );
     }
 
     let trip: {
@@ -79,23 +119,30 @@ export async function POST(req: NextRequest) {
       authorityStatus: string;
     } | null = null;
     if (tripId) {
-      const [foundTrip] = await db.select({
-        id: trips.id,
-        status: trips.status,
-        vehicleId: trips.vehicleId,
-        requestStatus: transportRequests.status,
-        driverEmployeeId: vehicleAllocations.driverEmployeeId,
-        authorityId: tripAuthorities.id,
-        authorityStatus: tripAuthorities.status,
-      }).from(trips)
+      const [foundTrip] = await db
+        .select({
+          id: trips.id,
+          status: trips.status,
+          vehicleId: trips.vehicleId,
+          requestStatus: transportRequests.status,
+          driverEmployeeId: vehicleAllocations.driverEmployeeId,
+          authorityId: tripAuthorities.id,
+          authorityStatus: tripAuthorities.status,
+        })
+        .from(trips)
         .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
         .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
         .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
         .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)))
         .limit(1);
       trip = foundTrip || null;
-      if (!trip || trip.vehicleId !== vehicleId) return NextResponse.json({ error: 'Trip and vehicle do not match' }, { status: 404 });
-      if (!trip.driverEmployeeId) return NextResponse.json({ error: 'A valid driver must be assigned before inspection' }, { status: 409 });
+      if (!trip || trip.vehicleId !== vehicleId)
+        return NextResponse.json({ error: 'Trip and vehicle do not match' }, { status: 404 });
+      if (!trip.driverEmployeeId)
+        return NextResponse.json(
+          { error: 'A valid driver must be assigned before inspection' },
+          { status: 409 },
+        );
       const roleNames = await getSessionRoleNames(session);
       if (roleNames.includes(SystemRoles.DRIVER)) {
         const [employee] = await db
@@ -110,18 +157,32 @@ export async function POST(req: NextRequest) {
       if (
         type === 'departure' &&
         (trip.status !== 'pending' ||
-          !['authorised', 'ready_for_issue', 'approved', 'approved_emergency'].includes(trip.requestStatus))
+          !['authorised', 'ready_for_issue', 'approved', 'approved_emergency'].includes(
+            trip.requestStatus,
+          ))
       ) {
-        return NextResponse.json({ error: 'Departure inspection requires final authorisation' }, { status: 409 });
+        return NextResponse.json(
+          { error: 'Departure inspection requires final authorisation' },
+          { status: 409 },
+        );
       }
       if (
         type === 'departure' &&
         !['driver_accepted', 'awaiting_pre_trip_inspection'].includes(trip.authorityStatus)
       ) {
-        return NextResponse.json({ error: 'The assigned driver must accept the Trip Authority before inspection' }, { status: 409 });
+        return NextResponse.json(
+          { error: 'The assigned driver must accept the Trip Authority before inspection' },
+          { status: 409 },
+        );
       }
-      if (type === 'return' && !['in_progress', 'return_due', 'return_inspection'].includes(trip.status)) {
-        return NextResponse.json({ error: 'Return inspection is only available after trip execution' }, { status: 409 });
+      if (
+        type === 'return' &&
+        !['in_progress', 'return_due', 'return_inspection'].includes(trip.status)
+      ) {
+        return NextResponse.json(
+          { error: 'Return inspection is only available after trip execution' },
+          { status: 409 },
+        );
       }
     }
 
@@ -141,7 +202,8 @@ export async function POST(req: NextRequest) {
       if (blockingDefect && Number(blockingDefect.count) > 0) {
         return NextResponse.json(
           {
-            error: 'Departure inspection blocked: This vehicle has unresolved critical or blocking defects. Resolve all defects before departure.',
+            error:
+              'Departure inspection blocked: This vehicle has unresolved critical or blocking defects. Resolve all defects before departure.',
             blockingDefects: Number(blockingDefect.count),
           },
           { status: 409 },
@@ -162,26 +224,61 @@ export async function POST(req: NextRequest) {
       )
       .limit(1);
 
-    if (!existingTemplate) return NextResponse.json({ error: 'No active inspection template is configured' }, { status: 409 });
-    const templateItems = await db.select().from(inspectionTemplateItems).where(eq(inspectionTemplateItems.templateId, existingTemplate.id));
-    if (templateItems.length === 0) return NextResponse.json({ error: 'The active inspection template has no checklist items' }, { status: 409 });
-    const submittedByLabel = new Map(checklist.map((item: { label?: string }) => [item.label, item]));
-    if (submittedByLabel.size !== templateItems.length || templateItems.some((item) => !submittedByLabel.has(item.label))) {
-      return NextResponse.json({ error: 'Submit every item from the active inspection template exactly once' }, { status: 422 });
+    if (!existingTemplate)
+      return NextResponse.json(
+        { error: 'No active inspection template is configured' },
+        { status: 409 },
+      );
+    const templateItems = await db
+      .select()
+      .from(inspectionTemplateItems)
+      .where(eq(inspectionTemplateItems.templateId, existingTemplate.id));
+    if (templateItems.length === 0)
+      return NextResponse.json(
+        { error: 'The active inspection template has no checklist items' },
+        { status: 409 },
+      );
+    const submittedByLabel = new Map(
+      checklist.map((item: { label?: string }) => [item.label, item]),
+    );
+    if (
+      submittedByLabel.size !== templateItems.length ||
+      templateItems.some((item) => !submittedByLabel.has(item.label))
+    ) {
+      return NextResponse.json(
+        { error: 'Submit every item from the active inspection template exactly once' },
+        { status: 422 },
+      );
     }
     const evaluatedItems = templateItems.map((templateItem) => {
-      const submitted = submittedByLabel.get(templateItem.label) as { result: string; comment?: string };
-      return { ...templateItem, result: submitted.result === 'na' ? 'not_applicable' : submitted.result, comment: submitted.comment };
+      const submitted = submittedByLabel.get(templateItem.label) as {
+        result: string;
+        comment?: string;
+      };
+      return {
+        ...templateItem,
+        result: submitted.result === 'na' ? 'not_applicable' : submitted.result,
+        comment: submitted.comment,
+      };
     });
     if (evaluatedItems.some((item) => !['pass', 'fail', 'not_applicable'].includes(item.result))) {
-      return NextResponse.json({ error: 'Inspection results must be pass, fail, or not applicable' }, { status: 422 });
+      return NextResponse.json(
+        { error: 'Inspection results must be pass, fail, or not applicable' },
+        { status: 422 },
+      );
     }
     if (evaluatedItems.some((item) => item.result === 'fail' && !item.comment?.trim())) {
-      return NextResponse.json({ error: 'A comment is required for every failed item' }, { status: 422 });
+      return NextResponse.json(
+        { error: 'A comment is required for every failed item' },
+        { status: 422 },
+      );
     }
     const requiredPhotoCount = evaluatedItems.filter((item) => item.requiresPhoto).length;
     if (!Array.isArray(photoKeys) || photoKeys.length < requiredPhotoCount) {
-      return NextResponse.json({ error: `At least ${requiredPhotoCount} inspection photos are required` }, { status: 422 });
+      return NextResponse.json(
+        { error: `At least ${requiredPhotoCount} inspection photos are required` },
+        { status: 422 },
+      );
     }
     const criticalPass = evaluatedItems.every((item) => !item.isCritical || item.result !== 'fail');
     const allPassed = evaluatedItems.every((item) => item.result !== 'fail');
@@ -217,12 +314,12 @@ export async function POST(req: NextRequest) {
     const insertedItemIds: string[] = [];
     if (checklist?.length > 0) {
       const resultsToInsert = evaluatedItems.map((item) => {
-        return ({
-        inspectionId: inspection.id,
-        templateItemId: item.id,
-        result: item.result,
-        comment: item.comment || null,
-      });
+        return {
+          inspectionId: inspection.id,
+          templateItemId: item.id,
+          result: item.result,
+          comment: item.comment || null,
+        };
       });
 
       const inserted = await db.insert(inspectionItemResults).values(resultsToInsert).returning();
@@ -232,6 +329,9 @@ export async function POST(req: NextRequest) {
     // Create vehicle defects for failed inspection items
     const failedItems = evaluatedItems.filter((item) => item.result === 'fail');
     if (failedItems.length > 0) {
+      const maintenanceUsers = await resolveActiveRoleRecipients(tenantId, [
+        SystemRoles.MAINTENANCE,
+      ]);
       const defectValues = failedItems.map((item) => ({
         vehicleId,
         tripId: tripId || null,
@@ -240,18 +340,24 @@ export async function POST(req: NextRequest) {
         description: item.comment?.trim() || `Inspection item failed: ${item.label}`,
         isBlocking: item.isCritical === true,
         reportedByUserId: userId,
+        assignedToUserId: maintenanceUsers[0] ?? null,
       }));
 
       try {
         await db.insert(vehicleDefects).values(defectValues);
-        console.log(`[Inspections] Created ${defectValues.length} defect(s) from ${type} inspection ${inspection.id}`);
+        console.log(
+          `[Inspections] Created ${defectValues.length} defect(s) from ${type} inspection ${inspection.id}`,
+        );
       } catch (err) {
         console.error('[Inspections] Failed to create defects:', err);
         // Non-fatal — inspection already saved
       }
 
       if (failedItems.some((item) => item.isCritical)) {
-        await db.update(vehicles).set({ status: 'maintenance', updatedAt: new Date() }).where(eq(vehicles.id, vehicleId));
+        await db
+          .update(vehicles)
+          .set({ status: 'maintenance', updatedAt: new Date() })
+          .where(eq(vehicles.id, vehicleId));
         await db.insert(maintenanceEvents).values({
           vehicleId,
           serviceDate: new Date().toISOString().slice(0, 10),
@@ -260,13 +366,30 @@ export async function POST(req: NextRequest) {
           description: `Critical ${type} inspection defect follow-up`,
           notes: `Automatically escalated from inspection ${inspection.id}`,
           createdByUserId: userId,
+          assignedToUserId: maintenanceUsers[0] ?? null,
         });
-        await db.insert(vehicleStatusEvents).values({ vehicleId, previousStatus: vehicle.status, newStatus: 'maintenance', reason: `Critical defect in ${type} inspection`, changedByUserId: userId, referenceEntityType: 'inspection', referenceEntityId: inspection.id });
-        const maintenanceUsers = await db.select({ userId: tenantMemberships.userId }).from(tenantMemberships)
-          .innerJoin(roleAssignments, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
-          .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
-          .where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.status, 'active'), eq(roles.name, 'Maintenance Officer')));
-        if (maintenanceUsers.length) await db.insert(notifications).values(maintenanceUsers.map(({ userId: recipientUserId }) => ({ tenantId, recipientUserId, type: 'critical_defect', title: 'Critical inspection defect', body: `Vehicle requires maintenance follow-up after its ${type} inspection.`, entityType: 'inspection', entityId: inspection.id, actionUrl: '/dashboard/maintenance', priority: 'urgent' })));
+        await db.insert(vehicleStatusEvents).values({
+          vehicleId,
+          previousStatus: vehicle.status,
+          newStatus: 'maintenance',
+          reason: `Critical defect in ${type} inspection`,
+          changedByUserId: userId,
+          referenceEntityType: 'inspection',
+          referenceEntityId: inspection.id,
+        });
+        await createScopedNotifications({
+          tenantId,
+          recipientUserIds: maintenanceUsers,
+          category: 'action_required',
+          eventType: 'critical_inspection_defect',
+          title: 'Critical inspection defect',
+          body: `Vehicle requires maintenance follow-up after its ${type} inspection.`,
+          entityType: 'inspection',
+          entityId: inspection.id,
+          actionUrl: '/dashboard/maintenance',
+          workspace: WorkspaceIds.MAINTENANCE,
+          priority: 'urgent',
+        });
       }
     }
 
@@ -292,7 +415,11 @@ export async function POST(req: NextRequest) {
       }
     }
     if (tripId && type === 'return') {
-      [updatedTrip] = await db.update(trips).set({ status: 'closure_review', returnedAt: new Date(), updatedAt: new Date() }).where(eq(trips.id, tripId)).returning();
+      [updatedTrip] = await db
+        .update(trips)
+        .set({ status: 'closure_review', returnedAt: new Date(), updatedAt: new Date() })
+        .where(eq(trips.id, tripId))
+        .returning();
       if (trip?.authorityStatus === 'awaiting_arrival_inspection') {
         await setAuthorityStatus({
           authorityId: trip.authorityId,
@@ -313,9 +440,35 @@ export async function POST(req: NextRequest) {
       await db.insert(inspectionPhotos).values(photoValues);
     }
 
-    await db.insert(vehicleOdometerEvents).values({ vehicleId, odometerValue: submittedOdometer, source: 'inspection', sourceEntityType: 'inspection', sourceEntityId: inspection.id, recordedByUserId: userId });
-    await db.update(vehicles).set({ currentOdometer: submittedOdometer, updatedAt: new Date() }).where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, tenantId)));
-    await db.insert(auditEvents).values({ tenantId, tenantSequence: Date.now(), eventType: 'inspection_completed', actorUserId: userId, action: 'complete', entityType: 'inspection', entityId: inspection.id, summary: `${type} inspection ${status}; ${failedItems.length} defect(s) recorded`, after: { tripId, vehicleId, overallPass, criticalDefects: failedItems.filter((item) => item.isCritical).length }, sourceChannel: 'web' });
+    await db.insert(vehicleOdometerEvents).values({
+      vehicleId,
+      odometerValue: submittedOdometer,
+      source: 'inspection',
+      sourceEntityType: 'inspection',
+      sourceEntityId: inspection.id,
+      recordedByUserId: userId,
+    });
+    await db
+      .update(vehicles)
+      .set({ currentOdometer: submittedOdometer, updatedAt: new Date() })
+      .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, tenantId)));
+    await db.insert(auditEvents).values({
+      tenantId,
+      tenantSequence: Date.now(),
+      eventType: 'inspection_completed',
+      actorUserId: userId,
+      action: 'complete',
+      entityType: 'inspection',
+      entityId: inspection.id,
+      summary: `${type} inspection ${status}; ${failedItems.length} defect(s) recorded`,
+      after: {
+        tripId,
+        vehicleId,
+        overallPass,
+        criticalDefects: failedItems.filter((item) => item.isCritical).length,
+      },
+      sourceChannel: 'web',
+    });
 
     // Trigger document generation
     const doc = await onInspectionCompleted(inspection.id, tenantId, userId);
@@ -323,9 +476,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ inspection, trip: updatedTrip, document: doc, overallPass, status });
   } catch (error) {
     console.error('[inspections] POST failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to complete inspection' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to complete inspection' }, { status: 500 });
   }
 }

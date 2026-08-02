@@ -23,16 +23,27 @@ import {
 import Link from 'next/link';
 import { getServerSession } from '@/lib/session';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
-import { canAccessDashboardPath, canPerformDashboardAction } from '@/lib/dashboard-access';
+import {
+  canAccessDashboardPath,
+  canPerformDashboardAction,
+  resolveDashboardAccess,
+  type DashboardRecordScope,
+} from '@/lib/dashboard-access';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { numericCount } from '@/lib/statistics';
+import { maintenanceScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
-async function fetchMaintenance(sp: Record<string, string | undefined>, tenantId: string) {
+async function fetchMaintenance(
+  sp: Record<string, string | undefined>,
+  tenantId: string,
+  userId: string,
+  recordScope: DashboardRecordScope,
+) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -40,7 +51,10 @@ async function fetchMaintenance(sp: Record<string, string | undefined>, tenantId
   const serviceType = normalizeOptionalFilter(sp.service_type);
   const due = normalizeOptionalFilter(sp.due);
 
-  const baseConditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
+  const baseConditions: SQL[] = [
+    eq(vehicles.tenantId, tenantId),
+    maintenanceScopeCondition({ tenantId, userId, recordScope }),
+  ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
 
@@ -154,11 +168,17 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchMaintenance>>;
   const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/maintenance', roleNames);
   const canCreate = canPerformDashboardAction('/dashboard/maintenance/new', roleNames, 'create');
   const canExport = canPerformDashboardAction('/dashboard/maintenance', roleNames, 'export');
   const canViewFleet = canAccessDashboardPath('/dashboard/fleet', roleNames);
   try {
-    result = await fetchMaintenance(sp, session.tenantId);
+    result = await fetchMaintenance(
+      sp,
+      session.tenantId,
+      session.user.id,
+      access.recordScope ?? 'assigned',
+    );
   } catch (error) {
     console.error('Maintenance query failed:', error);
     return (

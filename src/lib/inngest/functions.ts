@@ -12,10 +12,11 @@
 
 import { inngest, Events } from './client';
 import { getDb } from '@/db';
-import { workflowInstances, workflowActions } from '@/db/schema/workflows';
+import { workflowInstances, workflowActions, workflowSteps } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
-import { notifications } from '@/db/schema/notifications';
 import { eq, and } from 'drizzle-orm';
+import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
+import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -31,9 +32,14 @@ type EventPayloads = {
 // Helper: get instance info with tenantId
 // ---------------------------------------------------------------------------
 
-async function getInstanceWithTenant(
-  workflowInstanceId: string,
-): Promise<{ status: string; requestId: string; tenantId: string; currentStepOrder: number } | null> {
+async function getInstanceWithTenant(workflowInstanceId: string): Promise<{
+  status: string;
+  requestId: string;
+  tenantId: string;
+  currentStepOrder: number;
+  assignedUserId: string | null;
+  requesterUserId: string | null;
+} | null> {
   const db = getDb();
   const [row] = await db
     .select({
@@ -41,9 +47,18 @@ async function getInstanceWithTenant(
       requestId: workflowInstances.requestId,
       currentStepOrder: workflowInstances.currentStepOrder,
       tenantId: transportRequests.tenantId,
+      assignedUserId: workflowSteps.assignedUserId,
+      requesterUserId: transportRequests.requesterUserId,
     })
     .from(workflowInstances)
     .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
+    .leftJoin(
+      workflowSteps,
+      and(
+        eq(workflowSteps.definitionId, workflowInstances.definitionId),
+        eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
+      ),
+    )
     .where(eq(workflowInstances.id, workflowInstanceId))
     .limit(1);
 
@@ -59,7 +74,8 @@ export const stepReminder = inngest
       { id: 'workflow-step-reminder', retries: 2 },
       { event: Events.WORKFLOW_REMINDER },
       async ({ event, step }) => {
-        const { workflowInstanceId, stepOrder } = event.data as EventPayloads[typeof Events.WORKFLOW_REMINDER];
+        const { workflowInstanceId, stepOrder } =
+          event.data as EventPayloads[typeof Events.WORKFLOW_REMINDER];
 
         return step.run('Send reminder notification', async () => {
           const db = getDb();
@@ -84,22 +100,25 @@ export const stepReminder = inngest
             return { skipped: true, reason: 'Step already completed' };
           }
 
-          const [notif] = await db
-            .insert(notifications)
-            .values({
-              tenantId: instance.tenantId,
-              recipientUserId: instance.requestId,
-              type: 'reminder',
-              title: 'Workflow Action Reminder',
-              body: `Step ${stepOrder} requires attention in workflow ${workflowInstanceId.slice(0, 8)}.`,
-              entityType: 'workflow_instance',
-              entityId: workflowInstanceId,
-              priority: 'normal',
-              isRead: false,
-            })
-            .returning();
+          if (!instance.assignedUserId) {
+            return { skipped: true, reason: 'Workflow step has no current assignee' };
+          }
+          const [notif] = await createScopedNotifications({
+            tenantId: instance.tenantId,
+            recipientUserIds: [instance.assignedUserId],
+            category: 'reminder',
+            eventType: 'approval_due_reminder',
+            title: 'Workflow Action Reminder',
+            body: `Step ${stepOrder} requires attention in workflow ${workflowInstanceId.slice(0, 8)}.`,
+            entityType: 'workflow_instance',
+            entityId: workflowInstanceId,
+            actionUrl: `/dashboard/approvals/${workflowInstanceId}`,
+            workspace: WorkspaceIds.APPROVER,
+            workflowStage: String(stepOrder),
+            priority: 'normal',
+          });
 
-          return { sent: true, notificationId: notif.id };
+          return { sent: Boolean(notif), notificationId: notif?.id };
         });
       },
     )
@@ -114,7 +133,8 @@ export const stepEscalation = inngest
       { id: 'workflow-step-escalation', retries: 2 },
       { event: Events.WORKFLOW_ESCALATION },
       async ({ event, step }) => {
-        const { workflowInstanceId, stepOrder } = event.data as EventPayloads[typeof Events.WORKFLOW_ESCALATION];
+        const { workflowInstanceId, stepOrder } =
+          event.data as EventPayloads[typeof Events.WORKFLOW_ESCALATION];
 
         return step.run('Send escalation notification', async () => {
           const db = getDb();
@@ -139,22 +159,26 @@ export const stepEscalation = inngest
             return { skipped: true, reason: 'Step already completed' };
           }
 
-          const [notif] = await db
-            .insert(notifications)
-            .values({
-              tenantId: instance.tenantId,
-              recipientUserId: instance.requestId,
-              type: 'escalation',
-              title: '⚠️ Workflow Escalation',
-              body: `Step ${stepOrder} in workflow ${workflowInstanceId.slice(0, 8)} has exceeded its time limit and requires escalation.`,
-              entityType: 'workflow_instance',
-              entityId: workflowInstanceId,
-              priority: 'high',
-              isRead: false,
-            })
-            .returning();
+          if (!instance.assignedUserId) {
+            return { skipped: true, reason: 'Workflow step has no current assignee' };
+          }
+          const [notif] = await createScopedNotifications({
+            tenantId: instance.tenantId,
+            recipientUserIds: [instance.assignedUserId],
+            category: 'escalation',
+            eventType: 'approval_overdue_escalation',
+            title: '⚠️ Workflow Escalation',
+            body: `Step ${stepOrder} in workflow ${workflowInstanceId.slice(0, 8)} has exceeded its time limit and requires escalation.`,
+            entityType: 'workflow_instance',
+            entityId: workflowInstanceId,
+            actionUrl: `/dashboard/approvals/${workflowInstanceId}`,
+            workspace: WorkspaceIds.APPROVER,
+            workflowStage: String(stepOrder),
+            priority: 'high',
+            mandatory: true,
+          });
 
-          return { sent: true, notificationId: notif.id };
+          return { sent: Boolean(notif), notificationId: notif?.id };
         });
       },
     )
@@ -169,7 +193,8 @@ export const approvalCompleted = inngest
       { id: 'workflow-approval-completed', retries: 1 },
       { event: Events.APPROVAL_COMPLETED },
       async ({ event, step }) => {
-        const { workflowInstanceId, result, actorUserId } = event.data as EventPayloads[typeof Events.APPROVAL_COMPLETED];
+        const { workflowInstanceId, result, actorUserId } =
+          event.data as EventPayloads[typeof Events.APPROVAL_COMPLETED];
 
         return step.run('Send approval notification', async () => {
           const db = getDb();
@@ -186,22 +211,24 @@ export const approvalCompleted = inngest
                 ? '❌ Request Rejected'
                 : '↩️ Request Returned';
 
-          const [notif] = await db
-            .insert(notifications)
-            .values({
-              tenantId: instance.tenantId,
-              recipientUserId: actorUserId,
-              type: 'outcome',
-              title,
-              body: `Workflow ${workflowInstanceId.slice(0, 8)}: ${result} by user ${actorUserId}.`,
-              entityType: 'workflow_instance',
-              entityId: workflowInstanceId,
-              priority: 'normal',
-              isRead: false,
-            })
-            .returning();
+          if (!instance.requesterUserId) {
+            return { skipped: true, reason: 'Request has no authenticated requester' };
+          }
+          const [notif] = await createScopedNotifications({
+            tenantId: instance.tenantId,
+            recipientUserIds: [instance.requesterUserId],
+            category: result === 'returned' ? 'action_required' : 'outcome',
+            eventType: `request_${result}`,
+            title,
+            body: `Your request workflow ${workflowInstanceId.slice(0, 8)} was ${result}.`,
+            entityType: 'workflow_instance',
+            entityId: workflowInstanceId,
+            actionUrl: `/dashboard/requests/${instance.requestId}`,
+            workspace: WorkspaceIds.PERSONAL,
+            priority: 'normal',
+          });
 
-          return { sent: true, notificationId: notif.id };
+          return { sent: Boolean(notif), notificationId: notif?.id, actorUserId };
         });
       },
     )
@@ -239,9 +266,7 @@ export const vehicleLicenceExpiryAlert = inngest
               tenantId: vehicles.tenantId,
             })
             .from(vehicles)
-            .where(
-              lte(vehicles.licenceExpiryDate, thirtyDays.toISOString().split('T')[0]),
-            );
+            .where(lte(vehicles.licenceExpiryDate, thirtyDays.toISOString().split('T')[0]));
 
           // Track which tenants we've already checked today (cache)
           const vehicleBdCache = new Map<string, boolean>();
@@ -255,23 +280,28 @@ export const vehicleLicenceExpiryAlert = inngest
             if (!vehicleBdCache.get(v.tenantId)) continue;
 
             const daysLeft = v.licenceExpiryDate
-              ? Math.ceil((new Date(v.licenceExpiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+              ? Math.ceil(
+                  (new Date(v.licenceExpiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+                )
               : 0;
 
-            await db
-              .insert(notifications)
-              .values({
-                tenantId: v.tenantId,
-                recipientUserId: '00000000-0000-0000-0000-000000000000',
-                type: 'reminder',
-                title: '🚛 Vehicle Licence Expiring',
-                body: `${v.licenceNumber} licence expires${daysLeft > 0 ? ` in ${daysLeft} day(s)` : ' today'}.`,
-                entityType: 'vehicle',
-                entityId: v.vehicleId,
-                actionUrl: `/dashboard/fleet/${v.vehicleId}`,
-                priority: daysLeft <= 7 ? 'high' : 'normal',
-              });
-            notificationCount++;
+            const recipients = await resolveActiveRoleRecipients(v.tenantId, [
+              SystemRoles.TRANSPORT_ADMIN,
+            ]);
+            const created = await createScopedNotifications({
+              tenantId: v.tenantId,
+              recipientUserIds: recipients,
+              category: 'reminder',
+              eventType: 'vehicle_licence_expiring',
+              title: '🚛 Vehicle Licence Expiring',
+              body: `${v.licenceNumber} licence expires${daysLeft > 0 ? ` in ${daysLeft} day(s)` : ' today'}.`,
+              entityType: 'vehicle',
+              entityId: v.vehicleId,
+              actionUrl: `/dashboard/fleet/${v.vehicleId}`,
+              workspace: WorkspaceIds.TRANSPORT_ADMIN,
+              priority: daysLeft <= 7 ? 'high' : 'normal',
+            });
+            notificationCount += created.length;
           }
 
           return { sent: notificationCount > 0, count: notificationCount };
@@ -297,9 +327,7 @@ export const driverLicenceExpiryAlert = inngest
           const { isBusinessDay } = await import('@/lib/business-day');
 
           const today = new Date();
-          const [emailModule] = await Promise.all([
-            import('@/lib/email'),
-          ]);
+          const [emailModule] = await Promise.all([import('@/lib/email')]);
           const sendEmail = emailModule.sendNotificationEmail;
 
           const expiringLicences = await db
@@ -320,7 +348,10 @@ export const driverLicenceExpiryAlert = inngest
             .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
             .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
             .where(
-              lte(driverLicences.expiryDate, new Date(Date.now() + 90 * 86_400_000).toISOString().split('T')[0]),
+              lte(
+                driverLicences.expiryDate,
+                new Date(Date.now() + 90 * 86_400_000).toISOString().split('T')[0],
+              ),
             );
 
           // Track which tenants we've already checked today (cache)
@@ -333,28 +364,44 @@ export const driverLicenceExpiryAlert = inngest
             }
             if (!businessDayCache.get(l.tenantId)) continue;
 
-            const daysLeft = Math.ceil((new Date(l.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+            const daysLeft = Math.ceil(
+              (new Date(l.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+            );
             const isExpired = daysLeft <= 0;
-            const reminderDay = isExpired ? 0 : [90, 60, 30, 14, 7].find((threshold) => daysLeft === threshold);
+            const reminderDay = isExpired
+              ? 0
+              : [90, 60, 30, 14, 7].find((threshold) => daysLeft === threshold);
             if (reminderDay === undefined || !l.userId) continue;
-            const reminderTitle = isExpired ? '🚗 Driver Licence Expired' : `🚗 Driver Licence Expiring — ${daysLeft} days`;
+            const reminderTitle = isExpired
+              ? '🚗 Driver Licence Expired'
+              : `🚗 Driver Licence Expiring — ${daysLeft} days`;
             const { notifications: notificationTable } = await import('@/db/schema/notifications');
-            const [alreadySent] = await db.select({ id: notificationTable.id }).from(notificationTable).where(and(
-              eq(notificationTable.tenantId, l.tenantId),
-              eq(notificationTable.recipientUserId, l.userId),
-              eq(notificationTable.entityId, l.licenceId),
-              eq(notificationTable.title, reminderTitle),
-            )).limit(1);
+            const [alreadySent] = await db
+              .select({ id: notificationTable.id })
+              .from(notificationTable)
+              .where(
+                and(
+                  eq(notificationTable.tenantId, l.tenantId),
+                  eq(notificationTable.recipientUserId, l.userId),
+                  eq(notificationTable.entityId, l.licenceId),
+                  eq(notificationTable.title, reminderTitle),
+                ),
+              )
+              .limit(1);
             if (alreadySent) continue;
 
-            await db.insert(notifications).values({
+            await createScopedNotifications({
               tenantId: l.tenantId,
-              recipientUserId: l.userId,
-              type: 'reminder',
+              recipientUserIds: [l.userId],
+              category: 'reminder',
+              eventType: 'driver_licence_expiring',
               title: reminderTitle,
               body: `${l.firstName} ${l.lastName} — ${l.licenceClass} licence expires${daysLeft > 0 ? ` in ${daysLeft} day(s)` : ' today'}.`,
               entityType: 'driver_licence',
               entityId: l.licenceId,
+              actionUrl: `/dashboard/drivers/${l.employeeId}`,
+              workspace: WorkspaceIds.DRIVER,
+              eventVersion: reminderDay,
               priority: daysLeft <= 7 ? 'high' : 'normal',
             });
 
@@ -446,15 +493,20 @@ export const maintenanceReminder = inngest
             }
             if (!maintenanceBusinessDayCache.get(m.tenantId)) continue;
 
-            await db.insert(notifications).values({
+            const recipients = await resolveActiveRoleRecipients(m.tenantId, [
+              SystemRoles.MAINTENANCE,
+            ]);
+            await createScopedNotifications({
               tenantId: m.tenantId,
-              recipientUserId: '00000000-0000-0000-0000-000000000000',
-              type: 'reminder',
+              recipientUserIds: recipients,
+              category: 'reminder',
+              eventType: 'scheduled_maintenance_due',
               title: '🔧 Scheduled Maintenance Due',
               body: `${m.licenceNumber} — ${m.description} due on ${m.serviceDate || 'soon'}.`,
               entityType: 'maintenance_event',
               entityId: m.eventId,
               actionUrl: `/dashboard/fleet/${m.vehicleId}`,
+              workspace: WorkspaceIds.MAINTENANCE,
               priority: 'normal',
             });
           }
@@ -525,14 +577,22 @@ export const documentExpiryAlert = inngest
             }
             if (!expiryBdCache.get(doc.tenantId)) continue;
 
-            const daysRemaining = Math.ceil((expiresAt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            const daysRemaining = Math.ceil(
+              (expiresAt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+            );
             const isExpired = daysRemaining <= 0;
-            const label = doc.documentType.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+            const label = doc.documentType
+              .replace(/_/g, ' ')
+              .replace(/\b\w/g, (c: string) => c.toUpperCase());
 
-            await db.insert(notifications).values({
+            const recipients = await resolveActiveRoleRecipients(doc.tenantId, [
+              SystemRoles.AUDITOR,
+            ]);
+            await createScopedNotifications({
               tenantId: doc.tenantId,
-              recipientUserId: '00000000-0000-0000-0000-000000000000',
-              type: 'reminder',
+              recipientUserIds: recipients,
+              category: 'reminder',
+              eventType: 'document_expiring',
               title: isExpired
                 ? `📄 Document Expired: ${label}`
                 : `📄 Document Expiring: ${label} (${daysRemaining} days)`,
@@ -540,6 +600,7 @@ export const documentExpiryAlert = inngest
               entityType: doc.entityType,
               entityId: doc.entityId,
               actionUrl: `/dashboard/documents/${doc.docId}`,
+              workspace: WorkspaceIds.AUDIT,
               priority: daysRemaining <= 7 ? 'high' : 'normal',
             });
           }
@@ -586,9 +647,7 @@ export const tripReturnDueCheck = inngest
           let totalNotifications = 0;
 
           // Get email module for sending notifications
-          const [emailModule] = await Promise.all([
-            import('@/lib/email'),
-          ]);
+          const [emailModule] = await Promise.all([import('@/lib/email')]);
           const sendEmail = emailModule.sendNotificationEmail;
 
           for (const tenant of allTenants) {
@@ -637,7 +696,11 @@ export const tripReturnDueCheck = inngest
 
             // Fetch requester emails for each overdue trip
             const requestIds = overdueTrips.map((t) => t.requestId).filter(Boolean);
-            let requesterEmails: Array<{ requestId: string; email: string | null; name: string | null }> = [];
+            let requesterEmails: Array<{
+              requestId: string;
+              email: string | null;
+              name: string | null;
+            }> = [];
             if (requestIds.length > 0) {
               const { transportRequests } = await import('@/db/schema/requests');
               const { employees } = await import('@/db/schema/people');
@@ -687,18 +750,23 @@ export const tripReturnDueCheck = inngest
               });
 
               // Create notification
-              await db.insert(notifications).values({
+              const recipients = await resolveActiveRoleRecipients(tenant.id, [
+                SystemRoles.TRANSPORT_ADMIN,
+              ]);
+              const created = await createScopedNotifications({
                 tenantId: tenant.id,
-                recipientUserId: '00000000-0000-0000-0000-000000000000',
-                type: 'escalation',
+                recipientUserIds: recipients,
+                category: 'escalation',
+                eventType: 'trip_return_overdue',
                 title: '⚠️ Trip Return Overdue',
                 body: `${trip.make} ${trip.model} (${trip.licenceNumber}) — return was due. Please arrange return and inspection.`,
                 entityType: 'trip',
                 entityId: trip.id,
                 actionUrl: `/dashboard/trips/${trip.id}`,
+                workspace: WorkspaceIds.TRANSPORT_ADMIN,
                 priority: 'high',
               });
-              totalNotifications++;
+              totalNotifications += created.length;
 
               // Send email notification if we have the requester's address
               if (requester?.email && sendEmail) {
@@ -712,13 +780,20 @@ export const tripReturnDueCheck = inngest
                     recipientName: requester.name || 'Fleet Manager',
                   });
                 } catch (emailErr) {
-                  console.warn(`[tripReturnDueCheck] Email to ${requester.email} failed:`, emailErr);
+                  console.warn(
+                    `[tripReturnDueCheck] Email to ${requester.email} failed:`,
+                    emailErr,
+                  );
                 }
               }
             }
           }
 
-          return { sent: totalOverdue > 0, overdueCount: totalOverdue, notificationCount: totalNotifications };
+          return {
+            sent: totalOverdue > 0,
+            overdueCount: totalOverdue,
+            notificationCount: totalNotifications,
+          };
         });
       },
     )

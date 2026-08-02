@@ -1,55 +1,91 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, jsonb, uniqueIndex } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  boolean,
+  integer,
+  jsonb,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
 /**
  * In-app notifications
  */
-export const notifications = pgTable('notifications', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  recipientUserId: text('recipient_user_id'),
-  audience: text('audience').notNull().default('user'), // user, tenant, platform
-  audienceTarget: text('audience_target'), // role name, department UUID, or office UUID
-  type: text('type').notNull(), // awareness, action_required, outcome, reminder, escalation, operational, risk, emergency
-  title: text('title').notNull(),
-  body: text('body'),
-  entityType: text('entity_type'), // transport_request, trip, vehicle, etc.
-  entityId: uuid('entity_id'),
-  actionUrl: text('action_url'),
-  requiredRole: text('required_role'),
-  priority: text('priority').notNull().default('normal'), // low, normal, high, emergency
-  isRead: boolean('is_read').notNull().default(false),
-  readAt: timestamp('read_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    recipientUserId: text('recipient_user_id'),
+    audience: text('audience').notNull().default('user'), // user, role, department, office, tenant_admin, platform, activity
+    audienceTarget: text('audience_target'), // role name, department UUID, or office UUID
+    type: text('type').notNull(), // action_required, reminder, outcome, escalation, awareness
+    eventType: text('event_type'),
+    title: text('title').notNull(),
+    body: text('body'),
+    entityType: text('entity_type'), // transport_request, trip, vehicle, etc.
+    entityId: uuid('entity_id'),
+    actionUrl: text('action_url'),
+    requiredRole: text('required_role'),
+    workspace: text('workspace'),
+    workflowStage: text('workflow_stage'),
+    eventVersion: integer('event_version').notNull().default(1),
+    dedupeKey: text('dedupe_key'),
+    status: text('status').notNull().default('unread'), // unread, read, action_required, resolved, dismissed, archived
+    mandatory: boolean('mandatory').notNull().default(false),
+    priority: text('priority').notNull().default('normal'), // low, normal, high, emergency
+    isRead: boolean('is_read').notNull().default(false),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    notificationDedupeUnique: uniqueIndex('notifications_dedupe_key_idx').on(table.dedupeKey),
+  }),
+);
 
 /** Per-user read state for tenant/platform activity events. */
-export const notificationReads = pgTable('notification_reads', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  notificationId: uuid('notification_id')
-    .notNull()
-    .references(() => notifications.id, { onDelete: 'cascade' }),
-  userId: text('user_id').notNull(),
-  readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => ({
-  notificationUserUnique: uniqueIndex('notification_reads_notification_user_idx')
-    .on(table.notificationId, table.userId),
-}));
+export const notificationReads = pgTable(
+  'notification_reads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    notificationId: uuid('notification_id')
+      .notNull()
+      .references(() => notifications.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    notificationUserUnique: uniqueIndex('notification_reads_notification_user_idx').on(
+      table.notificationId,
+      table.userId,
+    ),
+  }),
+);
 
 /** Per-user dismissal of shared-audience notifications. */
-export const notificationDismissals = pgTable('notification_dismissals', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  notificationId: uuid('notification_id')
-    .notNull()
-    .references(() => notifications.id, { onDelete: 'cascade' }),
-  userId: text('user_id').notNull(),
-  dismissedAt: timestamp('dismissed_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => ({
-  notificationUserDismissedUnique: uniqueIndex('notification_dismissals_notification_user_idx')
-    .on(table.notificationId, table.userId),
-}));
+export const notificationDismissals = pgTable(
+  'notification_dismissals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    notificationId: uuid('notification_id')
+      .notNull()
+      .references(() => notifications.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    notificationUserDismissedUnique: uniqueIndex(
+      'notification_dismissals_notification_user_idx',
+    ).on(table.notificationId, table.userId),
+  }),
+);
 
 /**
  * Notification delivery tracking

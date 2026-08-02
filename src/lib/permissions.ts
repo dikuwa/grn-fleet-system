@@ -2,6 +2,8 @@
  * Permission codes used throughout the application.
  * These are stored in the database and checked by domain services.
  */
+import { WorkspaceIds, type WorkspaceId } from '@/lib/workspaces';
+
 export const Permissions = {
   // Requests
   REQUEST_CREATE: 'request:create',
@@ -94,6 +96,149 @@ export const Permissions = {
 } as const;
 
 export type PermissionCode = (typeof Permissions)[keyof typeof Permissions];
+
+/**
+ * A permission granted by a role is usable only inside the matching active
+ * workspace. This prevents a multi-role user's inactive responsibilities from
+ * leaking into direct API calls.
+ */
+export function isPermissionAvailableInWorkspace(
+  permission: PermissionCode,
+  workspace: WorkspaceId,
+) {
+  const W = WorkspaceIds;
+  const commonRequestPermissions: readonly PermissionCode[] = [
+    Permissions.REQUEST_CREATE,
+    Permissions.REQUEST_VIEW,
+    Permissions.REQUEST_WITHDRAW,
+  ];
+  if (commonRequestPermissions.includes(permission) && workspace !== W.PLATFORM_ADMIN) return true;
+
+  const policies: Record<string, readonly PermissionCode[]> = {
+    [W.PERSONAL]: [...commonRequestPermissions, Permissions.FILE_VIEW, Permissions.FILE_UPLOAD],
+    [W.APPROVER]: [
+      Permissions.REQUEST_VIEW,
+      Permissions.REQUEST_APPROVE_SUPERVISOR,
+      Permissions.REQUEST_REVIEW_TRANSPORT,
+      Permissions.VEHICLE_RELEASE_REGIONAL,
+      Permissions.VEHICLE_RELEASE_NATIONAL,
+      Permissions.TRIP_AUTHORIZE_REGIONAL,
+      Permissions.TRIP_AUTHORIZE_NATIONAL,
+      Permissions.TRIP_AUTHORIZE_EMERGENCY,
+      Permissions.FILE_VIEW,
+    ],
+    [W.DRIVER]: [
+      ...commonRequestPermissions,
+      Permissions.DRIVER_LOG_CREATE,
+      Permissions.DRIVER_LOG_VIEW,
+      Permissions.DRIVER_FUEL_CREATE,
+      Permissions.TRIP_VIEW,
+      Permissions.INSPECTION_VIEW,
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
+    ],
+    [W.INSPECTOR]: [
+      ...commonRequestPermissions,
+      Permissions.INSPECTION_PERFORM,
+      Permissions.INSPECTION_VIEW,
+      Permissions.VEHICLE_VIEW,
+      Permissions.TRIP_VIEW,
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
+    ],
+    [W.MAINTENANCE]: [
+      ...commonRequestPermissions,
+      Permissions.MAINTENANCE_VIEW,
+      Permissions.MAINTENANCE_MANAGE,
+      Permissions.VEHICLE_VIEW,
+      Permissions.INSPECTION_VIEW,
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
+    ],
+    [W.TRANSPORT_ADMIN]: [
+      ...commonRequestPermissions,
+      Permissions.REQUEST_REVIEW_TRANSPORT,
+      Permissions.REQUEST_CANCEL,
+      Permissions.ALLOCATION_MANAGE,
+      Permissions.ALLOCATION_CREATE,
+      Permissions.ALLOCATION_OVERRIDE,
+      Permissions.VEHICLE_MANAGE,
+      Permissions.VEHICLE_VIEW,
+      Permissions.VEHICLE_CREATE,
+      Permissions.VEHICLE_UPDATE,
+      Permissions.TRIP_CLOSE,
+      Permissions.TRIP_VIEW,
+      Permissions.TRIP_MANAGE,
+      Permissions.FUEL_MANAGE,
+      Permissions.FUEL_VERIFY,
+      Permissions.FUEL_VIEW,
+      Permissions.REPORT_VIEW,
+      Permissions.REPORT_EXPORT,
+      Permissions.INSPECTION_VIEW,
+      Permissions.DRIVER_MANAGE,
+      Permissions.DRIVER_ASSIGN,
+      Permissions.DRIVER_VERIFY,
+      Permissions.DRIVER_SUSPEND,
+      Permissions.DRIVER_REVOKE,
+      Permissions.DRIVER_REACTIVATE,
+      Permissions.DRIVER_ARCHIVE,
+      Permissions.DRIVER_UPLOAD_LICENCE,
+      Permissions.DRIVER_REVIEW_LICENCE,
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
+    ],
+    [W.TENANT_ADMIN]: [
+      ...commonRequestPermissions,
+      Permissions.REQUEST_CANCEL,
+      Permissions.TENANT_VIEW,
+      Permissions.TENANT_MANAGE,
+      Permissions.STAFF_MANAGE,
+      Permissions.STAFF_IMPORT,
+      Permissions.STAFF_VIEW,
+      Permissions.STAFF_LIFECYCLE_MANAGE,
+      Permissions.DELEGATION_MANAGE,
+      Permissions.LICENCE_VERIFY,
+      Permissions.SECURE_REQUEST_ASSIST,
+      Permissions.DRIVER_MANAGE,
+      Permissions.DRIVER_VERIFY,
+      Permissions.DRIVER_SUSPEND,
+      Permissions.DRIVER_REVOKE,
+      Permissions.DRIVER_REACTIVATE,
+      Permissions.DRIVER_ARCHIVE,
+      Permissions.DRIVER_UPLOAD_LICENCE,
+      Permissions.DRIVER_REVIEW_LICENCE,
+      Permissions.AUDIT_READ,
+      Permissions.AUDIT_EXPORT,
+      Permissions.REPORT_VIEW,
+      Permissions.REPORT_EXPORT,
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
+    ],
+    [W.AUDIT]: [
+      Permissions.REQUEST_VIEW,
+      Permissions.AUDIT_READ,
+      Permissions.AUDIT_EXPORT,
+      Permissions.REPORT_VIEW,
+      Permissions.REPORT_EXPORT,
+      Permissions.TRIP_VIEW,
+      Permissions.VEHICLE_VIEW,
+      Permissions.INSPECTION_VIEW,
+      Permissions.FUEL_VIEW,
+      Permissions.STAFF_VIEW,
+      Permissions.MAINTENANCE_VIEW,
+      Permissions.FILE_VIEW,
+    ],
+    [W.PLATFORM_ADMIN]: [
+      Permissions.PLATFORM_ADMIN,
+      Permissions.PLATFORM_SUPPORT,
+      Permissions.TENANT_VIEW,
+      Permissions.TENANT_MANAGE,
+      Permissions.AUDIT_READ,
+      Permissions.AUDIT_EXPORT,
+    ],
+  };
+  return policies[workspace]?.includes(permission) ?? false;
+}
 
 /**
  * Predefined role definitions with their permissions

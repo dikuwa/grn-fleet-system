@@ -8,7 +8,6 @@ import {
   requestRoutes,
 } from '@/db/schema/requests';
 import { employees, departments, driverProfiles } from '@/db/schema/people';
-import { notifications } from '@/db/schema/notifications';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { workflowDefinitions } from '@/db/schema/workflows';
@@ -17,6 +16,8 @@ import { WorkflowEngine } from '@/lib/workflow-engine';
 import { eq, and, inArray } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
+import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
+import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 export async function POST(req: NextRequest) {
   try {
@@ -25,8 +26,6 @@ export async function POST(req: NextRequest) {
     const { session } = auth;
     const roleCheck = await requireDashboardAction(session, '/dashboard/requests/new', 'create');
     if (roleCheck instanceof NextResponse) return roleCheck;
-    const permCheck = await requirePermission(session, Permissions.REQUEST_CREATE);
-    if (permCheck instanceof NextResponse) return permCheck;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body: any = await req.json();
@@ -326,16 +325,18 @@ export async function POST(req: NextRequest) {
     if (!hasMatchingRoute) {
       // Notify Tenant Administrators about the missing route configuration
       try {
-        await db.insert(notifications).values({
+        const recipients = await resolveActiveRoleRecipients(tenantId, [SystemRoles.TENANT_ADMIN]);
+        await createScopedNotifications({
           tenantId,
-          recipientUserId: null,
-          audience: 'tenant_admin',
-          type: 'action_required',
+          recipientUserIds: recipients,
+          category: 'action_required',
+          eventType: 'workflow_route_missing',
           title: 'Workflow route missing',
           body: `A ${scope} request was blocked because no active route matches the responsible office and department.`,
           entityType: 'system',
           entityId: null,
           actionUrl: '/dashboard/admin/workflows',
+          workspace: WorkspaceIds.TENANT_ADMIN,
           requiredRole: 'Tenant Administrator',
           priority: 'high',
         });
@@ -481,26 +482,28 @@ export async function POST(req: NextRequest) {
     // Insert routes
     if (routes?.length > 0) {
       await db.insert(requestRoutes).values(
-        routes.map((r: {
-          originName: string;
-          destinationName: string;
-          estimatedKm?: number;
-          originPlaceId?: string;
-          destinationPlaceId?: string;
-          originCoordinates?: { lat: number; lng: number };
-          destinationCoordinates?: { lat: number; lng: number };
-        }) => ({
-          requestId: request.id,
-          originName: r.originName,
-          destinationName: r.destinationName,
-          originPlaceId: r.originPlaceId || null,
-          destinationPlaceId: r.destinationPlaceId || null,
-          originCoordinates: r.originCoordinates || null,
-          destinationCoordinates: r.destinationCoordinates || null,
-          totalKilometres: r.estimatedKm || 0,
-          additionalKilometres: 0,
-          isVerified: false,
-        })),
+        routes.map(
+          (r: {
+            originName: string;
+            destinationName: string;
+            estimatedKm?: number;
+            originPlaceId?: string;
+            destinationPlaceId?: string;
+            originCoordinates?: { lat: number; lng: number };
+            destinationCoordinates?: { lat: number; lng: number };
+          }) => ({
+            requestId: request.id,
+            originName: r.originName,
+            destinationName: r.destinationName,
+            originPlaceId: r.originPlaceId || null,
+            destinationPlaceId: r.destinationPlaceId || null,
+            originCoordinates: r.originCoordinates || null,
+            destinationCoordinates: r.destinationCoordinates || null,
+            totalKilometres: r.estimatedKm || 0,
+            additionalKilometres: 0,
+            isVerified: false,
+          }),
+        ),
       );
     }
 

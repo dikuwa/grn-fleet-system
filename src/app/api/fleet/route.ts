@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicles, vehicleCategories } from '@/db/schema/fleet';
-import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, like, or, type SQL } from 'drizzle-orm';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { vehicleScopeCondition } from '@/lib/record-scope';
 
 /**
  * GET /api/fleet
@@ -26,7 +33,15 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status')?.trim();
     const categoryId = searchParams.get('category_id')?.trim();
 
-    const conditions: SQL[] = [eq(vehicles.tenantId, session.tenantId)];
+    const roleNames = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/fleet', roleNames);
+    const conditions: SQL[] = [
+      vehicleScopeCondition({
+        tenantId: session.tenantId,
+        userId: session.user.id,
+        recordScope: access.recordScope ?? 'assigned',
+      }),
+    ];
 
     if (status) conditions.push(eq(vehicles.status, status));
     if (categoryId) conditions.push(eq(vehicles.categoryId, categoryId));
@@ -117,7 +132,9 @@ export async function POST(req: NextRequest) {
 
     if (existing) {
       return NextResponse.json(
-        { error: `A vehicle with licence number "${body.licenceNumber}" already exists in your fleet` },
+        {
+          error: `A vehicle with licence number "${body.licenceNumber}" already exists in your fleet`,
+        },
         { status: 409 },
       );
     }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, asc, eq, ilike, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { departments, driverProfiles, employees, offices } from '@/db/schema/people';
-import { hasPermission, requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { hasPermission, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 export async function GET(request: NextRequest) {
@@ -10,13 +10,8 @@ export async function GET(request: NextRequest) {
   if (!auth.ok) return auth.error;
   const { session } = auth;
 
-  const permission = await requireAnyPermission(session, [
-    Permissions.REQUEST_CREATE,
-    Permissions.STAFF_VIEW,
-    Permissions.ALLOCATION_MANAGE,
-    Permissions.ALLOCATION_CREATE,
-  ]);
-  if (permission instanceof NextResponse) return permission;
+  const routeAccess = await requireDashboardAction(session, '/dashboard/requests/new', 'view');
+  if (routeAccess instanceof NextResponse) return routeAccess;
 
   const kind = request.nextUrl.searchParams.get('kind') === 'driver' ? 'driver' : 'employee';
   const requestedUnavailable = request.nextUrl.searchParams.get('showUnavailable') === 'true';

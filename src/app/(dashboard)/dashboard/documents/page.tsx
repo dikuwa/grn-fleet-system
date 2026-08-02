@@ -28,6 +28,9 @@ import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { groupedCountMap } from '@/lib/statistics';
 import { documentTypeLabel, formatDocumentStatus, formatHumanValue } from '@/lib/human-readable';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { documentScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   searchParams: Promise<{
@@ -100,9 +103,17 @@ export default async function DocumentsPage({ searchParams }: PageProps) {
   }
 
   const db = getDb();
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/documents', roleNames);
 
   // Build where conditions
-  const baseConditions = [eq(generatedDocuments.tenantId, session.tenantId)];
+  const baseConditions = [
+    documentScopeCondition({
+      tenantId: session.tenantId,
+      userId: session.user.id,
+      recordScope: access.recordScope ?? 'self',
+    }),
+  ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
   if (type) {

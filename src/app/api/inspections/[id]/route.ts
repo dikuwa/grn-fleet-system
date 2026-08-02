@@ -1,17 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicleInspections, inspectionItemResults, inspectionTemplateItems, inspectionPhotos } from '@/db/schema/trips';
+import {
+  vehicleInspections,
+  inspectionItemResults,
+  inspectionTemplateItems,
+  inspectionPhotos,
+} from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 
-import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { inspectionScopeCondition } from '@/lib/record-scope';
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const auth = await requireRequestAuth(req);
@@ -51,7 +59,11 @@ export async function GET(
       .where(
         and(
           eq(vehicleInspections.id, id),
-          eq(vehicleInspections.tenantId, session.tenantId),
+          inspectionScopeCondition({
+            tenantId: session.tenantId,
+            userId: session.user.id,
+            recordScope: access.recordScope ?? 'assigned',
+          }),
         ),
       )
       .limit(1);
@@ -59,13 +71,6 @@ export async function GET(
     if (!inspection) {
       return NextResponse.json({ error: 'Inspection not found' }, { status: 404 });
     }
-    if (
-      (access.recordScope === 'assigned' || access.recordScope === 'self') &&
-      inspection.inspectorUserId !== session.user.id
-    ) {
-      return NextResponse.json({ error: 'Inspection not found' }, { status: 404 });
-    }
-
     // Fetch checklist items
     const results = await db
       .select({
@@ -101,9 +106,6 @@ export async function GET(
     return NextResponse.json({ inspection, results, photos });
   } catch (error) {
     console.error('[inspections/id] GET failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to load inspection' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to load inspection' }, { status: 500 });
   }
 }

@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { fuelTransactions, trips, vehicleAllocations } from '@/db/schema/trips';
-import { maintenanceEvents, vehicleDefects, vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
+import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
-import { notifications } from '@/db/schema/notifications';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
-import { getSessionRoleNames, requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { fuelScopeCondition } from '@/lib/record-scope';
+import { createScopedNotifications } from '@/lib/notification-service';
+import { getSessionWorkspace } from '@/lib/auth-helpers';
 
 /**
  * GET /api/fuel
@@ -30,21 +37,13 @@ export async function GET(request: NextRequest) {
     const db = getDb();
     const roleNames = await getSessionRoleNames(session);
     const access = resolveDashboardAccess('/dashboard/fuel', roleNames);
-    const conditions = [eq(vehicles.tenantId, session.tenantId)];
-    if (access.recordScope === 'self' || access.recordScope === 'assigned') {
-      conditions.push(eq(fuelTransactions.recordedByUserId, session.user.id));
-    } else if (access.recordScope === 'related') {
-      conditions.push(sql`(
-        exists (
-          select 1 from ${vehicleDefects}
-          where ${vehicleDefects.vehicleId} = ${fuelTransactions.vehicleId}
-        )
-        or exists (
-          select 1 from ${maintenanceEvents}
-          where ${maintenanceEvents.vehicleId} = ${fuelTransactions.vehicleId}
-        )
-      )`);
-    }
+    const conditions = [
+      fuelScopeCondition({
+        tenantId: session.tenantId,
+        userId: session.user.id,
+        recordScope: access.recordScope ?? 'self',
+      }),
+    ];
 
     const rows = await db
       .select({
@@ -301,16 +300,14 @@ export async function POST(req: NextRequest) {
       .returning();
 
     if (odometerNumber !== null) {
-      await db
-        .insert(vehicleOdometerEvents)
-        .values({
-          vehicleId: resolvedVehicleId!,
-          odometerValue: odometerNumber,
-          source: 'fuel',
-          sourceEntityType: 'fuel_transaction',
-          sourceEntityId: transaction.id,
-          recordedByUserId: session.user.id,
-        });
+      await db.insert(vehicleOdometerEvents).values({
+        vehicleId: resolvedVehicleId!,
+        odometerValue: odometerNumber,
+        source: 'fuel',
+        sourceEntityType: 'fuel_transaction',
+        sourceEntityId: transaction.id,
+        recordedByUserId: session.user.id,
+      });
       await db
         .update(vehicles)
         .set({ currentOdometer: odometerNumber, updatedAt: new Date() })
@@ -330,19 +327,20 @@ export async function POST(req: NextRequest) {
       sourceChannel: clientSyncId ? 'offline_sync' : 'web',
     });
 
-    await db
-      .insert(notifications)
-      .values({
-        tenantId: session.tenantId,
-        recipientUserId: session.user.id,
-        type: 'fuel_created',
-        title: `Fuel Entry Recorded — ${litres}L`,
-        body: `${litres}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amount}.`,
-        entityType: 'fuel_transaction',
-        entityId: transaction.id,
-        actionUrl: '/dashboard/fuel',
-        priority: 'normal',
-      });
+    const { activeWorkspace } = await getSessionWorkspace(session);
+    await createScopedNotifications({
+      tenantId: session.tenantId,
+      recipientUserIds: [session.user.id],
+      category: 'outcome',
+      eventType: 'fuel_entry_recorded',
+      title: `Fuel Entry Recorded — ${litres}L`,
+      body: `${litres}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amount}.`,
+      entityType: 'fuel_transaction',
+      entityId: transaction.id,
+      actionUrl: '/dashboard/fuel',
+      workspace: activeWorkspace,
+      priority: 'normal',
+    });
 
     return NextResponse.json({ success: true, data: transaction });
   } catch (error) {

@@ -3,10 +3,8 @@ import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import {
   Bell,
   Building2,
-  CheckSquare,
   ClipboardCheck,
   FileText,
-  Route as RouteIcon,
   Shield,
   Truck,
   Users,
@@ -15,10 +13,10 @@ import {
 import { getDb, isDbConnected } from '@/db';
 import {
   employees,
-  maintenanceEvents,
   notifications,
-  notificationReads,
-  requestRoutes,
+  notificationDeliveries,
+  roleAssignments,
+  tenantMemberships,
   tenants,
   transportRequests,
   trips,
@@ -30,166 +28,437 @@ import {
   workflowSteps,
 } from '@/db/schema';
 import { getServerSession } from '@/lib/session';
-import { getSessionRoleNames } from '@/lib/auth-helpers';
-import { canAccessDashboardPath, SystemRoles } from '@/lib/dashboard-access';
+import { getSessionWorkspace } from '@/lib/auth-helpers';
+import { getWorkspaceNavigation } from '@/lib/dashboard-access';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { WorkspaceIds, type WorkspaceId } from '@/lib/workspaces';
 
 type Metric = { label: string; value: number; href?: string; icon: React.ReactNode };
-
-const quickLinks = [
-  ['/dashboard/platform', 'Platform Dashboard'],
-  ['/dashboard/staff', 'Staff Directory'],
-  ['/dashboard/approvals', 'Assigned Approvals'],
-  ['/dashboard/requests', 'Requests'],
-  ['/dashboard/allocations', 'Allocations'],
-  ['/dashboard/trips', 'Trips'],
-  ['/dashboard/fleet', 'Fleet'],
-  ['/dashboard/inspections', 'Inspections'],
-  ['/dashboard/maintenance', 'Maintenance'],
-  ['/dashboard/audit', 'Audit Log'],
-  ['/dashboard/reports', 'Reports'],
-] as const;
 
 async function countRows(query: Promise<Array<{ count: number }>>) {
   const rows = await query;
   return Number(rows[0]?.count || 0);
 }
 
-/** Sum of mapped route kilometres across all request routes for a tenant. */
-async function totalRouteKm(tenantId: string): Promise<number> {
+async function getWorkspaceMetrics(
+  tenantId: string,
+  userId: string,
+  workspace: WorkspaceId,
+): Promise<Metric[]> {
   const db = getDb();
-  const rows = await db
-    .select({ km: sql<number>`COALESCE(SUM(COALESCE(${requestRoutes.totalKilometres}, ${requestRoutes.mappedDistanceKm}, 0)), 0)` })
-    .from(requestRoutes)
-    .innerJoin(transportRequests, eq(requestRoutes.requestId, transportRequests.id))
-    .where(eq(transportRequests.tenantId, tenantId));
-  return Math.round(Number(rows[0]?.km || 0));
-}
-
-/** Sum of mapped route kilometres for the current user's own requests. */
-async function myRouteKm(tenantId: string, userId: string): Promise<number> {
-  const db = getDb();
-  const rows = await db
-    .select({ km: sql<number>`COALESCE(SUM(COALESCE(${requestRoutes.totalKilometres}, ${requestRoutes.mappedDistanceKm}, 0)), 0)` })
-    .from(requestRoutes)
-    .innerJoin(transportRequests, eq(requestRoutes.requestId, transportRequests.id))
-    .where(and(eq(transportRequests.tenantId, tenantId), eq(transportRequests.requesterUserId, userId)));
-  return Math.round(Number(rows[0]?.km || 0));
-}
-
-async function getRoleMetrics(tenantId: string, userId: string, roleNames: string[]): Promise<Metric[]> {
-  const db = getDb();
-  const has = (role: string) => roleNames.includes(role);
   const count = sql<number>`count(*)`;
 
-  if (has(SystemRoles.PLATFORM_ADMIN)) {
+  if (workspace === WorkspaceIds.PLATFORM_ADMIN) {
     return [
-      { label: 'Active tenants', value: await countRows(db.select({ count }).from(tenants).where(sql`lower(${tenants.status}) = 'active'`)), href: '/dashboard/platform/tenants', icon: <Building2 className="h-5 w-5" /> },
+      {
+        label: 'Active tenants',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(tenants)
+            .where(sql`lower(${tenants.status}) = 'active'`),
+        ),
+        href: '/dashboard/platform/tenants',
+        icon: <Building2 className="h-5 w-5" />,
+      },
     ];
   }
 
-  if (has(SystemRoles.TENANT_ADMIN)) {
+  if (workspace === WorkspaceIds.TENANT_ADMIN) {
     return [
-      { label: 'Active employees', value: await countRows(db.select({ count }).from(employees).where(and(eq(employees.tenantId, tenantId), eq(employees.employmentStatus, 'active')))), href: '/dashboard/staff', icon: <Users className="h-5 w-5" /> },
-      { label: 'Fleet drivers', value: await countRows(db.select({ count }).from(employees).where(and(eq(employees.tenantId, tenantId), eq(employees.isDriver, true), eq(employees.employmentStatus, 'active')))), href: '/dashboard/drivers', icon: <Truck className="h-5 w-5" /> },
-      { label: 'Route distance (km)', value: await totalRouteKm(tenantId), href: '/dashboard/reports', icon: <RouteIcon className="h-5 w-5" /> },
+      {
+        label: 'Active employees',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(employees)
+            .where(and(eq(employees.tenantId, tenantId), eq(employees.employmentStatus, 'active'))),
+        ),
+        href: '/dashboard/staff',
+        icon: <Users className="h-5 w-5" />,
+      },
+      {
+        label: 'Suspended users',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(tenantMemberships)
+            .where(
+              and(
+                eq(tenantMemberships.tenantId, tenantId),
+                eq(tenantMemberships.status, 'suspended'),
+              ),
+            ),
+        ),
+        href: '/dashboard/admin/users',
+        icon: <Shield className="h-5 w-5" />,
+      },
+      {
+        label: 'Active acting roles',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(roleAssignments)
+            .innerJoin(
+              tenantMemberships,
+              eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
+            )
+            .where(
+              and(
+                eq(tenantMemberships.tenantId, tenantId),
+                eq(roleAssignments.isActing, true),
+                or(isNull(roleAssignments.endDate), sql`${roleAssignments.endDate} >= now()`),
+              ),
+            ),
+        ),
+        href: '/dashboard/delegations',
+        icon: <Users className="h-5 w-5" />,
+      },
+      {
+        label: 'Failed deliveries',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(notificationDeliveries)
+            .innerJoin(notifications, eq(notificationDeliveries.notificationId, notifications.id))
+            .where(
+              and(
+                eq(notifications.tenantId, tenantId),
+                eq(notificationDeliveries.status, 'failed'),
+              ),
+            ),
+        ),
+        href: '/dashboard/notifications/deliveries',
+        icon: <Bell className="h-5 w-5" />,
+      },
     ];
   }
 
-  if (has(SystemRoles.REQUESTER)) {
+  if (workspace === WorkspaceIds.PERSONAL) {
     return [
-      { label: 'My active requests', value: await countRows(db.select({ count }).from(transportRequests).where(and(eq(transportRequests.tenantId, tenantId), eq(transportRequests.requesterUserId, userId), ne(transportRequests.status, 'closed')))), href: '/dashboard/requests', icon: <FileText className="h-5 w-5" /> },
-      { label: 'My route distance (km)', value: await myRouteKm(tenantId, userId), href: '/dashboard/requests', icon: <RouteIcon className="h-5 w-5" /> },
+      {
+        label: 'Requires my attention',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(transportRequests)
+            .where(
+              and(
+                eq(transportRequests.tenantId, tenantId),
+                eq(transportRequests.requesterUserId, userId),
+                eq(transportRequests.status, 'returned'),
+              ),
+            ),
+        ),
+        href: '/dashboard/requests?status=returned',
+        icon: <FileText className="h-5 w-5" />,
+      },
+      {
+        label: 'My pending requests',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(transportRequests)
+            .where(
+              and(
+                eq(transportRequests.tenantId, tenantId),
+                eq(transportRequests.requesterUserId, userId),
+                sql`${transportRequests.status} in ('submitted','pending_supervisor','pending_transport','pending_release','pending_authorisation')`,
+              ),
+            ),
+        ),
+        href: '/dashboard/requests',
+        icon: <FileText className="h-5 w-5" />,
+      },
+      {
+        label: 'My approved requests',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(transportRequests)
+            .where(
+              and(
+                eq(transportRequests.tenantId, tenantId),
+                eq(transportRequests.requesterUserId, userId),
+                sql`${transportRequests.status} in ('approved','authorised','ready_for_issue')`,
+              ),
+            ),
+        ),
+        href: '/dashboard/requests',
+        icon: <Truck className="h-5 w-5" />,
+      },
+      {
+        label: 'My drafts',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(transportRequests)
+            .where(
+              and(
+                eq(transportRequests.tenantId, tenantId),
+                eq(transportRequests.requesterUserId, userId),
+                eq(transportRequests.status, 'draft'),
+              ),
+            ),
+        ),
+        href: '/dashboard/requests?status=draft',
+        icon: <FileText className="h-5 w-5" />,
+      },
     ];
   }
 
-  if (has(SystemRoles.DRIVER)) {
+  if (workspace === WorkspaceIds.DRIVER) {
     return [
-      { label: 'My active trips', value: await countRows(db.select({ count }).from(trips)
-        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-        .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
-        .where(and(eq(trips.tenantId, tenantId), eq(employees.userId, userId), ne(trips.status, 'closed')))), href: '/dashboard/trips', icon: <Truck className="h-5 w-5" /> },
-      { label: 'My inspections', value: await countRows(db.select({ count }).from(vehicleInspections).where(and(eq(vehicleInspections.tenantId, tenantId), eq(vehicleInspections.inspectorUserId, userId)))), href: '/dashboard/inspections', icon: <ClipboardCheck className="h-5 w-5" /> },
+      {
+        label: 'My active trips',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(trips)
+            .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+            .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
+            .where(
+              and(
+                eq(trips.tenantId, tenantId),
+                eq(employees.userId, userId),
+                ne(trips.status, 'closed'),
+              ),
+            ),
+        ),
+        href: '/dashboard/trips',
+        icon: <Truck className="h-5 w-5" />,
+      },
     ];
   }
 
-  if (has(SystemRoles.INSPECTOR) || has(SystemRoles.RELEASE_OFFICER)) {
+  if (workspace === WorkspaceIds.INSPECTOR) {
     return [
-      { label: 'My inspections', value: await countRows(db.select({ count }).from(vehicleInspections).where(and(eq(vehicleInspections.tenantId, tenantId), eq(vehicleInspections.inspectorUserId, userId)))), href: '/dashboard/inspections', icon: <ClipboardCheck className="h-5 w-5" /> },
+      {
+        label: 'My inspections',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(vehicleInspections)
+            .where(
+              and(
+                eq(vehicleInspections.tenantId, tenantId),
+                eq(vehicleInspections.inspectorUserId, userId),
+              ),
+            ),
+        ),
+        href: '/dashboard/inspections',
+        icon: <ClipboardCheck className="h-5 w-5" />,
+      },
     ];
   }
 
-  if (has(SystemRoles.MAINTENANCE)) {
+  if (workspace === WorkspaceIds.MAINTENANCE) {
     return [
-      { label: 'Open defects', value: await countRows(db.select({ count }).from(vehicleDefects).innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id)).where(and(eq(vehicles.tenantId, tenantId), isNull(vehicleDefects.resolvedAt)))), href: '/dashboard/fleet/defects', icon: <Wrench className="h-5 w-5" /> },
-      { label: 'Maintenance records', value: await countRows(db.select({ count }).from(maintenanceEvents).innerJoin(vehicles, eq(maintenanceEvents.vehicleId, vehicles.id)).where(eq(vehicles.tenantId, tenantId))), href: '/dashboard/maintenance', icon: <CheckSquare className="h-5 w-5" /> },
+      {
+        label: 'My unresolved defects',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(vehicleDefects)
+            .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+            .where(
+              and(
+                eq(vehicles.tenantId, tenantId),
+                isNull(vehicleDefects.resolvedAt),
+                or(
+                  eq(vehicleDefects.reportedByUserId, userId),
+                  eq(vehicleDefects.assignedToUserId, userId),
+                  eq(vehicleDefects.resolvedByUserId, userId),
+                ),
+              ),
+            ),
+        ),
+        href: '/dashboard/fleet/defects',
+        icon: <Wrench className="h-5 w-5" />,
+      },
     ];
   }
 
-  if (has(SystemRoles.TRANSPORT_ADMIN) || has(SystemRoles.AUDITOR)) {
+  if (workspace === WorkspaceIds.TRANSPORT_ADMIN) {
     return [
-      { label: 'Active requests', value: await countRows(db.select({ count }).from(transportRequests).where(and(eq(transportRequests.tenantId, tenantId), ne(transportRequests.status, 'closed')))), href: '/dashboard/requests', icon: <FileText className="h-5 w-5" /> },
-      { label: 'Active trips', value: await countRows(db.select({ count }).from(trips).where(and(eq(trips.tenantId, tenantId), ne(trips.status, 'closed')))), href: '/dashboard/trips', icon: <Truck className="h-5 w-5" /> },
-      { label: 'Route distance (km)', value: await totalRouteKm(tenantId), href: '/dashboard/reports', icon: <RouteIcon className="h-5 w-5" /> },
-      { label: 'Open defects', value: await countRows(db.select({ count }).from(vehicleDefects).innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id)).where(and(eq(vehicles.tenantId, tenantId), isNull(vehicleDefects.resolvedAt)))), href: '/dashboard/fleet/defects', icon: <Wrench className="h-5 w-5" /> },
+      {
+        label: 'Active requests',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(transportRequests)
+            .where(
+              and(eq(transportRequests.tenantId, tenantId), ne(transportRequests.status, 'closed')),
+            ),
+        ),
+        href: '/dashboard/requests',
+        icon: <FileText className="h-5 w-5" />,
+      },
+      {
+        label: 'Active trips',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(trips)
+            .where(and(eq(trips.tenantId, tenantId), ne(trips.status, 'closed'))),
+        ),
+        href: '/dashboard/trips',
+        icon: <Truck className="h-5 w-5" />,
+      },
+      {
+        label: 'Open defects',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(vehicleDefects)
+            .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+            .where(and(eq(vehicles.tenantId, tenantId), isNull(vehicleDefects.resolvedAt))),
+        ),
+        href: '/dashboard/fleet/defects',
+        icon: <Wrench className="h-5 w-5" />,
+      },
     ];
   }
 
-  // Approval roles only see work currently assigned to them.
+  if (workspace === WorkspaceIds.AUDIT) {
+    return [
+      {
+        label: 'Unresolved compliance findings',
+        value: await countRows(
+          db
+            .select({ count })
+            .from(vehicleDefects)
+            .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+            .where(and(eq(vehicles.tenantId, tenantId), isNull(vehicleDefects.resolvedAt))),
+        ),
+        href: '/dashboard/fleet/defects',
+        icon: <Shield className="h-5 w-5" />,
+      },
+    ];
+  }
+
+  // Approval workspace only counts work currently assigned to this person.
   return [
-    { label: 'Assigned approvals', value: await countRows(db.select({ count }).from(workflowInstances)
-      .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-      .leftJoin(workflowSteps, and(eq(workflowSteps.definitionId, workflowInstances.definitionId), eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder)))
-      .where(and(eq(transportRequests.tenantId, tenantId), eq(workflowInstances.status, 'active'), or(eq(workflowSteps.assignedUserId, userId), isNull(workflowSteps.assignedUserId))))), href: '/dashboard/approvals', icon: <Shield className="h-5 w-5" /> },
+    {
+      label: 'Assigned approvals',
+      value: await countRows(
+        db
+          .select({ count })
+          .from(workflowInstances)
+          .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
+          .leftJoin(
+            workflowSteps,
+            and(
+              eq(workflowSteps.definitionId, workflowInstances.definitionId),
+              eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
+            ),
+          )
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              eq(workflowInstances.status, 'active'),
+              eq(workflowSteps.assignedUserId, userId),
+            ),
+          ),
+      ),
+      href: '/dashboard/approvals',
+      icon: <Shield className="h-5 w-5" />,
+    },
   ];
 }
 
-async function getUnreadActivityCount(tenantId: string, userId: string, isPlatform: boolean) {
+async function getUnreadNotificationCount(
+  tenantId: string,
+  userId: string,
+  workspace: WorkspaceId,
+) {
   const db = getDb();
-  const audience = isPlatform ? 'platform' : 'tenant';
-  return countRows(db.select({ count: sql<number>`count(*)` })
-    .from(notifications)
-    .leftJoin(notificationReads, and(eq(notificationReads.notificationId, notifications.id), eq(notificationReads.userId, userId)))
-    .where(and(eq(notifications.tenantId, tenantId), eq(notifications.audience, audience), isNull(notificationReads.id))));
+  return countRows(
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.tenantId, tenantId),
+          eq(notifications.recipientUserId, userId),
+          eq(notifications.isRead, false),
+          ne(notifications.status, 'archived'),
+          ne(notifications.status, 'dismissed'),
+          or(isNull(notifications.workspace), eq(notifications.workspace, workspace)),
+        ),
+      ),
+  );
 }
 
 export default async function DashboardPage() {
   const session = await getServerSession();
   if (!session || !isDbConnected()) {
-    return <EmptyState icon={<Shield className="h-6 w-6" />} title="Dashboard unavailable" description="Sign in with an active tenant account." />;
+    return (
+      <EmptyState
+        icon={<Shield className="h-6 w-6" />}
+        title="Dashboard unavailable"
+        description="Sign in with an active tenant account."
+      />
+    );
   }
 
-  const roleNames = await getSessionRoleNames(session);
-  const metrics = await getRoleMetrics(session.tenantId, session.user.id, roleNames);
-  const unreadActivity = await getUnreadActivityCount(
+  const workspaceContext = await getSessionWorkspace(session);
+  const metrics = await getWorkspaceMetrics(
     session.tenantId,
     session.user.id,
-    roleNames.includes(SystemRoles.PLATFORM_ADMIN),
+    workspaceContext.activeWorkspace,
   );
-  const roleLabel = roleNames[0] || 'Employee';
-  const links = quickLinks.filter(([href]) => canAccessDashboardPath(href, roleNames));
+  const unreadActivity = await getUnreadNotificationCount(
+    session.tenantId,
+    session.user.id,
+    workspaceContext.activeWorkspace,
+  );
+  const workspaceLabel =
+    workspaceContext.eligibleWorkspaces.find(
+      (workspace) => workspace.id === workspaceContext.activeWorkspace,
+    )?.label ?? 'Personal Requester';
+  const links = getWorkspaceNavigation(workspaceContext.activeWorkspace)
+    .filter((route) => !['dashboard', 'profile', 'notifications'].includes(route.id))
+    .slice(0, 9)
+    .map((route) => [route.href, route.label] as const);
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Dashboard" description={`${roleLabel} workspace`} />
+      <PageHeader title={workspaceLabel} description="Your current responsibility workspace" />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="pt-5">
-            <Bell className="h-5 w-5 text-brand-700" />
-            <p className="mt-3 text-2xl font-semibold tabular-nums text-ink-950">{unreadActivity}</p>
-            <p className="text-xs text-ink-500">Unread activity updates</p>
-            <Link className="mt-3 inline-block text-xs font-medium text-brand-700" href="/dashboard/notifications">View notifications</Link>
+            <Bell className="text-brand-700 h-5 w-5" />
+            <p className="text-ink-950 mt-3 text-2xl font-semibold tabular-nums">
+              {unreadActivity}
+            </p>
+            <p className="text-ink-500 text-xs">Unread relevant notifications</p>
+            <Link
+              className="text-brand-700 mt-3 inline-block text-xs font-medium"
+              href="/dashboard/notifications"
+            >
+              View notifications
+            </Link>
           </CardContent>
         </Card>
         {metrics.map((metric) => (
           <Card key={metric.label}>
             <CardContent className="pt-5">
               <span className="text-brand-700">{metric.icon}</span>
-              <p className="mt-3 text-2xl font-semibold tabular-nums text-ink-950">{metric.value}</p>
-              <p className="text-xs text-ink-500">{metric.label}</p>
-              {metric.href && <Link className="mt-3 inline-block text-xs font-medium text-brand-700" href={metric.href}>Open workspace</Link>}
+              <p className="text-ink-950 mt-3 text-2xl font-semibold tabular-nums">
+                {metric.value}
+              </p>
+              <p className="text-ink-500 text-xs">{metric.label}</p>
+              {metric.href && (
+                <Link
+                  className="text-brand-700 mt-3 inline-block text-xs font-medium"
+                  href={metric.href}
+                >
+                  Open workspace
+                </Link>
+              )}
             </CardContent>
           </Card>
         ))}
@@ -197,10 +466,14 @@ export default async function DashboardPage() {
       {links.length > 0 && (
         <Card>
           <CardContent className="pt-5">
-            <h2 className="text-sm font-semibold text-ink-950">Your workspaces</h2>
+            <h2 className="text-ink-950 text-sm font-semibold">Workspace shortcuts</h2>
             <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {links.map(([href, label]) => (
-                <Link key={href} href={href} className="rounded-[8px] border border-border px-4 py-3 text-sm text-ink-700 transition-colors hover:border-brand-200 hover:bg-brand-50/40">
+                <Link
+                  key={href}
+                  href={href}
+                  className="border-border text-ink-700 hover:border-brand-200 hover:bg-brand-50/40 rounded-[8px] border px-4 py-3 text-sm transition-colors"
+                >
                   {label}
                 </Link>
               ))}

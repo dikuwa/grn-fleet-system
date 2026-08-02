@@ -1,6 +1,6 @@
 import { getDb, isDbConnected } from '@/db';
 import { fuelTransactions } from '@/db/schema/trips';
-import { maintenanceEvents, vehicleDefects, vehicles } from '@/db/schema/fleet';
+import { vehicles } from '@/db/schema/fleet';
 import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,6 +19,7 @@ import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboa
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { numericCount } from '@/lib/statistics';
+import { fuelScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -38,21 +39,9 @@ async function fetchFuelEntries(
   const paymentMethod = normalizeOptionalFilter(sp.payment_method);
   const anomalyState = normalizeOptionalFilter(sp.anomaly_state);
 
-  const baseConditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
-  if (recordScope === 'self' || recordScope === 'assigned') {
-    baseConditions.push(eq(fuelTransactions.recordedByUserId, userId));
-  } else if (recordScope === 'related') {
-    baseConditions.push(sql`(
-      exists (
-        select 1 from ${vehicleDefects}
-        where ${vehicleDefects.vehicleId} = ${fuelTransactions.vehicleId}
-      )
-      or exists (
-        select 1 from ${maintenanceEvents}
-        where ${maintenanceEvents.vehicleId} = ${fuelTransactions.vehicleId}
-      )
-    )`);
-  }
+  const baseConditions: SQL[] = [
+    fuelScopeCondition({ tenantId, userId, recordScope: recordScope ?? 'self' }),
+  ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
 

@@ -1,15 +1,11 @@
 import { notFound, redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session';
 import { DashboardShell } from '@/components/layout/dashboard-shell';
-import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { getSessionWorkspace } from '@/lib/auth-helpers';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { headers } from 'next/headers';
 
-export default async function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   // Server-side session validation — redirect to login if not authenticated
   const session = await getServerSession();
 
@@ -23,13 +19,24 @@ export default async function DashboardLayout({
     redirect('/login?redirect=/dashboard&error=tenant');
   }
 
-  const roleNames = await getSessionRoleNames(session);
+  const workspaceContext = await getSessionWorkspace(session);
+  const { roleNames, activeWorkspace, eligibleWorkspaces } = workspaceContext;
   const pathname = (await headers()).get('x-grn-pathname') || '/dashboard';
-  const access = resolveDashboardAccess(pathname, roleNames);
+  const access = resolveDashboardAccess(pathname, roleNames, activeWorkspace);
   if (!access.allowed) {
     if (access.directUrlBehaviour === '404') notFound();
     redirect(`/forbidden?from=${encodeURIComponent(pathname)}`);
   }
 
-  return <DashboardShell tenantName={session.tenantSlug} userId={session.user.id} roleNames={roleNames}>{children}</DashboardShell>;
+  return (
+    <DashboardShell
+      tenantName={session.tenantSlug}
+      userId={session.user.id}
+      roleNames={roleNames}
+      activeWorkspace={activeWorkspace}
+      eligibleWorkspaces={eligibleWorkspaces.map(({ id, label }) => ({ id, label }))}
+    >
+      {children}
+    </DashboardShell>
+  );
 }

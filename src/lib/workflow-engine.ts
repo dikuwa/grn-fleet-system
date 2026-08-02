@@ -38,12 +38,14 @@ import type { AuthSession } from '@/lib/auth-helpers';
 import { requirePermission, forbiddenResponse } from '@/lib/auth-helpers';
 import type { PermissionCode } from '@/lib/permissions';
 import { Permissions } from '@/lib/permissions';
-import { notifications, tenantMemberships, roleAssignments } from '@/db/schema';
+import { tenantMemberships, roleAssignments } from '@/db/schema';
 import { workflowStepToStatus, workflowCompletedStatus } from '@/lib/request-status';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { resolveRoleHolder } from '@/lib/employee-lifecycle';
 import { provisionTripAuthority, setAuthorityStatus } from '@/lib/trip-authority';
 import { userProfiles } from '@/db/schema/auth';
+import { createScopedNotifications, resolveActionNotifications } from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -290,15 +292,18 @@ export class WorkflowEngine {
     const resolvedSteps = await this.getDefinitionSteps(instance);
     const firstStep = resolvedSteps.find((step) => step.stepOrder === 1);
     if (firstStep?.assignedUserId) {
-      await this.db.insert(notifications).values({
+      await createScopedNotifications({
         tenantId,
-        recipientUserId: firstStep.assignedUserId,
-        type: 'action_required',
+        recipientUserIds: [firstStep.assignedUserId],
+        category: 'action_required',
+        eventType: 'approval_assigned',
         title: `Action Required — ${firstStep.label}`,
         body: 'A newly submitted transport request is awaiting your action.',
         entityType: 'workflow_instance',
         entityId: instance.id,
         actionUrl: `/dashboard/approvals/${instance.id}`,
+        workspace: WorkspaceIds.APPROVER,
+        workflowStage: String(firstStep.stepOrder),
         priority: 'high',
       });
     }
@@ -424,92 +429,88 @@ export class WorkflowEngine {
         ok: false,
         error: forbiddenResponse('This workflow step is assigned to another responsible user.'),
       };
-    }    // Validate: separation of duty — conflict-of-interest detection
-      if (currentStep.separationDutyRole === 'requester') {
-        const [request] = await this.db
-          .select({
-            requesterUserId: transportRequests.requesterUserId,
-            travellerEmployeeId: transportRequests.travellerEmployeeId,
-            requesterEmployeeId: transportRequests.requesterEmployeeId,
-            id: transportRequests.id,
-          })
-          .from(transportRequests)
-          .where(eq(transportRequests.id, instance.requestId))
+    } // Validate: separation of duty — conflict-of-interest detection
+    if (currentStep.separationDutyRole === 'requester') {
+      const [request] = await this.db
+        .select({
+          requesterUserId: transportRequests.requesterUserId,
+          travellerEmployeeId: transportRequests.travellerEmployeeId,
+          requesterEmployeeId: transportRequests.requesterEmployeeId,
+          id: transportRequests.id,
+        })
+        .from(transportRequests)
+        .where(eq(transportRequests.id, instance.requestId))
+        .limit(1);
+
+      const isRequester = request && request.requesterUserId === session.user.id;
+      // Also check if the actor is the main traveller/beneficiary
+      let isTraveller = false;
+      if (request && !isRequester) {
+        const [actorEmployee] = await this.db
+          .select({ id: employees.id })
+          .from(employees)
+          .where(
+            and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)),
+          )
           .limit(1);
-
-        const isRequester = request && request.requesterUserId === session.user.id;
-        // Also check if the actor is the main traveller/beneficiary
-        let isTraveller = false;
-        if (request && !isRequester) {
-          const [actorEmployee] = await this.db
-            .select({ id: employees.id })
-            .from(employees)
-            .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)))
-            .limit(1);
-          if (
-            actorEmployee &&
-            (request.travellerEmployeeId === actorEmployee.id ||
-              request.requesterEmployeeId === actorEmployee.id)
-          ) {
-            isTraveller = true;
-          }
+        if (
+          actorEmployee &&
+          (request.travellerEmployeeId === actorEmployee.id ||
+            request.requesterEmployeeId === actorEmployee.id)
+        ) {
+          isTraveller = true;
         }
+      }
 
-        if (isRequester || isTraveller) {
-          // CONFLICT DETECTED — attempt auto-reassignment to an alternate officer
-          const resolution = await this.resolveAlternateOfficer(
-            instance,
-            currentStep,
-            session,
-          );
-          if (resolution) {
-            // The step was reassigned — notify the original actor and the replacement
-            await this.logAuditEvent(
-              {
-                entityType: 'workflow_instance',
-                entityId: instance.id,
-                action: 'workflow.conflict_reassigned',
-                actorUserId: session.user.id,
-                metadata: {
-                  conflictedUserId: session.user.id,
-                  originalStepOrder: currentStep.stepOrder,
-                  reassignedToUserId: resolution.reassignedUserId,
-                  reason: isRequester
-                    ? 'Requester-authoriser conflict detected'
-                    : 'Traveller-authoriser conflict detected',
-                  alternateEmployeeName: resolution.alternateName,
-                  reassignmentMethod: resolution.method,
-                },
+      if (isRequester || isTraveller) {
+        // CONFLICT DETECTED — attempt auto-reassignment to an alternate officer
+        const resolution = await this.resolveAlternateOfficer(instance, currentStep, session);
+        if (resolution) {
+          // The step was reassigned — notify the original actor and the replacement
+          await this.logAuditEvent(
+            {
+              entityType: 'workflow_instance',
+              entityId: instance.id,
+              action: 'workflow.conflict_reassigned',
+              actorUserId: session.user.id,
+              metadata: {
+                conflictedUserId: session.user.id,
+                originalStepOrder: currentStep.stepOrder,
+                reassignedToUserId: resolution.reassignedUserId,
+                reason: isRequester
+                  ? 'Requester-authoriser conflict detected'
+                  : 'Traveller-authoriser conflict detected',
+                alternateEmployeeName: resolution.alternateName,
+                reassignmentMethod: resolution.method,
               },
-              session.tenantId,
-            );
+            },
+            session.tenantId,
+          );
 
-            return {
-              ok: false,
-              error: NextResponse.json(
-                {
-                  error: `Conflict of interest detected: you are ${
-                    isRequester ? 'the requester' : 'a traveller'
-                  } on this request. This step has been reassigned to ${
-                    resolution.alternateName
-                  }.`,
-                  conflictReassigned: true,
-                  reassignedTo: resolution.alternateName,
-                },
-                { status: 409 },
-              ),
-            };
-          }
-
-          // No alternate found — block with clear message
           return {
             ok: false,
-            error: forbiddenResponse(
-              'You cannot approve your own request or act on a trip where you are a traveller. No eligible alternate officer could be assigned automatically. Please contact your Tenant Administrator.',
+            error: NextResponse.json(
+              {
+                error: `Conflict of interest detected: you are ${
+                  isRequester ? 'the requester' : 'a traveller'
+                } on this request. This step has been reassigned to ${resolution.alternateName}.`,
+                conflictReassigned: true,
+                reassignedTo: resolution.alternateName,
+              },
+              { status: 409 },
             ),
           };
         }
+
+        // No alternate found — block with clear message
+        return {
+          ok: false,
+          error: forbiddenResponse(
+            'You cannot approve your own request or act on a trip where you are a traveller. No eligible alternate officer could be assigned automatically. Please contact your Tenant Administrator.',
+          ),
+        };
       }
+    }
     if (currentStep.separationDutyRole === 'release') {
       const [releaseAction] = await this.db
         .select({ actorUserId: workflowActions.actorUserId })
@@ -632,6 +633,13 @@ export class WorkflowEngine {
       }
       throw error;
     }
+
+    await resolveActionNotifications({
+      tenantId: session.tenantId,
+      entityType: 'workflow_instance',
+      entityId: instance.id,
+      eventTypes: ['approval_assigned', 'approval_conflict_reassigned'],
+    });
 
     if (currentStep.actionType === 'authorise' && authorityContext) {
       await provisionTripAuthority({
@@ -1130,7 +1138,7 @@ export class WorkflowEngine {
    */
   private async resolveAlternateOfficer(
     instance: typeof workflowInstances.$inferSelect,
-    currentStep: (typeof workflowSteps.$inferSelect) & { label?: string },
+    currentStep: typeof workflowSteps.$inferSelect & { label?: string },
     session: AuthSession,
   ): Promise<{
     reassignedUserId: string;
@@ -1213,7 +1221,10 @@ export class WorkflowEngine {
               AND rd.${sql.identifier(actingColumns[capability])} = true
               AND e.employment_status = 'active'
               AND e.availability_status = 'available'
-              AND e.user_id NOT IN (${sql.join(excludeUserIds.map((uid) => sql`${uid}`), sql`, `)})
+              AND e.user_id NOT IN (${sql.join(
+                excludeUserIds.map((uid) => sql`${uid}`),
+                sql`, `,
+              )})
             LIMIT 1
           `,
         );
@@ -1221,7 +1232,9 @@ export class WorkflowEngine {
         const actingRow = actingResult.rows?.[0] as Record<string, unknown> | undefined;
         if (actingRow && actingRow.user_id) {
           const reassignedUserId = String(actingRow.user_id);
-          const alternateName = `${actingRow.first_name || ''} ${actingRow.last_name || ''}`.trim() || 'Alternate Officer';
+          const alternateName =
+            `${actingRow.first_name || ''} ${actingRow.last_name || ''}`.trim() ||
+            'Alternate Officer';
 
           // Update the step assignment to the alternate
           await this.db
@@ -1244,15 +1257,18 @@ export class WorkflowEngine {
             );
 
           // Notify the alternate
-          await this.db.insert(notifications).values({
+          await createScopedNotifications({
             tenantId,
-            recipientUserId: reassignedUserId,
-            type: 'action_required',
+            recipientUserIds: [reassignedUserId],
+            category: 'action_required',
+            eventType: 'approval_conflict_reassigned',
             title: `Conflict Reassignment — ${currentStep.label || 'Step'} Action Required`,
             body: `A workflow step has been reassigned to you because the original officer has a conflict of interest on this request.`,
             entityType: 'workflow_instance',
             entityId: instance.id,
             actionUrl: `/dashboard/approvals/${instance.id}`,
+            workspace: WorkspaceIds.APPROVER,
+            workflowStage: String(currentStep.stepOrder),
             priority: 'high',
           });
 
@@ -1273,10 +1289,10 @@ export class WorkflowEngine {
           })
           .from(tenantMemberships)
           .innerJoin(roleAssignments, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
-          .innerJoin(employees, and(
-            eq(employees.userId, tenantMemberships.userId),
-            eq(employees.tenantId, tenantId),
-          ))
+          .innerJoin(
+            employees,
+            and(eq(employees.userId, tenantMemberships.userId), eq(employees.tenantId, tenantId)),
+          )
           .where(
             and(
               eq(tenantMemberships.tenantId, tenantId),
@@ -1295,7 +1311,8 @@ export class WorkflowEngine {
           .limit(1);
 
         if (sameRole?.userId) {
-          const alternateName = `${sameRole.firstName || ''} ${sameRole.lastName || ''}`.trim() || 'Alternate Officer';
+          const alternateName =
+            `${sameRole.firstName || ''} ${sameRole.lastName || ''}`.trim() || 'Alternate Officer';
 
           await this.db
             .update(workflowSteps)
@@ -1316,15 +1333,18 @@ export class WorkflowEngine {
               ),
             );
 
-          await this.db.insert(notifications).values({
+          await createScopedNotifications({
             tenantId,
-            recipientUserId: sameRole.userId,
-            type: 'action_required',
+            recipientUserIds: [sameRole.userId],
+            category: 'action_required',
+            eventType: 'approval_conflict_reassigned',
             title: `Conflict Reassignment — ${currentStep.label || 'Step'} Action Required`,
             body: `A workflow step has been reassigned to you because the original officer has a conflict of interest.`,
             entityType: 'workflow_instance',
             entityId: instance.id,
             actionUrl: `/dashboard/approvals/${instance.id}`,
+            workspace: WorkspaceIds.APPROVER,
+            workflowStage: String(currentStep.stepOrder),
             priority: 'high',
           });
 
@@ -1393,15 +1413,18 @@ export class WorkflowEngine {
       // Secure-link requests have no login account; their outcome is delivered
       // through the tracking link/email rather than an internal notification.
       if (request.requesterUserId) {
-        await this.db.insert(notifications).values({
+        await createScopedNotifications({
           tenantId: request.tenantId,
-          recipientUserId: request.requesterUserId,
-          type: 'outcome',
+          recipientUserIds: [request.requesterUserId],
+          category: result === 'returned' ? 'action_required' : 'outcome',
+          eventType: `request_${result}`,
           title,
           body,
           entityType: 'workflow_instance',
           entityId: instance.id,
           actionUrl: `/dashboard/requests/${instance.requestId}`,
+          workspace: WorkspaceIds.PERSONAL,
+          workflowStage: String(currentStep.stepOrder),
           priority: result === 'rejected' ? 'high' : 'normal',
         });
       }
@@ -1410,15 +1433,18 @@ export class WorkflowEngine {
         const steps = await this.getDefinitionSteps(instance);
         const nextStep = steps.find((step) => step.stepOrder === currentStep.stepOrder + 1);
         if (nextStep?.assignedUserId && nextStep.assignedUserId !== request.requesterUserId) {
-          await this.db.insert(notifications).values({
+          await createScopedNotifications({
             tenantId: request.tenantId,
-            recipientUserId: nextStep.assignedUserId,
-            type: 'action_required',
+            recipientUserIds: [nextStep.assignedUserId],
+            category: 'action_required',
+            eventType: 'approval_assigned',
             title: `Action Required — ${nextStep.label}`,
             body: `A transport request is awaiting your ${nextStep.label.toLowerCase()} action.`,
             entityType: 'workflow_instance',
             entityId: instance.id,
             actionUrl: `/dashboard/approvals/${instance.id}`,
+            workspace: WorkspaceIds.APPROVER,
+            workflowStage: String(nextStep.stepOrder),
             priority: 'high',
           });
         }

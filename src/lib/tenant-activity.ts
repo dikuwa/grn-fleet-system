@@ -34,15 +34,18 @@ export async function recordTenantRequestActivity(input: {
   await db.insert(notifications).values({
     tenantId: input.tenantId,
     recipientUserId: null,
-    audience: 'tenant',
+    audience: 'activity',
     audienceTarget: null,
-    type: 'request_progress',
+    type: 'awareness',
+    eventType: 'request_progress',
     title: `${input.reference} · ${label}`,
     body: `Stage: ${label} · ${office} · ${occurredAt.toLocaleString('en-NA', { timeZone: 'Africa/Windhoek' })}`,
     entityType: 'transport_request',
     entityId: input.requestId,
     actionUrl: null,
     priority: input.stage === 'rejected' || input.stage === 'returned' ? 'high' : 'normal',
+    status: 'archived',
+    archivedAt: occurredAt,
     createdAt: occurredAt,
   });
 }
@@ -62,12 +65,15 @@ export async function recordPlatformActivity(input: {
     audience: 'platform',
     audienceTarget: null,
     type: input.type,
+    eventType: input.type,
     title: input.title,
     body: input.body || null,
     entityType: input.entityType || null,
     entityId: input.entityId || null,
     actionUrl: '/dashboard/platform',
     requiredRole: SystemPlatformRole,
+    workspace: 'platform_admin',
+    status: 'unread',
     priority: 'normal',
   });
 }

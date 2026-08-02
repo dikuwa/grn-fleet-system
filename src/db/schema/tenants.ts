@@ -61,6 +61,7 @@ export const tenantMemberships = pgTable('tenant_memberships', {
     .references(() => tenants.id, { onDelete: 'cascade' }),
   userId: text('user_id').notNull(), // References Better Auth user
   status: text('status').notNull().default('active'),
+  activeWorkspace: text('active_workspace'),
   joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

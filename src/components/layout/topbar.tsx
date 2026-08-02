@@ -11,15 +11,14 @@ import {
   ChevronDown,
   Building2,
   Download,
+  BriefcaseBusiness,
+  Check,
+  Loader2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getRoleLabel } from '@/lib/role-labels';
-import {
-  fetchUserProfile,
-  userProfileQueryKey,
-  type UserProfileData,
-} from '@/lib/user-profile';
+import { fetchUserProfile, userProfileQueryKey, type UserProfileData } from '@/lib/user-profile';
 import { ThemeSelector } from '@/components/layout/theme-selector';
 import {
   fetchNotifications,
@@ -29,22 +28,29 @@ import {
 import { GlobalSearch } from '@/components/layout/global-search';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import { SystemRoles } from '@/lib/dashboard-access';
-import {
-  usePwaInstallState,
-  IosInstallDialog,
-} from '@/components/ui/install-pwa-banner';
+import { usePwaInstallState, IosInstallDialog } from '@/components/ui/install-pwa-banner';
+import type { WorkspaceId } from '@/lib/workspaces';
 
 interface TopbarProps {
   onMenuClick: () => void;
   tenantName?: string;
   userId?: string;
   roleNames: string[];
+  activeWorkspace: WorkspaceId;
+  eligibleWorkspaces: Array<{ id: WorkspaceId; label: string }>;
 }
 
-export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
+export function Topbar({
+  onMenuClick,
+  userId,
+  roleNames,
+  activeWorkspace,
+  eligibleWorkspaces,
+}: TopbarProps) {
   const router = useRouter();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [showIosInstall, setShowIosInstall] = useState(false);
+  const [switchingWorkspace, setSwitchingWorkspace] = useState<WorkspaceId | null>(null);
   const accountRef = useRef<HTMLDivElement>(null);
   const pwa = usePwaInstallState();
   useNotificationBroadcast();
@@ -97,20 +103,42 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
       ? getRoleLabel(roleNames[0])
       : undefined;
   const avatarSrc = profile?.image;
+  const activeWorkspaceLabel =
+    eligibleWorkspaces.find((workspace) => workspace.id === activeWorkspace)?.label ??
+    'Personal Requester';
+
+  const switchWorkspace = async (workspace: WorkspaceId) => {
+    if (workspace === activeWorkspace || switchingWorkspace) return;
+    setSwitchingWorkspace(workspace);
+    try {
+      const response = await fetch('/api/workspace', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace }),
+      });
+      if (!response.ok) throw new Error('Workspace switch failed');
+      setShowAccountMenu(false);
+      window.location.assign('/dashboard');
+    } finally {
+      setSwitchingWorkspace(null);
+    }
+  };
 
   const handleSignOut = async () => {
     try {
       await fetch('/api/auth/sign-out', { method: 'POST' });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     router.push('/login');
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-surface px-4 md:px-6">
+    <header className="border-border bg-surface sticky top-0 z-30 flex h-16 items-center gap-4 border-b px-4 md:px-6">
       {/* Mobile menu trigger */}
       <button
         onClick={onMenuClick}
-        className="flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-500 hover:bg-muted md:hidden"
+        className="text-ink-500 hover:bg-muted flex h-9 w-9 items-center justify-center rounded-[8px] md:hidden"
         aria-label="Open navigation menu"
       >
         <Menu className="h-5 w-5" />
@@ -124,17 +152,17 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
         {/* Notifications */}
         <Link
           href="/dashboard/notifications"
-          className="relative flex h-9 w-9 items-center justify-center rounded-[8px] text-ink-500 hover:bg-muted transition-colors"
+          className="text-ink-500 hover:bg-muted relative flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors"
           aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
         >
           <Bell className="h-[18px] w-[18px]" />
           {unreadCount > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex min-w-[18px] items-center justify-center rounded-full bg-status-error-text px-1 py-0.5 text-[10px] font-bold leading-none text-white">
+            <span className="bg-status-error-text absolute -top-0.5 -right-0.5 flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] leading-none font-bold text-white">
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}
           {unreadCount === 0 && !notificationQuery.isError && (
-            <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-ink-300" />
+            <span className="bg-ink-300 absolute top-1.5 right-1.5 h-2 w-2 rounded-full" />
           )}
         </Link>
 
@@ -142,49 +170,84 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
         <div className="relative" ref={accountRef}>
           <button
             onClick={() => setShowAccountMenu(!showAccountMenu)}
-            className="flex min-h-9 items-center gap-2 rounded-[8px] px-2 py-1 text-ink-500 hover:bg-muted transition-colors"
+            className="text-ink-500 hover:bg-muted flex min-h-9 items-center gap-2 rounded-[8px] px-2 py-1 transition-colors"
             aria-label="Open account menu"
             aria-expanded={showAccountMenu}
           >
             {/* Avatar */}
-            <UserAvatar src={avatarSrc} name={displayName} className="h-7 w-7 rounded-[6px] text-xs" />
+            <UserAvatar
+              src={avatarSrc}
+              name={displayName}
+              className="h-7 w-7 rounded-[6px] text-xs"
+            />
             {/* Compact identity block (hidden on small mobile) */}
-            <span className="hidden min-w-0 max-w-[140px] flex-col items-start leading-tight sm:flex">
-              <span className="w-full truncate text-[13px] font-medium text-ink-700 dark:text-ink-300">
+            <span className="hidden max-w-[140px] min-w-0 flex-col items-start leading-tight sm:flex">
+              <span className="text-ink-700 dark:text-ink-300 w-full truncate text-[13px] font-medium">
                 {displayName}
               </span>
               {roleLabel && (
-                <span className="w-full truncate text-[11px] text-ink-500">
-                  {roleLabel}
+                <span className="text-ink-500 w-full truncate text-[11px]">
+                  {activeWorkspaceLabel}
                 </span>
               )}
             </span>
-            <ChevronDown className="hidden h-3.5 w-3.5 text-ink-400 sm:block" />
+            <ChevronDown className="text-ink-400 hidden h-3.5 w-3.5 sm:block" />
           </button>
 
           {/* Account dropdown */}
           {showAccountMenu && (
-            <div className="absolute right-0 top-10 z-50 w-64 rounded-[10px] border border-border bg-surface p-1 shadow-lg dark:shadow-[0_4px_16px_rgba(0,0,0,0.4)]">
+            <div className="border-border bg-surface absolute top-10 right-0 z-50 w-64 rounded-[10px] border p-1 shadow-lg dark:shadow-[0_4px_16px_rgba(0,0,0,0.4)]">
               {/* User info header */}
-              <div className="border-b border-border px-3 py-3">
+              <div className="border-border border-b px-3 py-3">
                 <div className="flex items-center gap-3">
-                  <UserAvatar src={avatarSrc} name={displayName} className="h-10 w-10 shrink-0 rounded-[8px] text-sm" />
+                  <UserAvatar
+                    src={avatarSrc}
+                    name={displayName}
+                    className="h-10 w-10 shrink-0 rounded-[8px] text-sm"
+                  />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-ink-950 dark:text-ink-100">
+                    <p className="text-ink-950 dark:text-ink-100 truncate text-sm font-medium">
                       {displayName}
                     </p>
-                    {roleLabel && (
-                      <p className="truncate text-xs text-ink-500">{roleLabel}</p>
-                    )}
+                    {roleLabel && <p className="text-ink-500 truncate text-xs">{roleLabel}</p>}
                   </div>
                 </div>
               </div>
+
+              {eligibleWorkspaces.length > 1 && (
+                <div className="border-border border-b px-1 py-2">
+                  <p className="text-ink-400 px-2 pb-1 text-[10px] font-semibold tracking-wider uppercase">
+                    Active workspace
+                  </p>
+                  {eligibleWorkspaces.map((workspace) => {
+                    const selected = workspace.id === activeWorkspace;
+                    const switching = workspace.id === switchingWorkspace;
+                    return (
+                      <button
+                        key={workspace.id}
+                        type="button"
+                        onClick={() => void switchWorkspace(workspace.id)}
+                        disabled={Boolean(switchingWorkspace)}
+                        className="text-ink-700 hover:bg-muted dark:text-ink-300 flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-sm transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
+                      >
+                        <BriefcaseBusiness className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
+                        {switching ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : selected ? (
+                          <Check className="text-brand-700 h-4 w-4" />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Menu items */}
               <div className="mt-1 space-y-0.5">
                 <Link
                   href="/dashboard/profile"
-                  className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors dark:text-ink-300 dark:hover:bg-white/[0.06]"
+                  className="text-ink-700 hover:bg-muted dark:text-ink-300 flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm transition-colors dark:hover:bg-white/[0.06]"
                   onClick={() => setShowAccountMenu(false)}
                 >
                   <User className="h-4 w-4" />
@@ -193,7 +256,7 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
                 {roleNames.includes(SystemRoles.TENANT_ADMIN) && (
                   <Link
                     href="/dashboard/settings"
-                    className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors dark:text-ink-300 dark:hover:bg-white/[0.06]"
+                    className="text-ink-700 hover:bg-muted dark:text-ink-300 flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm transition-colors dark:hover:bg-white/[0.06]"
                     onClick={() => setShowAccountMenu(false)}
                   >
                     <Settings className="h-4 w-4" />
@@ -203,7 +266,7 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
 
                 {/* Tenant context */}
                 {profile?.tenantSlug && (
-                  <div className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-500">
+                  <div className="text-ink-500 flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm">
                     <Building2 className="h-4 w-4 shrink-0" />
                     <span className="truncate">{profile.tenantSlug}</span>
                   </div>
@@ -219,18 +282,18 @@ export function Topbar({ onMenuClick, userId, roleNames }: TopbarProps) {
                       }
                       setShowAccountMenu(false);
                     }}
-                    className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors dark:text-ink-300 dark:hover:bg-white/[0.06]"
+                    className="text-ink-700 hover:bg-muted dark:text-ink-300 flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm transition-colors dark:hover:bg-white/[0.06]"
                   >
                     <Download className="h-4 w-4" />
                     Install GovFleet App
                   </button>
                 )}
 
-                <div className="border-t border-border my-1" />
+                <div className="border-border my-1 border-t" />
 
                 <button
                   onClick={handleSignOut}
-                  className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm text-ink-700 hover:bg-muted transition-colors dark:text-ink-300 dark:hover:bg-white/[0.06]"
+                  className="text-ink-700 hover:bg-muted dark:text-ink-300 flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm transition-colors dark:hover:bg-white/[0.06]"
                 >
                   <LogOut className="h-4 w-4" />
                   Sign Out

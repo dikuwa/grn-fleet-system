@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { APP_SHORT_NAME } from '@/lib/constants';
-import { canNavigateDashboardPath, SystemRoles } from '@/lib/dashboard-access';
+import { getWorkspaceNavigation, type WorkspaceId } from '@/lib/dashboard-access';
 import {
   LayoutDashboard,
   FileText,
@@ -38,140 +38,66 @@ import {
   Link2,
   GitBranch,
   AlertTriangle,
+  FilePlus2,
   type LucideIcon,
 } from 'lucide-react';
 
-interface NavItem {
-  label: string;
-  href: string;
-  icon: LucideIcon;
-  badge?: number;
-}
+const iconRegistry: Record<string, LucideIcon> = {
+  LayoutDashboard,
+  FileText,
+  FilePlus2,
+  ClipboardCheck,
+  ClipboardList,
+  Truck,
+  Gauge,
+  Fuel,
+  Wrench,
+  Users,
+  Building2,
+  CarFront,
+  FileSpreadsheet,
+  FileBarChart,
+  Bell,
+  Settings,
+  Globe,
+  MapPin,
+  Shield,
+  BrainCircuit,
+  Receipt,
+  User,
+  CalendarClock,
+  Clock,
+  Mail,
+  Send,
+  Database,
+  Link2,
+  GitBranch,
+  AlertTriangle,
+};
 
-interface NavGroup {
-  label: string;
-  items: NavItem[];
-}
-
-const navGroups: NavGroup[] = [
-  {
-    label: 'Overview',
-    items: [
-      { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-      { label: 'My Profile', href: '/dashboard/profile', icon: User },
-    ],
-  },
-  {
-    label: 'Driver',
-    items: [
-      { label: 'Driver Console', href: '/dashboard/driver-mobile', icon: Gauge },
-      { label: 'Driver Self-Service', href: '/dashboard/driver-self-service', icon: User },
-      { label: 'Daily Logs', href: '/dashboard/logs', icon: ClipboardCheck },
-    ],
-  },
-  {
-    label: 'Requests & Approvals',
-    items: [
-      { label: 'My Requests', href: '/dashboard/requests', icon: FileText },
-      { label: 'Programmes', href: '/dashboard/programmes', icon: ClipboardList },
-      { label: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck },
-    ],
-  },
-  {
-    label: 'Allocations & Trips',
-    items: [
-      { label: 'Allocations', href: '/dashboard/allocations', icon: Truck },
-      { label: 'Trips', href: '/dashboard/trips', icon: Gauge, badge: 0 },
-      { label: 'Active Trips', href: '/dashboard/trips/active', icon: Gauge },
-      { label: 'Release Readiness', href: '/dashboard/trips/readiness', icon: ClipboardCheck },
-      { label: 'Closure Review', href: '/dashboard/trips/closure-review', icon: Clock },
-      { label: 'Fuel Records', href: '/dashboard/fuel', icon: Fuel },
-      { label: 'Reimbursements', href: '/dashboard/reimbursements', icon: ClipboardList },
-    ],
-  },
-  {
-    label: 'Fleet & Maintenance',
-    items: [
-      { label: 'Fleet', href: '/dashboard/fleet', icon: CarFront },
-      { label: 'Import Vehicles', href: '/dashboard/fleet/import', icon: Truck },
-      { label: 'Fleet Map', href: '/dashboard/fleet/map', icon: MapPin },
-      { label: 'Compliance', href: '/dashboard/fleet/compliance', icon: Shield },
-      { label: 'Expiry Alerts', href: '/dashboard/expiry-alerts', icon: CalendarClock },
-      {
-        label: 'Predictive Maint.',
-        href: '/dashboard/fleet/predictive-maintenance',
-        icon: BrainCircuit,
-      },
-      { label: 'Expenses', href: '/dashboard/fleet/expenses', icon: Receipt },
-      { label: 'Maintenance', href: '/dashboard/maintenance', icon: Wrench },
-      { label: 'Defects', href: '/dashboard/fleet/defects', icon: AlertTriangle },
-      { label: 'Inspections', href: '/dashboard/inspections', icon: ClipboardCheck },
-      { label: 'Insp. Templates', href: '/dashboard/inspections/templates', icon: ClipboardList },
-    ],
-  },
-  {
-    label: 'People & Offices',
-    items: [
-      { label: 'Staff Directory', href: '/dashboard/staff', icon: Users },
-      { label: 'Organisation Structure', href: '/dashboard/organisation', icon: Building2 },
-      { label: 'Acting Roles', href: '/dashboard/delegations', icon: CalendarClock },
-      { label: 'Drivers', href: '/dashboard/drivers', icon: CarFront },
-    ],
-  },
-  {
-    label: 'Documents & Reports',
-    items: [
-      { label: 'Documents', href: '/dashboard/documents', icon: FileSpreadsheet },
-      { label: 'Share Links', href: '/dashboard/share-links', icon: Link2 },
-      { label: 'Reports', href: '/dashboard/reports', icon: FileBarChart },
-      { label: 'Licence Expiry', href: '/dashboard/reports/licence-expiry', icon: Shield },
-    ],
-  },
-  {
-    label: 'Administration',
-    items: [
-      { label: 'Notifications', href: '/dashboard/notifications', icon: Bell },
-      { label: 'Delivery Dashboard', href: '/dashboard/notifications/deliveries', icon: Send },
-      { label: 'Email History', href: '/dashboard/notifications/history', icon: Mail },
-      { label: 'Offline Drafts', href: '/dashboard/offline', icon: Database },
-      { label: 'Audit Log', href: '/dashboard/audit', icon: FileText },
-      { label: 'Settings', href: '/dashboard/settings', icon: Settings },
-      { label: 'User Management', href: '/dashboard/admin/users', icon: Users },
-      { label: 'Roles & Permissions', href: '/dashboard/admin/roles', icon: Shield },
-      { label: 'Workflow Routing', href: '/dashboard/admin/workflows', icon: GitBranch },
-      { label: 'Regions', href: '/dashboard/admin/regions', icon: MapPin },
-      { label: 'Tenants', href: '/dashboard/platform/tenants', icon: Globe },
-      { label: 'Platform Dashboard', href: '/dashboard/platform', icon: LayoutDashboard },
-      { label: 'Platform Audit', href: '/dashboard/platform/audit', icon: FileText },
-      { label: 'Onboard Tenant', href: '/dashboard/platform/onboard', icon: LayoutDashboard },
-    ],
-  },
-];
-
-function roleAwareLabel(item: NavItem, roleNames: readonly string[]) {
-  if (item.href === '/dashboard/requests') {
-    if (roleNames.includes(SystemRoles.REQUESTER)) return 'My Requests';
-    if (roleNames.includes(SystemRoles.TRANSPORT_ADMIN)) return 'Operational Requests';
+function getNavGroups(activeWorkspace: WorkspaceId) {
+  const groups = new Map<string, ReturnType<typeof getWorkspaceNavigation>>();
+  for (const item of getWorkspaceNavigation(activeWorkspace)) {
+    const group = groups.get(item.section) ?? [];
+    group.push(item);
+    groups.set(item.section, group);
   }
-  if (item.href === '/dashboard/approvals') return 'Assigned Approvals';
-  if (item.href === '/dashboard/trips' && roleNames.includes(SystemRoles.DRIVER)) {
-    return 'Assigned Trips';
-  }
-  return item.label;
+  return Array.from(groups, ([label, items]) => ({ label, items }));
 }
 
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
-  roleNames: string[];
+  activeWorkspace: WorkspaceId;
 }
 
-export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, activeWorkspace }: SidebarProps) {
   const pathname = usePathname();
   const [activeTripCount, setActiveTripCount] = useState(0);
+  const navGroups = getNavGroups(activeWorkspace);
 
   useEffect(() => {
-    if (!canNavigateDashboardPath('/dashboard/trips', roleNames)) return;
+    if (activeWorkspace !== 'driver') return;
     fetch('/api/trips/attention')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -180,7 +106,7 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
       .catch(() => {
         /* silent */
       });
-  }, [roleNames]);
+  }, [activeWorkspace]);
 
   return (
     <aside
@@ -224,73 +150,59 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
         className="scrollbar-thumb-border flex-1 scrollbar-thin scrollbar-track-transparent overflow-y-auto px-2 py-4"
         style={{ overscrollBehavior: 'contain' }}
       >
-        {navGroups
-          .map((group) => ({
-            ...group,
-            items: group.items.filter((item) => canNavigateDashboardPath(item.href, roleNames)),
-          }))
-          .filter((group) => group.items.length > 0)
-          .map((group) => (
-            <div key={group.label} className="mb-4">
-              {!collapsed && (
-                <p className="text-ink-400 dark:text-ink-500 mb-1 px-2 text-[11px] font-medium tracking-widest uppercase">
-                  {group.label}
-                </p>
-              )}
-              <ul className="space-y-0.5">
-                {group.items.map((item) => {
-                  const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
-                  const Icon = item.icon;
-                  return (
-                    <li key={item.href}>
-                      <Link
-                        href={item.href}
+        {navGroups.map((group) => (
+          <div key={group.label} className="mb-4">
+            {!collapsed && (
+              <p className="text-ink-400 dark:text-ink-500 mb-1 px-2 text-[11px] font-medium tracking-widest uppercase">
+                {group.label}
+              </p>
+            )}
+            <ul className="space-y-0.5">
+              {group.items.map((item) => {
+                const isActive = pathname === item.path || pathname.startsWith(item.path + '/');
+                const Icon = iconRegistry[item.icon ?? 'FileText'] ?? FileText;
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={cn(
+                        'flex items-center gap-3 rounded-[8px] px-2 py-2 text-sm transition-colors',
+                        isActive
+                          ? 'bg-brand-50 text-brand-800 dark:bg-brand-950/40 dark:text-brand-600'
+                          : 'text-ink-700 hover:bg-muted dark:text-ink-400 dark:hover:bg-white/[0.06]',
+                        collapsed && 'justify-center px-0',
+                      )}
+                      title={collapsed ? item.label : undefined}
+                    >
+                      <Icon
                         className={cn(
-                          'flex items-center gap-3 rounded-[8px] px-2 py-2 text-sm transition-colors',
+                          'h-[18px] w-[18px] shrink-0',
                           isActive
-                            ? 'bg-brand-50 text-brand-800 dark:bg-brand-950/40 dark:text-brand-600'
-                            : 'text-ink-700 hover:bg-muted dark:text-ink-400 dark:hover:bg-white/[0.06]',
-                          collapsed && 'justify-center px-0',
+                            ? 'text-brand-700 dark:text-brand-600'
+                            : 'text-ink-400 dark:text-ink-500',
                         )}
-                        title={collapsed ? item.label : undefined}
-                      >
-                        <Icon
-                          className={cn(
-                            'h-[18px] w-[18px] shrink-0',
-                            isActive
-                              ? 'text-brand-700 dark:text-brand-600'
-                              : 'text-ink-400 dark:text-ink-500',
-                          )}
-                        />
-                        {!collapsed && (
-                          <>
-                            <span className="flex-1 truncate">
-                              {roleAwareLabel(item, roleNames)}
-                            </span>
-                            {item.badge !== undefined &&
-                              item.label === 'Trips' &&
-                              activeTripCount > 0 && (
-                                <span
-                                  className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white"
-                                  title={`${activeTripCount} trip${activeTripCount === 1 ? '' : 's'} require your attention`}
-                                >
-                                  {activeTripCount > 99 ? '99+' : activeTripCount}
-                                </span>
-                              )}
-                            {item.badge !== undefined && item.label !== 'Trips' && (
-                              <span className="bg-brand-600 flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium text-white">
-                                {item.badge}
+                      />
+                      {!collapsed && (
+                        <>
+                          <span className="flex-1 truncate">{item.label}</span>
+                          {item.badgeQuery === 'trips:assigned-attention' &&
+                            activeTripCount > 0 && (
+                              <span
+                                className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white"
+                                title={`${activeTripCount} trip${activeTripCount === 1 ? '' : 's'} require your attention`}
+                              >
+                                {activeTripCount > 99 ? '99+' : activeTripCount}
                               </span>
                             )}
-                          </>
-                        )}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
+                        </>
+                      )}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
       </nav>
     </aside>
   );
@@ -302,13 +214,14 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
 export function MobileSidebar({
   open,
   onClose,
-  roleNames,
+  activeWorkspace,
 }: {
   open: boolean;
   onClose: () => void;
-  roleNames: string[];
+  activeWorkspace: WorkspaceId;
 }) {
   const pathname = usePathname();
+  const navGroups = getNavGroups(activeWorkspace);
 
   // Lock body scroll when drawer is open
   useEffect(() => {
@@ -376,52 +289,43 @@ export function MobileSidebar({
           className="pb-safe flex-1 overflow-y-auto px-2 py-4"
           style={{ overscrollBehavior: 'contain' }}
         >
-          {navGroups
-            .filter((group) =>
-              group.items.some((item) => canNavigateDashboardPath(item.href, roleNames)),
-            )
-            .map((group) => (
-              <div key={group.label} className="mb-4">
-                <p className="text-ink-400 dark:text-ink-500 mb-1 px-2 text-[11px] font-medium tracking-widest uppercase">
-                  {group.label}
-                </p>
-                <ul className="space-y-0.5">
-                  {group.items
-                    .filter((item) => canNavigateDashboardPath(item.href, roleNames))
-                    .map((item) => {
-                      const isActive =
-                        pathname === item.href || pathname.startsWith(item.href + '/');
-                      const Icon = item.icon;
-                      return (
-                        <li key={item.href}>
-                          <Link
-                            href={item.href}
-                            onClick={onClose}
-                            className={cn(
-                              'flex items-center gap-3 rounded-[8px] px-3 py-2.5 text-sm transition-colors',
-                              isActive
-                                ? 'bg-brand-50 text-brand-800 dark:bg-brand-950/40 dark:text-brand-600'
-                                : 'text-ink-700 hover:bg-muted dark:text-ink-400 dark:hover:bg-white/[0.06]',
-                            )}
-                          >
-                            <Icon
-                              className={cn(
-                                'h-[18px] w-[18px] shrink-0',
-                                isActive
-                                  ? 'text-brand-700 dark:text-brand-600'
-                                  : 'text-ink-400 dark:text-ink-500',
-                              )}
-                            />
-                            <span className="flex-1 truncate">
-                              {roleAwareLabel(item, roleNames)}
-                            </span>
-                          </Link>
-                        </li>
-                      );
-                    })}
-                </ul>
-              </div>
-            ))}
+          {navGroups.map((group) => (
+            <div key={group.label} className="mb-4">
+              <p className="text-ink-400 dark:text-ink-500 mb-1 px-2 text-[11px] font-medium tracking-widest uppercase">
+                {group.label}
+              </p>
+              <ul className="space-y-0.5">
+                {group.items.map((item) => {
+                  const isActive = pathname === item.path || pathname.startsWith(item.path + '/');
+                  const Icon = iconRegistry[item.icon ?? 'FileText'] ?? FileText;
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        onClick={onClose}
+                        className={cn(
+                          'flex items-center gap-3 rounded-[8px] px-3 py-2.5 text-sm transition-colors',
+                          isActive
+                            ? 'bg-brand-50 text-brand-800 dark:bg-brand-950/40 dark:text-brand-600'
+                            : 'text-ink-700 hover:bg-muted dark:text-ink-400 dark:hover:bg-white/[0.06]',
+                        )}
+                      >
+                        <Icon
+                          className={cn(
+                            'h-[18px] w-[18px] shrink-0',
+                            isActive
+                              ? 'text-brand-700 dark:text-brand-600'
+                              : 'text-ink-400 dark:text-ink-500',
+                          )}
+                        />
+                        <span className="flex-1 truncate">{item.label}</span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
         </nav>
       </aside>
     </>

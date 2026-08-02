@@ -7,7 +7,7 @@ import {
 } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, desc, and, sql, type SQL, or, inArray, ne } from 'drizzle-orm';
+import { eq, desc, and, sql, type SQL, ne } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
@@ -26,8 +26,6 @@ import {
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
-import { getSessionPermissions } from '@/lib/auth-helpers';
-import type { PermissionCode } from '@/lib/permissions';
 import Link from 'next/link';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
@@ -48,35 +46,26 @@ async function fetchApprovals(
   sp: Record<string, string | undefined>,
   tenantId: string,
   userId: string,
-  permissionCodes: PermissionCode[],
 ) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
   const offset = (page - 1) * limit;
   const status = normalizeOptionalFilter(sp.status);
+  const history = sp.view === 'history' || Boolean(status && status !== 'active');
 
   const baseConditions: SQL[] = [
     eq(transportRequests.tenantId, tenantId),
-    or(
-      and(
-        eq(workflowInstances.status, 'active'),
-        or(
-          eq(workflowSteps.assignedUserId, userId),
-          permissionCodes.length
-            ? inArray(workflowSteps.requiredPermission, permissionCodes)
-            : sql`false`,
-        ),
-      ),
-      and(
-        ne(workflowInstances.status, 'active'),
-        sql`exists (
-          select 1 from ${workflowActions}
-          where ${workflowActions.instanceId} = ${workflowInstances.id}
-            and ${workflowActions.actorUserId} = ${userId}
-        )`,
-      ),
-    )!,
+    history
+      ? and(
+          ne(workflowInstances.status, 'active'),
+          sql`exists (
+            select 1 from ${workflowActions}
+            where ${workflowActions.instanceId} = ${workflowInstances.id}
+              and ${workflowActions.actorUserId} = ${userId}
+          )`,
+        )!
+      : and(eq(workflowInstances.status, 'active'), eq(workflowSteps.assignedUserId, userId))!,
   ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
@@ -160,7 +149,7 @@ async function fetchApprovals(
       active: counts.get('active') ?? 0,
       completed: counts.get('completed') ?? 0,
     },
-    filters: { status },
+    filters: { status, view: history ? 'history' : undefined },
   };
 }
 
@@ -194,8 +183,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchApprovals>>;
   try {
-    const permissions = await getSessionPermissions(session);
-    result = await fetchApprovals(sp, session.tenantId, session.user.id, permissions);
+    result = await fetchApprovals(sp, session.tenantId, session.user.id);
   } catch (error) {
     console.error('Approvals query failed:', error);
     return (
@@ -210,7 +198,26 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Approvals' }]} />
-      <PageHeader title="Approvals" description="Review and manage workflow approvals" />
+      <PageHeader
+        title={result.filters.view === 'history' ? 'Approval History' : 'Assigned Approvals'}
+        description={
+          result.filters.view === 'history'
+            ? 'Decisions you previously completed'
+            : 'Requests currently awaiting your decision'
+        }
+      >
+        <Button variant="secondary" size="sm" asChild>
+          <Link
+            href={
+              result.filters.view === 'history'
+                ? '/dashboard/approvals'
+                : '/dashboard/approvals?view=history'
+            }
+          >
+            {result.filters.view === 'history' ? 'Assigned Approvals' : 'Approval History'}
+          </Link>
+        </Button>
+      </PageHeader>
 
       {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-3">

@@ -10,12 +10,13 @@ import { getDb } from '@/db';
 import { tripIncidentSequences, tripIncidents, trips } from '@/db/schema/trips';
 
 import { auditEvents } from '@/db/schema/audit';
-import { notifications } from '@/db/schema/notifications';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { requirePermission } from '@/lib/auth-helpers';
 import { generateDocument } from '@/lib/document-generator';
 import { eq, and, desc, sql } from 'drizzle-orm';
+import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
+import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 /**
  * GET /api/incidents?tripId=xxx
@@ -92,20 +93,34 @@ export async function POST(req: NextRequest) {
     if (!incidentType) {
       return NextResponse.json({ error: 'Incident type is required' }, { status: 400 });
     }
-    const [trip] = await db.select({ id: trips.id }).from(trips)
-      .where(and(eq(trips.id, tripId), eq(trips.tenantId, session.tenantId))).limit(1);
-    if (!trip) return NextResponse.json({ error: 'Trip not found in your organisation' }, { status: 404 });
+    const [trip] = await db
+      .select({ id: trips.id })
+      .from(trips)
+      .where(and(eq(trips.id, tripId), eq(trips.tenantId, session.tenantId)))
+      .limit(1);
+    if (!trip)
+      return NextResponse.json({ error: 'Trip not found in your organisation' }, { status: 404 });
     if (!['minor', 'moderate', 'serious', 'critical'].includes(severity)) {
-      return NextResponse.json({ error: 'Severity must be minor, moderate, serious or critical' }, { status: 422 });
+      return NextResponse.json(
+        { error: 'Severity must be minor, moderate, serious or critical' },
+        { status: 422 },
+      );
     }
     const eventDate = occurredAt ? new Date(occurredAt) : new Date();
-    if (Number.isNaN(eventDate.getTime())) return NextResponse.json({ error: 'A valid event date is required' }, { status: 422 });
+    if (Number.isNaN(eventDate.getTime()))
+      return NextResponse.json({ error: 'A valid event date is required' }, { status: 422 });
     const year = eventDate.getUTCFullYear();
-    const [sequence] = await db.insert(tripIncidentSequences).values({ tenantId: session.tenantId, sequenceYear: year, currentValue: 1 })
+    const [sequence] = await db
+      .insert(tripIncidentSequences)
+      .values({ tenantId: session.tenantId, sequenceYear: year, currentValue: 1 })
       .onConflictDoUpdate({
         target: [tripIncidentSequences.tenantId, tripIncidentSequences.sequenceYear],
-        set: { currentValue: sql`${tripIncidentSequences.currentValue} + 1`, updatedAt: new Date() },
-      }).returning({ currentValue: tripIncidentSequences.currentValue });
+        set: {
+          currentValue: sql`${tripIncidentSequences.currentValue} + 1`,
+          updatedAt: new Date(),
+        },
+      })
+      .returning({ currentValue: tripIncidentSequences.currentValue });
     const officialNumber = `${['accident', 'accident_collision'].includes(incidentType) && ['serious', 'critical'].includes(severity) ? 'ACC' : 'TID'}-${year}-${String(sequence.currentValue).padStart(5, '0')}`;
 
     const [incident] = await db
@@ -151,27 +166,49 @@ export async function POST(req: NextRequest) {
     });
 
     // Notify relevant parties
-    await db.insert(notifications).values({
+    await createScopedNotifications({
       tenantId: session.tenantId,
-      recipientUserId: session.user.id,
-      type: 'incident_created',
+      recipientUserIds: [session.user.id],
+      category: 'outcome',
+      eventType: 'incident_reported',
       title: `${officialNumber} — ${incidentType.replace(/_/g, ' ')}`,
       body: `${description.slice(0, 200)}. Trip: ${tripId.slice(0, 8)}.`,
       entityType: 'trip_incident',
       entityId: incident.id,
       actionUrl: `/dashboard/trips/${tripId}`,
+      workspace: WorkspaceIds.DRIVER,
       priority: 'high',
+    });
+    const transportAdministrators = await resolveActiveRoleRecipients(session.tenantId, [
+      SystemRoles.TRANSPORT_ADMIN,
+    ]);
+    await createScopedNotifications({
+      tenantId: session.tenantId,
+      recipientUserIds: transportAdministrators,
+      category: 'action_required',
+      eventType: 'trip_incident_review',
+      title: `${officialNumber} requires operational review`,
+      body: description.slice(0, 200),
+      entityType: 'trip_incident',
+      entityId: incident.id,
+      actionUrl: `/dashboard/trips/${tripId}`,
+      workspace: WorkspaceIds.TRANSPORT_ADMIN,
+      priority: severity === 'critical' ? 'emergency' : 'high',
     });
 
     await generateDocument({
-      documentType: ['accident', 'accident_collision'].includes(incidentType) && ['serious', 'critical'].includes(severity)
-        ? 'accident_report'
-        : 'trip_incident_report',
+      documentType:
+        ['accident', 'accident_collision'].includes(incidentType) &&
+        ['serious', 'critical'].includes(severity)
+          ? 'accident_report'
+          : 'trip_incident_report',
       entityType: 'trip_incident',
       entityId: incident.id,
       tenantId: session.tenantId,
       generatedByUserId: session.user.id,
-    }).catch((documentError) => console.error('[incidents] Incident document generation failed:', documentError));
+    }).catch((documentError) =>
+      console.error('[incidents] Incident document generation failed:', documentError),
+    );
 
     return NextResponse.json({ data: incident }, { status: 201 });
   } catch (error) {

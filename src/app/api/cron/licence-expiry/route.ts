@@ -15,6 +15,8 @@ import { getDb } from '@/db';
 import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { notifications, notificationDeliveries } from '@/db/schema/notifications';
 import { eq, and, gte, sql } from 'drizzle-orm';
+import { createScopedNotifications } from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 export const maxDuration = 120; // 2 min timeout for large tenants
 
@@ -23,7 +25,8 @@ export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const expectedToken = process.env.CRON_SECRET;
   if (expectedToken) {
-    const provided = authHeader?.replace('Bearer ', '') || request.nextUrl.searchParams.get('token') || '';
+    const provided =
+      authHeader?.replace('Bearer ', '') || request.nextUrl.searchParams.get('token') || '';
     if (provided !== expectedToken) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -132,21 +135,20 @@ export async function GET(request: NextRequest) {
           ? `Your ${licence.licenceClass} driving licence expired on ${expiryDate.toLocaleDateString('en-NA')}. Please renew it to remain eligible for driving assignments.`
           : `Your ${licence.licenceClass} driving licence expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'} (${expiryDate.toLocaleDateString('en-NA')}). Please arrange renewal.`;
 
-        const [createdNotification] = await db
-          .insert(notifications)
-          .values({
-            tenantId,
-            recipientUserId: licence.employeeUserId,
-            audience: 'user',
-            type: isExpired ? 'emergency' : 'reminder',
-            title,
-            body,
-            entityType: 'driver_licence',
-            entityId: licence.licenceId,
-            actionUrl: '/dashboard/driver-self-service',
-            priority: isExpired ? 'high' : 'normal',
-          })
-          .returning({ id: notifications.id });
+        const [createdNotification] = await createScopedNotifications({
+          tenantId,
+          recipientUserIds: [licence.employeeUserId],
+          category: 'reminder',
+          eventType: isExpired ? 'driver_licence_expired' : 'driver_licence_expiring',
+          title,
+          body,
+          entityType: 'driver_licence',
+          entityId: licence.licenceId,
+          actionUrl: '/dashboard/driver-self-service',
+          workspace: WorkspaceIds.DRIVER,
+          eventVersion: isExpired ? 0 : Math.max(daysUntilExpiry, 1),
+          priority: isExpired ? 'high' : 'normal',
+        });
 
         const notificationId = createdNotification?.id;
 
@@ -202,11 +204,16 @@ export async function GET(request: NextRequest) {
             });
             emailStatus = 'sent';
             providerId = emailResult?.data?.id;
-            console.log(`[cron/licence-expiry] Email sent to ${licence.employeeEmail} for licence ${licence.licenceNumber} (providerId: ${providerId})`);
+            console.log(
+              `[cron/licence-expiry] Email sent to ${licence.employeeEmail} for licence ${licence.licenceNumber} (providerId: ${providerId})`,
+            );
           } catch (emailError) {
             emailStatus = 'failed';
             errorSummary = String(emailError);
-            console.error(`[cron/licence-expiry] Failed to send email to ${licence.employeeEmail}:`, emailError);
+            console.error(
+              `[cron/licence-expiry] Failed to send email to ${licence.employeeEmail}:`,
+              emailError,
+            );
           }
 
           // Record delivery attempt
