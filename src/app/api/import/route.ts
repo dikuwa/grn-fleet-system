@@ -7,6 +7,7 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { allocateEmployeeNumber } from '@/lib/employee-number';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { normaliseEmployeeStatus } from '@/lib/employee-status';
 
 interface ImportRowData {
   employee_number?: string;
@@ -36,7 +37,6 @@ interface PreparedRow {
   errors: string[];
 }
 
-const SUPPORTED_STATUSES = new Set(['active', 'inactive', 'suspended', 'archived']);
 
 function normaliseLookup(value: string) {
   return value.trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -119,14 +119,16 @@ export async function POST(request: NextRequest) {
       if (departmentName && !departmentId) errors.push(`Unknown department “${departmentName}”. Map it to an existing tenant department before importing.`);
       if (officeName && !officeId) errors.push(`Unknown office “${officeName}”. Map it to an existing tenant office before importing.`);
 
-      const status = source.employment_status?.trim().toLowerCase() || 'active';
-      if (!SUPPORTED_STATUSES.has(status)) errors.push(`Unsupported employment status “${source.employment_status}”.`);
+      // Employment status defaults to ACTIVE and normalises case variants
+      // (ACTIVE / Active / active) plus legacy values to canonical values.
+      const status = normaliseEmployeeStatus(source.employment_status?.trim() || 'active');
+      if (!status) errors.push(`Unsupported employment status “${source.employment_status}”.`);
       const isDriver = parseBoolean(source.is_driver);
       if (isDriver === null) errors.push(`Unsupported is_driver value “${String(source.is_driver)}”.`);
 
       return {
         source, rowNumber: index + 2, employeeNumber, departmentId, officeId,
-        employmentStatus: status, isDriver: isDriver ?? false, errors,
+        employmentStatus: status ?? 'active', isDriver: isDriver ?? false, errors,
       };
     });
 

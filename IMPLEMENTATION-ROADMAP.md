@@ -210,6 +210,19 @@ This document is the permanent execution plan for every coding session. Read it 
 3. **Conflict Resolution E2E Test** (`src/e2e/offline-conflict-resolution.spec.ts`) — 7 test cases: summary cards/empty state on page load, status filter tab clicks, create draft via fuel form → verify on offline page, discard removes draft, view detail modal shows form data, breadcrumbs/header correct, Sync All button state. ✅
 4. **Phase 1.8 Secure file access** promoted to VERIFIED — full R2 upload + signed URL pipeline end-to-end. ✅
 
+### Session 29 ✅ — Strict Staff Status / Account Status / Availability Separation
+
+Implemented the three-concept separation per the strict implementation prompt. Staff employment status (ACTIVE/INACTIVE/ARCHIVED), user account status (User Management), and availability are now independent and never conflated.
+
+1. **Shared status model** (`src/lib/employee-status.ts`) — Canonical `EMPLOYEE_STATUSES`, `normaliseEmployeeStatus()` with legacy map (`on_leave`, `retired`, etc.), `employeeStatusConfig` badge config, `AVAILABILITY_OPTIONS`, `accountStatusConfig`. Badges always normalise before colouring — `ACTIVE`/`Active`/`active` all render green "Active". 14 unit tests. ✅
+2. **Bulk staff actions** (`src/app/api/employees/bulk/route.ts` + `staff-bulk-bar.tsx` + `bulk-selection.ts`) — Mark Active/Inactive, Set Availability, Assign Office/Department, Archive/Restore. Tenant-scoped WHERE, `STAFF_LIFECYCLE_MANAGE` (+ `STAFF_MANAGE` for office/department), archive requires reason, audit entry per batch. Max 500 rows. `useSyncExternalStore` selection sync. ✅
+3. **Lifecycle API separation** (`/api/employees/[id]/lifecycle`) — `status` (active/inactive) never touches accounts; `availability` uses canonical values; new `deactivate_account` / `reactivate_account` / `remove_driver` actions; archive/restore remain destructive (revoke/restore linked account) but are separate actions. ✅
+4. **Create + import defaulting** — `/api/employees` and `/api/import` both use the shared normalizer; blank status → `active`, blank availability → `available`; case variants accepted. Import preview shows defaults card (Employment status / Availability / Account: Not created / Driver profile). ✅
+5. **Employee Detail** — Account row (`Active` / `No account`) with View Account link; compact staff-status control (Mark Active / Mark Inactive) plus overflow menu (Archive / Restore / Remove Driver / Deactivate Account). ✅
+6. **User Management** — Linked employee summary in list and detail pages (Linked employee / Employee number / Staff status / Office / Department + View Employee Profile); invite dropdown only offers ACTIVE employees without an account. ✅
+7. **Kavango East data correction** (seed) — Tenant-scoped normalisation of case-variant statuses to `ACTIVE`; never activates archived/suspended; no accounts created; availability and driver authorisation untouched; single audit entry. ✅
+8. **Status Updates** — 2.4 Staff management / employee module → IMPLEMENTED; Kavango East correction applied. Acceptance criteria 1–18 all satisfied (new/imported staff default Active; badge consistency; status/account/availability independence; no duplicate person records; audit + tenant isolation verified).
+
 ---
 
 ## How to Use This Roadmap

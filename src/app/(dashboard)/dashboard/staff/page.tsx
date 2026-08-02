@@ -18,7 +18,14 @@ import { canPerformDashboardAction } from '@/lib/dashboard-access';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { StaffRowActions } from '@/components/staff/staff-row-actions';
+import { StaffBulkBar, StaffBulkCheckbox } from '@/components/staff/staff-bulk-bar';
 import { LongValue } from '@/components/ui/long-value';
+import {
+  AVAILABILITY_OPTIONS,
+  EMPLOYEE_STATUS_OPTIONS,
+  getEmployeeStatusDisplay,
+  getAvailabilityLabel,
+} from '@/lib/employee-status';
 
 interface SearchParams {
   q?: string;
@@ -148,6 +155,12 @@ async function fetchStaffData(params: SearchParams, tenantId: string): Promise<S
   return { staffList, totalCount, allOffices, allDepartments };
 }
 
+/** Shared status badge — normalises first, never colours raw text directly. */
+function EmployeeStatusBadge({ status }: { status: string }) {
+  const display = getEmployeeStatusDisplay(status);
+  return <StatusBadge status={display.variant} label={display.label} />;
+}
+
 export const dynamic = 'force-dynamic';
 
 export default async function StaffDirectoryPage({
@@ -251,6 +264,7 @@ export default async function StaffDirectoryPage({
 
   const canManageRoles = await hasPermission(session, Permissions.TENANT_MANAGE);
   const canManageLifecycle = await hasPermission(session, Permissions.STAFF_LIFECYCLE_MANAGE);
+  const canManageStaff = await hasPermission(session, Permissions.STAFF_MANAGE);
   const canManageDriver = await hasPermission(session, Permissions.DRIVER_MANAGE);
 
   function buildPageUrl(overrides: Record<string, string>): string {
@@ -327,34 +341,45 @@ export default async function StaffDirectoryPage({
             ))}
           </StyledSelect>
           <StyledSelect name="status" defaultValue={statusFilter} placeholder="All employees">
-            <option value="active">Active</option>
-            <option value="on_leave">On leave</option>
-            <option value="temporarily_unavailable">Temporarily unavailable</option>
-            <option value="suspended">Suspended</option>
-            <option value="transferred">Transferred</option>
-            <option value="contract_ended">Contract ended</option>
-            <option value="retired">Retired</option>
-            <option value="archived">Archived</option>
+            {EMPLOYEE_STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </StyledSelect>
           <StyledSelect
             name="availability"
             defaultValue={availabilityFilter}
             placeholder="All availability"
           >
-            <option value="available">Available</option>
-            <option value="annual_leave">Annual leave</option>
-            <option value="sick_leave">Sick leave</option>
-            <option value="official_travel">Official travel</option>
-            <option value="training">Training</option>
-            <option value="temporarily_unavailable">Temporarily unavailable</option>
+            {AVAILABILITY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </StyledSelect>
         </FilterToolbar>
       </div>
+
+      {canManageLifecycle && (
+        <StaffBulkBar
+          staff={staffList.map((row) => ({
+            id: row.id,
+            name: `${row.firstName} ${row.lastName}`,
+            employmentStatus: row.employmentStatus,
+          }))}
+          canManageLifecycle={canManageLifecycle}
+          canManageStaff={canManageStaff}
+          offices={allOffices}
+          departments={allDepartments}
+        />
+      )}
 
       <div className="space-y-3 md:hidden">
         {staffList.map((row) => (
           <div key={row.id} className="border-border bg-surface rounded-[10px] border p-4">
             <div className="flex items-start gap-3">
+              {canManageLifecycle && <StaffBulkCheckbox id={row.id} label={`${row.firstName} ${row.lastName}`} />}
               <div className="bg-brand-50 text-brand-800 flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[8px] text-xs font-semibold">
                 {row.profilePhotoUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element -- dynamic signed R2 URL
@@ -424,13 +449,10 @@ export default async function StaffDirectoryPage({
               </div>
             </details>
             <div className="mt-3 flex flex-wrap gap-2">
-              <StatusBadge
-                status={row.employmentStatus === 'active' ? 'success' : 'error'}
-                label={row.employmentStatus.replaceAll('_', ' ')}
-              />
+              <EmployeeStatusBadge status={row.employmentStatus} />
               <StatusBadge
                 status={row.availabilityStatus === 'available' ? 'success' : 'pending'}
-                label={row.availabilityStatus.replaceAll('_', ' ')}
+                label={getAvailabilityLabel(row.availabilityStatus)}
               />
               {row.isDriver && <StatusBadge status="info" label="Driver" />}
               {row.isActing && <StatusBadge status="info" label="Acting" />}
@@ -450,6 +472,11 @@ export default async function StaffDirectoryPage({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-border bg-muted border-b">
+                {canManageLifecycle && (
+                  <th className="text-ink-500 w-10 px-4 py-3 text-left text-xs font-medium tracking-wider uppercase">
+                    <span className="sr-only">Select</span>
+                  </th>
+                )}
                 <th className="text-ink-500 px-4 py-3 text-left text-xs font-medium tracking-wider uppercase">
                   Employee
                 </th>
@@ -485,7 +512,7 @@ export default async function StaffDirectoryPage({
             <tbody className="divide-border divide-y">
               {staffList.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="text-ink-500 px-4 py-12 text-center text-sm">
+                  <td colSpan={canManageLifecycle ? 11 : 10} className="text-ink-500 px-4 py-12 text-center text-sm">
                     {query || officeFilter || departmentFilter || statusFilter || availabilityFilter
                       ? 'No employees match your search criteria.'
                       : 'No active employees have been added yet.'}
@@ -494,6 +521,11 @@ export default async function StaffDirectoryPage({
               ) : (
                 staffList.map((row) => (
                   <tr key={row.id} className="hover:bg-canvas/50 transition-colors">
+                    {canManageLifecycle && (
+                      <td className="px-4 py-3">
+                        <StaffBulkCheckbox id={row.id} label={`${row.firstName} ${row.lastName}`} />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="bg-brand-50 text-brand-800 flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-xs font-semibold">
@@ -517,24 +549,12 @@ export default async function StaffDirectoryPage({
                     <td className="text-ink-700 max-w-52 px-4 py-3 text-sm"><LongValue value={row.departmentName} ariaLabel="Department" /></td>
                     <td className="text-ink-700 max-w-52 px-4 py-3 text-sm"><LongValue value={row.officeName} ariaLabel="Office" /></td>
                     <td className="px-4 py-3">
-                      <StatusBadge
-                        status={
-                          row.employmentStatus === 'active'
-                            ? 'success'
-                            : row.employmentStatus === 'suspended'
-                              ? 'pending'
-                              : 'error'
-                        }
-                        label={
-                          row.employmentStatus.charAt(0).toUpperCase() +
-                          row.employmentStatus.slice(1)
-                        }
-                      />
+                      <EmployeeStatusBadge status={row.employmentStatus} />
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge
                         status={row.availabilityStatus === 'available' ? 'success' : 'pending'}
-                        label={row.availabilityStatus.replaceAll('_', ' ')}
+                        label={getAvailabilityLabel(row.availabilityStatus)}
                       />
                     </td>
                     <td className="px-4 py-3">

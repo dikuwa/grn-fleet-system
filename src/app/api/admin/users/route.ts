@@ -148,6 +148,9 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    // All employees in this tenant (used for the linked-staff summary on each
+    // user row) regardless of employment status — an account may stay linked to
+    // an inactive or archived employee.
     const employeeRows = await db
       .select({
         id: employees.id,
@@ -156,13 +159,14 @@ export async function GET(request: NextRequest) {
         lastName: employees.lastName,
         email: employees.email,
         userId: employees.userId,
+        employmentStatus: employees.employmentStatus,
         departmentName: departments.name,
         officeName: offices.name,
       })
       .from(employees)
       .leftJoin(departments, eq(employees.departmentId, departments.id))
       .leftJoin(offices, eq(employees.officeId, offices.id))
-      .where(and(eq(employees.tenantId, session.tenantId), eq(employees.employmentStatus, 'active')));
+      .where(eq(employees.tenantId, session.tenantId));
 
     const employeeByUser = new Map(employeeRows.filter((employee) => employee.userId).map((employee) => [employee.userId, employee]));
     const usersWithEmployees = enrichedUsers.map((tenantUser) => ({
@@ -170,11 +174,18 @@ export async function GET(request: NextRequest) {
       employee: employeeByUser.get(tenantUser.id) || null,
     }));
 
+    // The invite picker only offers staff who are currently ACTIVE and do not
+    // already have a login account (creating an account requires an active
+    // employee record — enforced server-side in POST too).
+    const availableEmployees = employeeRows.filter(
+      (employee) => !employee.userId && employee.employmentStatus === 'active',
+    );
+
     return NextResponse.json({
       success: true,
       data: {
         users: usersWithEmployees,
-        availableEmployees: employeeRows.filter((employee) => !employee.userId),
+        availableEmployees,
         total,
         page,
         limit,

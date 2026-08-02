@@ -6,6 +6,7 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { allocateEmployeeNumber } from '@/lib/employee-number';
+import { normaliseAvailability, normaliseEmployeeStatus } from '@/lib/employee-status';
 
 export async function POST(request: NextRequest) {
   const auth = await requireRequestAuth(request);
@@ -37,11 +38,20 @@ export async function POST(request: NextRequest) {
   if (!body.firstName?.trim() || !body.lastName?.trim()) {
     return NextResponse.json({ error: 'First name and surname are required.' }, { status: 400 });
   }
-  if (body.employmentStatus && !['active', 'inactive', 'suspended'].includes(body.employmentStatus)) {
-    return NextResponse.json({ error: 'Unsupported employment status.' }, { status: 400 });
+  // Normalise explicit statuses through the shared canonical model. Blank
+  // values default to Active / Available; case variants (ACTIVE, Active) and
+  // legacy values are accepted and normalised, never stored raw.
+  let employmentStatus = 'active';
+  if (body.employmentStatus) {
+    const canonical = normaliseEmployeeStatus(body.employmentStatus);
+    if (!canonical) return NextResponse.json({ error: 'Unsupported employment status.' }, { status: 400 });
+    employmentStatus = canonical;
   }
-  if (body.availabilityStatus && !['available', 'unavailable', 'leave'].includes(body.availabilityStatus)) {
-    return NextResponse.json({ error: 'Unsupported availability status.' }, { status: 400 });
+  let availabilityStatus = 'available';
+  if (body.availabilityStatus) {
+    const canonical = normaliseAvailability(body.availabilityStatus);
+    if (!canonical) return NextResponse.json({ error: 'Unsupported availability status.' }, { status: 400 });
+    availabilityStatus = canonical;
   }
   const db = getDb();
   if (body.officeId) {
@@ -81,8 +91,8 @@ export async function POST(request: NextRequest) {
       departmentId: body.departmentId || null,
       employmentType: body.employmentType || null,
       employmentStartDate: startDate,
-      employmentStatus: body.employmentStatus || 'active',
-      availabilityStatus: body.availabilityStatus || 'available',
+      employmentStatus,
+      availabilityStatus,
       isDriver,
     }).returning();
     await tx.insert(employeeAssignments).values({

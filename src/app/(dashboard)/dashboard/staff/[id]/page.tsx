@@ -14,8 +14,10 @@ import {
   employeeDocuments,
   employeeAssignments,
   employeeAvailability,
+  userProfiles,
 } from '@/db/schema';
 import { eq, desc, and } from 'drizzle-orm';
+import { getEmployeeStatusDisplay, getAvailabilityLabel } from '@/lib/employee-status';
 import {
   Mail,
   Phone,
@@ -25,7 +27,9 @@ import {
   FileText,
   Download,
   ChevronLeft,
+  ChevronRight,
   Database,
+  KeyRound,
 } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -42,6 +46,7 @@ interface PageParams {
 
 interface EmployeeDetailData {
   employee: NonNullable<Awaited<ReturnType<typeof fetchEmployee>>>;
+  accountStatus: string | null;
   driverProfile: NonNullable<Awaited<ReturnType<typeof fetchDriverProfile>>> | null;
   licences: Awaited<ReturnType<typeof fetchLicences>>;
   docs: Awaited<ReturnType<typeof fetchDocs>>;
@@ -131,7 +136,17 @@ async function fetchEmployeeDetail(id: string, tenantId: string): Promise<Employ
     fetchAvailability(employee.id),
   ]);
 
-  return { employee, driverProfile, licences, docs, assignments, availability };
+  let accountStatus: string | null = null;
+  if (employee.userId) {
+    const [profile] = await getDb()
+      .select({ status: userProfiles.status })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, employee.userId))
+      .limit(1);
+    accountStatus = profile?.status ?? null;
+  }
+
+  return { employee, accountStatus, driverProfile, licences, docs, assignments, availability };
 }
 
 export const dynamic = 'force-dynamic';
@@ -185,8 +200,9 @@ export default async function EmployeeDetailPage({
     );
   }
 
-  const { employee, driverProfile, licences, docs, assignments, availability } = data;
-  const statusVariant = employee.employmentStatus === 'active' ? 'success' : employee.employmentStatus === 'suspended' ? 'pending' : 'error';
+  const { employee, accountStatus, driverProfile, licences, docs, assignments, availability } = data;
+  const employmentDisplay = getEmployeeStatusDisplay(employee.employmentStatus);
+  const availabilityDisplay = getAvailabilityLabel(employee.availabilityStatus);
 
   // Preserve directory filters when navigating back (state comes from the
   // query string the directory appends to detail links).
@@ -206,7 +222,15 @@ export default async function EmployeeDetailPage({
       <PageHeader title="Employee Detail" description="View employee information and records">
         <div className="flex flex-wrap items-center gap-2">
           {canManageDrivers && !driverProfile && <ConvertToDriver employeeId={employee.id} employeeName={`${employee.firstName} ${employee.lastName}`} />}
-          {canManageLifecycle && <EmployeeLifecycleActions employeeId={employee.id} archived={employee.employmentStatus === 'archived'} />}
+          {canManageLifecycle && (
+            <EmployeeLifecycleActions
+              employeeId={employee.id}
+              employeeName={`${employee.firstName} ${employee.lastName}`}
+              archived={employee.employmentStatus === 'archived'}
+              hasAccount={Boolean(employee.userId)}
+              isDriver={employee.isDriver}
+            />
+          )}
           <Button variant="secondary" size="sm" asChild>
             <Link href={backToDirectoryHref}><ChevronLeft className="h-4 w-4" />Back to Directory</Link>
           </Button>
@@ -220,7 +244,7 @@ export default async function EmployeeDetailPage({
               <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-brand-50 text-2xl font-bold text-brand-800">{employee.firstName.charAt(0)}{employee.lastName.charAt(0)}</div>
               <h2 className="text-lg font-semibold text-ink-950">{employee.title && `${employee.title} `}{employee.firstName} {employee.lastName}</h2>
               <LongValue value={employee.jobTitle} fallback="Position not recorded" className="mt-1 w-full justify-center" valueClassName="text-center text-sm text-ink-500" ariaLabel="Job title" />
-              <div className="mt-3"><StatusBadge status={statusVariant} label={employee.employmentStatus.charAt(0).toUpperCase() + employee.employmentStatus.slice(1)} /></div>
+              <div className="mt-3"><StatusBadge status={employmentDisplay.variant} label={employmentDisplay.label} /></div>
             </div>
             <div className="mt-6 min-w-0 space-y-3 border-t border-border pt-4">
               <div className="flex min-w-0 items-center gap-3 text-sm"><Mail className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={employee.email} copyable className="flex-1 text-ink-700" ariaLabel="Email" /></div>
@@ -228,8 +252,30 @@ export default async function EmployeeDetailPage({
               <div className="flex min-w-0 items-center gap-3 text-sm"><Building2 className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={employee.departmentName} className="flex-1 text-ink-700" ariaLabel="Department" /></div>
               <div className="flex min-w-0 items-center gap-3 text-sm"><Building2 className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={employee.officeName} className="flex-1 text-ink-700" ariaLabel="Office" /></div>
               <div className="flex min-w-0 items-center gap-3 text-sm"><Calendar className="h-4 w-4 shrink-0 text-ink-400" /><LongValue value={`Employee # ${employee.employeeNumber}`} copyable copyText={employee.employeeNumber} className="flex-1 text-ink-700" ariaLabel="Employee number" /></div>
-              <div className="flex items-center gap-3 text-sm"><Calendar className="h-4 w-4 text-ink-400" /><StatusBadge status={employee.availabilityStatus === 'available' ? 'success' : 'pending'} label={employee.availabilityStatus.replaceAll('_', ' ')} /></div>
+              <div className="flex items-center gap-3 text-sm"><Calendar className="h-4 w-4 text-ink-400" /><StatusBadge status={employee.availabilityStatus === 'available' ? 'success' : 'pending'} label={availabilityDisplay} /></div>
               {employee.isDriver && <div className="flex items-center gap-3 text-sm"><Car className="h-4 w-4 text-ink-400" /><StatusBadge status="info" label="Driver" /></div>}
+              <div className="flex min-w-0 items-center justify-between gap-3 border-t border-border pt-3 text-sm">
+                <div className="flex min-w-0 items-center gap-3">
+                  <KeyRound className="h-4 w-4 shrink-0 text-ink-400" />
+                  <span className="text-ink-700">Account:</span>
+                  {employee.userId ? (
+                    <StatusBadge
+                      status={accountStatus === 'active' || accountStatus === null ? 'success' : 'error'}
+                      label={accountStatus === 'active' || accountStatus === null ? 'Active' : accountStatus.charAt(0).toUpperCase() + accountStatus.slice(1)}
+                    />
+                  ) : (
+                    <StatusBadge status="cancelled" label="No account" />
+                  )}
+                </div>
+                {employee.userId && (
+                  <Link
+                    href={`/dashboard/admin/users/${employee.userId}`}
+                    className="text-brand-600 hover:text-brand-700 inline-flex shrink-0 items-center gap-1 text-xs font-medium transition-colors"
+                  >
+                    View Account <ChevronRight className="h-3 w-3" />
+                  </Link>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>

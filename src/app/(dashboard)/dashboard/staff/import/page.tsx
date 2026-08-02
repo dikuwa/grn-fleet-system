@@ -461,6 +461,35 @@ export default function StaffImportPage() {
       {/* Step 3: Preview & Confirm */}
       {step === 'preview' && (
         <div className="space-y-6">
+          <Card>
+            <CardHeader><CardTitle>Defaults Applied to Every Imported Row</CardTitle></CardHeader>
+            <CardContent>
+              <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div className="border-border rounded-[8px] border p-3">
+                  <p className="text-ink-500 text-xs">Employment status</p>
+                  <p className="text-status-success-text mt-0.5 font-medium">Active</p>
+                </div>
+                <div className="border-border rounded-[8px] border p-3">
+                  <p className="text-ink-500 text-xs">Availability</p>
+                  <p className="text-ink-950 mt-0.5 font-medium">Available</p>
+                </div>
+                <div className="border-border rounded-[8px] border p-3">
+                  <p className="text-ink-500 text-xs">Login account</p>
+                  <p className="text-ink-950 mt-0.5 font-medium">Not created</p>
+                </div>
+                <div className="border-border rounded-[8px] border p-3">
+                  <p className="text-ink-500 text-xs">Driver profile</p>
+                  <p className="text-ink-950 mt-0.5 font-medium">Only when “Is Driver” is Yes</p>
+                </div>
+              </div>
+              <p className="text-ink-500 mt-3 text-xs">
+                A blank or invalid employment status is treated as <span className="text-status-success-text font-medium">Active</span>. Case variants
+                (ACTIVE / Active / active) and legacy values are normalised to canonical statuses. Accounts are never
+                created by an import, and availability always starts as Available.
+              </p>
+            </CardContent>
+          </Card>
+
           <div className="grid gap-4 sm:grid-cols-3">
             <Card><CardContent className="pt-4"><div className="text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{rows.length}</p><p className="text-xs text-ink-500">Total Rows</p></div></CardContent></Card>
             <Card><CardContent className="pt-4"><div className="text-center"><p className="text-2xl font-[650] tabular-nums text-status-success-text">{totalValidRows}</p><p className="text-xs text-ink-500">Valid</p></div></CardContent></Card>

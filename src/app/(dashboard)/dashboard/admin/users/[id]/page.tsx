@@ -11,13 +11,14 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
-  User, Mail, Shield, CalendarDays, Loader2, ChevronLeft, CheckCircle2, XCircle,
+  User, Mail, Shield, CalendarDays, Loader2, ChevronLeft, ChevronRight, CheckCircle2, XCircle,
   Plus, Trash2, Database, KeyRound, Copy, CheckCheck, UserPlus,
   Clock, Lock, Ban,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
+import { getEmployeeStatusDisplay } from '@/lib/employee-status';
 
 interface UserDetail {
   id: string;
@@ -43,6 +44,20 @@ interface UserDetail {
     description: string | null;
   }>;
   image: string | null;
+  linkedEmployee: {
+    id: string;
+    employeeNumber: string;
+    firstName: string;
+    lastName: string;
+    email: string | null;
+    employmentStatus: string;
+    jobTitle: string | null;
+    departmentId: string | null;
+    departmentName: string | null;
+    officeId: string | null;
+    officeName: string | null;
+    isDriver: boolean;
+  } | null;
 }
 
 interface TenantUser {
@@ -370,6 +385,37 @@ export default function AdminUserDetailPage({ params }: PageProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Linked Employee summary — account and staff records stay separate */}
+      {userData.linkedEmployee && (
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="bg-brand-50 text-brand-800 flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] text-sm font-semibold">
+                  {userData.linkedEmployee.firstName.charAt(0)}{userData.linkedEmployee.lastName.charAt(0)}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-ink-950 truncate text-sm font-medium">
+                    Linked employee: {userData.linkedEmployee.firstName} {userData.linkedEmployee.lastName}
+                  </p>
+                  <p className="text-ink-500 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+                    <span>Employee number: {userData.linkedEmployee.employeeNumber}</span>
+                    <span>Staff status: <span className="text-status-success-text font-medium">{getEmployeeStatusDisplay(userData.linkedEmployee.employmentStatus).label}</span></span>
+                    {userData.linkedEmployee.officeName && <span>Office: {userData.linkedEmployee.officeName}</span>}
+                    {userData.linkedEmployee.departmentName && <span>Department: {userData.linkedEmployee.departmentName}</span>}
+                  </p>
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" asChild className="shrink-0">
+                <Link href={`/dashboard/staff/${userData.linkedEmployee.id}`}>
+                  View Employee Profile <ChevronRight className="h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Details Grid */}
       <div className="grid gap-6 lg:grid-cols-2">

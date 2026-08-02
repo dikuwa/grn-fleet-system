@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
-import {employees, driverProfiles} from '@/db/schema/people';
+import { employees, driverProfiles, departments, offices } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -78,6 +78,28 @@ export async function GET(
       .from(roles)
       .where(and(eq(roles.tenantId, session.tenantId), eq(roles.isSystem, true)));
 
+    // Linked employee summary (one employee may be linked to this account)
+    const [linkedEmployee] = await db
+      .select({
+        id: employees.id,
+        employeeNumber: employees.employeeNumber,
+        firstName: employees.firstName,
+        lastName: employees.lastName,
+        email: employees.email,
+        employmentStatus: employees.employmentStatus,
+        jobTitle: employees.jobTitle,
+        departmentId: departments.id,
+        departmentName: departments.name,
+        officeId: offices.id,
+        officeName: offices.name,
+        isDriver: employees.isDriver,
+      })
+      .from(employees)
+      .leftJoin(departments, eq(employees.departmentId, departments.id))
+      .leftJoin(offices, eq(employees.officeId, offices.id))
+      .where(and(eq(employees.userId, id), eq(employees.tenantId, session.tenantId)))
+      .limit(1);
+
     return NextResponse.json({
       success: true,
       data: {
@@ -86,6 +108,7 @@ export async function GET(
         joinedAt: membership.joinedAt,
         roleAssignments: assignments,
         availableRoles,
+        linkedEmployee: linkedEmployee || null,
       },
     });
   } catch (error) {

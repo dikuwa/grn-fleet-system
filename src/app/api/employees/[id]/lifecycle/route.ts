@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import {
   auditEvents,
+  driverProfiles,
   employeeAssignments,
   employeeAvailability,
   employeeDocuments,
@@ -15,7 +16,8 @@ import {
 import { and, count, eq } from 'drizzle-orm';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { AVAILABILITY_STATUSES, EMPLOYMENT_STATUSES } from '@/lib/employee-lifecycle';
+import { AVAILABILITY_STATUSES } from '@/lib/employee-lifecycle';
+import { normaliseAvailability, normaliseEmployeeStatus } from '@/lib/employee-status';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 async function getEmployee(id: string, tenantId: string) {
@@ -55,7 +57,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
 
   const body = await request.json() as {
-    action: 'archive' | 'restore' | 'status' | 'availability' | 'transfer';
+    action:
+      | 'archive'
+      | 'restore'
+      | 'status'
+      | 'availability'
+      | 'transfer'
+      | 'deactivate_account'
+      | 'reactivate_account'
+      | 'remove_driver';
     status?: string;
     startAt?: string;
     endAt?: string;
@@ -108,13 +118,42 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     after = { employmentStatus: 'active', accountEnabled: true };
   } else if (body.action === 'status') {
-    if (!body.status || !EMPLOYMENT_STATUSES.includes(body.status as typeof EMPLOYMENT_STATUSES[number])) {
-      return NextResponse.json({ error: 'Invalid employment status' }, { status: 400 });
+    // Routine staff status changes only. Archiving, suspending and account
+    // revocation have their own dedicated actions so that changing staff
+    // status never silently changes user account status.
+    const canonical = normaliseEmployeeStatus(body.status);
+    if (!canonical || (canonical !== 'active' && canonical !== 'inactive')) {
+      return NextResponse.json({ error: 'Invalid employment status. Use Mark Active or Mark Inactive for routine status changes.' }, { status: 400 });
     }
-    await db.update(employees).set({ employmentStatus: body.status, updatedAt: now }).where(eq(employees.id, id));
-    after = { employmentStatus: body.status };
+    await db.update(employees).set({ employmentStatus: canonical, updatedAt: now }).where(eq(employees.id, id));
+    after = { employmentStatus: canonical };
+  } else if (body.action === 'deactivate_account') {
+    if (!employee.userId) return NextResponse.json({ error: 'Employee has no linked login account' }, { status: 400 });
+    await Promise.all([
+      db.update(userProfiles).set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
+        .where(eq(userProfiles.userId, employee.userId)),
+      db.update(tenantMemberships).set({ status: 'inactive' })
+        .where(and(eq(tenantMemberships.userId, employee.userId), eq(tenantMemberships.tenantId, auth.session.tenantId))),
+    ]);
+    after = { accountEnabled: false };
+  } else if (body.action === 'reactivate_account') {
+    if (!employee.userId) return NextResponse.json({ error: 'Employee has no linked login account' }, { status: 400 });
+    await Promise.all([
+      db.update(userProfiles).set({ accountEnabled: true, status: 'active', disabledAt: null, updatedAt: now })
+        .where(eq(userProfiles.userId, employee.userId)),
+      db.update(tenantMemberships).set({ status: 'active' })
+        .where(and(eq(tenantMemberships.userId, employee.userId), eq(tenantMemberships.tenantId, auth.session.tenantId))),
+    ]);
+    after = { accountEnabled: true };
+  } else if (body.action === 'remove_driver') {
+    await db.update(employees).set({ isDriver: false, updatedAt: now }).where(eq(employees.id, id));
+    await db.update(driverProfiles)
+      .set({ driverStatus: 'revoked', notes: body.reason || 'Driver designation removed', updatedAt: now })
+      .where(eq(driverProfiles.employeeId, id));
+    after = { isDriver: false, driverStatus: 'revoked' };
   } else if (body.action === 'availability') {
-    if (!body.status || !AVAILABILITY_STATUSES.includes(body.status as typeof AVAILABILITY_STATUSES[number])) {
+    const canonicalAvailability = normaliseAvailability(body.status);
+    if (!canonicalAvailability || !AVAILABILITY_STATUSES.includes(canonicalAvailability as typeof AVAILABILITY_STATUSES[number])) {
       return NextResponse.json({ error: 'Invalid availability status' }, { status: 400 });
     }
     const startAt = body.startAt ? new Date(body.startAt) : now;
@@ -125,7 +164,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     await db.insert(employeeAvailability).values({
       tenantId: auth.session.tenantId,
       employeeId: id,
-      status: body.status,
+      status: canonicalAvailability,
       startAt,
       endAt,
       reason: body.reason?.trim() || null,
@@ -133,8 +172,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       supportingDocumentKey: body.supportingDocumentKey || null,
       enteredByUserId: auth.session.user.id,
     });
-    await db.update(employees).set({ availabilityStatus: body.status, updatedAt: now }).where(eq(employees.id, id));
-    after = { availabilityStatus: body.status, startAt, endAt };
+    await db.update(employees).set({ availabilityStatus: canonicalAvailability, updatedAt: now }).where(eq(employees.id, id));
+    after = { availabilityStatus: canonicalAvailability, startAt, endAt };
   } else if (body.action === 'transfer') {
     if (!body.officeId || !body.jobTitle) return NextResponse.json({ error: 'Office and job title are required' }, { status: 400 });
     await db.update(employeeAssignments).set({ isCurrent: false, endDate: now.toISOString().slice(0, 10) })

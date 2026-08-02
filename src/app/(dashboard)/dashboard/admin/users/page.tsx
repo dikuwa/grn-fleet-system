@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
+import { getEmployeeStatusDisplay } from '@/lib/employee-status';
 
 interface TenantUser {
   id: string;
@@ -47,6 +48,7 @@ interface AvailableEmployee {
   firstName: string;
   lastName: string;
   email: string | null;
+  employmentStatus: string;
   departmentName: string | null;
   officeName: string | null;
 }
@@ -756,6 +758,22 @@ export default function AdminUsersPage() {
                         <Mail className="text-ink-400 h-3 w-3" />
                         <span className="text-ink-500 text-xs">{u.email}</span>
                       </div>
+                      {u.employee && (
+                        <div className="text-ink-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                          <span className="text-ink-400">Linked staff:</span>
+                          <span className="text-ink-700 font-medium">
+                            {u.employee.firstName} {u.employee.lastName}
+                          </span>
+                          <span className="text-ink-400">·</span>
+                          <span>{u.employee.employeeNumber}</span>
+                          <Badge
+                            variant={getEmployeeStatusDisplay(u.employee.employmentStatus).variant}
+                            size="sm"
+                          >
+                            {getEmployeeStatusDisplay(u.employee.employmentStatus).label}
+                          </Badge>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">

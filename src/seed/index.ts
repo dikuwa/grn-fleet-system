@@ -39,6 +39,8 @@ import { Permissions, RoleDefinitions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { DEPARTURE_INSPECTION_ITEMS, RETURN_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
+import { normaliseEmployeeStatus } from '@/lib/employee-status';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 const ISOLATION_TENANT_ID = '00000000-0000-0000-0000-000000000002';
@@ -353,6 +355,52 @@ async function seed() {
     if (departmentId && officeId) {
       await db.insert(departmentOffices).values({ tenantId: TENANT_ID as any, departmentId, officeId }).onConflictDoNothing();
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // 8a. Kavango East employment-status correction (tenant-scoped, safe)
+  // -------------------------------------------------------------------------
+  // Imported rows can carry case variants (ACTIVE / Active / active) or legacy
+  // values. Normalise only statuses that semantically mean ACTIVE to the
+  // canonical value — archived and suspended staff are never activated. No
+  // login accounts are created, availability and driver authorisation are left
+  // untouched, and one audit entry records the whole batch.
+  console.log('Normalising Kavango East employment statuses...');
+  const kavangoEmployees = await db
+    .select({
+      id: employees.id,
+      employeeNumber: employees.employeeNumber,
+      firstName: employees.firstName,
+      lastName: employees.lastName,
+      employmentStatus: employees.employmentStatus,
+    })
+    .from(employees)
+    .where(eq(employees.tenantId, TENANT_ID as any));
+  let statusesCorrected = 0;
+  const correctedRows: Array<{ employeeNumber: string; from: string; to: string }> = [];
+  for (const employeeRecord of kavangoEmployees) {
+    const canonical = normaliseEmployeeStatus(employeeRecord.employmentStatus);
+    if (canonical !== 'active' || canonical === employeeRecord.employmentStatus) continue;
+    await db.update(employees)
+      .set({ employmentStatus: 'active', updatedAt: new Date() })
+      .where(eq(employees.id, employeeRecord.id));
+    statusesCorrected++;
+    correctedRows.push({
+      employeeNumber: employeeRecord.employeeNumber,
+      from: employeeRecord.employmentStatus,
+      to: 'active',
+    });
+  }
+  if (statusesCorrected > 0) {
+    await recordAuditEvent({
+      tenantId: TENANT_ID as any,
+      actorUserId: 'seed-system',
+      action: 'employee.status-normalised-batch',
+      entityType: 'employee',
+      after: { corrected: statusesCorrected, rows: correctedRows },
+      summary: `Normalised ${statusesCorrected} Kavango East employment status(es) to the canonical ACTIVE value`,
+      reason: 'Safe tenant-scoped correction of imported staff statuses; accounts, availability and driver authorisation unchanged',
+    });
   }
 
   // -------------------------------------------------------------------------
