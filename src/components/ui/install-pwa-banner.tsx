@@ -102,11 +102,24 @@ export function InstallPwaBanner() {
   const [dismissed, setDismissed] = useState(false);
   const [showIosHelp, setShowIosHelp] = useState(false);
 
+  useEffect(() => {
+    const dismissedAt = Number(localStorage.getItem('grn-pwa-banner-dismissed-at') || 0);
+    if (Date.now() - dismissedAt < 7 * 24 * 60 * 60 * 1000) {
+      const timer = window.setTimeout(() => setDismissed(true), 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, []);
+
+  const dismiss = () => {
+    localStorage.setItem('grn-pwa-banner-dismissed-at', String(Date.now()));
+    setDismissed(true);
+  };
+
   if (state === 'installed' || state === 'unsupported' || dismissed) return null;
 
   return (
     <>
-      <Card className="animate-in slide-in-from-bottom-4 bg-surface border-border fixed right-4 bottom-4 z-50 w-72 border shadow-lg duration-300">
+      <Card className="animate-in slide-in-from-bottom-4 bg-surface border-border fixed inset-x-3 bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px))] z-40 border shadow-lg duration-300 sm:inset-x-auto sm:right-4 sm:bottom-4 sm:w-72">
         <CardContent className="pt-4">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
@@ -119,8 +132,8 @@ export function InstallPwaBanner() {
               </div>
             </div>
             <button
-              onClick={() => setDismissed(true)}
-              className="text-ink-400 hover:text-ink-600 transition-colors"
+              onClick={dismiss}
+              className="touch-target text-ink-400 hover:text-ink-600 -mt-2 -mr-2 rounded-[8px] transition-colors"
               aria-label="Dismiss install prompt"
             >
               <X className="h-4 w-4" />
@@ -132,7 +145,12 @@ export function InstallPwaBanner() {
                 <Download className="h-3.5 w-3.5" /> Install App
               </Button>
             ) : (
-              <Button variant="primary" size="compact" className="w-full" onClick={() => setShowIosHelp(true)}>
+              <Button
+                variant="primary"
+                size="compact"
+                className="w-full"
+                onClick={() => setShowIosHelp(true)}
+              >
                 <Smartphone className="h-3.5 w-3.5" /> Install on iPhone
               </Button>
             )}
@@ -158,19 +176,25 @@ export function IosInstallDialog({ open, onClose }: { open: boolean; onClose: ()
             On iOS, use Safari&apos;s built-in Add to Home Screen:
           </DialogDescription>
         </DialogHeader>
-        <ol className="list-decimal space-y-2 pl-5 text-sm text-ink-700 dark:text-ink-300">
+        <ol className="text-ink-700 dark:text-ink-300 list-decimal space-y-2 pl-5 text-sm">
           <li>
-            Tap the <Share className="text-ink-500 inline h-3.5 w-3.5" /> Share button in the
-            Safari toolbar.
+            Tap the <Share className="text-ink-500 inline h-3.5 w-3.5" /> Share button in the Safari
+            toolbar.
           </li>
-          <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
-          <li>Tap <strong>Add</strong> (top right) to confirm.</li>
+          <li>
+            Scroll down and tap <strong>Add to Home Screen</strong>.
+          </li>
+          <li>
+            Tap <strong>Add</strong> (top right) to confirm.
+          </li>
         </ol>
-        <p className="text-ink-500 mt-2 rounded-[8px] bg-muted px-3 py-2 text-xs">
+        <p className="text-ink-500 bg-muted mt-2 rounded-[8px] px-3 py-2 text-xs">
           The app icon will appear on your home screen and open in standalone mode.
         </p>
         <DialogFooter>
-          <Button variant="primary" onClick={onClose}>Got it</Button>
+          <Button variant="primary" onClick={onClose}>
+            Got it
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

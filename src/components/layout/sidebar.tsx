@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -39,6 +39,7 @@ import {
   GitBranch,
   AlertTriangle,
   FilePlus2,
+  Menu,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -215,20 +216,32 @@ export function MobileSidebar({
   open,
   onClose,
   activeWorkspace,
+  tenantName,
+  workspaceLabel,
 }: {
   open: boolean;
   onClose: () => void;
   activeWorkspace: WorkspaceId;
+  tenantName?: string;
+  workspaceLabel?: string;
 }) {
   const pathname = usePathname();
   const navGroups = getNavGroups(activeWorkspace);
+  const drawerRef = useRef<HTMLElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   // Lock body scroll when drawer is open
   useEffect(() => {
     if (open) {
+      previousFocusRef.current = document.activeElement as HTMLElement | null;
       document.body.style.overflow = 'hidden';
+      window.setTimeout(
+        () => drawerRef.current?.querySelector<HTMLElement>('button, a')?.focus(),
+        0,
+      );
     } else {
       document.body.style.overflow = '';
+      previousFocusRef.current?.focus();
     }
     return () => {
       document.body.style.overflow = '';
@@ -240,6 +253,23 @@ export function MobileSidebar({
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
+      if (e.key === 'Tab' && drawerRef.current) {
+        const focusable = Array.from(
+          drawerRef.current.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        );
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
@@ -258,13 +288,17 @@ export function MobileSidebar({
 
       {/* Drawer */}
       <aside
+        ref={drawerRef}
+        hidden={!open}
+        inert={!open}
         className={cn(
-          'border-border bg-surface fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col border-r transition-transform duration-200 ease-out md:hidden dark:border-[#2a2a48] dark:bg-[#0f0f23]',
+          'border-border bg-surface pt-safe fixed inset-y-0 left-0 z-50 flex w-[min(88vw,320px)] flex-col border-r transition-transform duration-200 ease-out md:hidden dark:border-[#2a2a48] dark:bg-[#0f0f23]',
           open ? 'translate-x-0' : '-translate-x-full',
         )}
         role="dialog"
         aria-modal="true"
         aria-label="Navigation menu"
+        aria-hidden={!open}
       >
         {/* Header */}
         <div className="border-border flex h-16 shrink-0 items-center gap-3 border-b px-4 dark:border-[#2a2a48]">
@@ -277,11 +311,20 @@ export function MobileSidebar({
           <button
             type="button"
             onClick={onClose}
-            className="text-ink-400 hover:bg-muted hover:text-ink-700 dark:hover:text-ink-200 ml-auto flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors dark:hover:bg-white/[0.06]"
+            className="text-ink-400 hover:bg-muted hover:text-ink-700 dark:hover:text-ink-200 ml-auto flex h-11 w-11 items-center justify-center rounded-[8px] transition-colors dark:hover:bg-white/[0.06]"
             aria-label="Close navigation"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
+        </div>
+
+        <div className="border-border border-b px-4 py-3">
+          {tenantName && (
+            <p className="overflow-wrap-anywhere text-ink-950 text-sm font-medium">{tenantName}</p>
+          )}
+          <p className="text-ink-500 mt-0.5 text-xs">
+            {workspaceLabel ?? activeWorkspace.replaceAll('_', ' ')}
+          </p>
         </div>
 
         {/* Navigation */}
@@ -329,5 +372,64 @@ export function MobileSidebar({
         </nav>
       </aside>
     </>
+  );
+}
+
+export function MobileBottomNav({
+  activeWorkspace,
+  onMore,
+}: {
+  activeWorkspace: WorkspaceId;
+  onMore: () => void;
+}) {
+  const pathname = usePathname();
+  const primary =
+    activeWorkspace === 'driver'
+      ? { href: '/dashboard/driver-mobile', label: 'Trips', icon: Gauge }
+      : activeWorkspace === 'approver'
+        ? { href: '/dashboard/approvals', label: 'Approvals', icon: ClipboardCheck }
+        : { href: '/dashboard/requests', label: 'Requests', icon: FileText };
+  const items = [
+    { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
+    primary,
+    { href: '/dashboard/requests/new', label: 'New', icon: FilePlus2 },
+    { href: '/dashboard/notifications', label: 'Alerts', icon: Bell },
+  ];
+
+  return (
+    <nav
+      aria-label="Quick navigation"
+      className="mobile-bottom-nav border-border bg-surface/95 pb-safe fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t px-1 backdrop-blur md:hidden print:hidden"
+    >
+      {items.map((item) => {
+        const active =
+          pathname === item.href ||
+          (item.href !== '/dashboard' && pathname.startsWith(`${item.href}/`));
+        const Icon = item.icon;
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? 'page' : undefined}
+            className={cn(
+              'focus-ring flex min-h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-[8px] px-1 text-[11px] font-medium',
+              active ? 'text-brand-700' : 'text-ink-500',
+            )}
+          >
+            <Icon className="h-5 w-5" aria-hidden="true" />
+            <span className="max-w-full truncate">{item.label}</span>
+          </Link>
+        );
+      })}
+      <button
+        type="button"
+        onClick={onMore}
+        className="focus-ring text-ink-500 flex min-h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-[8px] px-1 text-[11px] font-medium"
+        aria-label="Open full navigation"
+      >
+        <Menu className="h-5 w-5" aria-hidden="true" />
+        <span>More</span>
+      </button>
+    </nav>
   );
 }

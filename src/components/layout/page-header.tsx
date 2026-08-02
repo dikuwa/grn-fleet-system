@@ -15,15 +15,17 @@ export function PageHeader({ title, description, children, className }: PageHead
         className,
       )}
     >
-      <div className="space-y-1">
-        <h1 className="text-xl font-[650] tracking-tight text-ink-950 sm:text-2xl">
+      <div className="min-w-0 space-y-1">
+        <h1 className="overflow-wrap-anywhere text-ink-950 text-xl font-[650] tracking-tight sm:text-2xl">
           {title}
         </h1>
-        {description && (
-          <p className="text-sm text-ink-500">{description}</p>
-        )}
+        {description && <p className="text-ink-500 text-sm">{description}</p>}
       </div>
-      {children && <div className="flex items-center gap-3">{children}</div>}
+      {children && (
+        <div className="page-header-actions flex min-w-0 flex-wrap items-center gap-2 sm:justify-end sm:gap-3">
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -34,19 +36,30 @@ interface BreadcrumbsProps {
 
 export function Breadcrumbs({ items }: BreadcrumbsProps) {
   return (
-    <nav className="flex items-center gap-2 text-xs text-ink-500">
+    <nav
+      aria-label="Breadcrumb"
+      className="text-ink-500 flex min-w-0 items-center gap-1.5 overflow-hidden text-xs sm:gap-2"
+    >
       {items.map((item, i) => (
-        <span key={i} className="flex items-center gap-2">
+        <span
+          key={i}
+          className={cn(
+            'min-w-0 items-center gap-1.5 sm:flex sm:gap-2',
+            i !== 0 && i !== items.length - 1 ? 'hidden sm:flex' : 'flex',
+          )}
+        >
           {i > 0 && <span className="text-ink-300">/</span>}
           {item.href ? (
             <a
               href={item.href}
-              className="hover:text-ink-700 transition-colors"
+              className="touch-target hover:text-ink-700 max-w-[9rem] min-w-0 justify-start truncate transition-colors sm:max-w-none"
             >
               {item.label}
             </a>
           ) : (
-            <span className="text-ink-700">{item.label}</span>
+            <span className="text-ink-700 min-w-0 truncate" title={item.label}>
+              {item.label}
+            </span>
           )}
         </span>
       ))}

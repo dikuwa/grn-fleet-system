@@ -9,7 +9,17 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/lib/use-toast';
 import { cn } from '@/lib/utils';
-import { Building2, Layers, Plus, Pencil, Archive, CheckCircle2, Users, MapPin, GitBranch } from 'lucide-react';
+import {
+  Building2,
+  Layers,
+  Plus,
+  Pencil,
+  Archive,
+  CheckCircle2,
+  Users,
+  MapPin,
+  GitBranch,
+} from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,7 +73,7 @@ function StatusPill({ active }: { active: boolean }) {
         'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
         active
           ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-          : 'bg-muted text-ink-500 dark:bg-white/[0.06] dark:text-ink-400',
+          : 'bg-muted text-ink-500 dark:text-ink-400 dark:bg-white/[0.06]',
       )}
     >
       {active ? <CheckCircle2 className="h-3 w-3" /> : <Archive className="h-3 w-3" />}
@@ -158,7 +168,11 @@ function OfficeFormDialog({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Code</Label>
-              <Input placeholder="e.g. RUO" value={code} onChange={(e) => setCode(e.target.value)} />
+              <Input
+                placeholder="e.g. RUO"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
             </div>
             <div className="space-y-1.5">
               <Label required>Type</Label>
@@ -173,28 +187,32 @@ function OfficeFormDialog({
           </div>
           <div className="space-y-1.5">
             <Label>Parent Office</Label>
-              <StyledSelect value={parentId} onChange={(e) => setParentId(e.target.value)}>
-                <option value="">— None —</option>
-                {offices
-                  .filter((o) => o.id !== editing?.id && o.isActive)
-                  .map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-              </StyledSelect>
+            <StyledSelect value={parentId} onChange={(e) => setParentId(e.target.value)}>
+              <option value="">— None —</option>
+              {offices
+                .filter((o) => o.id !== editing?.id && o.isActive)
+                .map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+            </StyledSelect>
           </div>
           <div className="space-y-1.5">
             <Label>Address</Label>
-            <Input placeholder="Physical address" value={address} onChange={(e) => setAddress(e.target.value)} />
+            <Input
+              placeholder="Physical address"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
           </div>
-          {error && <p className="text-xs text-status-error-text">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
+          {error && <p className="text-status-error-text text-xs">{error}</p>}
+          <div className="mobile-action-bar flex gap-2">
             <Button variant="primary" size="sm" type="submit" loading={saving}>
               {editing ? 'Save Changes' : 'Create Office'}
+            </Button>
+            <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
+              Cancel
             </Button>
           </div>
         </form>
@@ -275,13 +293,13 @@ function DepartmentFormDialog({
             <Label>Code</Label>
             <Input placeholder="e.g. TFM" value={code} onChange={(e) => setCode(e.target.value)} />
           </div>
-          {error && <p className="text-xs text-status-error-text">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
+          {error && <p className="text-status-error-text text-xs">{error}</p>}
+          <div className="mobile-action-bar flex gap-2">
             <Button variant="primary" size="sm" type="submit" loading={saving}>
               {editing ? 'Save Changes' : 'Create Department'}
+            </Button>
+            <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
+              Cancel
             </Button>
           </div>
         </form>
@@ -298,11 +316,17 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
   const router = useRouter();
   const { toast } = useToast();
   const [tab, setTab] = useState<'offices' | 'departments'>('offices');
-  const [officeDialog, setOfficeDialog] = useState<{ open: boolean; editing: OrganisationOffice | null }>({
+  const [officeDialog, setOfficeDialog] = useState<{
+    open: boolean;
+    editing: OrganisationOffice | null;
+  }>({
     open: false,
     editing: null,
   });
-  const [deptDialog, setDeptDialog] = useState<{ open: boolean; editing: OrganisationDepartment | null }>({
+  const [deptDialog, setDeptDialog] = useState<{
+    open: boolean;
+    editing: OrganisationDepartment | null;
+  }>({
     open: false,
     editing: null,
   });
@@ -369,11 +393,19 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
           </TabsList>
           <div className="hidden items-center gap-2 md:flex">
             {tab === 'offices' ? (
-              <Button variant="primary" size="sm" onClick={() => setOfficeDialog({ open: true, editing: null })}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setOfficeDialog({ open: true, editing: null })}
+              >
                 <Plus className="h-4 w-4" /> Add Office
               </Button>
             ) : (
-              <Button variant="primary" size="sm" onClick={() => setDeptDialog({ open: true, editing: null })}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setDeptDialog({ open: true, editing: null })}
+              >
                 <Plus className="h-4 w-4" /> Add Department
               </Button>
             )}
@@ -382,8 +414,12 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
 
         {/* ── Offices tab ── */}
         <TabsContent value="offices" className="mt-4">
-          <div className="mb-3 flex items-center justify-end md:hidden">
-            <Button variant="primary" size="sm" onClick={() => setOfficeDialog({ open: true, editing: null })}>
+          <div className="mb-3 flex items-center justify-start md:hidden">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setOfficeDialog({ open: true, editing: null })}
+            >
               <Plus className="h-4 w-4" /> Add Office
             </Button>
           </div>
@@ -392,12 +428,14 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
             <div className="border-border rounded-[10px] border border-dashed p-10 text-center">
               <Building2 className="text-ink-300 mx-auto mb-2 h-8 w-8" />
               <p className="text-sm font-medium">No offices yet</p>
-              <p className="text-ink-400 text-xs">Add your first office to begin building the structure.</p>
+              <p className="text-ink-400 text-xs">
+                Add your first office to begin building the structure.
+              </p>
             </div>
           ) : (
             <>
               {/* Desktop table */}
-              <div className="border-border overflow-hidden rounded-[10px] border bg-surface dark:bg-transparent">
+              <div className="border-border bg-surface overflow-hidden rounded-[10px] border dark:bg-transparent">
                 <table className="hidden w-full text-left text-sm md:table">
                   <thead className="border-border bg-muted/60 dark:bg-white/[0.04]">
                     <tr className="text-ink-500 text-xs tracking-wide uppercase">
@@ -416,7 +454,9 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                     {offices.map((office) => (
                       <tr key={office.id} className="hover:bg-muted/40 dark:hover:bg-white/[0.03]">
                         <td className="px-4 py-3">
-                          <p className="text-ink-950 dark:text-ink-100 font-medium">{office.name}</p>
+                          <p className="text-ink-950 dark:text-ink-100 font-medium">
+                            {office.name}
+                          </p>
                           {office.address && (
                             <p className="text-ink-400 flex items-center gap-1 text-xs">
                               <MapPin className="h-3 w-3" /> {office.address}
@@ -430,10 +470,14 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                         <td className="text-ink-500 px-4 py-3">{office.address ?? '—'}</td>
                         <td className="text-ink-500 px-4 py-3">{office.parentName ?? '—'}</td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-ink-950 dark:text-ink-100 font-semibold">{office.employeeCount}</span>
+                          <span className="text-ink-950 dark:text-ink-100 font-semibold">
+                            {office.employeeCount}
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-ink-950 dark:text-ink-100 font-semibold">{office.deptCount}</span>
+                          <span className="text-ink-950 dark:text-ink-100 font-semibold">
+                            {office.deptCount}
+                          </span>
                         </td>
                         <td className="px-4 py-3">
                           <StatusPill active={office.isActive} />
@@ -456,7 +500,11 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                                   ? 'text-ink-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400'
                                   : 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-500/10',
                               )}
-                              aria-label={office.isActive ? `Archive ${office.name}` : `Restore ${office.name}`}
+                              aria-label={
+                                office.isActive
+                                  ? `Archive ${office.name}`
+                                  : `Restore ${office.name}`
+                              }
                               title={office.isActive ? 'Archive' : 'Restore'}
                             >
                               <Archive className="h-4 w-4" />
@@ -474,7 +522,9 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                     <div key={office.id} className="space-y-2 p-4">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <p className="text-ink-950 dark:text-ink-100 font-medium">{office.name}</p>
+                          <p className="text-ink-950 dark:text-ink-100 font-medium">
+                            {office.name}
+                          </p>
                           <p className="text-ink-400 text-xs">
                             {OFFICE_TYPES[office.type] ?? office.type}
                             {office.code ? ` · ${office.code}` : ''}
@@ -504,12 +554,9 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                         >
                           <Pencil className="h-3.5 w-3.5" /> Edit
                         </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => archiveOffice(office)}
-                        >
-                          <Archive className="h-3.5 w-3.5" /> {office.isActive ? 'Archive' : 'Restore'}
+                        <Button variant="secondary" size="sm" onClick={() => archiveOffice(office)}>
+                          <Archive className="h-3.5 w-3.5" />{' '}
+                          {office.isActive ? 'Archive' : 'Restore'}
                         </Button>
                       </div>
                     </div>
@@ -522,8 +569,12 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
 
         {/* ── Departments tab ── */}
         <TabsContent value="departments" className="mt-4">
-          <div className="mb-3 flex items-center justify-end md:hidden">
-            <Button variant="primary" size="sm" onClick={() => setDeptDialog({ open: true, editing: null })}>
+          <div className="mb-3 flex items-center justify-start md:hidden">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setDeptDialog({ open: true, editing: null })}
+            >
               <Plus className="h-4 w-4" /> Add Department
             </Button>
           </div>
@@ -537,7 +588,7 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
           ) : (
             <>
               {/* Desktop table */}
-              <div className="border-border overflow-hidden rounded-[10px] border bg-surface dark:bg-transparent">
+              <div className="border-border bg-surface overflow-hidden rounded-[10px] border dark:bg-transparent">
                 <table className="hidden w-full text-left text-sm md:table">
                   <thead className="border-border bg-muted/60 dark:bg-white/[0.04]">
                     <tr className="text-ink-500 text-xs tracking-wide uppercase">
@@ -553,16 +604,27 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                   <tbody className="divide-border divide-y dark:divide-white/[0.06]">
                     {departments.map((dept) => (
                       <tr key={dept.id} className="hover:bg-muted/40 dark:hover:bg-white/[0.03]">
-                        <td className="text-ink-950 dark:text-ink-100 px-4 py-3 font-medium">{dept.name}</td>
+                        <td className="text-ink-950 dark:text-ink-100 px-4 py-3 font-medium">
+                          {dept.name}
+                        </td>
                         <td className="text-ink-500 px-4 py-3">{dept.code ?? '—'}</td>
-                        <td className="text-ink-600 dark:text-ink-300 px-4 py-3">{dept.headName ?? '—'}</td>
+                        <td className="text-ink-600 dark:text-ink-300 px-4 py-3">
+                          {dept.headName ?? '—'}
+                        </td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-ink-950 dark:text-ink-100 font-semibold">{dept.staffCount}</span>
+                          <span className="text-ink-950 dark:text-ink-100 font-semibold">
+                            {dept.staffCount}
+                          </span>
                         </td>
                         <td className="text-ink-500 px-4 py-3">
-                          {dept.officeCount > 0 ? `${dept.officeCount} office${dept.officeCount > 1 ? 's' : ''}` : '—'}
+                          {dept.officeCount > 0
+                            ? `${dept.officeCount} office${dept.officeCount > 1 ? 's' : ''}`
+                            : '—'}
                           {dept.officeNames && (
-                            <span className="text-ink-400 block max-w-[240px] truncate text-xs" title={dept.officeNames}>
+                            <span
+                              className="text-ink-400 block max-w-[240px] truncate text-xs"
+                              title={dept.officeNames}
+                            >
                               {dept.officeNames}
                             </span>
                           )}
@@ -588,7 +650,9 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                                   ? 'text-ink-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400'
                                   : 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-500/10',
                               )}
-                              aria-label={dept.isActive ? `Archive ${dept.name}` : `Restore ${dept.name}`}
+                              aria-label={
+                                dept.isActive ? `Archive ${dept.name}` : `Restore ${dept.name}`
+                              }
                               title={dept.isActive ? 'Archive' : 'Restore'}
                             >
                               <Archive className="h-4 w-4" />
@@ -619,8 +683,12 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                           <Building2 className="h-3 w-3" /> {dept.officeCount} offices
                         </span>
                       </div>
-                      {dept.headName && <p className="text-ink-500 text-xs">Head: {dept.headName}</p>}
-                      {dept.officeNames && <p className="text-ink-400 text-xs">{dept.officeNames}</p>}
+                      {dept.headName && (
+                        <p className="text-ink-500 text-xs">Head: {dept.headName}</p>
+                      )}
+                      {dept.officeNames && (
+                        <p className="text-ink-400 text-xs">{dept.officeNames}</p>
+                      )}
                       <div className="flex items-center gap-2 pt-1">
                         <Button
                           variant="secondary"
@@ -629,8 +697,13 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                         >
                           <Pencil className="h-3.5 w-3.5" /> Edit
                         </Button>
-                        <Button variant="secondary" size="sm" onClick={() => archiveDepartment(dept)}>
-                          <Archive className="h-3.5 w-3.5" /> {dept.isActive ? 'Archive' : 'Restore'}
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => archiveDepartment(dept)}
+                        >
+                          <Archive className="h-3.5 w-3.5" />{' '}
+                          {dept.isActive ? 'Archive' : 'Restore'}
                         </Button>
                       </div>
                     </div>

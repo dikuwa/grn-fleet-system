@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,6 +25,11 @@ import { EmployeeMultiSelect } from '@/components/ui/employee-multi-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { PlacesAutocomplete } from '@/components/map/places-autocomplete';
+import { MobileActionBar, ResponsiveStepper } from '@/components/ui/responsive';
+import {
+  isRouteReadyForAutomaticCalculation,
+  routeCalculationIdentity,
+} from '@/lib/responsive-routing';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,6 +76,9 @@ interface Route {
   destinationPlaceId?: string;
   originCoordinates?: { lat: number; lng: number };
   destinationCoordinates?: { lat: number; lng: number };
+  estimatedMinutes?: number;
+  routeStatus?: 'idle' | 'calculating' | 'calculated' | 'failed' | 'manual';
+  calculatedAt?: string;
 }
 
 interface RequestFormData {
@@ -659,6 +667,14 @@ function PeopleStep({
 function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[]) => void }) {
   const [calculating, setCalculating] = useState(false);
   const [calcError, setCalcError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const routesRef = useRef(routes);
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    routesRef.current = routes;
+    onChangeRef.current = onChange;
+  }, [routes, onChange]);
 
   const addRoute = () => {
     onChange([
@@ -682,15 +698,31 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
     onChange(routes.filter((r) => r.id !== id));
   };
 
-  const handleCalculateAll = async () => {
-    const validRoutes = routes.filter((r) => r.originName.trim() && r.destinationName.trim());
+  const handleCalculateAll = useCallback(async (automatic = false) => {
+    const currentRoutes = routesRef.current;
+    const validRoutes = currentRoutes.filter(
+      (r) =>
+        r.originName.trim() &&
+        r.destinationName.trim() &&
+        (!automatic || isRouteReadyForAutomaticCalculation(r)),
+    );
     if (validRoutes.length === 0) {
-      setCalcError('Add at least one route with origin and destination filled in.');
+      if (!automatic) setCalcError('Add at least one route with origin and destination filled in.');
       return;
     }
 
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setCalculating(true);
     setCalcError(null);
+    onChangeRef.current(
+      currentRoutes.map((route) =>
+        validRoutes.some((valid) => valid.id === route.id)
+          ? { ...route, routeStatus: 'calculating' as const }
+          : route,
+      ),
+    );
 
     try {
       const legs = validRoutes.map((r) => ({
@@ -702,6 +734,7 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ legs }),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -713,43 +746,67 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
 
       if (data.routes && Array.isArray(data.routes)) {
         // Map the returned routes back to our form routes by matching origin/destination
-        const updates = [...routes];
-        for (const calc of data.routes) {
-          const idx = updates.findIndex(
-            (r) =>
-              r.originName.toLowerCase().trim() === (calc.originName || '').toLowerCase().trim() &&
-              r.destinationName.toLowerCase().trim() ===
-                (calc.destinationName || '').toLowerCase().trim(),
-          );
+        const updates = [...routesRef.current];
+        for (const [resultIndex, calc] of data.routes.entries()) {
+          const routeId = validRoutes[resultIndex]?.id;
+          const idx = updates.findIndex((route) => route.id === routeId);
           if (idx !== -1) {
-            updates[idx] = { ...updates[idx], estimatedKm: Math.round(calc.distanceKm || 0) };
+            const distance = Number(calc.distanceKm);
+            if (!Number.isFinite(distance) || distance <= 0) continue;
+            updates[idx] = {
+              ...updates[idx],
+              estimatedKm: Math.round(distance),
+              estimatedMinutes: Number(calc.durationMinutes) || undefined,
+              routeStatus: 'calculated',
+              calculatedAt: new Date().toISOString(),
+            };
           }
         }
-        onChange(updates);
+        onChangeRef.current(updates);
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setCalcError(err instanceof Error ? err.message : 'Failed to calculate routes');
+      onChangeRef.current(
+        routesRef.current.map((route) =>
+          validRoutes.some((valid) => valid.id === route.id)
+            ? { ...route, routeStatus: 'failed' as const }
+            : route,
+        ),
+      );
     } finally {
-      setCalculating(false);
+      if (abortRef.current === controller) setCalculating(false);
     }
-  };
+  }, []);
+
+  const calculationKey = routeCalculationIdentity(routes);
+  const hasAutoReadyRoute = routes.some(isRouteReadyForAutomaticCalculation);
+
+  useEffect(() => {
+    if (!hasAutoReadyRoute) return;
+    const timer = window.setTimeout(() => void handleCalculateAll(true), 500);
+    return () => {
+      window.clearTimeout(timer);
+      abortRef.current?.abort();
+    };
+  }, [calculationKey, handleCalculateAll, hasAutoReadyRoute]);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-ink-500 text-sm">
           Define the travel route. Distances can be calculated automatically when Maps credentials
           are configured.
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {routes.filter((r) => r.originName.trim() && r.destinationName.trim()).length > 0 && (
             <Button
               variant="secondary"
               size="sm"
-              onClick={handleCalculateAll}
+              onClick={() => void handleCalculateAll(false)}
               disabled={calculating}
             >
-              {calculating ? 'Calculating...' : 'Calculate Routes'}
+              {calculating ? 'Calculating distance…' : 'Calculate distance'}
             </Button>
           )}
           <Button variant="secondary" size="sm" onClick={addRoute}>
@@ -792,7 +849,8 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
                         updateRoute(r.id, {
                           originName: place.name,
                           originPlaceId: place.placeId || undefined,
-                          originCoordinates: place.lat && place.lng ? { lat: place.lat, lng: place.lng } : undefined,
+                          originCoordinates:
+                            place.lat && place.lng ? { lat: place.lat, lng: place.lng } : undefined,
                         })
                       }
                       placeholder="e.g. Rundu, Kavango East"
@@ -810,7 +868,8 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
                         updateRoute(r.id, {
                           destinationName: place.name,
                           destinationPlaceId: place.placeId || undefined,
-                          destinationCoordinates: place.lat && place.lng ? { lat: place.lat, lng: place.lng } : undefined,
+                          destinationCoordinates:
+                            place.lat && place.lng ? { lat: place.lat, lng: place.lng } : undefined,
                         })
                       }
                       placeholder="e.g. Windhoek, Khomas Region"
@@ -824,15 +883,28 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
                     <input
                       type="number"
                       value={r.estimatedKm || ''}
-                      onChange={(e) => updateRoute(r.id, { estimatedKm: Number(e.target.value) })}
+                      onChange={(e) =>
+                        updateRoute(r.id, {
+                          estimatedKm: Number(e.target.value),
+                          routeStatus: 'manual',
+                          calculatedAt: new Date().toISOString(),
+                        })
+                      }
                       placeholder="e.g. 500"
                       className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
                     />
                   </div>
-                  <div className="flex items-end">
-                    <div className="border-border text-ink-500 rounded-[8px] border border-dashed px-3 py-2 text-xs">
-                      Distance calculation adapter — route distances will be calculated
-                      automatically when the routing service is configured.
+                  <div className="flex items-end" aria-live="polite">
+                    <div className="border-border text-ink-500 w-full rounded-[8px] border border-dashed px-3 py-2 text-xs">
+                      {r.routeStatus === 'calculating'
+                        ? 'Calculating driving distance and duration…'
+                        : r.routeStatus === 'calculated'
+                          ? `Automatic route · ${r.estimatedKm} km${r.estimatedMinutes ? ` · about ${Math.round(r.estimatedMinutes)} min` : ''}${r.calculatedAt ? ` · updated ${new Date(r.calculatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`
+                          : r.routeStatus === 'failed'
+                            ? 'Route could not be resolved. Check both selected places or use Calculate distance to retry.'
+                            : r.routeStatus === 'manual'
+                              ? 'Manually entered distance'
+                              : 'Select an origin and destination to calculate automatically.'}
                     </div>
                   </div>
                 </div>
@@ -1093,37 +1165,11 @@ export default function NewRequestPage() {
       />
 
       {/* Step Indicator */}
-      <div className="flex items-center gap-0.5 overflow-x-auto">
-        {STEPS.map((s, i) => {
-          const Icon = s.icon;
-          const isActive = i === step;
-          const isComplete = i < step;
-          return (
-            <div key={s.label} className="flex items-center">
-              <button
-                type="button"
-                onClick={() => {
-                  if (i < step) setStep(i);
-                }}
-                disabled={i > step}
-                className={`flex items-center gap-2 rounded-[8px] px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors ${
-                  isActive
-                    ? 'bg-brand-800 text-white'
-                    : isComplete
-                      ? 'bg-brand-50 text-brand-700'
-                      : 'bg-muted text-ink-500 disabled:cursor-not-allowed disabled:opacity-70'
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {s.label}
-              </button>
-              {i < STEPS.length - 1 && (
-                <div className={`mx-1 h-px w-4 ${i < step ? 'bg-brand-600' : 'bg-border'}`} />
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <ResponsiveStepper
+        steps={STEPS}
+        current={step}
+        onStep={(index) => index < step && setStep(index)}
+      />
 
       {/* Step Content */}
       <Card>
@@ -1138,7 +1184,21 @@ export default function NewRequestPage() {
       )}
 
       {/* Actions */}
-      <div className="flex items-center justify-between">
+      <MobileActionBar className="sm:justify-between">
+        {step < STEPS.length - 1 ? (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setStep(Math.min(STEPS.length - 1, step + 1))}
+            disabled={!canProceed()}
+          >
+            Continue <ChevronRight className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button variant="primary" size="sm" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? 'Submitting...' : 'Submit Request'}
+          </Button>
+        )}
         <Button
           variant="secondary"
           size="sm"
@@ -1147,26 +1207,10 @@ export default function NewRequestPage() {
         >
           <ChevronLeft className="h-4 w-4" /> Back
         </Button>
-        <div className="flex items-center gap-3">
-          <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/requests">Cancel</Link>
-          </Button>
-          {step < STEPS.length - 1 ? (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setStep(Math.min(STEPS.length - 1, step + 1))}
-              disabled={!canProceed()}
-            >
-              Continue <ChevronRight className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button variant="primary" size="sm" onClick={handleSubmit} disabled={submitting}>
-              {submitting ? 'Submitting...' : 'Submit Request'}
-            </Button>
-          )}
-        </div>
-      </div>
+        <Button variant="secondary" size="sm" asChild>
+          <Link href="/dashboard/requests">Cancel</Link>
+        </Button>
+      </MobileActionBar>
     </div>
   );
 }

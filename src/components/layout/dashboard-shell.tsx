@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Sidebar, MobileSidebar } from '@/components/layout/sidebar';
+import { Sidebar, MobileBottomNav, MobileSidebar } from '@/components/layout/sidebar';
 import { Topbar } from '@/components/layout/topbar';
 import { OfflineIndicator } from '@/components/ui/offline-status';
 import { OfflineSyncHandler } from '@/components/ui/offline-sync-handler';
@@ -31,7 +31,7 @@ export function DashboardShell({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="bg-canvas min-h-screen overflow-x-hidden transition-colors duration-200">
+    <div className="bg-canvas min-h-screen transition-colors duration-200">
       {/* Desktop sidebar */}
       <Sidebar
         collapsed={sidebarCollapsed}
@@ -44,6 +44,10 @@ export function DashboardShell({
         open={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
         activeWorkspace={activeWorkspace}
+        tenantName={tenantName}
+        workspaceLabel={
+          eligibleWorkspaces.find((workspace) => workspace.id === activeWorkspace)?.label
+        }
       />
 
       {/* Main content area */}
@@ -62,12 +66,13 @@ export function DashboardShell({
           eligibleWorkspaces={eligibleWorkspaces}
         />
 
-        <main className="page-enter mx-auto max-w-[1440px] min-w-0 px-4 py-6 md:px-6 lg:px-8">
+        <main className="page-enter mx-auto max-w-[1440px] min-w-0 px-3 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] min-[360px]:px-4 sm:py-6 md:px-6 md:pb-6 lg:px-8">
           <ErrorBoundary label="Dashboard">{children}</ErrorBoundary>
         </main>
         <OfflineIndicator />
         <OfflineSyncHandler />
         <InstallPwaBanner />
+        <MobileBottomNav activeWorkspace={activeWorkspace} onMore={() => setMobileMenuOpen(true)} />
       </div>
     </div>
   );

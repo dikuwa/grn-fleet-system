@@ -75,7 +75,8 @@ export function EmployeeMultiSelect({
           <Popover.Content
             align="start"
             sideOffset={4}
-            className="border-border bg-surface z-[90] w-[min(var(--radix-popover-trigger-width),calc(100vw-2rem))] min-w-[300px] rounded-xl border p-2 shadow-xl"
+            collisionPadding={12}
+            className="border-border bg-surface z-[90] w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-1.5rem)] rounded-xl border p-2 shadow-xl"
           >
             <div className="relative">
               <Search className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />

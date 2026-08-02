@@ -149,7 +149,7 @@ const StyledSelect = React.forwardRef<HTMLButtonElement, StyledSelectProps>(
             <SelectPrimitive.Content
               position="popper"
               sideOffset={4}
-              className="border-border bg-surface z-[100] max-h-80 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[10px] border p-1 shadow-lg"
+              className="border-border bg-surface z-[100] max-h-[min(20rem,60dvh)] max-w-[calc(100vw-1.5rem)] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[10px] border p-1 shadow-lg"
             >
               <SelectPrimitive.Viewport className="max-h-72 scrollbar-thin overflow-y-auto">
                 {showUnfilteredOption && (

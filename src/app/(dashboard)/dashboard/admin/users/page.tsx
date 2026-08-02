@@ -10,7 +10,7 @@ import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { SearchableEntitySelect } from '@/components/ui/searchable-entity-select';
 import {
   Users,
   Search,
@@ -133,7 +133,7 @@ function PendingInviteRow({ invite, onAction }: { invite: PendingInvite; onActio
 
   return (
     <>
-      <div className="hover:bg-muted/50 flex items-center justify-between px-5 py-3.5 transition-colors">
+      <div className="hover:bg-muted/50 flex flex-col items-start gap-3 px-4 py-3.5 transition-colors sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-sm font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
             {(invite.name || invite.email)[0].toUpperCase()}
@@ -152,14 +152,16 @@ function PendingInviteRow({ invite, onAction }: { invite: PendingInvite; onActio
                 </Badge>
               )}
             </div>
-            <div className="mt-0.5 flex items-center gap-2">
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
               <Mail className="text-ink-400 h-3 w-3" />
-              <span className="text-ink-500 text-xs">{invite.email}</span>
+              <span className="overflow-wrap-anywhere text-ink-500 min-w-0 text-xs">
+                {invite.email}
+              </span>
               <span className="text-ink-400 text-xs">· {invite.daysSinceInvite}d ago</span>
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {result && (
             <span className="text-ink-500 mr-2 max-w-[160px] truncate text-xs">{result}</span>
           )}
@@ -233,6 +235,7 @@ export default function AdminUsersPage() {
   const [inviteUsername, setInviteUsername] = useState('');
   const [inviteRoleIds, setInviteRoleIds] = useState<string[]>([]);
   const [inviteEmployeeId, setInviteEmployeeId] = useState('');
+  const [roleSearch, setRoleSearch] = useState('');
   const [deliveryMode, setDeliveryMode] = useState<'email' | 'manual'>('email');
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [inviteResult, setInviteResult] = useState<{
@@ -284,6 +287,7 @@ export default function AdminUsersPage() {
     setInviteName('');
     setInviteUsername('');
     setInviteRoleIds([]);
+    setRoleSearch('');
     setInviteEmployeeId('');
     setDeliveryMode('email');
     setShowInvite(true);
@@ -443,10 +447,20 @@ export default function AdminUsersPage() {
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label required>Staff Member</Label>
-              <StyledSelect
+              <SearchableEntitySelect
                 value={inviteEmployeeId}
-                onChange={(event) => {
-                  const employeeId = event.target.value;
+                ariaLabel="Search by name, number, email, office or department"
+                placeholder="Search by name, number, email, office or department…"
+                emptyLabel="No employee without an existing or pending account matches this search."
+                options={availableEmployees.map((employee) => ({
+                  id: employee.id,
+                  label: `${employee.firstName} ${employee.lastName}`,
+                  description: `${employee.employeeNumber} · ${employee.officeName || 'No office'}${employee.departmentName ? ` · ${employee.departmentName}` : ''}`,
+                  searchText: `${employee.email || ''} ${employee.departmentName || ''} ${employee.officeName || ''}`,
+                  status: 'Available for account',
+                }))}
+                onChange={(option) => {
+                  const employeeId = option?.id ?? '';
                   setInviteEmployeeId(employeeId);
                   const employee = availableEmployees.find((item) => item.id === employeeId);
                   if (employee) {
@@ -454,15 +468,7 @@ export default function AdminUsersPage() {
                     if (employee.email) setInviteEmail(employee.email);
                   }
                 }}
-              >
-                <option value="">Select an employee...</option>
-                {availableEmployees.map((employee) => (
-                  <option key={employee.id} value={employee.id}>
-                    {employee.employeeNumber} — {employee.firstName} {employee.lastName} (
-                    {employee.officeName || 'No office'})
-                  </option>
-                ))}
-              </StyledSelect>
+              />
               <p className="text-ink-500 text-xs">
                 Accounts must be linked to an active employee record.
               </p>
@@ -497,33 +503,43 @@ export default function AdminUsersPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Roles</Label>
+              <Input
+                value={roleSearch}
+                onChange={(event) => setRoleSearch(event.target.value)}
+                placeholder="Search permitted roles…"
+                aria-label="Search permitted roles"
+              />
               <div className="border-border bg-muted/30 max-h-44 space-y-1 overflow-y-auto rounded-[8px] border p-2">
                 {roles.length === 0 ? (
                   <p className="text-ink-400 px-2 py-1 text-xs">No roles available</p>
                 ) : (
-                  roles.map((r) => {
-                    const checked = inviteRoleIds.includes(r.id);
-                    return (
-                      <label
-                        key={r.id}
-                        className={`flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-sm transition-colors ${
-                          checked ? 'bg-brand-50 text-brand-800' : 'text-ink-700 hover:bg-muted'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="border-border text-brand-600 h-4 w-4 rounded focus:ring-brand-500"
-                          checked={checked}
-                          onChange={() => {
-                            setInviteRoleIds((prev) =>
-                              checked ? prev.filter((id) => id !== r.id) : [...prev, r.id],
-                            );
-                          }}
-                        />
-                        <span className="font-medium">{r.name}</span>
-                      </label>
-                    );
-                  })
+                  roles
+                    .filter((role) =>
+                      role.name.toLocaleLowerCase().includes(roleSearch.trim().toLocaleLowerCase()),
+                    )
+                    .map((r) => {
+                      const checked = inviteRoleIds.includes(r.id);
+                      return (
+                        <label
+                          key={r.id}
+                          className={`flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-sm transition-colors ${
+                            checked ? 'bg-brand-50 text-brand-800' : 'text-ink-700 hover:bg-muted'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="border-border text-brand-600 focus:ring-brand-500 h-4 w-4 rounded"
+                            checked={checked}
+                            onChange={() => {
+                              setInviteRoleIds((prev) =>
+                                checked ? prev.filter((id) => id !== r.id) : [...prev, r.id],
+                              );
+                            }}
+                          />
+                          <span className="font-medium">{r.name}</span>
+                        </label>
+                      );
+                    })
                 )}
               </div>
               <p className="text-ink-500 text-xs">
@@ -544,7 +560,7 @@ export default function AdminUsersPage() {
                   <input
                     type="radio"
                     name="deliveryMode"
-                    className="border-border text-brand-600 mt-0.5 h-4 w-4 accent-brand-600"
+                    className="border-border text-brand-600 accent-brand-600 mt-0.5 h-4 w-4"
                     checked={deliveryMode === 'email'}
                     onChange={() => setDeliveryMode('email')}
                   />
@@ -565,7 +581,7 @@ export default function AdminUsersPage() {
                   <input
                     type="radio"
                     name="deliveryMode"
-                    className="border-border text-brand-600 mt-0.5 h-4 w-4 accent-brand-600"
+                    className="border-border text-brand-600 accent-brand-600 mt-0.5 h-4 w-4"
                     checked={deliveryMode === 'manual'}
                     onChange={() => setDeliveryMode('manual')}
                   />
@@ -596,10 +612,7 @@ export default function AdminUsersPage() {
               </div>
             )}
 
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setShowInvite(false)}>
-                Close
-              </Button>
+            <div className="mobile-action-bar flex flex-wrap gap-2">
               <Button
                 variant="primary"
                 size="sm"
@@ -608,6 +621,9 @@ export default function AdminUsersPage() {
                 disabled={!inviteEmployeeId || !inviteEmail.trim() || isInviting}
               >
                 <Send className="h-4 w-4" /> Send Invitation
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setShowInvite(false)}>
+                Close
               </Button>
             </div>
           </div>

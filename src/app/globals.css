@@ -67,6 +67,14 @@
   --radius-input: 8px;
   --radius-card: 10px;
   --radius-dialog: 14px;
+
+  /* Responsive application shell */
+  --page-padding-mobile: 0.75rem;
+  --page-padding-tablet: 1.5rem;
+  --page-padding-desktop: 2rem;
+  --mobile-navigation-height: 3.5rem;
+  --minimum-touch-target: 44px;
+  --content-max-width: 1440px;
 }
 
 /*
@@ -207,8 +215,26 @@ body {
     background-color: var(--color-canvas);
     font-size: 14px;
     line-height: 1.5;
+    min-width: 320px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  :where(button, [role='button'], a, input, select, textarea) {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :where(input, select, textarea) {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  main :where(.flex, .grid, form, section, article, header, footer) > * {
+    min-width: 0;
+  }
+
+  main :where(table) {
+    max-width: 100%;
   }
 
   h1,
@@ -291,6 +317,78 @@ body {
       opacity: 1;
     }
   }
+
+  .overflow-wrap-anywhere {
+    overflow-wrap: anywhere;
+  }
+
+  .responsive-page {
+    container-type: inline-size;
+  }
+
+  .responsive-table {
+    overscroll-behavior-inline: contain;
+  }
+
+  .responsive-table:focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
+  }
+
+  .mobile-action-bar {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  @media (max-width: 639px) {
+    .page-header-actions {
+      width: 100%;
+      justify-content: flex-start;
+    }
+
+    .page-header-actions > * {
+      flex: 0 1 auto;
+      max-width: 100%;
+    }
+
+    .mobile-action-bar {
+      justify-content: flex-start !important;
+    }
+
+    main .justify-end {
+      justify-content: flex-start;
+    }
+
+    .mobile-action-bar > * {
+      min-width: min(100%, 9rem);
+    }
+
+    main :where(.overflow-x-auto, .table-responsive) {
+      max-width: 100%;
+      overscroll-behavior-inline: contain;
+    }
+
+    main :where(table) {
+      font-size: 0.8125rem;
+    }
+  }
+
+  @media (max-width: 359px) {
+    .stat-grid,
+    .stat-grid-auto {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 /* ===================================================================
@@ -334,6 +432,13 @@ body {
   @media (min-width: 640px) {
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 1rem;
+  }
+}
+
+@media (max-width: 359px) {
+  .stat-grid,
+  .stat-grid-auto {
+    grid-template-columns: 1fr;
   }
 }
 

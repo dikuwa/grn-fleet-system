@@ -70,10 +70,12 @@ export function EmployeeCombobox({
     return [selectedOption, ...(query.data || [])];
   }, [query.data, selectedOption]);
 
-  const emptyLabel = kind === 'driver'
-    ? 'No authorised drivers match this search.'
-    : 'No active employees match this search.';
-  const resolvedPlaceholder = placeholder || (kind === 'driver' ? 'Search drivers by name…' : 'Search employees by name…');
+  const emptyLabel =
+    kind === 'driver'
+      ? 'No authorised drivers match this search.'
+      : 'No active employees match this search.';
+  const resolvedPlaceholder =
+    placeholder || (kind === 'driver' ? 'Search drivers by name…' : 'Search employees by name…');
 
   return (
     <Popover.Root
@@ -91,17 +93,19 @@ export function EmployeeCombobox({
           <button
             type="button"
             disabled={disabled}
-            className="focus-ring flex min-h-10 w-full items-center gap-2 rounded-[8px] border border-border bg-surface px-3 py-2 text-left text-sm text-ink-950 disabled:cursor-not-allowed disabled:opacity-50"
+            className="focus-ring border-border bg-surface text-ink-950 flex min-h-10 w-full items-center gap-2 rounded-[8px] border px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50"
             role="combobox"
             aria-expanded={open}
             aria-controls={listboxId}
             aria-label={resolvedPlaceholder}
           >
-            <UserRound className="h-4 w-4 shrink-0 text-ink-400" aria-hidden="true" />
+            <UserRound className="text-ink-400 h-4 w-4 shrink-0" aria-hidden="true" />
             <span className={cn('min-w-0 flex-1 truncate', !selectedOption && 'text-ink-500')}>
-              {selectedOption ? `${selectedOption.fullName} · ${selectedOption.employeeNumber}` : resolvedPlaceholder}
+              {selectedOption
+                ? `${selectedOption.fullName} · ${selectedOption.employeeNumber}`
+                : resolvedPlaceholder}
             </span>
-            <ChevronDown className="h-4 w-4 shrink-0 text-ink-400" aria-hidden="true" />
+            <ChevronDown className="text-ink-400 h-4 w-4 shrink-0" aria-hidden="true" />
           </button>
         </Popover.Trigger>
         {value && !disabled && (
@@ -111,7 +115,7 @@ export function EmployeeCombobox({
               event.stopPropagation();
               onSelect(null);
             }}
-            className="focus-ring absolute right-8 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-[6px] text-ink-400 hover:bg-muted hover:text-ink-950"
+            className="focus-ring text-ink-400 hover:bg-muted hover:text-ink-950 absolute top-1/2 right-8 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-[6px]"
             aria-label="Clear selection"
           >
             <X className="h-3.5 w-3.5" />
@@ -122,32 +126,37 @@ export function EmployeeCombobox({
         <Popover.Content
           align="start"
           sideOffset={4}
-          className="z-[90] w-[var(--radix-popover-trigger-width)] min-w-[280px] rounded-[10px] border border-border bg-surface p-1 shadow-lg outline-none"
+          collisionPadding={12}
+          className="border-border bg-surface z-[90] w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-1.5rem)] rounded-[10px] border p-1 shadow-lg outline-none"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >
-          <div className="relative border-b border-border p-2">
-            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+          <div className="border-border relative border-b p-2">
+            <Search className="text-ink-400 absolute top-1/2 left-4 h-4 w-4 -translate-y-1/2" />
             <input
               autoFocus
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={resolvedPlaceholder}
-              className="h-10 w-full rounded-[8px] border border-border bg-canvas pl-9 pr-3 text-sm text-ink-950 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-brand-600"
+              className="border-border bg-canvas text-ink-950 placeholder:text-ink-500 focus:ring-brand-600 h-10 w-full rounded-[8px] border pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
               aria-controls={listboxId}
             />
           </div>
-          <div id={listboxId} role="listbox" className="scrollbar-thin max-h-72 overflow-y-auto p-1">
+          <div
+            id={listboxId}
+            role="listbox"
+            className="max-h-72 scrollbar-thin overflow-y-auto p-1"
+          >
             {query.isLoading || query.isFetching ? (
-              <div className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-ink-500">
+              <div className="text-ink-500 flex items-center justify-center gap-2 px-3 py-6 text-sm">
                 <Loader2 className="h-4 w-4 animate-spin" /> Searching…
               </div>
             ) : query.isError ? (
-              <p className="px-3 py-6 text-center text-sm text-status-error-text">
+              <p className="text-status-error-text px-3 py-6 text-center text-sm">
                 {query.error instanceof Error ? query.error.message : 'Unable to search employees.'}
               </p>
             ) : options.length === 0 ? (
-              <p className="px-3 py-6 text-center text-sm text-ink-500">{emptyLabel}</p>
+              <p className="text-ink-500 px-3 py-6 text-center text-sm">{emptyLabel}</p>
             ) : (
               options.map((option) => {
                 const isSelected = option.id === value;
@@ -161,23 +170,27 @@ export function EmployeeCombobox({
                       onSelect(option);
                       setOpen(false);
                     }}
-                    className="focus-ring flex w-full items-start gap-3 rounded-[7px] px-3 py-2.5 text-left hover:bg-muted"
+                    className="focus-ring hover:bg-muted flex w-full items-start gap-3 rounded-[7px] px-3 py-2.5 text-left"
                   >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">
-                      {option.firstName[0]}{option.lastName[0]}
+                    <span className="bg-brand-50 text-brand-700 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
+                      {option.firstName[0]}
+                      {option.lastName[0]}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-ink-950">{option.fullName}</span>
-                      <span className="block truncate text-xs text-ink-500">
-                        {option.employeeNumber}{option.jobTitle ? ` · ${option.jobTitle}` : ''}
+                      <span className="text-ink-950 block truncate text-sm font-medium">
+                        {option.fullName}
+                      </span>
+                      <span className="text-ink-500 block truncate text-xs">
+                        {option.employeeNumber}
+                        {option.jobTitle ? ` · ${option.jobTitle}` : ''}
                       </span>
                       {kind === 'driver' && option.availabilityStatus && (
-                        <span className="mt-0.5 block text-[11px] capitalize text-ink-500">
+                        <span className="text-ink-500 mt-0.5 block text-[11px] capitalize">
                           {option.availabilityStatus.replaceAll('_', ' ')}
                         </span>
                       )}
                     </span>
-                    {isSelected && <Check className="mt-1 h-4 w-4 shrink-0 text-brand-700" />}
+                    {isSelected && <Check className="text-brand-700 mt-1 h-4 w-4 shrink-0" />}
                   </button>
                 );
               })

@@ -8,8 +8,8 @@ function Card({ className, hover, children, ...props }: CardProps) {
   return (
     <div
       className={cn(
-        'rounded-[10px] border border-border bg-surface',
-        hover && 'transition-all hover:border-brand-100 hover:shadow-sm',
+        'border-border bg-surface rounded-[10px] border',
+        hover && 'hover:border-brand-100 transition-all hover:shadow-sm',
         className,
       )}
       {...props}
@@ -22,36 +22,32 @@ function Card({ className, hover, children, ...props }: CardProps) {
 function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('flex items-center justify-between gap-4 px-5 py-4', className)}
+      className={cn(
+        'flex min-w-0 flex-wrap items-center justify-between gap-3 px-4 py-4 sm:gap-4 sm:px-5',
+        className,
+      )}
       {...props}
     />
   );
 }
 
 function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return (
-    <h3 className={cn('text-sm font-semibold text-ink-950', className)} {...props} />
-  );
+  return <h3 className={cn('text-ink-950 text-sm font-semibold', className)} {...props} />;
 }
 
-function CardDescription({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLParagraphElement>) {
-  return (
-    <p className={cn('text-sm text-ink-500', className)} {...props} />
-  );
+function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
+  return <p className={cn('text-ink-500 text-sm', className)} {...props} />;
 }
 
 function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('px-5 pb-4', className)} {...props} />;
+  return <div className={cn('min-w-0 px-4 pb-4 sm:px-5', className)} {...props} />;
 }
 
 function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        'flex items-center justify-between gap-4 border-t border-border px-5 py-3',
+        'border-border flex min-w-0 flex-wrap items-center gap-3 border-t px-4 py-3 sm:justify-between sm:px-5',
         className,
       )}
       {...props}
@@ -79,13 +75,9 @@ export function StatCard({ title, value, description, icon, trend, className }: 
       <CardContent>
         <div className="flex items-start justify-between pt-4">
           <div className="space-y-1">
-            <p className="text-xs font-medium uppercase tracking-wider text-ink-500">
-              {title}
-            </p>
-            <p className="text-2xl font-[650] tabular-nums text-ink-950">{value}</p>
-            {description && (
-              <p className="text-xs text-ink-500">{description}</p>
-            )}
+            <p className="text-ink-500 text-xs font-medium tracking-wider uppercase">{title}</p>
+            <p className="text-ink-950 text-2xl font-[650] tabular-nums">{value}</p>
+            {description && <p className="text-ink-500 text-xs">{description}</p>}
             {trend && (
               <p
                 className={cn(
@@ -98,7 +90,7 @@ export function StatCard({ title, value, description, icon, trend, className }: 
             )}
           </div>
           {icon && (
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+            <div className="bg-brand-50 text-brand-700 flex h-10 w-10 items-center justify-center rounded-lg">
               {icon}
             </div>
           )}

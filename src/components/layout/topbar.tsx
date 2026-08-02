@@ -42,6 +42,7 @@ interface TopbarProps {
 
 export function Topbar({
   onMenuClick,
+  tenantName,
   userId,
   roleNames,
   activeWorkspace,
@@ -134,11 +135,11 @@ export function Topbar({
   };
 
   return (
-    <header className="border-border bg-surface sticky top-0 z-30 flex h-16 items-center gap-4 border-b px-4 md:px-6">
+    <header className="border-border bg-surface pt-safe sticky top-0 z-30 flex min-h-16 items-center gap-2 border-b px-3 min-[360px]:gap-3 min-[360px]:px-4 md:gap-4 md:px-6">
       {/* Mobile menu trigger */}
       <button
         onClick={onMenuClick}
-        className="text-ink-500 hover:bg-muted flex h-9 w-9 items-center justify-center rounded-[8px] md:hidden"
+        className="focus-ring text-ink-500 hover:bg-muted flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] md:hidden"
         aria-label="Open navigation menu"
       >
         <Menu className="h-5 w-5" />
@@ -196,7 +197,7 @@ export function Topbar({
 
           {/* Account dropdown */}
           {showAccountMenu && (
-            <div className="border-border bg-surface absolute top-10 right-0 z-50 w-64 rounded-[10px] border p-1 shadow-lg dark:shadow-[0_4px_16px_rgba(0,0,0,0.4)]">
+            <div className="border-border bg-surface fixed inset-x-3 top-[calc(4rem+env(safe-area-inset-top,0px))] z-50 max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-[10px] border p-1 shadow-lg min-[360px]:left-auto min-[360px]:w-72 sm:absolute sm:inset-x-auto sm:top-10 sm:right-0 sm:w-64 dark:shadow-[0_4px_16px_rgba(0,0,0,0.4)]">
               {/* User info header */}
               <div className="border-border border-b px-3 py-3">
                 <div className="flex items-center gap-3">
@@ -210,6 +211,7 @@ export function Topbar({
                       {displayName}
                     </p>
                     {roleLabel && <p className="text-ink-500 truncate text-xs">{roleLabel}</p>}
+                    {tenantName && <p className="text-ink-500 truncate text-xs">{tenantName}</p>}
                   </div>
                 </div>
               </div>

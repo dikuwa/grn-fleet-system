@@ -10,25 +10,22 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: 'bg-brand-800 text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] active:bg-brand-900',
-        secondary:
-          'border border-border bg-surface text-ink-700 hover:bg-muted active:bg-border',
+        primary:
+          'bg-brand-800 text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] active:bg-brand-900',
+        secondary: 'border border-border bg-surface text-ink-700 hover:bg-muted active:bg-border',
         tertiary: 'text-ink-700 hover:bg-muted active:bg-border',
-        destructive:
-          'bg-status-error-text text-white hover:bg-red-700 active:bg-red-800',
+        destructive: 'bg-status-error-text text-white hover:bg-red-700 active:bg-red-800',
         ghost: 'text-ink-500 hover:text-ink-700 hover:bg-muted',
-        outline:
-          'border border-border bg-transparent text-ink-700 hover:bg-muted',
-        emergency:
-          'bg-status-emergency-text text-white hover:bg-rose-700 active:bg-rose-800',
+        outline: 'border border-border bg-transparent text-ink-700 hover:bg-muted',
+        emergency: 'bg-status-emergency-text text-white hover:bg-rose-700 active:bg-rose-800',
       },
       size: {
         default: 'h-10 px-4',
-        sm: 'h-9 px-3 text-xs',
+        sm: 'min-h-11 px-3 text-xs sm:min-h-9',
         lg: 'h-11 px-6 text-base',
-        compact: 'h-9 px-3',
-        icon: 'h-10 w-10',
-        'icon-sm': 'h-9 w-9',
+        compact: 'min-h-11 px-3 sm:min-h-9',
+        icon: 'h-11 w-11 sm:h-10 sm:w-10',
+        'icon-sm': 'h-11 w-11 sm:h-9 sm:w-9',
       },
     },
     defaultVariants: {
@@ -39,8 +36,7 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   loading?: boolean;
   asChild?: boolean;
 }
@@ -48,16 +44,14 @@ export interface ButtonProps
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, loading, disabled, asChild, children, ...props }, ref) => {
     if (asChild) {
-      const child = React.Children.toArray(children).find(React.isValidElement) as React.ReactElement<{ className?: string }> | undefined;
+      const child = React.Children.toArray(children).find(React.isValidElement) as
+        React.ReactElement<{ className?: string }> | undefined;
       if (!child) return null;
-      return React.cloneElement(
-        child,
-        {
-          className: cn(buttonVariants({ variant, size }), child.props.className, className),
-          ref,
-          ...props,
-        } as Record<string, unknown>,
-      );
+      return React.cloneElement(child, {
+        className: cn(buttonVariants({ variant, size }), child.props.className, className),
+        ref,
+        ...props,
+      } as Record<string, unknown>);
     }
 
     return (

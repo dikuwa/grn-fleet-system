@@ -5,15 +5,10 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
-import {
-  Car,
-  AlertTriangle,
-  Loader2,
-  RefreshCw,
-  WifiOff
-} from 'lucide-react';
+import { Car, AlertTriangle, Loader2, RefreshCw, WifiOff } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { ResponsiveMapContainer, ResponsiveStatsGrid } from '@/components/ui/responsive';
 
 interface VehicleMarker {
   id: string;
@@ -32,7 +27,14 @@ interface VehicleMarker {
 
 export default function FleetMapPage() {
   const [vehicles, setVehicles] = useState<VehicleMarker[]>([]);
-  const [summary, setSummary] = useState({ total: 0, available: 0, onTrip: 0, maintenance: 0, outOfService: 0, withDefects: 0 });
+  const [summary, setSummary] = useState({
+    total: 0,
+    available: 0,
+    onTrip: 0,
+    maintenance: 0,
+    outOfService: 0,
+    withDefects: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleMarker | null>(null);
@@ -50,7 +52,16 @@ export default function FleetMapPage() {
       if (!res.ok) throw new Error('Failed to load map data');
       const json = await res.json();
       setVehicles(json.vehicles || []);
-      setSummary(json.summary || { total: 0, available: 0, onTrip: 0, maintenance: 0, outOfService: 0, withDefects: 0 });
+      setSummary(
+        json.summary || {
+          total: 0,
+          available: 0,
+          onTrip: 0,
+          maintenance: 0,
+          outOfService: 0,
+          withDefects: 0,
+        },
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
     } finally {
@@ -64,28 +75,30 @@ export default function FleetMapPage() {
     fetchData();
   }, [fetchData]);
 
-  const renderMarkers = useCallback((map: L.Map, vehiclesList: VehicleMarker[], statusFilter: string) => {
-    // Clear old markers
-    markersRef.current.forEach((m) => map.removeLayer(m));
-    markersRef.current = [];
+  const renderMarkers = useCallback(
+    (map: L.Map, vehiclesList: VehicleMarker[], statusFilter: string) => {
+      // Clear old markers
+      markersRef.current.forEach((m) => map.removeLayer(m));
+      markersRef.current = [];
 
-    const filtered = statusFilter === 'all'
-      ? vehiclesList
-      : vehiclesList.filter((v) => v.status === statusFilter);
+      const filtered =
+        statusFilter === 'all'
+          ? vehiclesList
+          : vehiclesList.filter((v) => v.status === statusFilter);
 
-    filtered.forEach((v) => {
-      if (!v.location) return;
+      filtered.forEach((v) => {
+        if (!v.location) return;
 
-      const marker = L.circleMarker([v.location.lat, v.location.lng], {
-        radius: 10,
-        fillColor: v.markerColor,
-        color: '#ffffff',
-        weight: 2,
-        opacity: 1,
-        fillOpacity: 0.8,
-      });
+        const marker = L.circleMarker([v.location.lat, v.location.lng], {
+          radius: 10,
+          fillColor: v.markerColor,
+          color: '#ffffff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.8,
+        });
 
-      marker.bindPopup(`
+        marker.bindPopup(`
         <div style="font-family: system-ui, sans-serif; min-width: 200px;">
           <p style="font-weight: 600; margin: 0 0 4px; font-size: 14px;">
             ${v.make} ${v.model}
@@ -106,13 +119,28 @@ export default function FleetMapPage() {
         </div>
       `);
 
-      marker.on('click', () => {
-        setSelectedVehicle(v);
-      });
+        marker.on('click', () => {
+          setSelectedVehicle(v);
+        });
 
-      marker.addTo(map);
-      markersRef.current.push(marker);
-    });
+        marker.addTo(map);
+        markersRef.current.push(marker);
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const resize = () =>
+      window.requestAnimationFrame(() => mapInstanceRef.current?.invalidateSize());
+    const observer = new ResizeObserver(resize);
+    observer.observe(mapRef.current);
+    window.addEventListener('orientationchange', resize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('orientationchange', resize);
+    };
   }, []);
 
   // Initialize map
@@ -127,7 +155,8 @@ export default function FleetMapPage() {
     });
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 18,
     }).addTo(map);
 
@@ -148,21 +177,30 @@ export default function FleetMapPage() {
 
   const statusColor = (s: string): string => {
     switch (s) {
-      case 'available': return 'bg-green-500';
-      case 'issued': case 'allocated': return 'bg-blue-500';
-      case 'maintenance': return 'bg-amber-500';
-      case 'out_of_service': case 'written_off': return 'bg-red-500';
-      default: return 'bg-gray-300';
+      case 'available':
+        return 'bg-green-500';
+      case 'issued':
+      case 'allocated':
+        return 'bg-blue-500';
+      case 'maintenance':
+        return 'bg-amber-500';
+      case 'out_of_service':
+      case 'written_off':
+        return 'bg-red-500';
+      default:
+        return 'bg-gray-300';
     }
   };
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Fleet', href: '/dashboard/fleet' },
-        { label: 'Fleet Map' },
-      ]} />
+      <Breadcrumbs
+        items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Fleet', href: '/dashboard/fleet' },
+          { label: 'Fleet Map' },
+        ]}
+      />
       <PageHeader
         title="Fleet Map"
         description="Live view of vehicle positions by office and status"
@@ -173,49 +211,87 @@ export default function FleetMapPage() {
         </span>
         <Button variant="secondary" size="sm" onClick={fetchData} loading={loading}>
           <RefreshCw className="h-4 w-4" />
+          Refresh map
         </Button>
       </PageHeader>
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-ink-400" />
+          <Loader2 className="text-ink-400 h-8 w-8 animate-spin" />
         </div>
       ) : error ? (
         <div className="flex flex-col items-center gap-3 py-16">
-          <AlertTriangle className="h-8 w-8 text-status-error-text" />
-          <p className="text-sm text-ink-500">{error}</p>
-          <Button variant="secondary" size="sm" onClick={fetchData}>Retry</Button>
+          <AlertTriangle className="text-status-error-text h-8 w-8" />
+          <p className="text-ink-500 text-sm">{error}</p>
+          <Button variant="secondary" size="sm" onClick={fetchData}>
+            Retry
+          </Button>
         </div>
       ) : (
         <>
           {/* Status Summary */}
-          <div className="grid gap-3 sm:grid-cols-5">
-            <Card><CardContent className="pt-3">
-              <div className="text-center"><p className="text-lg font-[650]">{summary.total}</p><p className="text-xs text-ink-500">Total</p></div>
-            </CardContent></Card>
-            <Card><CardContent className="pt-3">
-              <div className="text-center"><p className="text-lg font-[650] text-green-600">{summary.available}</p><p className="text-xs text-ink-500">Available</p></div>
-            </CardContent></Card>
-            <Card><CardContent className="pt-3">
-              <div className="text-center"><p className="text-lg font-[650] text-blue-600">{summary.onTrip}</p><p className="text-xs text-ink-500">On Trip</p></div>
-            </CardContent></Card>
-            <Card><CardContent className="pt-3">
-              <div className="text-center"><p className="text-lg font-[650] text-amber-600">{summary.maintenance}</p><p className="text-xs text-ink-500">Maintenance</p></div>
-            </CardContent></Card>
-            <Card><CardContent className="pt-3">
-              <div className="text-center"><p className="text-lg font-[650] text-red-600">{summary.outOfService}</p><p className="text-xs text-ink-500">Out of Service</p></div>
-            </CardContent></Card>
-          </div>
+          <ResponsiveStatsGrid className="lg:grid-cols-5">
+            <Card>
+              <CardContent className="pt-3">
+                <div className="text-center">
+                  <p className="text-lg font-[650]">{summary.total}</p>
+                  <p className="text-ink-500 text-xs">Total</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-3">
+                <div className="text-center">
+                  <p className="text-lg font-[650] text-green-600">{summary.available}</p>
+                  <p className="text-ink-500 text-xs">Available</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-3">
+                <div className="text-center">
+                  <p className="text-lg font-[650] text-blue-600">{summary.onTrip}</p>
+                  <p className="text-ink-500 text-xs">On Trip</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-3">
+                <div className="text-center">
+                  <p className="text-lg font-[650] text-amber-600">{summary.maintenance}</p>
+                  <p className="text-ink-500 text-xs">Maintenance</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-3">
+                <div className="text-center">
+                  <p className="text-lg font-[650] text-red-600">{summary.outOfService}</p>
+                  <p className="text-ink-500 text-xs">Out of Service</p>
+                </div>
+              </CardContent>
+            </Card>
+          </ResponsiveStatsGrid>
 
           {/* Map + Sidebar */}
-          <div className="flex flex-col lg:flex-row gap-4">
+          <div className="flex flex-col gap-4 lg:flex-row">
             {/* Map */}
             <div className="flex-1">
-              <div ref={mapRef} className="h-[500px] rounded-[10px] border border-border overflow-hidden" style={{ minHeight: '400px' }} />
+              <ResponsiveMapContainer className="border-border h-[360px] border sm:h-[440px] lg:h-[500px]">
+                <div ref={mapRef} className="h-full w-full" />
+              </ResponsiveMapContainer>
+              {!vehicles.some((vehicle) => vehicle.location) && (
+                <p
+                  className="bg-muted text-ink-500 mt-2 rounded-[8px] px-3 py-2 text-sm"
+                  role="status"
+                >
+                  No static or GPS positions are available for the current vehicles.
+                </p>
+              )}
             </div>
 
             {/* Sidebar */}
-            <div className="w-full lg:w-72 space-y-3">
+            <div className="w-full space-y-3 lg:w-72">
               {/* Status Filter */}
               <Card>
                 <CardContent className="pt-3">
@@ -256,13 +332,17 @@ export default function FleetMapPage() {
                   <CardContent>
                     <div className="space-y-2 text-sm">
                       <p className="text-ink-500">{selectedVehicle.licenceNumber}</p>
-                      <p className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium text-white ${statusColor(selectedVehicle.status)}`}>
+                      <p
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium text-white ${statusColor(selectedVehicle.status)}`}
+                      >
                         {selectedVehicle.status.replace(/_/g, ' ')}
                       </p>
                       <p className="text-ink-500">Office: {selectedVehicle.office.name}</p>
-                      <p className="text-ink-500">Odometer: {selectedVehicle.currentOdometer.toLocaleString()} km</p>
+                      <p className="text-ink-500">
+                        Odometer: {selectedVehicle.currentOdometer.toLocaleString()} km
+                      </p>
                       {selectedVehicle.openDefects > 0 && (
-                        <p className="text-red-600 flex items-center gap-1">
+                        <p className="flex items-center gap-1 text-red-600">
                           <AlertTriangle className="h-3.5 w-3.5" />
                           {selectedVehicle.openDefects} open defect(s)
                         </p>
@@ -278,11 +358,23 @@ export default function FleetMapPage() {
                   <CardTitle className="text-sm">Legend</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-1.5 text-xs text-ink-500">
-                    <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-green-500" />Available</div>
-                    <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-blue-500" />On Trip / Allocated</div>
-                    <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-amber-500" />In Maintenance</div>
-                    <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-red-500" />Out of Service</div>
+                  <div className="text-ink-500 space-y-1.5 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="h-3 w-3 rounded-full bg-green-500" />
+                      Available
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="h-3 w-3 rounded-full bg-blue-500" />
+                      On Trip / Allocated
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="h-3 w-3 rounded-full bg-amber-500" />
+                      In Maintenance
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="h-3 w-3 rounded-full bg-red-500" />
+                      Out of Service
+                    </div>
                   </div>
                 </CardContent>
               </Card>
