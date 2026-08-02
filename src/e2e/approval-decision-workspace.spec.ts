@@ -25,14 +25,14 @@ async function openFirstAssignedApproval(page: Page, knownPath?: string) {
   if (knownPath) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await page.goto(knownPath, { waitUntil: 'load' });
-      const summary = page.getByRole('heading', { name: 'Request Decision Summary' });
+      const summary = page.getByRole('heading', { name: 'Request Summary' });
       if (await summary.isVisible().catch(() => false)) {
         await page.waitForTimeout(500);
         return;
       }
       await page.waitForTimeout(500);
     }
-    await expect(page.getByRole('heading', { name: 'Request Decision Summary' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Request Summary' })).toBeVisible();
     return;
   }
   await page.goto('/dashboard/approvals', { waitUntil: 'load' });
@@ -44,7 +44,7 @@ async function openFirstAssignedApproval(page: Page, knownPath?: string) {
   const href = await link.getAttribute('href');
   expect(href).toBeTruthy();
   await page.goto(href!, { waitUntil: 'load' });
-  await expect(page.getByRole('heading', { name: 'Request Decision Summary' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Request Summary' })).toBeVisible();
   await page.waitForTimeout(500);
 }
 
@@ -70,6 +70,15 @@ test('supervisor can review a complete decision workspace and contextual action 
     '/dashboard/approvals/e71bed4c-0132-4c43-b50b-440b3c0554d0',
   );
   await expectNoPageOverflow(page);
+  const mobileAction = page.getByTestId('mobile-approval-action');
+  await expect(mobileAction).toBeVisible();
+  await expect(mobileAction).toHaveCSS('position', 'fixed');
+  const actionBox = await mobileAction.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom };
+  });
+  expect(actionBox.top).toBeGreaterThan(0);
+  expect(actionBox.bottom).toBeLessThanOrEqual(844 - 56);
 
   const title = await page.getByRole('heading', { level: 1 }).textContent();
   expect(title).not.toMatch(/^GRN\//);
@@ -90,6 +99,7 @@ test('supervisor can review a complete decision workspace and contextual action 
   await expect(page.getByRole('heading', { name: 'Action History' })).toBeVisible();
 
   const axe = await new AxeBuilder({ page })
+    .include('[data-testid="approval-decision-workspace"]')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
     .analyze();
   const blocking = axe.violations.filter(
@@ -141,7 +151,19 @@ test('decision workspace remains contained on desktop dark mode', async ({ brows
   await expect(page.locator('html')).toHaveClass(/dark/);
   await page.getByRole('button', { name: 'Expand request details' }).click();
   await expect(page.getByRole('heading', { name: 'Journey' })).toBeVisible();
+  const detailColumns = await page
+    .getByTestId('approval-request-details')
+    .evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length);
+  expect(detailColumns).toBe(5);
   await expectNoPageOverflow(page);
+  const axe = await new AxeBuilder({ page })
+    .include('[data-testid="approval-decision-workspace"]')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  const blocking = axe.violations.filter(
+    (violation) => violation.impact === 'critical' || violation.impact === 'serious',
+  );
+  expect(blocking, blocking.map((violation) => violation.id).join(', ')).toEqual([]);
   await context.close();
   await api.dispose();
 });

@@ -325,18 +325,20 @@ export default async function ApprovalDetailPage({ params }: PageProps) {
         title={title}
         description={`Transport Request · ${instance.requestReference} · ${workspaceData.workflowName} · Step ${instance.currentStepOrder} of ${steps.length}`}
       >
-        {detail.canAct && (
-          <Button variant="primary" size="sm" asChild>
-            <Link href={`/dashboard/approvals/${instance.id}/action`}>
-              Review &amp; Take Action
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" asChild>
+            <Link href="/dashboard/approvals">
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Back
             </Link>
           </Button>
-        )}
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/approvals">
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Back
-          </Link>
-        </Button>
+          {detail.canAct && (
+            <Button variant="primary" size="sm" asChild>
+              <Link href={`/dashboard/approvals/${instance.id}/action`}>
+                Review &amp; Take Action
+              </Link>
+            </Button>
+          )}
+        </div>
       </PageHeader>
       <ApprovalDecisionWorkspace data={workspaceData} />
     </div>

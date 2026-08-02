@@ -4,17 +4,19 @@ import Link from 'next/link';
 import {
   AlertTriangle,
   ArrowRight,
+  Building2,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
-  ExternalLink,
   Info,
   MapPin,
   Paperclip,
   Route,
+  UserRound,
   Users,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -174,6 +176,40 @@ function Detail({ label, value }: { label: string; value?: React.ReactNode }) {
   );
 }
 
+function CompactMetadata({
+  icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  detail?: React.ReactNode;
+}) {
+  return (
+    <div className="relative min-w-0 pl-10">
+      <dt className="text-ink-500 text-[11px] font-medium">
+        <span
+          className="bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-200 absolute top-0 left-0 flex h-8 w-8 items-center justify-center rounded-[8px]"
+          aria-hidden="true"
+        >
+          {icon}
+        </span>
+        {label}
+      </dt>
+      <dd className="overflow-wrap-anywhere text-ink-950 mt-0.5 text-sm leading-5 font-medium">
+        {value}
+        {detail && (
+          <span className="overflow-wrap-anywhere text-ink-500 mt-0.5 block text-xs leading-4">
+            {detail}
+          </span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
 function SummarySection({
   title,
   icon,
@@ -242,22 +278,50 @@ function PeopleList({ people }: { people: ApprovalDecisionWorkspaceData['passeng
   );
 }
 
+function MobileApprovalAction({ href }: { href: string }) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <div
+      data-testid="mobile-approval-action"
+      className="border-border bg-surface/95 fixed inset-x-3 z-40 rounded-[10px] border p-2 shadow-lg backdrop-blur md:hidden"
+      style={{
+        bottom: 'calc(var(--mobile-nav-height, 64px) + env(safe-area-inset-bottom, 0px) + 0.5rem)',
+      }}
+    >
+      <Button variant="primary" className="w-full" asChild>
+        <Link href={href}>Review &amp; Take Action</Link>
+      </Button>
+    </div>,
+    document.body,
+  );
+}
+
 export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWorkspaceData }) {
   const [expanded, setExpanded] = useState(false);
   const travellerCount = data.passengers.length + 1;
+  const journeyDetail = [
+    data.journey.distanceKm ? `${data.journey.distanceKm.toLocaleString()} km` : null,
+    data.journey.durationMinutes ? formatDuration(data.journey.durationMinutes) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
-    <div className="space-y-6">
+    <div
+      data-testid="approval-decision-workspace"
+      className={cn('space-y-6', data.canAct && 'pb-24 md:pb-0')}
+    >
       <Card>
         <CardHeader className="border-border border-b">
-          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <CardTitle className="overflow-wrap-anywhere text-lg">
-                Request Decision Summary
-              </CardTitle>
-              <p className="overflow-wrap-anywhere text-ink-950 mt-1 text-base font-semibold">
-                {data.title}
-              </p>
+              <CardTitle className="overflow-wrap-anywhere text-lg">Request Summary</CardTitle>
+              <p className="overflow-wrap-anywhere text-ink-500 mt-1 text-xs">{data.reference}</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Badge variant={statusVariant(data.workflowStatus)} size="sm">
                   {humanize(data.workflowStatus)}
@@ -270,32 +334,40 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
                 </Badge>
               </div>
             </div>
-            <Button variant="secondary" size="sm" asChild>
-              <Link href={`/dashboard/requests/${data.requestId}`}>
-                Open full request <ExternalLink className="h-4 w-4" aria-hidden="true" />
-              </Link>
-            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-5 pt-4">
-          <dl className="grid min-w-0 grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-4">
-            <Detail label="Reference" value={data.reference} />
-            <Detail label="Requester" value={data.requester.name} />
-            <Detail
+          <dl className="grid min-w-0 grid-cols-1 gap-4 min-[520px]:grid-cols-2 lg:grid-cols-5">
+            <CompactMetadata
+              icon={<UserRound className="h-4 w-4" />}
+              label="Requester"
+              value={data.requester.name}
+              detail={data.requester.jobTitle || 'Requester'}
+            />
+            <CompactMetadata
+              icon={<Building2 className="h-4 w-4" />}
               label="Department / Directorate"
               value={data.requester.department || data.requester.directorate}
+              detail={data.requester.department && data.requester.directorate}
             />
-            <Detail label="Current stage" value={data.currentStepLabel} />
-            <Detail
+            <CompactMetadata
+              icon={<CalendarDays className="h-4 w-4" />}
               label="Travel dates"
-              value={`${formatDateTime(data.journey.startAt)} – ${formatDateTime(data.journey.endAt)}`}
+              value={formatDateTime(data.journey.startAt)}
+              detail={`Returns ${formatDateTime(data.journey.endAt)}`}
             />
-            <Detail
+            <CompactMetadata
+              icon={<Route className="h-4 w-4" />}
               label="Route"
               value={`${data.journey.origin || 'Not provided'} → ${data.journey.destination || 'Not provided'}`}
+              detail={journeyDetail || 'Distance and duration not provided'}
             />
-            <Detail label="Travellers" value={`${travellerCount} total`} />
-            <Detail label="Vehicle request" value={data.vehicle.requestedType || 'Not provided'} />
+            <CompactMetadata
+              icon={<Users className="h-4 w-4" />}
+              label="Travellers / vehicle"
+              value={`${travellerCount} ${travellerCount === 1 ? 'traveller' : 'travellers'}`}
+              detail={data.vehicle.requestedType || 'Vehicle type not provided'}
+            />
           </dl>
 
           <section
@@ -305,7 +377,7 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
             <div className="flex flex-wrap items-center gap-2">
               <h2
                 id="decision-brief-title"
-                className="text-brand-900 dark:text-brand-100 text-sm font-semibold"
+                className="text-brand-900 text-sm font-semibold dark:text-white"
               >
                 {data.brief.aiGenerated ? 'Decision Brief (AI Generated)' : 'Decision Brief'}
               </h2>
@@ -315,11 +387,11 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
                 </Badge>
               )}
             </div>
-            <p className="overflow-wrap-anywhere text-ink-800 dark:text-ink-200 mt-2 text-sm leading-6">
+            <p className="overflow-wrap-anywhere text-ink-800 mt-2 text-sm leading-6 dark:text-white/90">
               {data.brief.text}
             </p>
             {data.brief.aiGenerated && (
-              <p className="text-ink-500 mt-2 text-xs">
+              <p className="text-ink-500 mt-2 text-xs dark:text-white/70">
                 AI can make mistakes. Verify important details below.
               </p>
             )}
@@ -340,12 +412,16 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
           </button>
 
           {expanded && (
-            <div id="approval-request-details" className="grid min-w-0 gap-4 lg:grid-cols-2">
+            <div
+              id="approval-request-details"
+              data-testid="approval-request-details"
+              className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-5"
+            >
               <SummarySection
                 title="Journey"
                 icon={<Route className="h-4 w-4" aria-hidden="true" />}
               >
-                <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                <dl className="grid min-w-0 grid-cols-1 gap-3">
                   <Detail label="Origin" value={data.journey.origin} />
                   <Detail label="Destination" value={data.journey.destination} />
                   <Detail label="Departure" value={formatDateTime(data.journey.startAt)} />
@@ -402,7 +478,7 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
                 title="People"
                 icon={<Users className="h-4 w-4" aria-hidden="true" />}
               >
-                <dl className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <dl className="mb-3 grid grid-cols-1 gap-3">
                   <Detail
                     label="Requester"
                     value={`${data.requester.name}${data.requester.employeeNumber ? ` · ${data.requester.employeeNumber}` : ''}`}
@@ -437,7 +513,7 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
                 title="Vehicle & Logistics"
                 icon={<MapPin className="h-4 w-4" aria-hidden="true" />}
               >
-                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <dl className="grid grid-cols-1 gap-3">
                   <Detail label="Requested vehicle" value={data.vehicle.requestedType} />
                   <Detail
                     label="Assigned vehicle"
@@ -476,7 +552,7 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
                 title="Approval Context"
                 icon={<CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
               >
-                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <dl className="grid grid-cols-1 gap-3">
                   <Detail label="Completed approvals" value={`${data.actions.length}`} />
                   <Detail
                     label="Required next step"
@@ -735,13 +811,7 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
       </Card>
 
       {data.canAct && (
-        <div className="border-border bg-surface/95 pb-safe sticky bottom-[calc(var(--mobile-nav-height)+env(safe-area-inset-bottom,0px))] z-20 rounded-[10px] border p-3 shadow-lg backdrop-blur md:hidden">
-          <Button variant="primary" className="w-full" asChild>
-            <Link href={`/dashboard/approvals/${data.instanceId}/action`}>
-              Review &amp; Take Action
-            </Link>
-          </Button>
-        </div>
+        <MobileApprovalAction href={`/dashboard/approvals/${data.instanceId}/action`} />
       )}
     </div>
   );
