@@ -1,95 +1,36 @@
-import { getDb, isDbConnected } from '@/db';
-import { workflowInstances, workflowDefinitions, workflowSteps, workflowActions, emergencyOverrides } from '@/db/schema/workflows';
-import { transportRequests } from '@/db/schema/requests';
-import { employees } from '@/db/schema/people';
-import { eq, asc, and } from 'drizzle-orm';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { ChevronLeft, Database } from 'lucide-react';
+import {
+  ApprovalDecisionWorkspace,
+  type ApprovalDecisionWorkspaceData,
+} from '@/components/approvals/approval-decision-workspace';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Database, ChevronLeft, FileText, User, CalendarDays, CheckCircle2, XCircle, AlertTriangle, ArrowRight } from 'lucide-react';
-import { formatDate, formatDateTime } from '@/lib/utils';
-import { notFound } from 'next/navigation';
-import Link from 'next/link';
-import { getServerSession } from '@/lib/session';
+import { isDbConnected } from '@/db';
+import {
+  buildApprovalAlerts,
+  buildApprovalRequestTitle,
+  buildStructuredDecisionBrief,
+  type ApprovalBriefInput,
+} from '@/lib/approval-decision';
+import { generateApprovalDecisionBrief } from '@/lib/approval-decision-ai';
+import { getApprovalDetail } from '@/lib/approval-detail';
 import { getSessionPermissions } from '@/lib/auth-helpers';
-import type { PermissionCode } from '@/lib/permissions';
+import { getServerSession } from '@/lib/session';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-async function fetchApprovalDetail(
-  id: string,
-  tenantId: string,
-  userId: string,
-  permissionCodes: PermissionCode[],
-) {
-  const db = getDb();
-
-  const instance = await db
-    .select({
-      id: workflowInstances.id,
-      status: workflowInstances.status,
-      currentStepOrder: workflowInstances.currentStepOrder,
-      createdAt: workflowInstances.createdAt,
-      requestId: workflowInstances.requestId,
-      definitionId: workflowInstances.definitionId,
-      definitionName: workflowDefinitions.name,
-      definitionVersion: workflowDefinitions.version,
-      requestReference: transportRequests.reference,
-      requestScope: transportRequests.scope,
-      requestStatus: transportRequests.status,
-      requestPurpose: transportRequests.purpose,
-      requesterFirstName: employees.firstName,
-      requesterLastName: employees.lastName,
-    })
-    .from(workflowInstances)
-    .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-    .leftJoin(workflowDefinitions, eq(workflowInstances.definitionId, workflowDefinitions.id))
-    .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
-    .where(and(eq(workflowInstances.id, id), eq(transportRequests.tenantId, tenantId)))
-    .then((r) => r[0] ?? null);
-
-  if (!instance) notFound();
-
-  const [steps, actions, overrides] = await Promise.all([
-    db
-      .select()
-      .from(workflowSteps)
-      .where(eq(workflowSteps.definitionId, instance.definitionId))
-      .orderBy(asc(workflowSteps.stepOrder)),
-    db
-      .select({
-        id: workflowActions.id,
-        stepOrder: workflowActions.stepOrder,
-        actionType: workflowActions.actionType,
-        result: workflowActions.result,
-        comment: workflowActions.comment,
-        isActing: workflowActions.isActing,
-        actorUserId: workflowActions.actorUserId,
-        createdAt: workflowActions.createdAt,
-      })
-      .from(workflowActions)
-      .where(eq(workflowActions.instanceId, id))
-      .orderBy(asc(workflowActions.createdAt)),
-    db
-      .select()
-      .from(emergencyOverrides)
-      .where(eq(emergencyOverrides.instanceId, id))
-      .then((r) => r[0] ?? null),
-  ]);
-
-  const currentStep = steps.find((step) => step.stepOrder === instance.currentStepOrder);
-  const assignedToUser = instance.status === 'active' && (
-    currentStep?.assignedUserId === userId ||
-    (!!currentStep?.requiredPermission && permissionCodes.includes(currentStep.requiredPermission as PermissionCode))
-  );
-  const actedPreviously = instance.status !== 'active' && actions.some((action) => action.actorUserId === userId);
-  if (!assignedToUser && !actedPreviously) notFound();
-
-  return { instance, steps, actions, overrides };
+function stringValue(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  }
+  return null;
 }
 
 export default async function ApprovalDetailPage({ params }: PageProps) {
@@ -100,184 +41,304 @@ export default async function ApprovalDetailPage({ params }: PageProps) {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Approvals', href: '/dashboard/approvals' }, { label: 'Approval' }]} />
+        <Breadcrumbs
+          items={[
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Approvals', href: '/dashboard/approvals' },
+            { label: 'Approval' },
+          ]}
+        />
         <PageHeader title="Approval Detail" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" />
       </div>
     );
   }
 
-  let data: Awaited<ReturnType<typeof fetchApprovalDetail>>;
-  try {
-    const permissions = await getSessionPermissions(session);
-    data = await fetchApprovalDetail(id, session.tenantId, session.user.id, permissions);
-  } catch (error) {
+  const permissions = await getSessionPermissions(session);
+  const detail = await getApprovalDetail({
+    instanceId: id,
+    tenantId: session.tenantId,
+    userId: session.user.id,
+    permissionCodes: permissions,
+  }).catch((error) => {
     console.error('Approval detail query failed:', error);
-    return (
-      <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Approvals', href: '/dashboard/approvals' }, { label: 'Approval' }]} />
-        <PageHeader title="Approval Detail" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Approval" />
-      </div>
-    );
+    return null;
+  });
+  if (!detail) notFound();
+
+  const {
+    instance,
+    currentStep,
+    steps,
+    actions,
+    activities,
+    passengers,
+    drivers,
+    routes,
+    attachments,
+    allocation,
+    revision,
+    override,
+  } = detail;
+  const routeFacts = routes.map((route) => ({
+    originName: route.originName,
+    destinationName: route.destinationName,
+    mappedDistanceKm: route.mappedDistanceKm,
+    mappedDurationMinutes: route.mappedDurationMinutes,
+    totalKilometres: route.totalKilometres,
+    overrideReason: route.overrideReason,
+    calculationTimestamp: route.calculationTimestamp?.toISOString() ?? null,
+  }));
+  const title = buildApprovalRequestTitle({ purpose: instance.requestPurpose, routes: routeFacts });
+  const startAt = activities[0]?.startDate ?? null;
+  const endAt = activities.at(-1)?.endDate ?? null;
+  const origin = routes[0]?.originName ?? null;
+  const destination = routes.at(-1)?.destinationName ?? null;
+  const distanceKm = routes.reduce(
+    (total, route) => total + (route.totalKilometres || route.mappedDistanceKm || 0),
+    0,
+  );
+  const durationMinutes = routes.reduce(
+    (total, route) => total + (route.mappedDurationMinutes || 0),
+    0,
+  );
+  const requirements = (instance.vehicleRequirements || {}) as Record<string, unknown>;
+  const requestedVehicle = stringValue(
+    requirements,
+    'vehicleType',
+    'vehicleCategory',
+    'category',
+    'type',
+  );
+  const driverAssigned = Boolean(
+    allocation?.driverEmployeeId ||
+    instance.assignedDriverEmployeeId ||
+    drivers.some((driver) => driver.driverType === 'assigned' || driver.isConfirmed),
+  );
+  const travellerCount = passengers.length + 1;
+  const latestApproval = actions.at(-1);
+  const currentStage = currentStep?.label || `Step ${instance.currentStepOrder}`;
+  const fallbackFacts: ApprovalBriefInput = {
+    travellerCount,
+    origin,
+    destination,
+    startAt: startAt?.toISOString(),
+    endAt: endAt?.toISOString(),
+    purpose: instance.requestPurpose,
+    vehicleType: requestedVehicle,
+    driverAssigned,
+    specialAuthorityRequired: instance.specialAuthorityRequired,
+    currentStage,
+  };
+  const fallbackBrief = buildStructuredDecisionBrief(fallbackFacts);
+  const aiBrief = await generateApprovalDecisionBrief({
+    tenantId: session.tenantId,
+    requestId: instance.requestId,
+    requestVersion: instance.revision,
+    facts: fallbackFacts,
+  });
+  const alerts = buildApprovalAlerts({
+    scope: instance.requestScope,
+    specialAuthorityRequired: instance.specialAuthorityRequired,
+    specialAuthorityReason: instance.specialAuthorityReason,
+    attachmentCount: attachments.length,
+    travellerCount,
+    requesterIsPassenger: passengers.some(
+      (passenger) => passenger.employeeId === instance.requesterEmployeeId,
+    ),
+    routes: routeFacts,
+    departureAt: startAt?.toISOString(),
+    driverAssigned,
+    hasDriverWithUnvalidatedLicence: drivers.some((driver) => !driver.licenceValidated),
+    vehicleAssigned: Boolean(allocation),
+    vehicleCapacity: allocation?.seatedCapacity,
+    requestUpdatedAt: instance.requestUpdatedAt.toISOString(),
+    latestApprovalAt: latestApproval?.createdAt.toISOString(),
+    revision: instance.revision,
+    hasActingApproval: actions.some((action) => action.isActing),
+  });
+  if (override) {
+    alerts.unshift({
+      id: 'emergency-override',
+      tone: 'warning',
+      title: 'Emergency override applied',
+      detail: `${override.reason} Bypassed steps: ${override.bypassedSteps.join(', ')}.`,
+    });
   }
 
-  const { instance: inst, steps, actions, overrides } = data;
+  const stepByOrder = new Map(steps.map((step) => [step.stepOrder, step]));
+  const actionByOrder = new Map(actions.map((action) => [action.stepOrder, action]));
+  const workspaceData: ApprovalDecisionWorkspaceData = {
+    instanceId: instance.id,
+    requestId: instance.requestId,
+    title,
+    reference: instance.requestReference,
+    workflowName: instance.definitionName || `${instance.requestScope} trip workflow`,
+    scope: instance.requestScope,
+    requestStatus: instance.requestStatus,
+    workflowStatus: instance.status,
+    currentStepOrder: instance.currentStepOrder,
+    stepCount: steps.length,
+    currentStepLabel: currentStage,
+    currentStepDescription: currentStep?.description,
+    purpose: instance.requestPurpose,
+    requester: {
+      name:
+        [instance.requesterFirstName, instance.requesterLastName].filter(Boolean).join(' ') ||
+        'Not provided',
+      employeeNumber: instance.requesterEmployeeNumber,
+      jobTitle: instance.requesterJobTitle,
+      department: instance.requestDepartment,
+      directorate: instance.requesterDirectorate,
+    },
+    journey: {
+      startAt: startAt?.toISOString(),
+      endAt: endAt?.toISOString(),
+      origin,
+      destination,
+      distanceKm: distanceKm || instance.totalAuthorisedKilometres,
+      durationMinutes: durationMinutes || null,
+      routeSource: routes.some((route) => route.overrideReason)
+        ? 'Mapped route with manual override'
+        : routes.some((route) => route.calculationTimestamp)
+          ? 'Automatically calculated route'
+          : routes.length
+            ? 'Manually entered route'
+            : 'Not provided',
+      routes: routes.map((route) => ({
+        id: route.id,
+        origin: route.originName,
+        destination: route.destinationName,
+        distanceKm: route.totalKilometres || route.mappedDistanceKm,
+        durationMinutes: route.mappedDurationMinutes,
+        overrideReason: route.overrideReason,
+      })),
+    },
+    activities: activities.map((activity) => ({
+      id: activity.id,
+      title: activity.title,
+      description: activity.description,
+      venue: activity.venue,
+      startAt: activity.startDate.toISOString(),
+      endAt: activity.endDate.toISOString(),
+    })),
+    passengers: passengers.map((passenger) => ({
+      id: passenger.id,
+      name: passenger.employeeId
+        ? passenger.employeeName || 'Employee name not provided'
+        : passenger.externalName || 'External traveller',
+      employeeNumber: passenger.employeeNumber,
+      organisation: passenger.externalOrganisation,
+      role: passenger.travellerRole,
+      reason: passenger.reasonForTravel,
+      external: !passenger.employeeId,
+    })),
+    drivers: drivers.map((driver) => ({
+      id: driver.id,
+      name: driver.employeeName || 'Driver name not provided',
+      employeeNumber: driver.employeeNumber,
+      type: driver.driverType,
+      confirmed: driver.isConfirmed,
+      licenceValidated: driver.licenceValidated,
+    })),
+    vehicle: {
+      requestedType: requestedVehicle,
+      terrain: stringValue(requirements, 'terrain', 'roadType'),
+      luggage: stringValue(requirements, 'luggage', 'equipment', 'luggageEquipment'),
+      fuelAdvance: stringValue(requirements, 'fuelAdvance', 'fuel', 'advanceRequested'),
+      accommodation: stringValue(requirements, 'accommodation', 'overnightAccommodation'),
+      accessibilityNeeds: stringValue(requirements, 'accessibilityNeeds', 'specialTravelNeeds'),
+      assignedLabel: allocation
+        ? `${allocation.make} ${allocation.model} · ${allocation.licenceNumber}`
+        : null,
+      allocationState: allocation?.state,
+    },
+    logistics: {
+      driverPreference: instance.driverPreference,
+      specialRequirements: instance.specialRequirements,
+      specialAuthorityRequired: instance.specialAuthorityRequired,
+      specialAuthorityReason: instance.specialAuthorityReason,
+      specialAuthorityApproved: instance.specialAuthorityApproved,
+    },
+    approvalContext: {
+      driverAssigned,
+      vehicleAssigned: Boolean(allocation),
+      attachmentCount: attachments.length,
+      requesterDeclaration:
+        instance.employeeConfirmationStatus === 'confirmed'
+          ? 'Confirmed by requester'
+          : instance.employeeConfirmationStatus || 'Not recorded',
+      revision: instance.revision,
+      changedFields: Object.keys(revision?.changedFields || {}).map((field) =>
+        field.replaceAll('_', ' '),
+      ),
+      requiredNextStep:
+        instance.status === 'active'
+          ? currentStep?.description || currentStage
+          : 'Workflow already completed',
+    },
+    brief: { text: aiBrief || fallbackBrief, aiGenerated: Boolean(aiBrief) },
+    alerts,
+    steps: steps.map((step) => {
+      const action = actionByOrder.get(step.stepOrder);
+      return {
+        id: step.id,
+        order: step.stepOrder,
+        label: step.label,
+        description: step.description,
+        actionType: step.actionType,
+        action: action
+          ? {
+              result: action.result,
+              comment: action.comment,
+              actorName: action.actorName,
+              acting: action.isActing,
+              createdAt: action.createdAt.toISOString(),
+            }
+          : undefined,
+      };
+    }),
+    actions: actions.map((action) => ({
+      id: action.id,
+      stepOrder: action.stepOrder,
+      stage: stepByOrder.get(action.stepOrder)?.label || action.actionType,
+      result: action.result,
+      actorName: action.actorName,
+      actorRole: stepByOrder.get(action.stepOrder)?.label || 'Approval officer',
+      acting: action.isActing,
+      comment: action.comment,
+      createdAt: action.createdAt.toISOString(),
+    })),
+    canAct: detail.canAct,
+  };
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Approvals', href: '/dashboard/approvals' },
-        { label: inst.requestReference || 'Workflow' },
-      ]} />
+      <Breadcrumbs
+        items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Approvals', href: '/dashboard/approvals' },
+          { label: instance.requestReference },
+        ]}
+      />
       <PageHeader
-        title={inst.requestReference || 'Approval Workflow'}
-        description={inst.definitionName || 'Workflow'}
+        title={title}
+        description={`Transport Request · ${instance.requestReference} · ${workspaceData.workflowName} · Step ${instance.currentStepOrder} of ${steps.length}`}
       >
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/approvals"><ChevronLeft className="h-4 w-4" /> Back</Link>
-        </Button>
-        {inst.status === 'active' && (
+        {detail.canAct && (
           <Button variant="primary" size="sm" asChild>
-            <Link href={`/dashboard/approvals/${inst.id}/action`}>Take Action</Link>
+            <Link href={`/dashboard/approvals/${instance.id}/action`}>
+              Review &amp; Take Action
+            </Link>
           </Button>
         )}
+        <Button variant="secondary" size="sm" asChild>
+          <Link href="/dashboard/approvals">
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Back
+          </Link>
+        </Button>
       </PageHeader>
-
-      {/* Summary Card */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="flex items-center gap-4">
-            <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-[10px] ${
-              inst.status === 'completed' ? 'bg-status-success-bg text-status-success-text' :
-              inst.status === 'cancelled' ? 'bg-status-cancelled-bg text-status-cancelled-text' :
-              inst.status === 'overridden' ? 'bg-status-emergency-bg text-status-emergency-text' :
-              'bg-status-info-bg text-status-info-text'
-            }`}>
-              {inst.status === 'completed' ? <CheckCircle2 className="h-7 w-7" /> :
-               inst.status === 'cancelled' ? <XCircle className="h-7 w-7" /> :
-               inst.status === 'overridden' ? <AlertTriangle className="h-7 w-7" /> :
-               <FileText className="h-7 w-7" />}
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg font-semibold text-ink-950">{inst.requestReference || 'No Reference'}</h2>
-                <Badge variant={
-                  inst.status === 'active' ? 'info' :
-                  inst.status === 'completed' ? 'success' :
-                  inst.status === 'overridden' ? 'emergency' : 'cancelled'
-                } size="sm">{inst.status}</Badge>
-                <Badge variant={inst.requestScope === 'national' ? 'emergency' : 'info'} size="sm">{inst.requestScope ?? 'regional'}</Badge>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
-                {inst.requesterFirstName && <span className="flex items-center gap-1"><User className="h-3.5 w-3.5" />{inst.requesterFirstName} {inst.requesterLastName}</span>}
-                <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />Created {formatDate(inst.createdAt)}</span>
-                <span>Step {inst.currentStepOrder} of {steps.length}</span>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Details Grid */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Workflow Steps Timeline */}
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>Workflow Timeline</CardTitle></CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {steps.map((step) => {
-                const action = actions.find((a) => a.stepOrder === step.stepOrder);
-                const isCurrentStep = step.stepOrder === inst.currentStepOrder && inst.status === 'active';
-                const isComplete = !!action;
-
-                return (
-                  <div key={step.id} className="flex items-start gap-3">
-                    <div className="flex flex-col items-center">
-                      <div className={`flex h-8 w-8 items-center justify-center rounded-full ${
-                        isComplete ? 'bg-status-success-bg text-status-success-text' :
-                        isCurrentStep ? 'bg-status-info-bg text-status-info-text ring-2 ring-brand-600' :
-                        'bg-muted text-ink-400'
-                      }`}>
-                        {isComplete ? <CheckCircle2 className="h-4 w-4" /> : isCurrentStep ? <ArrowRight className="h-4 w-4" /> : <div className="h-2 w-2 rounded-full bg-current" />}
-                      </div>
-                      <div className={`mt-1 h-full w-px ${isComplete ? 'bg-status-success-bg' : 'bg-border'}`} />
-                    </div>
-                    <div className="pb-4 flex-1">
-                      <div className="flex items-center justify-between">
-                        <p className={`text-sm font-medium ${isCurrentStep ? 'text-ink-950' : isComplete ? 'text-ink-950' : 'text-ink-500'}`}>
-                          {step.label}
-                        </p>
-                        {action && (
-                          <Badge variant={
-                            action.result === 'approved' || action.result === 'released' || action.result === 'authorised' || action.result === 'acknowledged' ? 'success' :
-                            action.result === 'rejected' || action.result === 'returned' ? 'error' : 'info'
-                          } size="sm">{action.result}</Badge>
-                        )}
-                      </div>
-                      {step.description && <p className="text-xs text-ink-500 mt-0.5">{step.description}</p>}
-                      {action && (
-                        <div className="mt-1 rounded-[6px] bg-muted px-3 py-1.5">
-                          <p className="text-xs text-ink-500">{formatDateTime(action.createdAt)}</p>
-                          {action.comment && <p className="text-xs text-ink-700 mt-0.5 italic">&ldquo;{action.comment}&rdquo;</p>}
-                        </div>
-                      )}
-                      {isCurrentStep && !action && (
-                        <p className="text-xs text-brand-600 mt-1 font-medium">Awaiting action...</p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Emergency Override Banner */}
-      {overrides && (
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-status-emergency-text shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-status-emergency-text">Emergency Override Applied</p>
-                <p className="text-xs text-ink-500 mt-1">Reason: {overrides.reason}</p>
-                <p className="text-xs text-ink-500">Bypassed steps: {overrides.bypassedSteps.join(', ')}</p>
-                {overrides.requiresPostTripReview && <p className="text-xs text-status-pending-text mt-1">Post-trip review required.</p>}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* All Actions History */}
-      {actions.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle>Action History</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y divide-border">
-              {actions.map((action) => (
-                <div key={action.id} className="px-5 py-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Badge variant={
-                        action.result === 'approved' || action.result === 'released' || action.result === 'authorised' ? 'success' :
-                        action.result === 'rejected' || action.result === 'returned' ? 'error' : 'info'
-                      } size="sm">{action.result}</Badge>
-                      <span className="text-xs text-ink-500">Step {action.stepOrder}</span>
-                      {action.isActing && <Badge variant="pending" size="sm">Acting</Badge>}
-                    </div>
-                    <span className="text-xs text-ink-500">{formatDateTime(action.createdAt)}</span>
-                  </div>
-                  {action.comment && <p className="mt-1 text-xs text-ink-700">{action.comment}</p>}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <ApprovalDecisionWorkspace data={workspaceData} />
     </div>
   );
 }

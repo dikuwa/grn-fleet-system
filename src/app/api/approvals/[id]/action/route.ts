@@ -4,12 +4,13 @@ import { workflowInstances } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { eq } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
-import { WorkflowEngine, type WorkflowActionType, type WorkflowActionResult } from '@/lib/workflow-engine';
+import {
+  WorkflowEngine,
+  type WorkflowActionType,
+  type WorkflowActionResult,
+} from '@/lib/workflow-engine';
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
 
@@ -19,7 +20,11 @@ export async function POST(
     const { session } = auth;
     const roleCheck = await requireDashboardAction(session, '/dashboard/approvals', 'approve');
     if (roleCheck instanceof NextResponse) {
-      const driverCheck = await requireDashboardAction(session, '/dashboard/driver-mobile', 'update');
+      const driverCheck = await requireDashboardAction(
+        session,
+        '/dashboard/driver-mobile',
+        'update',
+      );
       if (driverCheck instanceof NextResponse) return roleCheck;
     }
 
@@ -35,9 +40,14 @@ export async function POST(
       );
     }
 
-    if (!comment && actionType === 'returned') {
+    if ((!comment || !String(comment).trim()) && ['returned', 'rejected'].includes(actionType)) {
       return NextResponse.json(
-        { error: 'A comment is required when returning a request.' },
+        {
+          error:
+            actionType === 'returned'
+              ? 'A reason is required when returning a request for correction.'
+              : 'A reason is required when rejecting a request.',
+        },
         { status: 400 },
       );
     }

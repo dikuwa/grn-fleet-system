@@ -8,7 +8,7 @@ import {
   requestAttachments,
 } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { workflowInstances, workflowSteps } from '@/db/schema/workflows';
+import { workflowActions, workflowInstances, workflowSteps } from '@/db/schema/workflows';
 import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -35,7 +35,8 @@ import Link from 'next/link';
 import { CancelRequestButton } from './CancelRequestButton';
 import { RouteMapWrapper } from './route-map-wrapper';
 import { ResubmitRequestButton } from './ResubmitRequestButton';
-import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
+import type { PermissionCode } from '@/lib/permissions';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 
 interface PageProps {
@@ -204,7 +205,8 @@ export default async function RequestDetailPage({ params }: PageProps) {
     request.enteredByUserId !== session.user.id
   ) {
     const db = getDb();
-    const [[participant], [assignedApproval]] = await Promise.all([
+    const permissionCodes = await getSessionPermissions(session);
+    const [[participant], [assignedApproval], [previousApproval]] = await Promise.all([
       db
         .select({ id: requestPassengers.id })
         .from(requestPassengers)
@@ -218,7 +220,11 @@ export default async function RequestDetailPage({ params }: PageProps) {
         )
         .limit(1),
       db
-        .select({ id: workflowInstances.id })
+        .select({
+          id: workflowInstances.id,
+          assignedUserId: workflowSteps.assignedUserId,
+          requiredPermission: workflowSteps.requiredPermission,
+        })
         .from(workflowInstances)
         .innerJoin(
           workflowSteps,
@@ -227,16 +233,27 @@ export default async function RequestDetailPage({ params }: PageProps) {
             eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
           ),
         )
+        .where(and(eq(workflowInstances.requestId, id), eq(workflowInstances.status, 'active')))
+        .limit(1),
+      db
+        .select({ id: workflowActions.id })
+        .from(workflowActions)
+        .innerJoin(workflowInstances, eq(workflowActions.instanceId, workflowInstances.id))
         .where(
           and(
             eq(workflowInstances.requestId, id),
-            eq(workflowInstances.status, 'active'),
-            eq(workflowSteps.assignedUserId, session.user.id),
+            eq(workflowActions.actorUserId, session.user.id),
           ),
         )
         .limit(1),
     ]);
-    if (!participant && !assignedApproval) notFound();
+    const canReviewApproval = Boolean(
+      assignedApproval &&
+      (assignedApproval.assignedUserId === session.user.id ||
+        (assignedApproval.requiredPermission &&
+          permissionCodes.includes(assignedApproval.requiredPermission as PermissionCode))),
+    );
+    if (!participant && !canReviewApproval && !previousApproval) notFound();
   }
   const canModify = access.actions.includes('update');
   const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
@@ -595,7 +612,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
 
       {/* Attachments */}
       {attachments.length > 0 && (
-        <Card>
+        <Card id="attachments">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Paperclip className="h-4 w-4" /> Attachments ({attachments.length})

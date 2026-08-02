@@ -53,12 +53,22 @@ const MAX_CALLS_PER_WINDOW = 30;
 
 /** Flat per-field confidence assigned to AI vision extraction (no per-field signal from the API). */
 export const AI_OCR_CONFIDENCE = 0.85;
-const callLog: Array<{ at: number; feature: string; tenantId?: string; model: string; ok: boolean; inputTokens?: number; outputTokens?: number }> = [];
+const callLog: Array<{
+  at: number;
+  feature: string;
+  tenantId?: string;
+  model: string;
+  ok: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
+}> = [];
 
 function logAiUsage(entry: (typeof callLog)[number]) {
   callLog.push(entry);
   if (callLog.length > 500) callLog.shift();
-  console.info(`[ai] ${entry.feature} ${entry.ok ? 'ok' : 'failed'} model=${entry.model} tenant=${entry.tenantId ?? 'n/a'} tokens=${entry.inputTokens ?? 0}+${entry.outputTokens ?? 0}`);
+  console.info(
+    `[ai] ${entry.feature} ${entry.ok ? 'ok' : 'failed'} model=${entry.model} tenant=${entry.tenantId ?? 'n/a'} tokens=${entry.inputTokens ?? 0}+${entry.outputTokens ?? 0}`,
+  );
 }
 
 /** Lightweight in-process rate limiter (per tenant, sliding window). */
@@ -74,8 +84,7 @@ export function isAiRateLimited(tenantId?: string): boolean {
 // ---------------------------------------------------------------------------
 
 export type OpenAiContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } };
+  { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
 
 type OpenAiMessage = {
   role: 'system' | 'user';
@@ -100,11 +109,14 @@ export async function callOpenAi(options: {
   system: string;
   user: string | OpenAiContentPart[];
   maxTokens?: number;
+  timeoutMs?: number;
   jsonMode?: boolean;
 }): Promise<{ json: unknown; usage: { inputTokens: number; outputTokens: number } } | null> {
   if (!isAiFeatureEnabled(options.feature)) return null;
   if (isAiRateLimited(options.tenantId)) {
-    console.warn(`[ai] rate limit hit for tenant=${options.tenantId ?? 'n/a'} feature=${options.feature}`);
+    console.warn(
+      `[ai] rate limit hit for tenant=${options.tenantId ?? 'n/a'} feature=${options.feature}`,
+    );
     return null;
   }
   const apiKey = env.OPENAI_API_KEY;
@@ -112,7 +124,8 @@ export async function callOpenAi(options: {
 
   const model = options.model ?? env.OPENAI_MODEL ?? 'gpt-5-mini';
   const maxTokens = Number(options.maxTokens ?? env.AI_MAX_OUTPUT_TOKENS ?? 1500);
-  const timeoutMs = Number(env.AI_REQUEST_TIMEOUT_MS ?? 30000);
+  const timeoutMs = Number(options.timeoutMs ?? env.AI_REQUEST_TIMEOUT_MS ?? 30000);
+  const supportsCustomTemperature = !/^(gpt-5|o\d)/i.test(model);
 
   const messages: OpenAiMessage[] = [
     { role: 'system', content: options.system },
@@ -131,8 +144,8 @@ export async function callOpenAi(options: {
       body: JSON.stringify({
         model,
         messages,
-        max_tokens: maxTokens,
-        temperature: 0,
+        max_completion_tokens: maxTokens,
+        ...(supportsCustomTemperature ? { temperature: 0 } : {}),
         ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: controller.signal,
@@ -140,13 +153,25 @@ export async function callOpenAi(options: {
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as OpenAiResponse | null;
       console.warn(`[ai] HTTP ${response.status}: ${body?.error?.message ?? 'unknown error'}`);
-      logAiUsage({ at: Date.now(), feature: options.feature, tenantId: options.tenantId, model, ok: false });
+      logAiUsage({
+        at: Date.now(),
+        feature: options.feature,
+        tenantId: options.tenantId,
+        model,
+        ok: false,
+      });
       return null;
     }
     const data = (await response.json()) as OpenAiResponse;
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      logAiUsage({ at: Date.now(), feature: options.feature, tenantId: options.tenantId, model, ok: false });
+      logAiUsage({
+        at: Date.now(),
+        feature: options.feature,
+        tenantId: options.tenantId,
+        model,
+        ok: false,
+      });
       return null;
     }
     logAiUsage({
@@ -168,11 +193,25 @@ export async function callOpenAi(options: {
     } else {
       json = content;
     }
-    return { json, usage: { inputTokens: data.usage?.prompt_tokens ?? 0, outputTokens: data.usage?.completion_tokens ?? 0 } };
+    return {
+      json,
+      usage: {
+        inputTokens: data.usage?.prompt_tokens ?? 0,
+        outputTokens: data.usage?.completion_tokens ?? 0,
+      },
+    };
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'AbortError';
-    console.warn(`[ai] ${timedOut ? 'timeout' : 'request failed'} after ${timeoutMs}ms for ${options.feature}`);
-    logAiUsage({ at: Date.now(), feature: options.feature, tenantId: options.tenantId, model, ok: false });
+    console.warn(
+      `[ai] ${timedOut ? 'timeout' : 'request failed'} after ${timeoutMs}ms for ${options.feature}`,
+    );
+    logAiUsage({
+      at: Date.now(),
+      feature: options.feature,
+      tenantId: options.tenantId,
+      model,
+      ok: false,
+    });
     return null;
   } finally {
     clearTimeout(timer);
@@ -192,7 +231,10 @@ export async function extractReceiptWithAi(input: {
   imageBuffer: Buffer;
   mimeType: string;
   tenantId?: string;
-}): Promise<{ json: Record<string, unknown>; usage: { inputTokens: number; outputTokens: number } } | null> {
+}): Promise<{
+  json: Record<string, unknown>;
+  usage: { inputTokens: number; outputTokens: number };
+} | null> {
   const { imageBuffer, mimeType, tenantId } = input;
   const base64 = imageBuffer.toString('base64');
   const result = await callOpenAi({
