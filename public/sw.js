@@ -1,54 +1,60 @@
 // Service Worker for GRN Fleet Management System
 // Network-first for authenticated data, cache-first for static assets
 
-var CACHE_NAME = 'grn-fleet-v1';
-var STATIC_CACHE = 'grn-fleet-static-v1';
+var CACHE_NAME = 'grn-fleet-v2';
+var STATIC_CACHE = 'grn-fleet-static-v2';
 
-var STATIC_ASSETS = [
-  '/',
-  '/dashboard',
-  '/manifest.json',
-  '/icons/icon-192.svg',
-  '/icons/icon-512.svg',
-];
+var STATIC_ASSETS = ['/manifest.json', '/icons/icon-192.svg', '/icons/icon-512.svg'];
 
 // Install event: cache static shell
-self.addEventListener('install', function(event) {
+self.addEventListener('install', function (event) {
   event.waitUntil(
     caches
       .open(STATIC_CACHE)
-      .then(function(cache) { return cache.addAll(STATIC_ASSETS); })
-      .then(function() { return self.skipWaiting(); })
+      .then(function (cache) {
+        return cache.addAll(STATIC_ASSETS);
+      })
+      .then(function () {
+        return self.skipWaiting();
+      }),
   );
 });
 
 // Activate event: clean old caches
-self.addEventListener('activate', function(event) {
+self.addEventListener('activate', function (event) {
   event.waitUntil(
     caches
       .keys()
-      .then(function(names) {
+      .then(function (names) {
         return Promise.all(
           names
-            .filter(function(name) { return name !== STATIC_CACHE && name !== CACHE_NAME; })
-            .map(function(name) { return caches.delete(name); })
+            .filter(function (name) {
+              return name !== STATIC_CACHE && name !== CACHE_NAME;
+            })
+            .map(function (name) {
+              return caches.delete(name);
+            }),
         );
       })
-      .then(function() { return self.clients.claim(); })
+      .then(function () {
+        return self.clients.claim();
+      }),
   );
 });
 
-// Fetch event: network-first for API/data, cache-first for static
-self.addEventListener('fetch', function(event) {
+// Fetch event: never cache authenticated or dynamic responses. Caching these
+// responses by URL can expose one signed-in user's data to the next user of the
+// same browser. Only immutable public assets are safe to share across sessions.
+self.addEventListener('fetch', function (event) {
   var request = event.request;
   var url = new URL(request.url);
 
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // API routes: network-first with timeout
+  // API routes can contain user-scoped data and must always come from the network.
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirstWithTimeout(request, 5000));
+    event.respondWith(fetch(request));
     return;
   }
 
@@ -62,9 +68,10 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // Page navigations: network-first
+  // Page navigations can contain server-rendered user-scoped data. Do not place
+  // them in a cache shared by consecutive sessions.
   if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request));
+    event.respondWith(fetch(request));
     return;
   }
 
@@ -74,54 +81,30 @@ self.addEventListener('fetch', function(event) {
 
 function networkFirst(request) {
   return fetch(request)
-    .then(function(response) {
+    .then(function (response) {
       if (response.ok) {
-        return caches.open(CACHE_NAME).then(function(cache) {
+        return caches.open(CACHE_NAME).then(function (cache) {
           cache.put(request, response.clone());
           return response;
         });
       }
       return response;
     })
-    .catch(function() {
-      return caches.match(request).then(function(cached) {
+    .catch(function () {
+      return caches.match(request).then(function (cached) {
         return cached || new Response('Offline', { status: 503 });
       });
     });
 }
 
-function networkFirstWithTimeout(request, timeoutMs) {
-  var timeoutPromise = new Promise(function(_, reject) {
-    setTimeout(function() { reject(new Error('Network timeout')); }, timeoutMs);
-  });
-
-  return Promise.race([fetch(request), timeoutPromise])
-    .then(function(response) {
-      if (response instanceof Response && response.ok) {
-        return caches.open(CACHE_NAME).then(function(cache) {
-          cache.put(request, response.clone());
-          return response;
-        });
-      }
-      return response;
-    })
-    .catch(function() {
-      return caches.match(request).then(function(cached) {
-        return cached || new Response(JSON.stringify({ error: 'Offline' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      });
-    });
-}
-
 function cacheFirst(request) {
-  return caches.match(request)
-    .then(function(cached) {
+  return caches
+    .match(request)
+    .then(function (cached) {
       if (cached) return cached;
-      return fetch(request).then(function(response) {
+      return fetch(request).then(function (response) {
         if (response.ok) {
-          return caches.open(STATIC_CACHE).then(function(cache) {
+          return caches.open(STATIC_CACHE).then(function (cache) {
             cache.put(request, response.clone());
             return response;
           });
@@ -129,7 +112,7 @@ function cacheFirst(request) {
         return response;
       });
     })
-    .catch(function() {
+    .catch(function () {
       return new Response('Not found', { status: 404 });
     });
 }

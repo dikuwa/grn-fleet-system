@@ -14,6 +14,8 @@ interface DashboardShellProps {
   children: React.ReactNode;
   tenantName?: string;
   userId?: string;
+  userName?: string | null;
+  userEmail?: string;
   roleNames: string[];
   activeWorkspace: WorkspaceId;
   eligibleWorkspaces: Array<{ id: WorkspaceId; label: string }>;
@@ -23,6 +25,8 @@ export function DashboardShell({
   children,
   tenantName,
   userId,
+  userName,
+  userEmail,
   roleNames,
   activeWorkspace,
   eligibleWorkspaces,
@@ -61,6 +65,8 @@ export function DashboardShell({
           onMenuClick={() => setMobileMenuOpen(true)}
           tenantName={tenantName}
           userId={userId}
+          userName={userName}
+          userEmail={userEmail}
           roleNames={roleNames}
           activeWorkspace={activeWorkspace}
           eligibleWorkspaces={eligibleWorkspaces}

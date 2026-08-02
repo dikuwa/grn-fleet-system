@@ -45,12 +45,13 @@ test.describe('Role lifecycle smoke', () => {
     const transport = await login('transport.admin@kavangoeast.test');
     const release = await login('release.officer@kavangoeast.test');
     const authoriser = await login('regional.authoriser@kavangoeast.test');
+    const driver = await login('driver@kavangoeast.test');
 
     // Trip-authority validity check at trip-start requires now >= validFrom.
     // Use a window that starts 1 hour in the past (so validFrom is already
     // passed by the time the trip-start API is called) and ends 2 hours
-    // in the future.  The requester (converted to driver) has no pre-existing
-    // allocations, so near-past dates don't cause conflicts.
+    // in the future. The E2E seed clears stale driver allocations before the
+    // suite so the dedicated driver persona remains isolated from Requester.
     const start = new Date(Date.now() - 60 * 60 * 1000);
     const end = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
@@ -60,12 +61,14 @@ test.describe('Role lifecycle smoke', () => {
       data: {
         purpose: 'E2E lifecycle smoke — district coordination meeting',
         scope: 'regional',
-        activities: [{
-          title: 'District coordination meeting',
-          startDate: start.toISOString(),
-          endDate: end.toISOString(),
-          estimatedKilometres: 120,
-        }],
+        activities: [
+          {
+            title: 'District coordination meeting',
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+            estimatedKilometres: 120,
+          },
+        ],
       },
     });
     expect(createRes.status(), await createRes.text()).toBe(200);
@@ -88,10 +91,15 @@ test.describe('Role lifecycle smoke', () => {
       headers: { 'idempotency-key': crypto.randomUUID() },
       data: {
         licenceNumber: `E2E-${Date.now()}`,
-        make: 'Toyota', model: 'Hilux',
-        manufactureYear: 2025, colour: 'White',
-        fuelType: 'diesel', transmission: 'manual',
-        currentOdometer: 100, status: 'available', seatedCapacity: 5,
+        make: 'Toyota',
+        model: 'Hilux',
+        manufactureYear: 2025,
+        colour: 'White',
+        fuelType: 'diesel',
+        transmission: 'manual',
+        currentOdometer: 100,
+        status: 'available',
+        seatedCapacity: 5,
       },
     });
     if (createVehicleRes.status() === 403) {
@@ -106,7 +114,12 @@ test.describe('Role lifecycle smoke', () => {
     const initialOdometer = vehicle.currentOdometer ?? 100;
 
     const allocationRes = await transport.post('/api/allocations', {
-      data: { requestId: requestData.id, vehicleId, startDate: start.toISOString(), endDate: end.toISOString() },
+      data: {
+        requestId: requestData.id,
+        vehicleId,
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+      },
     });
     expect(allocationRes.status(), await allocationRes.text()).toBe(200);
     const allocationData = await allocationRes.json();
@@ -114,50 +127,32 @@ test.describe('Role lifecycle smoke', () => {
     const tripId = allocationData.trip.id as string;
     expect(tripId).toBeTruthy();
 
-    // ── Create a dedicated test driver ──────────────────────────────────
-    // Seed drivers (KERC008, KERC009) have stale allocations that conflict
-    // with our trip dates.  Instead, we convert the requester's employee
-    // (KERC002, Maria Shikongo — no pre-existing allocations) into a test
-    // driver.  The POST /api/drivers endpoint now auto-assigns the
-    // "Assigned Driver" role, so the requester session passes the workflow
-    // engine's DRIVER_LOG_CREATE permission check.
-    const profileRes = await requester.get('/api/users/profile');
+    // Use the dedicated driver identity. Tests must never mutate a fixed
+    // role persona (for example by converting Requester into a driver).
+    const profileRes = await driver.get('/api/users/profile');
     const profileBody = await profileRes.json();
     const profileData = profileBody.data || profileBody;
-    const requesterEmpId = profileData.employee?.id || profileData.profile?.employeeId;
-    if (!requesterEmpId) {
-      test.skip(true, 'Could not determine requester employee ID');
+    const driverEmpId = profileData.employee?.id || profileData.profile?.employeeId;
+    if (!driverEmpId) {
+      test.skip(true, 'Could not determine driver employee ID');
       return;
     }
-    const createDriverRes = await transport.post('/api/drivers', {
-      data: {
-        employeeId: requesterEmpId,
-        licenceNumber: `LIC-E2E-${Date.now()}`,
-        licenceClass: 'B',
-        issueDate: new Date().toISOString().slice(0, 10),
-        expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-        verificationStatus: 'verified',
-      },
-    });
-    if (createDriverRes.status() === 409) {
-      // Already converted in a prior run — reuse
-      console.log('Driver profile already existed for requester, reusing');
-    } else {
-      expect(createDriverRes.status(), await createDriverRes.text()).toBe(201);
-    }
 
-    // Assign the requester (now a driver) to the allocation
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
-      data: { driverEmployeeId: requesterEmpId },
+      data: { driverEmployeeId: driverEmpId },
     });
     expect(assignRes.status(), await assignRes.text()).toBe(200);
 
     // 4. Transport admin reviews + Release officer releases + Authoriser authorises + Driver acknowledges
-    for (const [api, label] of [[transport, 'transport review'], [release, 'release'], [authoriser, 'authorise'], [requester, 'driver ack']] as const) {
-      const res = await api.post(
-        `/api/approvals/${requestData.workflowInstanceId}/action`,
-        { data: { actionType: 'approved', comment: `Smoke: ${label}` } },
-      );
+    for (const [api, label] of [
+      [transport, 'transport review'],
+      [release, 'release'],
+      [authoriser, 'authorise'],
+      [driver, 'driver ack'],
+    ] as const) {
+      const res = await api.post(`/api/approvals/${requestData.workflowInstanceId}/action`, {
+        data: { actionType: 'approved', comment: `Smoke: ${label}` },
+      });
       expect(res.status(), `${label}: ${await res.text()}`).toBe(200);
     }
 
@@ -165,9 +160,13 @@ test.describe('Role lifecycle smoke', () => {
     const inspector = await login('inspector@kavangoeast.test');
     const depRes = await inspector.post('/api/inspections', {
       data: {
-        vehicleId, tripId, type: 'departure',
-        odometerReading: initialOdometer, fuelLevel: 'full',
-        inspectorAcknowledged: true, driverAcknowledged: true,
+        vehicleId,
+        tripId,
+        type: 'departure',
+        odometerReading: initialOdometer,
+        fuelLevel: 'full',
+        inspectorAcknowledged: true,
+        driverAcknowledged: true,
         photoKeys: ['smoke/dep-front.jpg', 'smoke/dep-rear.jpg', 'smoke/dep-dash.jpg'],
         checklist: fullChecklist(DEPARTURE_INSPECTION_ITEMS),
       },
@@ -179,26 +178,32 @@ test.describe('Role lifecycle smoke', () => {
       data: { keysIssued: true, issueOdometer: initialOdometer },
     });
     expect(issueRes.status(), await issueRes.text()).toBe(200);
-    const startRes = await requester.post(`/api/trips/${tripId}/start`, {
+    const startRes = await driver.post(`/api/trips/${tripId}/start`, {
       data: { beginningOdometer: initialOdometer, passengersConfirmed: true, fuelLevel: 'full' },
     });
     expect(startRes.status(), await startRes.text()).toBe(200);
 
     // 7. Return trip + return inspection (using source-of-truth constants)
-    const returnRes = await requester.post(`/api/trips/${tripId}/return`, {
+    const returnRes = await driver.post(`/api/trips/${tripId}/return`, {
       data: {
-        endingOdometer: initialOdometer + 65, fuelLevel: 'half',
+        endingOdometer: initialOdometer + 65,
+        fuelLevel: 'half',
         returnLocation: 'Rundu fleet yard',
-        incidentDeclared: false, outstandingReceiptsDeclared: false,
+        incidentDeclared: false,
+        outstandingReceiptsDeclared: false,
       },
     });
     expect(returnRes.status(), await returnRes.text()).toBe(200);
 
     const returnInspectionRes = await inspector.post('/api/inspections', {
       data: {
-        vehicleId, tripId, type: 'return',
-        odometerReading: initialOdometer + 65, fuelLevel: 'half',
-        inspectorAcknowledged: true, driverAcknowledged: true,
+        vehicleId,
+        tripId,
+        type: 'return',
+        odometerReading: initialOdometer + 65,
+        fuelLevel: 'half',
+        inspectorAcknowledged: true,
+        driverAcknowledged: true,
         photoKeys: ['smoke/ret-front.jpg', 'smoke/ret-rear.jpg', 'smoke/ret-dash.jpg'],
         checklist: fullChecklist(RETURN_INSPECTION_ITEMS),
       },
@@ -217,8 +222,8 @@ test.describe('Role lifecycle smoke', () => {
     expect(auditRes.status()).toBe(200);
 
     await Promise.all(
-      [requester, supervisor, transport, release, authoriser, inspector, auditor].map(
-        (a) => a.dispose(),
+      [requester, supervisor, transport, release, authoriser, driver, inspector, auditor].map((a) =>
+        a.dispose(),
       ),
     );
   });

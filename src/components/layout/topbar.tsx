@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Bell,
   User,
@@ -16,7 +16,6 @@ import {
   Loader2,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { getRoleLabel } from '@/lib/role-labels';
 import { fetchUserProfile, userProfileQueryKey, type UserProfileData } from '@/lib/user-profile';
 import { ThemeSelector } from '@/components/layout/theme-selector';
@@ -35,6 +34,8 @@ interface TopbarProps {
   onMenuClick: () => void;
   tenantName?: string;
   userId?: string;
+  userName?: string | null;
+  userEmail?: string;
   roleNames: string[];
   activeWorkspace: WorkspaceId;
   eligibleWorkspaces: Array<{ id: WorkspaceId; label: string }>;
@@ -44,11 +45,13 @@ export function Topbar({
   onMenuClick,
   tenantName,
   userId,
+  userName,
+  userEmail,
   roleNames,
   activeWorkspace,
   eligibleWorkspaces,
 }: TopbarProps) {
-  const router = useRouter();
+  const queryClient = useQueryClient();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [showIosInstall, setShowIosInstall] = useState(false);
   const [switchingWorkspace, setSwitchingWorkspace] = useState<WorkspaceId | null>(null);
@@ -57,7 +60,7 @@ export function Topbar({
   useNotificationBroadcast();
 
   const { data: profile = null } = useQuery<UserProfileData>({
-    queryKey: userProfileQueryKey,
+    queryKey: [...userProfileQueryKey, userId],
     queryFn: ({ signal }) => fetchUserProfile(signal),
     enabled: Boolean(userId),
     staleTime: 30_000,
@@ -97,7 +100,12 @@ export function Topbar({
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
-  const displayName = profile?.name || profile?.email?.split('@')[0] || 'User';
+  const displayName =
+    profile?.name ||
+    profile?.email?.split('@')[0] ||
+    userName ||
+    userEmail?.split('@')[0] ||
+    'User';
   const roleLabel = profile?.roles?.[0]
     ? getRoleLabel(profile.roles[0].roleName)
     : roleNames[0]
@@ -131,7 +139,8 @@ export function Topbar({
     } catch {
       /* ignore */
     }
-    router.push('/login');
+    queryClient.clear();
+    window.location.assign('/login');
   };
 
   return (

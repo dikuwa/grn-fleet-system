@@ -45,10 +45,11 @@ test.describe('Route flow with maps and reporting', () => {
     const transport = await login('transport.admin@kavangoeast.test');
     const release = await login('release.officer@kavangoeast.test');
     const authoriser = await login('regional.authoriser@kavangoeast.test');
+    const driver = await login('driver@kavangoeast.test');
 
     // Trip-authority validity check at trip-start requires now >= validFrom.
     // Use a window 4-6h in the future: route-flow never calls trip-start, and
-    // this must NOT overlap role-lifecycle-smoke's requester-driver window
+    // this must NOT overlap role-lifecycle-smoke's dedicated-driver window
     // (now-1h -> now+2h) which runs in a parallel worker — the driver-overlap
     // check rejects any second assignment of the same employee in an
     // overlapping period, so a wide 2h+ gap keeps both specs deterministic
@@ -62,12 +63,14 @@ test.describe('Route flow with maps and reporting', () => {
       data: {
         purpose: 'E2E route flow — mapped route round trip',
         scope: 'regional',
-        activities: [{
-          title: 'Route flow verification',
-          startDate: start.toISOString(),
-          endDate: end.toISOString(),
-          estimatedKilometres: ROUTE.estimatedKm,
-        }],
+        activities: [
+          {
+            title: 'Route flow verification',
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+            estimatedKilometres: ROUTE.estimatedKm,
+          },
+        ],
         routes: [ROUTE],
       },
     });
@@ -88,7 +91,10 @@ test.describe('Route flow with maps and reporting', () => {
     const context = await browser.newContext({ storageState: await api.storageState() });
     const page = await context.newPage();
 
-    await page.goto(`/dashboard/requests/${requestData.id}`, { waitUntil: 'load', timeout: 60_000 });
+    await page.goto(`/dashboard/requests/${requestData.id}`, {
+      waitUntil: 'load',
+      timeout: 60_000,
+    });
     await expect(page.locator('h1:has-text("GRN/TR/")').first()).toBeVisible({ timeout: 15_000 });
     // Routes section present with the Leaflet map container
     await expect(page.locator('text=Routes').first()).toBeVisible({ timeout: 10_000 });
@@ -115,10 +121,15 @@ test.describe('Route flow with maps and reporting', () => {
       headers: { 'idempotency-key': crypto.randomUUID() },
       data: {
         licenceNumber: `E2E-RF-${Date.now()}`,
-        make: 'Toyota', model: 'Hilux',
-        manufactureYear: 2025, colour: 'White',
-        fuelType: 'diesel', transmission: 'manual',
-        currentOdometer: 100, status: 'available', seatedCapacity: 5,
+        make: 'Toyota',
+        model: 'Hilux',
+        manufactureYear: 2025,
+        colour: 'White',
+        fuelType: 'diesel',
+        transmission: 'manual',
+        currentOdometer: 100,
+        status: 'available',
+        seatedCapacity: 5,
       },
     });
     if (createVehicleRes.status() === 403) {
@@ -129,7 +140,12 @@ test.describe('Route flow with maps and reporting', () => {
     const vehicleId = ((await createVehicleRes.json()).vehicle as { id: string }).id;
 
     const allocationRes = await transport.post('/api/allocations', {
-      data: { requestId: requestData.id, vehicleId, startDate: start.toISOString(), endDate: end.toISOString() },
+      data: {
+        requestId: requestData.id,
+        vehicleId,
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+      },
     });
     expect(allocationRes.status(), await allocationRes.text()).toBe(200);
     const allocationData = await allocationRes.json();
@@ -137,33 +153,18 @@ test.describe('Route flow with maps and reporting', () => {
     const tripId = allocationData.trip.id as string;
     expect(tripId).toBeTruthy();
 
-    // Convert the requester into a test driver (like role-lifecycle-smoke)
-    const profileRes = await requester.get('/api/users/profile');
+    // Use the dedicated driver identity; never mutate the fixed Requester persona.
+    const profileRes = await driver.get('/api/users/profile');
     const profileBody = await profileRes.json();
     const profileData = profileBody.data || profileBody;
-    const requesterEmpId = profileData.employee?.id || profileData.profile?.employeeId;
-    if (!requesterEmpId) {
-      test.skip(true, 'Could not determine requester employee ID');
+    const driverEmpId = profileData.employee?.id || profileData.profile?.employeeId;
+    if (!driverEmpId) {
+      test.skip(true, 'Could not determine driver employee ID');
       return;
-    }
-    const createDriverRes = await transport.post('/api/drivers', {
-      data: {
-        employeeId: requesterEmpId,
-        licenceNumber: `LIC-RF-${Date.now()}`,
-        licenceClass: 'B',
-        issueDate: new Date().toISOString().slice(0, 10),
-        expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-        verificationStatus: 'verified',
-      },
-    });
-    if (createDriverRes.status() === 409) {
-      console.log('Driver profile already existed for requester, reusing');
-    } else {
-      expect(createDriverRes.status(), await createDriverRes.text()).toBe(201);
     }
 
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
-      data: { driverEmployeeId: requesterEmpId },
+      data: { driverEmployeeId: driverEmpId },
     });
     expect(assignRes.status(), await assignRes.text()).toBe(200);
 
@@ -172,12 +173,11 @@ test.describe('Route flow with maps and reporting', () => {
       [transport, 'transport review'],
       [release, 'release'],
       [authoriser, 'authorise'],
-      [requester, 'driver ack'],
+      [driver, 'driver ack'],
     ] as const) {
-      const res = await api.post(
-        `/api/approvals/${requestData.workflowInstanceId}/action`,
-        { data: { actionType: 'approved', comment: `Route flow: ${label}` } },
-      );
+      const res = await api.post(`/api/approvals/${requestData.workflowInstanceId}/action`, {
+        data: { actionType: 'approved', comment: `Route flow: ${label}` },
+      });
       expect(res.status(), `${label}: ${await res.text()}`).toBe(200);
     }
 
@@ -191,13 +191,15 @@ test.describe('Route flow with maps and reporting', () => {
     });
     await expect(page.getByText('Route map').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.leaflet-container').first()).toBeAttached({ timeout: 15_000 });
-    await expect(page.getByText('Approved route distance').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Approved route distance').first()).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(page.getByText(/700 km/).first()).toBeVisible({ timeout: 10_000 });
 
     await context.close();
     await api.dispose();
     await Promise.all(
-      [requester, supervisor, transport, release, authoriser].map((a) => a.dispose()),
+      [requester, supervisor, transport, release, authoriser, driver].map((a) => a.dispose()),
     );
   });
 });

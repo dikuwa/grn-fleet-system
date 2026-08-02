@@ -32,6 +32,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <DashboardShell
       tenantName={session.tenantSlug}
       userId={session.user.id}
+      userName={session.user.name}
+      userEmail={session.user.email}
       roleNames={roleNames}
       activeWorkspace={activeWorkspace}
       eligibleWorkspaces={eligibleWorkspaces.map(({ id, label }) => ({ id, label }))}

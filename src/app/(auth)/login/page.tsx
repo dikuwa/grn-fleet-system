@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff, LogIn, AlertCircle, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,6 @@ import { ThemeSelector } from '@/components/layout/theme-selector';
 
 /** Inner form component that calls useSearchParams */
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirect') || '/dashboard';
   const [showPassword, setShowPassword] = useState(false);
@@ -40,11 +39,11 @@ function LoginForm() {
       }
 
       if (json.requiresPasswordChange) {
-        router.push('/dashboard/profile');
+        window.location.assign('/dashboard/profile');
         return;
       }
 
-      router.push(redirectTo);
+      window.location.assign(redirectTo);
     } catch {
       setError('Unable to sign in. Please check your connection and try again.');
       setLoading(false);
@@ -54,20 +53,16 @@ function LoginForm() {
   return (
     <div className="space-y-6">
       <div className="relative text-center">
-        <ThemeSelector className="absolute -right-1 -top-1" />
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-800 text-lg font-bold text-white">
+        <ThemeSelector className="absolute -top-1 -right-1" />
+        <div className="bg-brand-800 mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white">
           G
         </div>
-        <h1 className="text-xl font-[650] tracking-tight text-ink-950">
-          Sign in to {APP_NAME}
-        </h1>
-        <p className="mt-1 text-sm text-ink-500">
-          Authorised government personnel only
-        </p>
+        <h1 className="text-ink-950 text-xl font-[650] tracking-tight">Sign in to {APP_NAME}</h1>
+        <p className="text-ink-500 mt-1 text-sm">Authorised government personnel only</p>
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-[8px] border border-status-error-bg bg-status-error-bg/30 px-4 py-3 text-sm text-status-error-text">
+        <div className="border-status-error-bg bg-status-error-bg/30 text-status-error-text flex items-center gap-2 rounded-[8px] border px-4 py-3 text-sm">
           <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
         </div>
@@ -76,7 +71,7 @@ function LoginForm() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <FieldWrapper label="Username or email" required>
           <div className="relative">
-            <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+            <User className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
             <Input
               type="text"
               placeholder="Enter your username or email"
@@ -102,14 +97,10 @@ function LoginForm() {
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-500 hover:text-ink-700"
+              className="text-ink-500 hover:text-ink-700 absolute top-1/2 right-3 -translate-y-1/2"
               aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
-              {showPassword ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </FieldWrapper>
@@ -120,7 +111,7 @@ function LoginForm() {
         </Button>
       </form>
 
-      <p className="text-center text-xs text-ink-500">
+      <p className="text-ink-500 text-center text-xs">
         Only authorised administrators can create accounts.{' '}
         <Link href="/contact" className="text-brand-600 hover:text-brand-700">
           Contact support
@@ -135,10 +126,10 @@ export default function LoginPage() {
     <Suspense
       fallback={
         <div className="space-y-6 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-800 text-lg font-bold text-white">
+          <div className="bg-brand-800 mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white">
             G
           </div>
-          <p className="text-sm text-ink-500">Loading...</p>
+          <p className="text-ink-500 text-sm">Loading...</p>
         </div>
       }
     >

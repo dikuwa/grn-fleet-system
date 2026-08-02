@@ -15,7 +15,7 @@ import {
   UserRound,
   Users,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -278,10 +278,14 @@ function PeopleList({ people }: { people: ApprovalDecisionWorkspaceData['passeng
   );
 }
 
-function MobileApprovalAction({ href }: { href: string }) {
-  const [mounted, setMounted] = useState(false);
+const subscribeToClientMount = () => () => undefined;
 
-  useEffect(() => setMounted(true), []);
+function MobileApprovalAction({ href }: { href: string }) {
+  const mounted = useSyncExternalStore(
+    subscribeToClientMount,
+    () => true,
+    () => false,
+  );
 
   if (!mounted) return null;
 

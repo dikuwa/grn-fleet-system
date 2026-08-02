@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, LogOut } from 'lucide-react';
 import { authClient } from '@/lib/auth-client';
 
 export default function LogoutPage() {
-  const router = useRouter();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     async function performSignOut() {
@@ -16,26 +16,24 @@ export default function LogoutPage() {
         // Ignore errors — clear local state regardless
       }
       // Clear Better Auth session cookies only
-      const cookieNames = [
-        'better-auth.session_token',
-        'better-auth.session_token.sig',
-      ];
+      const cookieNames = ['better-auth.session_token', 'better-auth.session_token.sig'];
       cookieNames.forEach((name) => {
         document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
       });
-      router.push('/login');
+      queryClient.clear();
+      window.location.replace('/login');
     }
     performSignOut();
-  }, [router]);
+  }, [queryClient]);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-canvas px-4">
+    <div className="bg-canvas flex min-h-screen flex-col items-center justify-center px-4">
       <div className="w-full max-w-sm text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-50">
-          <LogOut className="h-6 w-6 text-brand-700" />
+        <div className="bg-brand-50 mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl">
+          <LogOut className="text-brand-700 h-6 w-6" />
         </div>
-        <h1 className="text-lg font-[650] tracking-tight text-ink-950">Signing Out</h1>
-        <div className="mt-4 flex items-center justify-center gap-2 text-sm text-ink-500">
+        <h1 className="text-ink-950 text-lg font-[650] tracking-tight">Signing Out</h1>
+        <div className="text-ink-500 mt-4 flex items-center justify-center gap-2 text-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
           Please wait...
         </div>
