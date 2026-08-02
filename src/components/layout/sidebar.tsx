@@ -189,11 +189,11 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
         collapsed ? 'w-[72px]' : 'w-[248px]',
       )}
     >
-      {/* Fixed header: branding (collapse toggle moved to edge chevron) */}
+      {/* Fixed header: branding and desktop collapse control */}
       <div
         className={cn(
           'border-border flex shrink-0 items-center border-b px-4 dark:border-[#2a2a48]',
-          collapsed ? 'h-16 justify-center' : 'h-16 gap-3',
+          collapsed ? 'h-16 gap-0.5 px-1' : 'h-16 gap-3',
         )}
       >
         <div className="bg-brand-800 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-white">
@@ -204,19 +204,20 @@ export function Sidebar({ collapsed, onToggle, roleNames }: SidebarProps) {
             {APP_SHORT_NAME}
           </span>
         )}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+          className={cn(
+            'text-ink-500 hover:bg-muted hover:text-ink-800 dark:text-ink-300 dark:hover:text-ink-100 focus-visible:ring-brand-600 ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] transition-colors focus:outline-none focus-visible:ring-2 active:scale-95 dark:hover:bg-white/[0.08]',
+            collapsed && 'ml-0 h-7 w-7',
+          )}
+        >
+          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </button>
       </div>
-
-      {/* Edge collapse chevron — vertically centred on the sidebar's right border,
-          overlapping the divider, fixed while the nav scrolls. Desktop only;
-          mobile uses the drawer. */}
-      <button
-        onClick={onToggle}
-        aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
-        title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
-        className="bg-surface border-border text-ink-500 hover:bg-muted hover:text-ink-800 dark:bg-[#1b1b39] dark:text-ink-300 dark:hover:bg-white/[0.08] dark:hover:text-ink-100 absolute top-1/2 right-0 z-20 hidden h-7 w-7 -translate-y-1/2 translate-x-1/2 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 active:scale-95 md:flex"
-      >
-        {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-      </button>
 
       {/* Scrollable navigation area */}
       <nav
@@ -361,6 +362,7 @@ export function MobileSidebar({
             {APP_SHORT_NAME}
           </span>
           <button
+            type="button"
             onClick={onClose}
             className="text-ink-400 hover:bg-muted hover:text-ink-700 dark:hover:text-ink-200 ml-auto flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors dark:hover:bg-white/[0.06]"
             aria-label="Close navigation"
