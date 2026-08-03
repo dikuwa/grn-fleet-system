@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
 
     // Verify the vehicle exists
     const [vehicle] = await db
-      .select({ id: vehicles.id, status: vehicles.status })
+      .select({ id: vehicles.id, status: vehicles.status, licenceNumber: vehicles.licenceNumber })
       .from(vehicles)
       .where(and(eq(vehicles.id, resolvedVehicleId), eq(vehicles.tenantId, tenantId)))
       .limit(1);
@@ -186,6 +186,35 @@ export async function POST(req: NextRequest) {
       stage: 'allocated',
       officeLabel: 'Transport office',
     });
+
+    // Send allocation notification emails (best-effort; never block the response)
+    try {
+      const { sendNotificationEmail } = await import('@/lib/email');
+      const { employees } = await import('@/db/schema/people');
+      const [requester] = await db
+        .select({
+          email: employees.email,
+          firstName: employees.firstName,
+          lastName: employees.lastName,
+        })
+        .from(transportRequests)
+        .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+        .where(eq(transportRequests.id, resolvedRequestId))
+        .limit(1);
+
+      if (requester?.email) {
+        await sendNotificationEmail({
+          to: requester.email,
+          type: 'allocation_created',
+          title: '🚗 Vehicle Allocated',
+          body: `A vehicle (${vehicle.licenceNumber}) has been allocated to your request ${foundReq.reference} from ${startAt.toLocaleDateString('en-NA')}.`,
+          actionUrl: `/dashboard/requests/${foundReq.id}`,
+          recipientName: requester.firstName || 'Requester',
+        });
+      }
+    } catch (emailErr) {
+      console.warn('[allocations] Allocation email failed:', emailErr);
+    }
 
     return NextResponse.json({ allocation, trip, document: doc, recommendation });
   } catch (error) {

@@ -415,7 +415,7 @@ export const driverLicenceExpiryAlert = inngest
                 .where(
                   and(
                     eq(notificationPreferences.tenantId, l.tenantId),
-                    eq(notificationPreferences.userId, l.email),
+                    eq(notificationPreferences.userId, l.userId),
                   ),
                 )
                 .limit(1);

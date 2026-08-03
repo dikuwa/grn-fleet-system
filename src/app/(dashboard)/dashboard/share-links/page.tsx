@@ -19,7 +19,8 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
-
+  Copy,
+  MessageCircle,
   RefreshCcw,
   Trash2,
 } from 'lucide-react';
@@ -29,6 +30,7 @@ import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 interface ShareLinkRow {
   id: string;
   tokenHash: string;
+  shortSlug: string | null;
   expiresAt: string;
   isExpired: boolean;
   isRevoked: boolean;
@@ -78,6 +80,26 @@ export default function ShareLinksDashboardPage() {
     } catch {
       /* silent */
     }
+  };
+
+  const shareUrlFor = (link: ShareLinkRow) => {
+    if (!link.shortSlug) return null;
+    const baseUrl = window.location.origin;
+    return `${baseUrl}/v/${encodeURIComponent(link.shortSlug)}`;
+  };
+
+  const copyLink = async (link: ShareLinkRow) => {
+    const url = shareUrlFor(link);
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
+  };
+
+  const openWhatsApp = (link: ShareLinkRow) => {
+    const url = shareUrlFor(link);
+    if (!url) return;
+    const docLabel = link.documentType.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+    const message = `${docLabel} (v${link.documentVersion}) — verified document link.\nVerify securely: ${url}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener');
   };
 
   const summary = data?.summary ?? { active: 0, expired: 0, revoked: 0, views: 0 };
@@ -285,6 +307,26 @@ export default function ShareLinksDashboardPage() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    {isActive && shareUrlFor(link) && (
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openWhatsApp(link)}
+                          title="Share via WhatsApp"
+                        >
+                          <MessageCircle className="h-3 w-3" /> WhatsApp
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => copyLink(link)}
+                          title="Copy secure link"
+                        >
+                          <Copy className="h-3 w-3" /> Copy
+                        </Button>
+                      </>
+                    )}
                     {isActive && (
                       <Button variant="destructive" size="sm" onClick={() => handleRevoke(link.id)}>
                         <Trash2 className="h-3 w-3" /> Revoke

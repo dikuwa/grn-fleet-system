@@ -5,6 +5,8 @@ import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { sql, eq, and, gte, count } from 'drizzle-orm';
+import { offices } from '@/db/schema/people';
+import { regions } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -146,6 +148,32 @@ async function buildRequestRows(db: ReturnType<typeof getDb>, tenantId: string, 
     .orderBy(sql`transport_requests.created_at DESC`);
 }
 
+async function buildFleetRows(db: ReturnType<typeof getDb>, tenantId: string) {
+  return db
+    .select({
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+      make: vehicles.make,
+      model: vehicles.model,
+      category: vehicles.vehicleCategory,
+      status: vehicles.status,
+      fuelType: vehicles.fuelType,
+      transmission: vehicles.transmission,
+      currentOdometer: vehicles.currentOdometer,
+      seatedCapacity: vehicles.seatedCapacity,
+      licenceExpiryDate: vehicles.licenceExpiryDate,
+      roadworthyTestDate: vehicles.roadworthyTestDate,
+      officeName: offices.name,
+      regionName: regions.name,
+      createdAt: vehicles.createdAt,
+    })
+    .from(vehicles)
+    .leftJoin(offices, eq(vehicles.assignedOfficeId, offices.id))
+    .leftJoin(regions, eq(vehicles.assignedRegionId, regions.id))
+    .where(eq(vehicles.tenantId, tenantId))
+    .orderBy(sql`vehicles.created_at DESC`);
+}
+
 async function buildMaintenanceRows(
   db: ReturnType<typeof getDb>,
   tenantId: string,
@@ -280,6 +308,31 @@ export async function GET(request: NextRequest) {
           ];
           title = 'Transport Requests Report';
           summary = [{ label: 'Total Requests', value: String(reqData.length) }];
+          break;
+        }
+        case 'fleet': {
+          const fleetData = await buildFleetRows(db, tenantId);
+          rows = fleetData;
+          columns = [
+            { key: 'licenceNumber', label: 'Licence Number' },
+            { key: 'vehicleRegisterNumber', label: 'NaTIS Register No' },
+            { key: 'make', label: 'Make' },
+            { key: 'model', label: 'Model' },
+            { key: 'category', label: 'Category' },
+            { key: 'status', label: 'Status' },
+            { key: 'fuelType', label: 'Fuel' },
+            { key: 'currentOdometer', label: 'Odometer (km)' },
+            { key: 'licenceExpiryDate', label: 'Licence Expiry' },
+            { key: 'roadworthyTestDate', label: 'Roadworthy Date' },
+          ];
+          title = 'Fleet Utilisation Report';
+          const available = fleetData.filter((v) => v.status === 'available').length;
+          const maintenance = fleetData.filter((v) => v.status === 'maintenance').length;
+          summary = [
+            { label: 'Total Vehicles', value: String(fleetData.length) },
+            { label: 'Available', value: String(available) },
+            { label: 'In Maintenance', value: String(maintenance) },
+          ];
           break;
         }
         case 'maintenance': {
@@ -436,6 +489,27 @@ export async function GET(request: NextRequest) {
           ];
           filename = `requests-report-${period}-${new Date().toISOString().split('T')[0]}.csv`;
           break;
+        case 'fleet':
+          rows = await buildFleetRows(db, tenantId);
+          columns = [
+            { key: 'licenceNumber', label: 'Licence Number' },
+            { key: 'vehicleRegisterNumber', label: 'NaTIS Register No' },
+            { key: 'make', label: 'Make' },
+            { key: 'model', label: 'Model' },
+            { key: 'category', label: 'Category' },
+            { key: 'status', label: 'Status' },
+            { key: 'fuelType', label: 'Fuel' },
+            { key: 'transmission', label: 'Transmission' },
+            { key: 'currentOdometer', label: 'Odometer (km)' },
+            { key: 'seatedCapacity', label: 'Seats' },
+            { key: 'licenceExpiryDate', label: 'Licence Expiry' },
+            { key: 'roadworthyTestDate', label: 'Roadworthy Date' },
+            { key: 'officeName', label: 'Office' },
+            { key: 'regionName', label: 'Region' },
+            { key: 'createdAt', label: 'Created' },
+          ];
+          filename = `fleet-report-${period}-${new Date().toISOString().split('T')[0]}.csv`;
+          break;
         case 'maintenance':
           rows = await buildMaintenanceRows(db, tenantId, startDate);
           columns = [
@@ -535,6 +609,27 @@ export async function GET(request: NextRequest) {
             { key: 'createdAt', label: 'Created' },
           ];
           sheetName = 'Requests';
+          break;
+        case 'fleet':
+          rows = await buildFleetRows(db, tenantId);
+          columns = [
+            { key: 'licenceNumber', label: 'Licence Number' },
+            { key: 'vehicleRegisterNumber', label: 'NaTIS Register No' },
+            { key: 'make', label: 'Make' },
+            { key: 'model', label: 'Model' },
+            { key: 'category', label: 'Category' },
+            { key: 'status', label: 'Status' },
+            { key: 'fuelType', label: 'Fuel' },
+            { key: 'transmission', label: 'Transmission' },
+            { key: 'currentOdometer', label: 'Odometer (km)' },
+            { key: 'seatedCapacity', label: 'Seats' },
+            { key: 'licenceExpiryDate', label: 'Licence Expiry' },
+            { key: 'roadworthyTestDate', label: 'Roadworthy Date' },
+            { key: 'officeName', label: 'Office' },
+            { key: 'regionName', label: 'Region' },
+            { key: 'createdAt', label: 'Created' },
+          ];
+          sheetName = 'Fleet';
           break;
         case 'maintenance':
           rows = await buildMaintenanceRows(db, tenantId, startDate);

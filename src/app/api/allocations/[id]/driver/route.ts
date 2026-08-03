@@ -169,6 +169,28 @@ export async function PATCH(
       officeLabel: 'Transport office',
     });
 
+    // Notify the assigned driver by email (best-effort, never blocks the response)
+    try {
+      const { sendNotificationEmail } = await import('@/lib/email');
+      const [driverRow] = await db
+        .select({ email: employees.email, firstName: employees.firstName })
+        .from(employees)
+        .where(eq(employees.id, driverEmployeeId))
+        .limit(1);
+      if (driverRow?.email) {
+        await sendNotificationEmail({
+          to: driverRow.email,
+          type: 'allocation_created',
+          title: '🚗 You have been assigned as driver',
+          body: `You have been assigned to allocation for request ${allocation.requestReference ?? ''}. Please review the trip authority in the system.`,
+          actionUrl: `/dashboard/trips`,
+          recipientName: driverRow.firstName || 'Driver',
+        });
+      }
+    } catch (emailErr) {
+      console.warn('[Allocation Driver] Assignment email failed:', emailErr);
+    }
+
     return NextResponse.json({ success: true, driverEmployeeId });
   } catch (error) {
     console.error('[Allocation Driver] PATCH failed:', error);

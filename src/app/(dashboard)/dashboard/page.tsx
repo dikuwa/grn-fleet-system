@@ -1,15 +1,17 @@
 import Link from 'next/link';
-import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import {
   Bell,
   Building2,
   ClipboardCheck,
   FileText,
+  Fuel,
   Shield,
   Truck,
   Users,
   Wrench,
 } from 'lucide-react';
+import { fuelTransactions } from '@/db/schema';
 import { getDb, isDbConnected } from '@/db';
 import {
   employees,
@@ -210,25 +212,55 @@ async function getWorkspaceMetrics(
   }
 
   if (workspace === WorkspaceIds.DRIVER) {
+    const driverBase = (
+      condition: SQL<boolean> | undefined,
+    ) =>
+      db
+        .select({ count })
+        .from(trips)
+        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+        .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
+        .where(
+          and(
+            eq(trips.tenantId, tenantId),
+            eq(employees.userId, userId),
+            condition ?? sql<boolean>`true`,
+          ),
+        );
     return [
       {
         label: 'My active trips',
+        value: await countRows(driverBase(sql<boolean>`${trips.status} != 'closed'`)),
+        href: '/dashboard/trips',
+        icon: <Truck className="h-5 w-5" />,
+      },
+      {
+        label: 'Trips due for return',
+        value: await countRows(
+          driverBase(sql<boolean>`${trips.status} in ('return_due','in_progress')`),
+        ),
+        href: '/dashboard/trips?status=return_due',
+        icon: <FileText className="h-5 w-5" />,
+      },
+      {
+        label: 'My fuel records (30d)',
         value: await countRows(
           db
             .select({ count })
-            .from(trips)
+            .from(fuelTransactions)
+            .innerJoin(trips, eq(fuelTransactions.tripId, trips.id))
             .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
             .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
             .where(
               and(
                 eq(trips.tenantId, tenantId),
                 eq(employees.userId, userId),
-                ne(trips.status, 'closed'),
+                sql`${fuelTransactions.transactionAt} >= now() - interval '30 days'`,
               ),
             ),
         ),
-        href: '/dashboard/trips',
-        icon: <Truck className="h-5 w-5" />,
+        href: '/dashboard/fuel',
+        icon: <Fuel className="h-5 w-5" />,
       },
     ];
   }

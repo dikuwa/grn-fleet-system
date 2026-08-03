@@ -56,6 +56,7 @@ export async function GET(request: NextRequest) {
         .select({
           id: shareLinks.id,
           tokenHash: shareLinks.tokenHash,
+          shortSlug: shareLinks.shortSlug,
           expiresAt: shareLinks.expiresAt,
           isExpired: sql<boolean>`${shareLinks.expiresAt} < now()`,
           isRevoked: shareLinks.isRevoked,

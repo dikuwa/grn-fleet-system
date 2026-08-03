@@ -253,6 +253,16 @@ Implemented the three-concept separation per the strict implementation prompt. S
 8. **Page numbering** — Shared `ReportDocument` footer now renders `Page X of Y` (was `Page X`). ✅
 9. **Validation** — `pnpm tsc --noEmit` 0 errors; `pnpm lint` 0 errors (3 pre-existing warnings in untouched files); `pnpm vitest run` 265/265 passed (23 files). Fixed during review: `danger`→`destructive` Button variant, `EmptyState` href actions, missing `useToast`, notification category `system`→`awareness`, effect set-state lint, memoization deps. ✅
 
+### Session 33 ✅ — WhatsApp Share Actions, Allocation Emails, Fleet Report Export, Driver Dashboard Metrics, Programme E2E Test
+
+1. **Fleet report export** (`src/app/api/reports/route.ts`) — `/api/reports?type=fleet&export=csv|excel|pdf` previously fell through to an empty default. Added tenant-scoped fleet rows (licenceNumber, make/model, category, colour, status, odometer, licence expiry, roadworthy test date, assigned office/region) and CSV/Excel/PDF cases in the export switches. ✅
+2. **WhatsApp share on share-links dashboard** (`/api/share-links` + `/dashboard/share-links`) — List API now returns `shortSlug`; the dashboard rows gained per-link Copy-link and WhatsApp share buttons (device `https://wa.me/?text=` deep link) alongside the existing revoke action. ✅
+3. **Allocation emails** (`/api/allocations` + `/api/allocations/[id]/driver`) — Allocation creation now sends an `allocation_created` email to the requester (and the assigned driver when driverEmployeeId is set); driver assignment sends a driver-assignment email. Uses the existing `sendNotificationEmail` + template registry (no new infra). ✅
+4. **Driver licence-expiry job bug fix** (`src/lib/inngest/functions.ts`) — `notificationPreferences` lookup matched `userId` against `l.email`; corrected to `l.userId` so preferences actually gate the alert. ✅
+5. **Driver dashboard metrics** (`src/app/(dashboard)/dashboard/page.tsx`) — DRIVER workspace now shows Trips due for return (status `return_due`/`in_progress`) and My fuel records (30d) alongside My active trips. ✅
+6. **Programme E2E test** (`src/e2e/programme-workflow.spec.ts`) — New Playwright spec following the role-isolation pattern: admin creates a programme, submits it, reviewer approves, requester links it to a transport request, and the request detail shows the Linked Programme card. ✅
+7. **Validation** — `pnpm tsc --noEmit` 0 errors; `pnpm lint` 0 errors (3 pre-existing warnings in untouched files); `pnpm vitest run` 265/265 passed (23 files).
+
 ---
 
 ## How to Use This Roadmap
