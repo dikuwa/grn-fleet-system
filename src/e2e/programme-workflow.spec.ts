@@ -217,13 +217,20 @@ test.describe.serial('Programme business model workflow', () => {
     const created = (await createResponse.json()).data as { id: string; status: string };
     expect(created.status).toBe('draft');
 
-    // Reject requires a reason
+    // Rejecting a draft is an invalid transition (only submit/archive allowed)
+    const premature = await tenantAdmin.post(`/api/programmes/${created.id}/action`, {
+      data: { action: 'reject' },
+    });
+    expect(premature.status()).toBe(409);
+
+    await requester.post(`/api/programmes/${created.id}/action`, { data: { action: 'submit' } });
+
+    // Reject requires a reason once the programme is submitted
     const noReason = await tenantAdmin.post(`/api/programmes/${created.id}/action`, {
       data: { action: 'reject' },
     });
     expect(noReason.status()).toBe(400);
 
-    await requester.post(`/api/programmes/${created.id}/action`, { data: { action: 'submit' } });
     const reject = await tenantAdmin.post(`/api/programmes/${created.id}/action`, {
       data: { action: 'reject', note: 'Insufficient operational detail.' },
     });

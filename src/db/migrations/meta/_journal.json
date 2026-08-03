@@ -218,6 +218,13 @@
       "when": 1785931200000,
       "tag": "0030_programme_management",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785942000000,
+      "tag": "0031_vehicle_inspection_sync",
+      "breakpoints": true
     }
   ]
 }

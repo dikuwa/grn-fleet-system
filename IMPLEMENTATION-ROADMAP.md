@@ -263,6 +263,13 @@ Implemented the three-concept separation per the strict implementation prompt. S
 6. **Programme E2E test** (`src/e2e/programme-workflow.spec.ts`) — New Playwright spec following the role-isolation pattern: admin creates a programme, submits it, reviewer approves, requester links it to a transport request, and the request detail shows the Linked Programme card. ✅
 7. **Validation** — `pnpm tsc --noEmit` 0 errors; `pnpm lint` 0 errors (3 pre-existing warnings in untouched files); `pnpm vitest run` 265/265 passed (23 files).
 
+### Session 34 ✅ — Email Coverage in Background Jobs, Offline Inspection Sync Idempotency, Playwright Verification
+
+1. **Emails wired into background jobs** (`src/lib/inngest/functions.ts`) — Added a shared `emailUserIds` helper (tenant-scoped, respects `notificationPreferences.emailNotifications`, mirrors the driver-licence job pattern) and wired it into six jobs that previously only created in-app notifications: `stepReminder` (approval_due_reminder → assigned approver), `stepEscalation` (approval_overdue_escalation → assignee), `approvalCompleted` (request_approved/rejected → requester with correct template type), `vehicleLicenceExpiryAlert` (→ fleet managers), `maintenanceReminder` (→ fleet managers), and `documentExpiryAlert` (→ document controllers). ✅
+2. **Offline inspection sync idempotency** — `vehicle_inspections` gained `client_sync_id` (schema + hand-written migration `0031_vehicle_inspection_sync.sql` + `_journal.json` entry, matching the fuel/trip-logs/progress/expenses/incidents pattern). `POST /api/inspections` now dedupes by `(tenantId, tripId, clientSyncId)` returning `{ idempotent: true }` for resubmissions; `syncSingleDraft` in `src/lib/offline-sync.ts` passes `clientSyncId` through so retries can't double-submit. Unique index `uq_vehicle_inspections_tenant_sync` enforces the constraint at the DB level. ✅
+3. **Playwright verification** — Fixed `src/e2e/programme-workflow.spec.ts` rejection-path ordering bug (the API correctly returns 409 for `reject` on a `draft` — invalid transition — so the no-reason 400 assertion must run after `submit`). Ran `programme-workflow` (7/7), `offline-drafts` (7/7) and `offline-conflict-resolution` (7/7) specs against a fresh production build + e2e seed — all 21 passed. Migration 0031 verified applied (`client_sync_id` present on `vehicle_inspections`). ✅
+4. **Validation** — `pnpm tsc --noEmit` 0 errors; `pnpm lint` 0 errors (3 pre-existing warnings in untouched files); `pnpm vitest run` 265/265 passed (23 files).
+
 ---
 
 ## How to Use This Roadmap

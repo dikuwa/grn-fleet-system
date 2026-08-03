@@ -112,6 +112,7 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
           notes: fd<string | null>(d.formData, 'notes', null),
           inspectorAcknowledged: fd(d.formData, 'inspectorAcknowledged', false),
           driverAcknowledged: fd(d.formData, 'driverAcknowledged', false),
+          clientSyncId: d.id,
         }),
       };
 

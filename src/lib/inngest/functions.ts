@@ -66,6 +66,67 @@ async function getInstanceWithTenant(workflowInstanceId: string): Promise<{
 }
 
 // ---------------------------------------------------------------------------
+// Helper: send notification emails to user IDs (respects notification preferences)
+// ---------------------------------------------------------------------------
+
+async function emailUserIds(input: {
+  tenantId: string;
+  userIds: readonly string[];
+  type: string;
+  title: string;
+  body: string;
+  actionUrl?: string;
+  defaultName?: string;
+}): Promise<number> {
+  if (!input.userIds.length) return 0;
+  const db = getDb();
+  const { user } = await import('@/db/schema/better-auth');
+  const { notificationPreferences } = await import('@/db/schema/notifications');
+  const { inArray, eq, and } = await import('drizzle-orm');
+  const { sendNotificationEmail } = await import('@/lib/email');
+
+  const users = await db
+    .select({ id: user.id, email: user.email, name: user.name })
+    .from(user)
+    .where(inArray(user.id, [...input.userIds]));
+
+  const prefs = await db
+    .select({
+      userId: notificationPreferences.userId,
+      emailNotifications: notificationPreferences.emailNotifications,
+    })
+    .from(notificationPreferences)
+    .where(
+      and(
+        eq(notificationPreferences.tenantId, input.tenantId),
+        inArray(notificationPreferences.userId, [...input.userIds]),
+      ),
+    );
+
+  const prefMap = new Map(prefs.map((p) => [p.userId, p.emailNotifications !== false]));
+
+  let sent = 0;
+  for (const u of users) {
+    if (!u.email) continue;
+    if (prefMap.has(u.id) && !prefMap.get(u.id)) continue;
+    try {
+      const result = await sendNotificationEmail({
+        to: u.email,
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        actionUrl: input.actionUrl,
+        recipientName: u.name || input.defaultName || 'Team Member',
+      });
+      if (result.success) sent += 1;
+    } catch (err) {
+      console.warn(`[inngest] Email to ${u.email} failed:`, err);
+    }
+  }
+  return sent;
+}
+
+// ---------------------------------------------------------------------------
 // Step Reminder
 // ---------------------------------------------------------------------------
 
@@ -118,7 +179,17 @@ export const stepReminder = inngest
             priority: 'normal',
           });
 
-          return { sent: Boolean(notif), notificationId: notif?.id };
+          const emailed = await emailUserIds({
+            tenantId: instance.tenantId,
+            userIds: [instance.assignedUserId],
+            type: 'reminder',
+            title: 'Workflow Action Reminder',
+            body: `Step ${stepOrder} requires attention in workflow ${workflowInstanceId.slice(0, 8)}. Please review and take action.`,
+            actionUrl: `/dashboard/approvals/${workflowInstanceId}`,
+            defaultName: 'Approver',
+          });
+
+          return { sent: Boolean(notif), notificationId: notif?.id, emailed };
         });
       },
     )
@@ -178,7 +249,17 @@ export const stepEscalation = inngest
             mandatory: true,
           });
 
-          return { sent: Boolean(notif), notificationId: notif?.id };
+          const emailed = await emailUserIds({
+            tenantId: instance.tenantId,
+            userIds: [instance.assignedUserId],
+            type: 'escalation',
+            title: '⚠️ Workflow Escalation',
+            body: `Step ${stepOrder} in workflow ${workflowInstanceId.slice(0, 8)} has exceeded its time limit. Immediate attention required.`,
+            actionUrl: `/dashboard/approvals/${workflowInstanceId}`,
+            defaultName: 'Approver',
+          });
+
+          return { sent: Boolean(notif), notificationId: notif?.id, emailed };
         });
       },
     )
@@ -228,7 +309,23 @@ export const approvalCompleted = inngest
             priority: 'normal',
           });
 
-          return { sent: Boolean(notif), notificationId: notif?.id, actorUserId };
+          const emailType =
+            result === 'approved'
+              ? 'request_approved'
+              : result === 'rejected'
+                ? 'request_rejected'
+                : 'request_returned';
+          const emailed = await emailUserIds({
+            tenantId: instance.tenantId,
+            userIds: [instance.requesterUserId],
+            type: emailType,
+            title,
+            body: `Your request workflow ${workflowInstanceId.slice(0, 8)} was ${result}. Review the request for details.`,
+            actionUrl: `/dashboard/requests/${instance.requestId}`,
+            defaultName: 'Requester',
+          });
+
+          return { sent: Boolean(notif), notificationId: notif?.id, emailed, actorUserId };
         });
       },
     )
@@ -302,6 +399,16 @@ export const vehicleLicenceExpiryAlert = inngest
               priority: daysLeft <= 7 ? 'high' : 'normal',
             });
             notificationCount += created.length;
+
+            await emailUserIds({
+              tenantId: v.tenantId,
+              userIds: recipients,
+              type: 'reminder',
+              title: `🚛 Vehicle Licence Expiring — ${v.licenceNumber}`,
+              body: `${v.licenceNumber} licence expires${daysLeft > 0 ? ` in ${daysLeft} day(s)` : ' today'}. Arrange renewal or take the vehicle off the road.`,
+              actionUrl: `/dashboard/fleet/${v.vehicleId}`,
+              defaultName: 'Transport Administrator',
+            });
           }
 
           return { sent: notificationCount > 0, count: notificationCount };
@@ -678,6 +785,16 @@ export const maintenanceReminder = inngest
               workspace: WorkspaceIds.MAINTENANCE,
               priority: 'normal',
             });
+
+            await emailUserIds({
+              tenantId: m.tenantId,
+              userIds: recipients,
+              type: 'maintenance_created',
+              title: `🔧 Scheduled Maintenance Due — ${m.licenceNumber}`,
+              body: `${m.licenceNumber} — ${m.description} is due on ${m.serviceDate || 'soon'}. Schedule the service to avoid vehicle unavailability.`,
+              actionUrl: `/dashboard/fleet/${m.vehicleId}`,
+              defaultName: 'Maintenance Officer',
+            });
           }
 
           return { sent: upcomingMaintenance.length > 0, count: upcomingMaintenance.length };
@@ -771,6 +888,18 @@ export const documentExpiryAlert = inngest
               actionUrl: `/dashboard/documents/${doc.docId}`,
               workspace: WorkspaceIds.AUDIT,
               priority: daysRemaining <= 7 ? 'high' : 'normal',
+            });
+
+            await emailUserIds({
+              tenantId: doc.tenantId,
+              userIds: recipients,
+              type: 'document_expiry',
+              title: isExpired
+                ? `📄 Document Expired: ${label}`
+                : `📄 Document Expiring: ${label} (${daysRemaining} days)`,
+              body: `${label} v${doc.documentVersion} ${isExpired ? `expired on ${expiresAt.toISOString().split('T')[0]}` : `will expire on ${expiresAt.toISOString().split('T')[0]} (${daysRemaining} days remaining)`}.`,
+              actionUrl: `/dashboard/documents/${doc.docId}`,
+              defaultName: 'Auditor',
             });
           }
 

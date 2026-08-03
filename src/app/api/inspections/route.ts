@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
       photoKeys,
       inspectorAcknowledged,
       driverAcknowledged,
+      clientSyncId,
     } = body;
 
     // Validate required fields
@@ -86,6 +87,27 @@ export async function POST(req: NextRequest) {
     const db = getDb();
     const userId = session.user.id;
     const tenantId = session.tenantId;
+
+    // Idempotency: a retried offline sync (or double-tap) with the same tenant +
+    // clientSyncId returns the already-created inspection instead of duplicating it.
+    if (clientSyncId) {
+      const [existing] = await db
+        .select()
+        .from(vehicleInspections)
+        .where(
+          and(eq(vehicleInspections.tenantId, tenantId), eq(vehicleInspections.clientSyncId, clientSyncId)),
+        )
+        .limit(1);
+      if (existing) {
+        return NextResponse.json({
+          inspection: existing,
+          trip: null,
+          overallPass: existing.overallPass,
+          status: existing.status,
+          idempotent: true,
+        });
+      }
+    }
 
     // Verify the vehicle exists and belongs to this tenant
     const [vehicle] = await db
@@ -307,6 +329,7 @@ export async function POST(req: NextRequest) {
         status,
         overallPass,
         notes: notes || null,
+        clientSyncId: clientSyncId || null,
       })
       .returning();
 

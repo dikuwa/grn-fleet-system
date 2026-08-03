@@ -442,33 +442,38 @@ export const inspectionTemplateItems = pgTable('inspection_template_items', {
 /**
  * Vehicle inspections
  */
-export const vehicleInspections = pgTable('vehicle_inspections', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  vehicleId: uuid('vehicle_id')
-    .notNull()
-    .references(() => vehicles.id),
-  tripId: uuid('trip_id').references(() => trips.id),
-  templateId: uuid('template_id')
-    .notNull()
-    .references(() => inspectionTemplates.id),
-  templateVersion: integer('template_version').notNull(),
-  type: text('type').notNull(), // departure, return
-  odometerReading: integer('odometer_reading'),
-  fuelLevel: text('fuel_level'), // empty, quarter, half, three_quarters, full
-  inspectorUserId: text('inspector_user_id').notNull(),
-  inspectorEmployeeId: uuid('inspector_employee_id'),
-  driverEmployeeId: uuid('driver_employee_id').references(() => employees.id),
-  status: text('status').notNull().default('in_progress'), // in_progress, completed, failed
-  overallPass: boolean('overall_pass'),
-  signatureInspector: text('signature_inspector'),
-  signatureDriver: text('signature_driver'),
-  notes: text('notes'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const vehicleInspections = pgTable(
+  'vehicle_inspections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    vehicleId: uuid('vehicle_id')
+      .notNull()
+      .references(() => vehicles.id),
+    tripId: uuid('trip_id').references(() => trips.id),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => inspectionTemplates.id),
+    templateVersion: integer('template_version').notNull(),
+    type: text('type').notNull(), // departure, return
+    odometerReading: integer('odometer_reading'),
+    fuelLevel: text('fuel_level'), // empty, quarter, half, three_quarters, full
+    inspectorUserId: text('inspector_user_id').notNull(),
+    inspectorEmployeeId: uuid('inspector_employee_id'),
+    driverEmployeeId: uuid('driver_employee_id').references(() => employees.id),
+    status: text('status').notNull().default('in_progress'), // in_progress, completed, failed
+    overallPass: boolean('overall_pass'),
+    signatureInspector: text('signature_inspector'),
+    signatureDriver: text('signature_driver'),
+    notes: text('notes'),
+    clientSyncId: text('client_sync_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('uq_vehicle_inspections_tenant_sync').on(table.tenantId, table.clientSyncId)],
+);
 
 /**
  * Inspection item results
