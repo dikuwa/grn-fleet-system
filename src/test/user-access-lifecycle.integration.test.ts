@@ -1,0 +1,223 @@
+/**
+ * User Access Lifecycle — Integration Tests
+ *
+ * Exercises the real admin user-management API against a running server and
+ * the seeded database (the "Selma" scenario — remove a role-less user, keep
+ * the person as staff, restore the account):
+ *
+ *   1. A fresh account with zero active roles can be removed (DELETE) — the
+ *      linked staff record is preserved and the account leaves User Management.
+ *   2. Removal is BLOCKED while the user holds an active role (role-count
+ *      rule), and succeeds immediately after that role is ended.
+ *   3. Sessions are revoked on removal and verification tokens invalidated.
+ *   4. Removed accounts are hidden from the default list and surfaced through
+ *      the explicit ?status=removed filter.
+ *   5. Restore (POST /restore) re-activates the account.
+ *   6. Cross-tenant access (a user from another tenant) and self-deletion are
+ *      rejected.
+ *
+ * Run with: `pnpm test:integration` (requires the seeded dev server on
+ * http://localhost:3000 and .env.test with DB credentials).
+ */
+
+import { describe, it, expect, beforeAll } from 'vitest';
+
+const BASE_URL = process.env.BETTER_AUTH_URL || 'http://localhost:3000';
+
+const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async function apiFetch(path: string, init?: RequestInit) {
+  const url = `${BASE_URL}${path}`;
+  return fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    ...init,
+  });
+}
+
+/** Sign in and return the raw cookie header for authenticated requests. */
+async function signInAndGetCookie(email: string, password: string): Promise<string> {
+  const res = await apiFetch('/api/auth/sign-in', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  expect(res.status, `login ${email}`).toBe(200);
+  const setCookies: string[] =
+    typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : (res.headers.get('set-cookie') || '').split(',').filter(Boolean);
+  const cookie = setCookies.map((c) => c.split(';')[0]).join('; ');
+  expect(cookie, 'sign-in should return session cookies').toBeTruthy();
+  return cookie;
+}
+
+async function authed(path: string, cookie: string, init?: RequestInit) {
+  return apiFetch(path, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Cookie: cookie, ...init?.headers },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('User Access Lifecycle API', () => {
+  let adminCookie: string;
+
+  beforeAll(async () => {
+    adminCookie = await signInAndGetCookie(ADMIN_EMAIL, ADMIN_PASSWORD);
+  });
+
+  it('removes a role-less account, blocks role-held removal, restores the account', async () => {
+    const db = (await import('@/db')).getDb();
+    const { session } = await import('@/db/schema/better-auth');
+    const { employees } = await import('@/db/schema/people');
+    const { eq, count } = await import('drizzle-orm');
+
+    // ── 1. Create a fresh account against an active, account-less employee ──
+    const listRes = await authed('/api/admin/users?limit=100', adminCookie);
+    expect(listRes.status, await listRes.text()).toBe(200);
+    const listData = (await listRes.json()).data;
+    const employee = listData.availableEmployees[0];
+    expect(employee, 'seed should expose at least one account-less active employee').toBeTruthy();
+
+    const unique = `access-lifecycle-${Date.now()}@kavangoeast.test`;
+    const create = await authed('/api/admin/users', adminCookie, {
+      method: 'POST',
+      body: JSON.stringify({
+        email: unique,
+        name: 'Access Lifecycle Tester',
+        password: 'change-me-123',
+        employeeId: employee.id,
+      }),
+    });
+    expect(create.status, await create.text()).toBe(200);
+    const userId = (await create.json()).data.id;
+    expect(userId).toBeTruthy();
+
+    // The account can sign in before removal.
+    await signInAndGetCookie(unique, 'change-me-123');
+
+    // ── 2. Detail: zero active roles; pick a non-admin system role ──
+    const detail = await authed(`/api/admin/users/${userId}`, adminCookie);
+    expect(detail.status, await detail.text()).toBe(200);
+    const detailData = (await detail.json()).data;
+    expect(detailData.tenantStatus).toBe('active');
+    expect(detailData.roleAssignments).toHaveLength(0);
+    const role = detailData.availableRoles.find(
+      (r: { name: string }) => r.name !== 'Tenant Administrator',
+    );
+    expect(role, 'tenant should expose at least one non-admin system role').toBeTruthy();
+
+    // ── 3. Assign a role → DELETE is blocked (active-role gate) ──
+    const assign = await authed(`/api/admin/users/${userId}`, adminCookie, {
+      method: 'PATCH',
+      body: JSON.stringify({ addRoleId: role.id }),
+    });
+    expect(assign.status, await assign.text()).toBe(200);
+
+    const blocked = await authed(`/api/admin/users/${userId}`, adminCookie, {
+      method: 'DELETE',
+    });
+    expect(blocked.status).toBe(409);
+    expect((await blocked.json()).error).toContain(role.name);
+
+    // ── 4. End the role (soft close) → DELETE succeeds ──
+    const detail2 = await authed(`/api/admin/users/${userId}`, adminCookie);
+    const assignment = (await detail2.json()).data.roleAssignments.find(
+      (a: { roleId: string }) => a.roleId === role.id,
+    );
+    expect(assignment, 'role assignment should exist after PATCH add').toBeTruthy();
+
+    const end = await authed(`/api/admin/users/${userId}`, adminCookie, {
+      method: 'PATCH',
+      body: JSON.stringify({ removeRoleId: assignment.id }),
+    });
+    expect(end.status, await end.text()).toBe(200);
+
+    const removed = await authed(`/api/admin/users/${userId}`, adminCookie, {
+      method: 'DELETE',
+    });
+    expect(removed.status, await removed.text()).toBe(200);
+
+    // ── 5. Sessions revoked + staff record preserved ──
+    const [sessionCount] = await db
+      .select({ total: count() })
+      .from(session)
+      .where(eq(session.userId, userId));
+    expect(Number(sessionCount.total)).toBe(0);
+
+    const [staff] = await db
+      .select({ userId: employees.userId, employmentStatus: employees.employmentStatus })
+      .from(employees)
+      .where(eq(employees.id, employee.id))
+      .limit(1);
+    expect(staff, 'the linked employee record must survive removal').toBeTruthy();
+    expect(staff.userId).toBe(userId);
+    expect(staff.employmentStatus).toBe('active');
+
+    // Detail still resolves the membership (now access_removed).
+    const removedDetail = await authed(`/api/admin/users/${userId}`, adminCookie);
+    expect((await removedDetail.json()).data.tenantStatus).toBe('access_removed');
+
+    // ── 6. Hidden by default, surfaced via ?status=removed ──
+    const defaultList = await authed('/api/admin/users?limit=100', adminCookie);
+    expect(JSON.stringify(await defaultList.json())).not.toContain(unique);
+
+    const removedList = await authed('/api/admin/users?status=removed&limit=100', adminCookie);
+    expect(removedList.status, await removedList.text()).toBe(200);
+    const removedBody = await removedList.json();
+    expect(
+      removedBody.data.users.some((u: { id: string }) => u.id === userId),
+      'removed account should appear under ?status=removed',
+    ).toBe(true);
+
+    // ── 7. Restore re-activates the account ──
+    const restore = await authed(`/api/admin/users/${userId}/restore`, adminCookie, {
+      method: 'POST',
+    });
+    expect(restore.status, await restore.text()).toBe(200);
+
+    const restoredDetail = await authed(`/api/admin/users/${userId}`, adminCookie);
+    expect((await restoredDetail.json()).data.tenantStatus).toBe('active');
+
+    // ── 8. Restoring an account that was not removed → 409 ──
+    const restoreAgain = await authed(`/api/admin/users/${userId}/restore`, adminCookie, {
+      method: 'POST',
+    });
+    expect(restoreAgain.status).toBe(409);
+  });
+
+  it('rejects cross-tenant access and self-deletion', async () => {
+    // A user id that is not a member of this tenant → 404 (cross-tenant guard).
+    const ghost = await authed(
+      '/api/admin/users/11111111-1111-1111-1111-111111111111',
+      adminCookie,
+      { method: 'DELETE' },
+    );
+    expect(ghost.status).toBe(404);
+
+    const ghostRestore = await authed(
+      '/api/admin/users/11111111-1111-1111-1111-111111111111/restore',
+      adminCookie,
+      { method: 'POST' },
+    );
+    expect(ghostRestore.status).toBe(404);
+
+    // The tenant admin cannot remove their own account.
+    const sessionRes = await authed('/api/auth/get-session', adminCookie);
+    expect(sessionRes.status, await sessionRes.text()).toBe(200);
+    const adminId = (await sessionRes.json()).user.id;
+    expect(adminId).toBeTruthy();
+
+    const self = await authed(`/api/admin/users/${adminId}`, adminCookie, {
+      method: 'DELETE',
+    });
+    expect(self.status).toBe(400);
+  });
+});

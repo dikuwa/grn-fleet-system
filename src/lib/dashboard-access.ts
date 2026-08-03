@@ -446,9 +446,10 @@ export const routeRegistry: readonly RouteDefinition[] = [
     path: '/dashboard/inspections/new',
     label: 'Perform Inspection',
     section: 'Inspections',
-    workspaces: [W.DRIVER, W.INSPECTOR, W.TRANSPORT_ADMIN],
+    // Phase 32: drivers do not perform official inspections — only Inspectors,
+    // Release Officers (INSPECTOR workspace) and Transport Administrators.
+    workspaces: [W.INSPECTOR, W.TRANSPORT_ADMIN],
     access: {
-      [W.DRIVER]: assignedManage(['view', 'create']),
       [W.INSPECTOR]: assignedManage(),
       [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
     },
@@ -462,9 +463,8 @@ export const routeRegistry: readonly RouteDefinition[] = [
     path: '/dashboard/inspections/departure',
     label: 'Departure Inspection',
     section: 'Inspections',
-    workspaces: [W.DRIVER, W.INSPECTOR, W.TRANSPORT_ADMIN],
+    workspaces: [W.INSPECTOR, W.TRANSPORT_ADMIN],
     access: {
-      [W.DRIVER]: assignedManage(['view', 'create']),
       [W.INSPECTOR]: assignedManage(),
       [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
     },
@@ -478,9 +478,8 @@ export const routeRegistry: readonly RouteDefinition[] = [
     path: '/dashboard/inspections/return',
     label: 'Return Inspection',
     section: 'Inspections',
-    workspaces: [W.DRIVER, W.INSPECTOR, W.TRANSPORT_ADMIN],
+    workspaces: [W.INSPECTOR, W.TRANSPORT_ADMIN],
     access: {
-      [W.DRIVER]: assignedManage(['view', 'create']),
       [W.INSPECTOR]: assignedManage(),
       [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
     },

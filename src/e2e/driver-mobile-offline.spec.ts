@@ -1,18 +1,22 @@
 /**
- * Driver Mobile PWA — Offline Inspection Workflow
+ * Driver Mobile PWA — Offline Incident Reporting Workflow
  *
- * End-to-end test of the driver mobile experience:
+ * End-to-end test of the driver mobile experience under Phase 32 rules
+ * (drivers do NOT perform official inspections — Inspectors and Release
+ * Officers do; drivers report incidents, damage and defects instead):
  *   1. API setup — a regional request is approved, allocated and the driver
- *      (KERC008) is assigned, producing a trip the driver can see.
+ *      (KERC008) is assigned. The Inspector performs the official departure
+ *      inspection, Transport issues the vehicle and the driver starts the
+ *      trip (status `in_progress`).
  *   2. Mobile dashboard — the driver opens /dashboard/driver-mobile at a
  *      390px viewport and sees the assigned trip + offline banner.
- *   3. Offline departure inspection — the driver opens the departure
- *      inspection page, goes offline, fills the form and saves it as an
- *      offline draft ("Saved Offline").
+ *   3. Offline incident report — on the trip workspace the driver opens the
+ *      incident dialog, goes offline and saves it ("Saved for sync").
  *   4. Reconnect + sync — the OfflineSyncHandler pushes the draft; the
- *      inspection row appears with a client_sync_id.
+ *      trip_incident row appears with a client_sync_id.
  *   5. Idempotency — re-POSTing the same clientSyncId returns
- *      `{ idempotent: true }` and the database still holds exactly one row.
+ *      `{ idempotentReplay: true }` and the database still holds exactly one
+ *      incident row.
  *
  * Mirrors the role-isolation pattern: cookie-authenticated API contexts for
  * setup + a real browser context for the PWA surfaces.
@@ -26,12 +30,13 @@ import {
   type Browser,
 } from '@playwright/test';
 import { getDb } from '@/db';
-import { vehicleInspections, vehicleAllocations, vehicles, trips } from '@/db/schema';
+import { vehicleAllocations, vehicles, trips, tripIncidents } from '@/db/schema';
 import { and, eq, gt, inArray, isNotNull, lt } from 'drizzle-orm';
 import { DEPARTURE_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
+const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 const accounts = {
   requester: 'requester@kavangoeast.test',
@@ -41,6 +46,7 @@ const accounts = {
   release: 'release.officer@kavangoeast.test',
   authoriser: 'regional.authoriser@kavangoeast.test',
   driver: 'driver@kavangoeast.test',
+  inspector: 'inspector@kavangoeast.test',
 } as const;
 
 async function login(email: string) {
@@ -76,15 +82,13 @@ async function openAs(
   return { api, context, page };
 }
 
-/** 1×1 transparent PNG for inspection photo uploads. */
-const TINY_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64',
-);
-
 /**
- * Creates an approved + allocated trip assigned to driver KERC008.
- * Returns the trip id, vehicle id and workflow id for downstream steps.
+ * Creates an approved + allocated trip assigned to driver KERC008 and
+ * advances it to `in_progress` under Phase 32 rules:
+ *   1. Inspector performs the official departure inspection (pass).
+ *   2. Transport physically issues the vehicle.
+ *   3. The driver starts the trip.
+ * Returns the trip id, vehicle id and odometer for downstream steps.
  */
 async function setupDriverAssignedTrip(): Promise<{
   tripId: string;
@@ -98,6 +102,7 @@ async function setupDriverAssignedTrip(): Promise<{
   const release = await login(accounts.release);
   const authoriser = await login(accounts.authoriser);
   const driver = await login(accounts.driver);
+  const inspector = await login(accounts.inspector);
 
   const start = new Date(Date.now() - 5 * 60 * 1000);
   const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
@@ -142,7 +147,6 @@ async function setupDriverAssignedTrip(): Promise<{
   // that make the vehicle and driver overlap checks 409 on the next run.
   // Mirror the cleanup that `pnpm db:seed-e2e` performs (vehicle_allocations
   // has no tenantId column — scope via the tenant's vehicles).
-  const TENANT_ID = '00000000-0000-0000-0000-000000000001';
   const staleAllocStates = ['provisional', 'confirmed', 'issued'];
   const tenantVehicleIds = db
     .select({ id: vehicles.id })
@@ -237,8 +241,48 @@ async function setupDriverAssignedTrip(): Promise<{
   await approve(authoriser, workflowId);
   await approve(driver, workflowId);
 
+  // ── Phase 32: advance to in_progress ────────────────────────────────────
+  // The Inspector performs the official departure inspection (all items pass),
+  // Transport physically issues the vehicle, then the assigned driver starts.
+  const departure = await inspector.post('/api/inspections', {
+    data: {
+      vehicleId: available.id,
+      tripId,
+      type: 'departure',
+      odometerReading: vehicleOdometer,
+      fuelLevel: 'full',
+      inspectorAcknowledged: true,
+      driverAcknowledged: true,
+      photoKeys: ['e2e/departure-1.jpg', 'e2e/departure-2.jpg', 'e2e/departure-3.jpg'],
+      checklist: DEPARTURE_INSPECTION_ITEMS.map((item) => ({
+        label: item.label,
+        result: 'pass',
+        comment: null,
+      })),
+    },
+  });
+  expect(departure.status(), await departure.text()).toBe(200);
+
+  const issue = await transport.post(`/api/trips/${tripId}/issue`, {
+    data: {
+      keysIssued: true,
+      fuelCardIssued: true,
+      issueOdometer: vehicleOdometer,
+    },
+  });
+  expect(issue.status(), await issue.text()).toBe(200);
+
+  const startTrip = await driver.post(`/api/trips/${tripId}/start`, {
+    data: {
+      beginningOdometer: vehicleOdometer,
+      passengersConfirmed: true,
+      fuelLevel: 'full',
+    },
+  });
+  expect(startTrip.status(), await startTrip.text()).toBe(200);
+
   await Promise.all(
-    [requester, supervisor, transport, release, authoriser, driver].map((api) =>
+    [requester, supervisor, transport, release, authoriser, driver, inspector].map((api) =>
       api.dispose(),
     ),
   );
@@ -250,7 +294,6 @@ test.describe.serial('Driver Mobile PWA offline workflow', () => {
   test.setTimeout(600_000);
 
   let tripId: string;
-  let vehicleId: string;
   let vehicleOdometer: number;
 
   test.beforeAll(async () => {
@@ -259,7 +302,6 @@ test.describe.serial('Driver Mobile PWA offline workflow', () => {
     test.setTimeout(600_000);
     const setup = await setupDriverAssignedTrip();
     tripId = setup.tripId;
-    vehicleId = setup.vehicleId;
     vehicleOdometer = setup.vehicleOdometer;
   });
 
@@ -284,47 +326,50 @@ test.describe.serial('Driver Mobile PWA offline workflow', () => {
     await ui.api.dispose();
   });
 
-  test('offline departure inspection saves a draft, syncs, and is idempotent', async ({
+  test('offline incident report saves a draft, syncs, and is idempotent', async ({
     browser,
   }) => {
     const ui = await openAs(
       browser,
       accounts.driver,
-      `/dashboard/inspections/departure?tripId=${tripId}&vehicleId=${vehicleId}`,
+      `/dashboard/trips/${tripId}`,
       { width: 390, height: 844 },
     );
     const { page, context } = ui;
-    await expect(page.locator('h1:has-text("Departure Inspection")').first()).toBeVisible({
+    // The trip workspace renders the incident entry point once the trip is
+    // in progress. Phase 32: no driver-facing inspection buttons.
+    await expect(page.locator('text=My Active Trip').first()).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByText('Report incident, damage or defect').first()).toBeVisible({
       timeout: 15_000,
     });
+    // Phase 32 guard: the driver workspace must NOT expose inspection actions.
+    await expect(page.getByText('Start Inspection').first()).toHaveCount(0);
 
-    // Fill the minimum required fields: odometer, fuel level, both
-    // acknowledgements and three photos (canComplete gate).
-    // The odometer must be at or above the vehicle's current reading or the
-    // API rejects the inspection; derive it from the vehicle chosen in setup.
-    await page.locator('input[type="number"]').first().fill(String(vehicleOdometer + 100));
+    // Open the incident dialog and describe the event.
+    await page.getByText('Report incident, damage or defect').first().click();
+    await expect(page.getByRole('dialog').getByRole('heading')).toContainText(
+      'Report incident, damage or defect',
+    );
     await page
-      .locator('label')
-      .filter({ hasText: 'I confirm that I performed and recorded this inspection.' })
-      .click();
+      .locator('[role="dialog"] textarea')
+      .fill('Left rear tyre pressure dropped noticeably after a fuel stop.');
     await page
-      .locator('label')
-      .filter({ hasText: 'The assigned driver confirms the recorded vehicle condition.' })
-      .click();
-    await page.locator('input[type="file"]').setInputFiles([
-      { name: 'p1.png', mimeType: 'image/png', buffer: TINY_PNG },
-      { name: 'p2.png', mimeType: 'image/png', buffer: TINY_PNG },
-      { name: 'p3.png', mimeType: 'image/png', buffer: TINY_PNG },
-    ]);
-    await expect(page.getByText('3 photos selected')).toBeVisible();
+      .locator('[role="dialog"] input[type="number"]')
+      .fill(String(vehicleOdometer + 80));
 
-    // Go offline and submit — the fetch fails and the draft is saved locally.
+    // Go offline and wait for the workspace to register the state change
+    // (the save button flips to "Save for Sync" and the badge to "Offline").
     await context.setOffline(true);
-    await page.getByRole('button', { name: /Complete Departure Inspection/i }).click();
+    await expect(page.getByText('Offline', { exact: true }).first()).toBeVisible({
+      timeout: 10_000,
+    });
+    await page.getByRole('button', { name: /Save for Sync/i }).click();
 
-    await expect(page.getByText('Saved Offline').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Saved for sync').first()).toBeVisible({ timeout: 15_000 });
     await page.screenshot({
-      path: 'docs/screenshots/driver-mobile-offline-saved.png',
+      path: 'docs/screenshots/driver-mobile-incident-offline.png',
       fullPage: true,
     });
 
@@ -336,25 +381,22 @@ test.describe.serial('Driver Mobile PWA offline workflow', () => {
     // picks up the pending draft — IndexedDB survives the reload in this
     // context. The online event alone is not guaranteed to fire here.
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1:has-text("Departure Inspection")').first()).toBeVisible({
-      timeout: 15_000,
+    await expect(page.locator('text=My Active Trip').first()).toBeVisible({
+      timeout: 20_000,
     });
 
-    // Poll the DB until the synced inspection row appears (clientSyncId = draft id).
+    // Poll the DB until the synced incident row appears (clientSyncId = draft id).
     const db = getDb();
-    let syncedRow: (typeof vehicleInspections.$inferSelect) | undefined;
-    // The sync engine uploads photos serially before POSTing, so give it a
-    // generous window — and if the first attempt fails validation, the
-    // handler's 60s interval retry must also land inside the window.
+    let syncedRow: (typeof tripIncidents.$inferSelect) | undefined;
     for (let attempt = 0; attempt < 45; attempt++) {
       const [row] = await db
         .select()
-        .from(vehicleInspections)
+        .from(tripIncidents)
         .where(
           and(
-            eq(vehicleInspections.tripId, tripId),
-            eq(vehicleInspections.type, 'departure'),
-            isNotNull(vehicleInspections.clientSyncId),
+            eq(tripIncidents.tripId, tripId),
+            eq(tripIncidents.tenantId, TENANT_ID),
+            isNotNull(tripIncidents.clientSyncId),
           ),
         )
         .limit(1);
@@ -364,40 +406,36 @@ test.describe.serial('Driver Mobile PWA offline workflow', () => {
       }
       await new Promise((r) => setTimeout(r, 2_000));
     }
-    expect(syncedRow, 'departure inspection should sync with a client_sync_id').toBeTruthy();
+    expect(syncedRow, 'incident should sync with a client_sync_id').toBeTruthy();
     const clientSyncId = syncedRow!.clientSyncId!;
     expect(clientSyncId).toBeTruthy();
+    expect(syncedRow!.incidentType).toBe('mechanical_defect');
 
     // Idempotency: re-POST the same payload with the same clientSyncId.
     const driverApi = await login(accounts.driver);
-    const duplicate = await driverApi.post('/api/inspections', {
+    const duplicate = await driverApi.post(`/api/trips/${tripId}/operations`, {
       data: {
-        vehicleId,
-        tripId,
-        type: 'departure',
-        odometerReading: vehicleOdometer + 100,
-        fuelLevel: 'full',
-        checklist: DEPARTURE_INSPECTION_ITEMS.map((item) => ({
-          label: item.label,
-          result: 'na',
-        })),
-        notes: 'Duplicate submission guard',
-        inspectorAcknowledged: true,
-        driverAcknowledged: true,
+        action: 'incident',
+        incidentType: 'mechanical_defect',
+        description: 'Left rear tyre pressure dropped noticeably after a fuel stop.',
+        severity: 'minor',
+        continuationState: 'safe_to_continue',
+        vehicleSafe: true,
+        passengerSafe: true,
         clientSyncId,
       },
     });
     expect(duplicate.status(), await duplicate.text()).toBe(200);
-    expect((await duplicate.json()).idempotent).toBe(true);
+    expect((await duplicate.json()).idempotentReplay).toBe(true);
 
-    // And the database still holds exactly one row for that clientSyncId.
+    // And the database still holds exactly one incident for that clientSyncId.
     const rows = await db
-      .select({ id: vehicleInspections.id })
-      .from(vehicleInspections)
+      .select({ id: tripIncidents.id })
+      .from(tripIncidents)
       .where(
         and(
-          eq(vehicleInspections.tripId, tripId),
-          eq(vehicleInspections.clientSyncId, clientSyncId),
+          eq(tripIncidents.tripId, tripId),
+          eq(tripIncidents.clientSyncId, clientSyncId),
         ),
       );
     expect(rows.length).toBe(1);

@@ -247,8 +247,26 @@ Verified end-to-end: `POST /api/approvals/[id]/action` delegates to `WorkflowEng
 - **Playwright**: driver-mobile 2/2 + cross-tenant 5/5 against fresh production build + e2e seed
 - **Build**: Production build green
 
+## Session 36 — User Access Lifecycle, Phase 32 Driver Inspection Scope, Offline Incident E2E, Cross-Tenant Integration Tests
+
+### Added
+
+- **User access lifecycle** — DELETE `/api/admin/users/[id]` rewritten as a soft remove: active-role gate (role-count rule), final Tenant Administrator protection, open-trip/live-allocation dependency checks, session revocation + verification-token invalidation, membership → `access_removed` + profile → `removed` inside a transaction while the linked staff record is preserved (person still appears in Staff Directory).
+- **Restore endpoint** (`POST /api/admin/users/[id]/restore`) — Re-activates a removed account; `TENANT_MANAGE` gated, cross-tenant safe, `user_access.restored` audit event.
+- **Role removal = soft close** — PATCH now writes an `endDate` instead of deleting role assignments (history preserved), allows re-assignment after end date, blocks generic status PATCH on removed accounts, protects the final Tenant Administrator, and audits `role_assignment.ended`.
+- **Removed Access tab** — User Management list hides removed accounts by default and surfaces them via `?status=removed`; per-row Restore buttons + confirm dialog; detail page danger zone with "Remove User Access" and "Restore User Access".
+- **Phase 32 driver scope** — DRIVER removed from inspection page workspaces and `INSPECTION_PERFORM` dropped from the DRIVER policy/role; `DriverTripWorkspace` no longer offers Start/Arrival Inspection buttons (Inspectors/Release Officers perform official inspections; drivers report incidents from the console).
+- **E2E rework** (`src/e2e/driver-mobile-offline.spec.ts`) — Offline **incident reporting** flow (inspector departure inspection → issue → driver acknowledge → start → offline incident draft → reconnect → auto-sync → `idempotentReplay` on re-sync) replaces the driver-performed inspection flow.
+- **Integration tests** (`src/test/user-access-lifecycle.integration.test.ts`) — Removal (staff preserved), role-held removal blocked then succeeds, sessions/tokens revoked, hidden-from-list + `?status=removed` surfacing, restore re-activation, cross-tenant + self-deletion rejection.
+
+### Validation
+
+- **TypeScript**: Clean compile (0 errors)
+- **Lint**: 0 errors (2 pre-existing warnings in untouched lines)
+- **Unit tests**: 265/265 passing (23 files)
+
 ## Known Gaps
 
 - SMS won't send until Twilio credentials are set
 - Full workflow E2E coverage exists, but requires a seeded test database and configured object storage for upload assertions
-- Missing: user invitation flow (back-end API exists, no front-end invite form)
+- Driver licence-expiry digest and user-access-lifecycle integration tests run via `pnpm test:integration` against a seeded dev server

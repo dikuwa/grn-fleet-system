@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-08-03 — Session 36: User Access Lifecycle, Phase 32 Driver Inspection Scope, Offline Incident E2E, Cross-Tenant Integration Tests
+
+### Added
+
+- **User access lifecycle (DELETE → soft remove, staff preserved)** — `src/app/api/admin/users/[id]/route.ts` rewritten: ACTIVE-ROLE GATE (role-count rule — only currently in-force assignments block; historical/ended assignments never block), final Tenant Administrator protection (last active TA, including self, cannot be removed), dependency checks (open trips or live allocations as assigned driver must be reassigned first), session revocation + verification-token invalidation before the state change, and an atomic soft-remove (`tenant_membership → access_removed` + `user_profile → removed` inside a transaction) while the linked staff/employee record is preserved — the person still appears in Staff Directory. Audit event carries full context (email, activeRoleCount, sessionsRevoked, verificationTokensInvalidated).
+- **Restore endpoint** (`src/app/api/admin/users/[id]/restore/route.ts`) — POST re-activates `access_removed` → `active` (+ profile) in a transaction, `TENANT_MANAGE` gated, cross-tenant safe, `user_access.restored` audit event.
+- **Role removal = soft close with history** — PATCH writes an `endDate` instead of deleting role assignments (history preserved for audit/workflow reconstruction), allows re-assigning the same role after the end date, blocks generic status PATCH on removed accounts (must use Restore), protects the final Tenant Administrator on role removal, and audits `role_assignment.ended`.
+- **Removed-account visibility** — GET `/api/admin/users` hides `access_removed` accounts from the default view and surfaces them via the explicit `?status=removed` filter (plus a new `?status=pending` filter). User Management UI gained a "Removed Access" tab with per-row Restore buttons + confirm dialog; the detail page shows a status badge, danger-zone "Remove User Access" with explainer, and "Restore User Access" for removed accounts.
+- **Phase 32 driver inspection scope** — DRIVER removed from the `/dashboard/inspections/new|departure|return` page workspaces (`dashboard-access.ts`) and `INSPECTION_PERFORM` dropped from the DRIVER workspace policy + DRIVER RoleDefinition (`permissions.ts`). `DriverTripWorkspace` no longer offers Start Inspection / Arrival Inspection buttons — official inspections are performed by Inspectors / Release Officers; drivers report incidents, defects and damage from the trip console (retaining `FILE_UPLOAD` for photos).
+- **E2E rework** (`src/e2e/driver-mobile-offline.spec.ts`) — Phase-32 compliant: the offline flow now tests **incident reporting** instead of a driver-performed departure inspection. Full arc: inspector departure inspection (canonical 16-item checklist) → issue → driver acknowledge → start → offline incident report saved as a Dexie draft → reconnect → mount-time auto-sync → DB row with `idempotentReplay: true` on re-sync. Self-cleaning `beforeAll` mirrors seed-e2e.
+- **Integration tests** (`src/test/user-access-lifecycle.integration.test.ts`) — The "Selma" scenario against the live seeded server: role-less account removal (staff preserved), role-held removal blocked (409) then succeeding after the role is ended, session revocation + token invalidation, hidden from default list + surfaced via `?status=removed`, restore re-activating the account, and cross-tenant + self-deletion rejection.
+
+### Fixed
+
+- **DELETE route type-safety** — `session` table-import shadowing fixed by importing as `sessionTable`; driver-column join predicate corrected for the open-trip dependency check.
+- **Users page type union** — `activeTab` widened to include `'removed'` so the new tab is type-safe.
+
+### Validation
+
+- **TypeScript**: 0 errors
+- **ESLint**: 0 errors (2 pre-existing warnings in untouched lines of `functions.ts`)
+- **Unit tests**: 265/265 passing (23 files)
+
+---
+
 ## 2026-07-27 — Session 50: Complete 13-role functional audit and workflow repair
 
 ### Fixed

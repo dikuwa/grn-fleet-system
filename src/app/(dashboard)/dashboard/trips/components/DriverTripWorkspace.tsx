@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   Camera,
   CheckCircle2,
-  ClipboardCheck,
   FileText,
   MapPin,
   Navigation,
@@ -130,10 +129,12 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
   const primaryAction = useMemo(() => {
     if (!data?.authority) return null;
     if (data.authority.status === 'awaiting_driver_acceptance') return 'accept';
-    if (['driver_accepted', 'awaiting_pre_trip_inspection'].includes(data.authority.status)) return 'inspection';
+    // Phase 32: drivers do not perform official inspections — departure and
+    // arrival inspections are performed by Inspectors and Release Officers.
+    // While the vehicle awaits the pre-trip or arrival inspection the driver
+    // waits; incident/defect reporting remains available from the console.
     if (data.authority.status === 'ready_for_departure') return 'start';
     if (['in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported'].includes(data.authority.status)) return 'return';
-    if (data.authority.status === 'awaiting_arrival_inspection') return 'arrival';
     return null;
   }, [data]);
 
@@ -259,10 +260,8 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
               <Link href={`/dashboard/trips/${tripId}/authority`}><FileText className="h-4 w-4" />Show Authority</Link>
             </Button>
             {primaryAction === 'accept' && <Button className="w-full sm:w-auto" onClick={() => setAction('accept')}><ShieldCheck className="h-4 w-4" />Accept Trip</Button>}
-            {primaryAction === 'inspection' && <Button className="w-full sm:w-auto" asChild><Link href={`/dashboard/inspections/new?type=departure&tripId=${tripId}&vehicleId=${data.trip.vehicleId}`}><ClipboardCheck className="h-4 w-4" />Start Inspection</Link></Button>}
             {primaryAction === 'start' && <Button className="w-full sm:w-auto" onClick={() => setAction('start')}><Play className="h-4 w-4" />Start Trip</Button>}
             {primaryAction === 'return' && <Button className="w-full sm:w-auto" onClick={() => setAction('return')}><RotateCcw className="h-4 w-4" />Complete Trip</Button>}
-            {primaryAction === 'arrival' && <Button className="w-full sm:w-auto" asChild><Link href={`/dashboard/inspections/new?type=return&tripId=${tripId}&vehicleId=${data.trip.vehicleId}`}><ClipboardCheck className="h-4 w-4" />Arrival Inspection</Link></Button>}
             {data.trip.status === 'in_progress' && (
               <>
                 <Button variant="secondary" className="w-full sm:w-auto" onClick={() => setAction('progress')}><MapPin className="h-4 w-4" />Add Stop</Button>

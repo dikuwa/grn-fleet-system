@@ -158,11 +158,10 @@ export function isPermissionAvailableInWorkspace(
       Permissions.DRIVER_FUEL_CREATE,
       Permissions.TRIP_VIEW,
       Permissions.INSPECTION_VIEW,
-      // Drivers perform departure/return inspections on their assigned trips
-      // from the mobile console (offline-first), so INSPECTION_PERFORM must be
-      // usable inside the DRIVER workspace even though the API also requires
-      // the dashboard-action gate on /dashboard/inspections/new.
-      Permissions.INSPECTION_PERFORM,
+      // Drivers do NOT perform official inspections (Phase 32): official
+      // departure/arrival inspections are performed by Inspectors and Release
+      // Officers. Drivers report incidents, defects and damage from the trip
+      // console instead, which is why DRIVER retains FILE_UPLOAD.
       Permissions.FILE_VIEW,
       Permissions.FILE_UPLOAD,
     ],
@@ -497,7 +496,6 @@ export const RoleDefinitions = {
       Permissions.DRIVER_FUEL_CREATE,
       Permissions.TRIP_VIEW,
       Permissions.INSPECTION_VIEW,
-      Permissions.INSPECTION_PERFORM,
       Permissions.FILE_VIEW,
       Permissions.FILE_UPLOAD,
     ],

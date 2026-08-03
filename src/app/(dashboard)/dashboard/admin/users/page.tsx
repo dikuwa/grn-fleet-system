@@ -259,21 +259,26 @@ export default function AdminUsersPage() {
     loginUrl: string;
   } | null>(null);
   const [copied, setCopied] = useState<'full' | 'password' | 'username' | null>(null);
-  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'pending'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'pending' | 'removed'>('all');
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
 
   // Remove-user flow (role-less / pending accounts only)
   const [removeUser, setRemoveUser] = useState<TenantUser | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
+  // Restore-user flow (access_removed accounts)
+  const [restoreUser, setRestoreUser] = useState<TenantUser | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['admin-users', searchQuery, page],
+    queryKey: ['admin-users', searchQuery, page, activeTab],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (searchQuery) params.set('q', searchQuery);
       params.set('page', String(page));
       params.set('limit', '25');
+      if (activeTab === 'active') params.set('status', 'active');
+      else if (activeTab === 'removed') params.set('status', 'removed');
 
       const res = await fetch(`/api/admin/users?${params}`);
       const json = await res.json();
@@ -406,6 +411,33 @@ export default function AdminUsersPage() {
     }
   };
 
+  const handleRestoreUser = async () => {
+    if (!restoreUser) return;
+    setIsRestoring(true);
+    try {
+      const res = await fetch(`/api/admin/users/${restoreUser.id}/restore`, {
+        method: 'POST',
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to restore user');
+      toast({
+        title: 'User access restored',
+        description: `${restoreUser.name || restoreUser.email} can sign in again. The staff record was preserved.`,
+        variant: 'success',
+      });
+      setRestoreUser(null);
+      refetch();
+    } catch (err) {
+      toast({
+        title: 'Failed to restore user',
+        description: err instanceof Error ? err.message : 'Failed to restore user',
+        variant: 'error',
+      });
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
   const loadPendingInvites = useCallback(async () => {
     setLoadingInvites(true);
     try {
@@ -421,7 +453,7 @@ export default function AdminUsersPage() {
     }
   }, []);
 
-  const handleTabChange = (tab: 'all' | 'active' | 'pending') => {
+  const handleTabChange = (tab: 'all' | 'active' | 'pending' | 'removed') => {
     setActiveTab(tab);
     if (tab === 'pending') {
       loadPendingInvites();
@@ -455,9 +487,9 @@ export default function AdminUsersPage() {
         </Button>
       </PageHeader>
 
-      {/* Tabs: All | Active | Pending Invites */}
+      {/* Tabs: All | Active | Removed | Pending Invites */}
       <div className="border-border flex gap-1 border-b">
-        {(['all', 'active', 'pending'] as const).map((tab) => (
+        {(['all', 'active', 'removed', 'pending'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => handleTabChange(tab)}
@@ -467,7 +499,13 @@ export default function AdminUsersPage() {
                 : 'text-ink-500 hover:text-ink-700 hover:border-ink-300 border-transparent'
             }`}
           >
-            {tab === 'all' ? 'All Users' : tab === 'active' ? 'Active' : 'Pending Invites'}
+            {tab === 'all'
+              ? 'All Users'
+              : tab === 'active'
+                ? 'Active'
+                : tab === 'removed'
+                  ? 'Removed Access'
+                  : 'Pending Invites'}
           </button>
         ))}
       </div>
@@ -779,11 +817,15 @@ export default function AdminUsersPage() {
                               ? 'success'
                               : u.tenantStatus === 'suspended'
                                 ? 'error'
-                                : 'cancelled'
+                                : u.tenantStatus === 'access_removed'
+                                  ? 'cancelled'
+                                  : 'pending'
                           }
                           size="sm"
                         >
-                          {u.tenantStatus}
+                          {u.tenantStatus === 'access_removed'
+                            ? 'Removed'
+                            : u.tenantStatus}
                         </Badge>
                       </div>
                       <div className="mt-0.5 flex items-center gap-2">
@@ -821,27 +863,42 @@ export default function AdminUsersPage() {
                         )}
                       </div>
                     )}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (u.roles.length === 0) setRemoveUser(u);
-                      }}
-                      disabled={u.roles.length > 0}
-                      title={
-                        u.roles.length > 0
-                          ? 'Remove role assignments first, then this user can be removed'
-                          : 'Remove from organisation (staff record preserved)'
-                      }
-                      aria-label={`Remove ${u.name || u.email} from organisation`}
-                      className={`flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors ${
-                        u.roles.length === 0
-                          ? 'text-ink-400 hover:bg-red-50 hover:text-status-error-text dark:hover:bg-red-950/30'
-                          : 'cursor-not-allowed text-ink-300'
-                      }`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    {u.tenantStatus === 'access_removed' ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRestoreUser(u);
+                        }}
+                        title="Restore user access (staff record preserved)"
+                        aria-label={`Restore ${u.name || u.email} access`}
+                        className="text-ink-400 hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-950/30 flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (u.roles.length === 0) setRemoveUser(u);
+                        }}
+                        disabled={u.roles.length > 0}
+                        title={
+                          u.roles.length > 0
+                            ? 'Remove role assignments first, then this user can be removed'
+                            : 'Remove from organisation (staff record preserved)'
+                        }
+                        aria-label={`Remove ${u.name || u.email} from organisation`}
+                        className={`flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors ${
+                          u.roles.length === 0
+                            ? 'text-ink-400 hover:bg-red-50 hover:text-status-error-text dark:hover:bg-red-950/30'
+                            : 'cursor-not-allowed text-ink-300'
+                        }`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     <ChevronRight className="text-ink-400 h-4 w-4" />
                   </div>
                 </div>
@@ -877,6 +934,39 @@ export default function AdminUsersPage() {
           </div>
         </div>
       )}
+      {/* Restore User Confirmation Dialog */}
+      <Dialog open={!!restoreUser} onOpenChange={(open) => !open && setRestoreUser(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Restore User Access</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-ink-700 text-sm">
+              Restore login access for{' '}
+              <strong>{restoreUser?.name || restoreUser?.email || 'this user'}</strong>? They will
+              be able to sign in again and will reappear in User Management.
+            </p>
+            <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
+              Their <strong>staff/employee record is unchanged</strong>. Role assignments may need
+              to be re-added after restoration.
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" size="sm" onClick={() => setRestoreUser(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleRestoreUser}
+                loading={isRestoring}
+              >
+                <RotateCcw className="h-4 w-4" /> Restore Access
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Remove User Confirmation Dialog */}
       <Dialog open={!!removeUser} onOpenChange={(open) => !open && setRemoveUser(null)}>
         <DialogContent className="sm:max-w-sm">

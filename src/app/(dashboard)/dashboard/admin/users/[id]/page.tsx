@@ -13,7 +13,7 @@ import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
   User, Mail, Shield, CalendarDays, Loader2, ChevronLeft, ChevronRight, CheckCircle2, XCircle,
   Plus, Trash2, Database, KeyRound, Copy, CheckCheck, UserPlus,
-  Clock, Lock, Ban, AlertTriangle,
+  Clock, Lock, Ban, AlertTriangle, RotateCcw,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/use-toast';
@@ -103,6 +103,12 @@ const STATUS_CONFIG: Record<string, { label: string; variant: 'success' | 'error
     icon: <Lock className="h-4 w-4" />,
     description: 'Account locked due to security policy (e.g. too many failed attempts).',
   },
+  access_removed: {
+    label: 'Removed',
+    variant: 'cancelled',
+    icon: <XCircle className="h-4 w-4" />,
+    description: 'The user has been removed from the organisation. Their staff record is preserved and access can be restored.',
+  },
 };
 
 const STATUS_OPTIONS = ['active', 'suspended', 'pending_activation', 'disabled', 'locked'] as const;
@@ -122,6 +128,9 @@ export default function AdminUserDetailPage({ params }: PageProps) {
   // Remove-user flow (role-less / pending accounts only)
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  // Restore-user flow (access_removed accounts)
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   const router = useRouter();
 
   // Delegation dialog
@@ -284,6 +293,30 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       });
     } finally {
       setIsRemoving(false);
+    }
+  };
+
+  const handleRestoreUser = async () => {
+    setIsRestoring(true);
+    try {
+      const res = await fetch(`/api/admin/users/${id}/restore`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to restore user');
+      toast({
+        title: 'User access restored',
+        description: `${userData?.name || userData?.email || 'User'} can sign in again. The staff record was preserved.`,
+        variant: 'success',
+      });
+      setShowRestoreConfirm(false);
+      await refetch();
+    } catch (err) {
+      toast({
+        title: 'Failed to restore user',
+        description: err instanceof Error ? err.message : 'Failed to restore user',
+        variant: 'error',
+      });
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -487,6 +520,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                 <StyledSelect
                   value={selectedStatus}
                   onChange={(e) => setSelectedStatus(e.target.value)}
+                  disabled={userData.tenantStatus === 'access_removed'}
                 >
                   {STATUS_OPTIONS.map((s) => (
                     <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
@@ -497,7 +531,10 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                   size="sm"
                   onClick={() => handleUpdateStatus(selectedStatus)}
                   loading={isSaving}
-                  disabled={selectedStatus === userData.tenantStatus}
+                  disabled={
+                    selectedStatus === userData.tenantStatus ||
+                    userData.tenantStatus === 'access_removed'
+                  }
                 >
                   <CheckCircle2 className="h-4 w-4" /> Apply
                 </Button>
@@ -532,7 +569,23 @@ export default function AdminUserDetailPage({ params }: PageProps) {
 
             {/* Danger zone: remove from organisation (role-less / pending only) */}
             <div className="border-border mt-3 pt-3 border-t">
-              {userData.roleAssignments.length === 0 ? (
+              {userData.tenantStatus === 'access_removed' ? (
+                <>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setShowRestoreConfirm(true)}
+                    loading={isRestoring}
+                  >
+                    <RotateCcw className="h-4 w-4" /> Restore User Access
+                  </Button>
+                  <p className="text-ink-400 mt-2 text-xs">
+                    This account was removed from the organisation. Restoring re-activates the
+                    login account and returns the person to User Management. Their staff record
+                    is untouched; role assignments may need to be re-added.
+                  </p>
+                </>
+              ) : userData.roleAssignments.length === 0 ? (
                 <>
                   <Button
                     variant="secondary"
@@ -664,6 +717,39 @@ export default function AdminUserDetailPage({ params }: PageProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* Restore User Access Confirmation Dialog */}
+      <Dialog open={showRestoreConfirm} onOpenChange={setShowRestoreConfirm}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Restore User Access</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-ink-700 text-sm">
+              Restore login access for{' '}
+              <strong>{userData.name || userData.email || 'this user'}</strong>? They will be able
+              to sign in again and will reappear in User Management.
+            </p>
+            <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
+              Their <strong>staff/employee record is unchanged</strong>. Role assignments may need
+              to be re-added after restoration.
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" size="sm" onClick={() => setShowRestoreConfirm(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleRestoreUser}
+                loading={isRestoring}
+              >
+                <RotateCcw className="h-4 w-4" /> Restore Access
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Remove from Organisation Confirmation Dialog */}
       <Dialog open={showRemoveConfirm} onOpenChange={setShowRemoveConfirm}>

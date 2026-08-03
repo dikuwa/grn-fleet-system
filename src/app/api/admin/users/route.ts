@@ -12,7 +12,7 @@ import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { account } from '@/db/schema/better-auth';
 import { userProfiles } from '@/db/schema/auth';
-import { eq, and, like, desc, count, or, inArray } from 'drizzle-orm';
+import { eq, and, like, desc, count, or, inArray, ne } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import bcrypt from 'bcryptjs';
@@ -41,13 +41,22 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
 
-    // Get all users in this tenant via memberships
+    // Get all users in this tenant via memberships. Accounts whose access was
+    // removed (status `access_removed`) are hidden from the default view and
+    // only surfaced through the explicit `status=removed` filter so admins can
+    // restore them.
     const conditions = [eq(tenantMemberships.tenantId, session.tenantId)];
 
     if (status === 'active') {
       conditions.push(eq(tenantMemberships.status, 'active'));
     } else if (status === 'suspended') {
       conditions.push(eq(tenantMemberships.status, 'suspended'));
+    } else if (status === 'removed') {
+      conditions.push(eq(tenantMemberships.status, 'access_removed'));
+    } else if (status === 'pending') {
+      conditions.push(eq(tenantMemberships.status, 'pending_activation'));
+    } else {
+      conditions.push(ne(tenantMemberships.status, 'access_removed'));
     }
 
     // Count total matching users

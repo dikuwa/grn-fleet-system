@@ -8,10 +8,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { user } from '@/db/schema/better-auth';
+import { user, session as sessionTable, verification } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { employees, driverProfiles, departments, offices } from '@/db/schema/people';
-import { eq, and } from 'drizzle-orm';
+import { userProfiles } from '@/db/schema/auth';
+import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { eq, and, or, ne, gt, isNull, count, inArray } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
@@ -172,8 +174,17 @@ export async function PATCH(
         .where(eq(user.id, id));
     }
 
-    // Update tenant membership status (activate/suspend)
+    // Update tenant membership status (activate/suspend). Access-removed
+    // accounts are managed exclusively through the restore endpoint so a
+    // removed user can never be silently re-activated via a generic status
+    // change without an audit trail.
     if (tenantStatus !== undefined) {
+      if (membership.status === 'access_removed') {
+        return NextResponse.json(
+          { error: 'This account has been removed. Use “Restore User Access” to re-activate it.' },
+          { status: 409 },
+        );
+      }
       await db
         .update(tenantMemberships)
         .set({ status: tenantStatus })
@@ -193,7 +204,9 @@ export async function PATCH(
         return NextResponse.json({ error: 'Role not found' }, { status: 404 });
       }
 
-      // Check for existing active assignment
+      // Check for an existing ACTIVE assignment only — a soft-closed (ended)
+      // assignment must not block re-assigning the same role later.
+      const now = new Date();
       const [existing] = await db
         .select()
         .from(roleAssignments)
@@ -201,6 +214,7 @@ export async function PATCH(
           and(
             eq(roleAssignments.tenantMembershipId, membership.id),
             eq(roleAssignments.roleId, addRoleId),
+            or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
           ),
         )
         .limit(1);
@@ -253,16 +267,72 @@ export async function PATCH(
       }
     }
 
-    // Remove a role assignment
+    // Remove a role assignment — SOFT CLOSE: history is preserved by writing an
+    // end date instead of deleting the row, so historical role records stay
+    // valid for audit and workflow reconstruction.
     if (removeRoleId) {
-      await db
-        .delete(roleAssignments)
+      const now = new Date();
+      const [assignment] = await db
+        .select({
+          id: roleAssignments.id,
+          roleId: roleAssignments.roleId,
+          roleName: roles.name,
+          endDate: roleAssignments.endDate,
+        })
+        .from(roleAssignments)
+        .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
         .where(
           and(
             eq(roleAssignments.id, removeRoleId),
             eq(roleAssignments.tenantMembershipId, membership.id),
           ),
-        );
+        )
+        .limit(1);
+
+      if (!assignment) {
+        return NextResponse.json({ error: 'Role assignment not found' }, { status: 404 });
+      }
+
+      const isActive = !assignment.endDate || new Date(assignment.endDate) > now;
+      if (isActive && assignment.roleName === 'Tenant Administrator') {
+        // Final Tenant Administrator protection — includes the actor removing
+        // their own last admin role. Removing it would leave the tenant
+        // unmanageable.
+        const [adminCount] = await db
+          .select({ total: count() })
+          .from(roleAssignments)
+          .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
+          .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+          .where(
+            and(
+              eq(tenantMemberships.tenantId, session.tenantId),
+              eq(roles.name, 'Tenant Administrator'),
+              or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
+            ),
+          );
+        if (Number(adminCount?.total) <= 1) {
+          return NextResponse.json(
+            { error: 'This is the final Tenant Administrator in your organisation and cannot be removed.' },
+            { status: 409 },
+          );
+        }
+      }
+
+      await db
+        .update(roleAssignments)
+        .set({ endDate: now })
+        .where(eq(roleAssignments.id, removeRoleId));
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        action: 'role_assignment.ended',
+        entityType: 'role_assignment',
+        entityId: removeRoleId,
+        summary: `Role assignment for ${assignment.roleName} closed on ${now.toISOString()}`,
+        before: { endDate: assignment.endDate },
+        after: { roleName: assignment.roleName, endedAt: now.toISOString(), historyPreserved: true },
+      }).catch((auditErr) => console.warn('[Admin User Detail] role-end audit failed:', auditErr));
     }
 
     return NextResponse.json({ success: true });
@@ -276,13 +346,19 @@ export async function PATCH(
 }
 
 // ---------------------------------------------------------------------------
-// DELETE — Remove a user from the organisation
+// DELETE — Remove a user's access to the organisation
 //
-// Only role-less users (or pending/never-activated accounts) can be removed.
-// Removing a user deletes their tenant membership and role assignments but
-// PRESERVES the linked employee/staff record — the person still appears in
-// the staff directory. The global user/account row is also kept so that if
-// the user belongs to other tenants, those memberships are untouched.
+// Guardrails (user-access lifecycle):
+//   • Only ACTIVE role assignments block removal. Historical/ended assignments
+//     (soft-closed via PATCH) never block it — the ROLE COUNT RULE.
+//   • The final active Tenant Administrator in the tenant cannot be removed.
+//   • Dependency checks: users with open operational responsibilities (active
+//     trips or live allocations as the assigned driver) must be reassigned first.
+//   • Sessions are revoked and invitation/verification tokens invalidated so
+//     the user cannot log in or activate through an old link.
+//   • The tenant membership is soft-marked `access_removed` (not deleted) and
+//     the linked staff/employee record is preserved unchanged, so the person
+//     still appears in the Staff Directory and the account can be restored.
 // ---------------------------------------------------------------------------
 
 export async function DELETE(
@@ -321,44 +397,131 @@ export async function DELETE(
       return NextResponse.json({ error: 'User not found in your organisation' }, { status: 404 });
     }
 
-    // Role assignments must be cleared first — removing a user who still
-    // carries roles would silently drop their permissions.
-    const assignments = await db
-      .select({ id: roleAssignments.id, roleName: roles.name })
+    const [userRecord] = await db
+      .select({ id: user.id, email: user.email })
+      .from(user)
+      .where(eq(user.id, id))
+      .limit(1);
+    if (!userRecord) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    // ── 1. ACTIVE-ROLE GATE (ROLE COUNT RULE) ──────────────────────────────
+    // Count only assignments that are currently in force. Historical records
+    // with an end date in the past (or a future start date) never block removal.
+    const now = new Date();
+    const allAssignments = await db
+      .select({ id: roleAssignments.id, roleName: roles.name, endDate: roleAssignments.endDate })
       .from(roleAssignments)
       .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
       .where(eq(roleAssignments.tenantMembershipId, membership.id));
 
-    if (assignments.length > 0) {
-      const names = assignments.map((a) => a.roleName).join(', ');
+    const activeAssignments = allAssignments.filter(
+      (a) => !a.endDate || new Date(a.endDate) > now,
+    );
+    if (activeAssignments.length > 0) {
+      const names = activeAssignments.map((a) => a.roleName).join(', ');
       return NextResponse.json(
         {
-          error: `This user still holds role${assignments.length !== 1 ? 's' : ''}: ${names}. Remove their role${assignments.length !== 1 ? 's' : ''} before removing them from the organisation.`,
+          error: `This user still holds active role${activeAssignments.length !== 1 ? 's' : ''}: ${names}. Remove their role${activeAssignments.length !== 1 ? 's' : ''} first — historical role records do not block this action.`,
         },
         { status: 409 },
       );
     }
 
-    // Unlink the employee record so the staff member remains in the directory
-    // but no longer has a login account for this tenant, remove any role
-    // assignments, then drop the membership — all atomically so a mid-sequence
-    // failure can never leave the employee unlinked while the membership still
-    // exists (or vice-versa). (role_assignments.tenant_membership_id is also
-    // FK-cascaded, but we delete explicitly for a clean audit trail.)
+    // ── 2. FINAL TENANT ADMINISTRATOR PROTECTION ──────────────────────────
+    const holdsTenantAdmin = allAssignments.some(
+      (a) => a.roleName === 'Tenant Administrator' && (!a.endDate || new Date(a.endDate) > now),
+    );
+    if (holdsTenantAdmin) {
+      const [adminCount] = await db
+        .select({ total: count() })
+        .from(roleAssignments)
+        .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
+        .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+        .where(
+          and(
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(roles.name, 'Tenant Administrator'),
+            or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
+          ),
+        );
+      if (Number(adminCount?.total) <= 1) {
+        return NextResponse.json(
+          { error: 'This account is protected and cannot be deleted from Tenant User Management.' },
+          { status: 409 },
+        );
+      }
+    }
+
+    // ── 3. DEPENDENCY CHECKS (active operational responsibilities) ─────────
+    const [employee] = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(and(eq(employees.userId, id), eq(employees.tenantId, session.tenantId)))
+      .limit(1);
+    if (employee) {
+      const [openTrip] = await db
+        .select({ id: trips.id })
+        .from(trips)
+        .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
+        .where(
+          and(
+            eq(vehicleAllocations.driverEmployeeId, employee.id),
+            eq(trips.tenantId, session.tenantId),
+            ne(trips.status, 'closed'),
+            ne(trips.status, 'cancelled'),
+          ),
+        )
+        .limit(1);
+      if (openTrip) {
+        return NextResponse.json(
+          { error: 'This user still has active trip responsibilities that must be reassigned before the account can be removed.' },
+          { status: 409 },
+        );
+      }
+      const [openAllocation] = await db
+        .select({ id: vehicleAllocations.id })
+        .from(vehicleAllocations)
+        .where(
+          and(
+            eq(vehicleAllocations.driverEmployeeId, employee.id),
+            inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'released']),
+          ),
+        )
+        .limit(1);
+      if (openAllocation) {
+        return NextResponse.json(
+          { error: 'This user still has a live vehicle allocation that must be cancelled or reassigned first.' },
+          { status: 409 },
+        );
+      }
+    }
+
+    // ── 4. REVOKE SESSIONS + INVALIDATE VERIFICATION TOKENS ───────────────
+    // The user can no longer use an existing session, and any outstanding
+    // invite/verification link becomes inert. Performed before the state
+    // change so no window remains where a live token is valid.
+    await db.delete(sessionTable).where(eq(sessionTable.userId, id));
+    await db
+      .delete(verification)
+      .where(or(eq(verification.identifier, userRecord.email), eq(verification.identifier, id)));
+
+    // ── 5. SOFT REMOVE (staff preserved) ───────────────────────────────────
+    // The membership is marked `access_removed` (so the account leaves User
+    // Management and session resolution fails) while the employee record stays
+    // fully intact. Role history is preserved verbatim.
     await db.transaction(async (tx) => {
       await tx
-        .update(employees)
-        .set({ userId: null, updatedAt: new Date() })
-        .where(and(eq(employees.userId, id), eq(employees.tenantId, session.tenantId)));
+        .update(tenantMemberships)
+        .set({ status: 'access_removed' })
+        .where(eq(tenantMemberships.id, membership.id));
       await tx
-        .delete(roleAssignments)
-        .where(eq(roleAssignments.tenantMembershipId, membership.id));
-      await tx.delete(tenantMemberships).where(eq(tenantMemberships.id, membership.id));
+        .update(userProfiles)
+        .set({ status: 'removed', updatedAt: new Date() })
+        .where(eq(userProfiles.userId, id));
     });
 
-    // Audit is written after the transaction; a failure here must not surface
-    // as a client-facing 500 (the removal already succeeded and a retry would
-    // then 404).
     try {
       await recordAuditEvent({
         tenantId: session.tenantId,
@@ -366,11 +529,16 @@ export async function DELETE(
         action: 'user_membership.removed',
         entityType: 'tenant_membership',
         entityId: membership.id,
-        summary: `User removed from the organisation. Staff record preserved.`,
+        summary: `User removed from the organisation. The linked staff record was preserved.`,
         after: {
           userId: id,
-          removedFrom: new Date().toISOString(),
+          userEmail: userRecord.email,
           staffRecordPreserved: true,
+          activeRoleCount: activeAssignments.length,
+          sessionsRevoked: true,
+          verificationTokensInvalidated: true,
+          removedFrom: now.toISOString(),
+          accountStatus: 'access_removed',
         },
       });
     } catch (auditErr) {
