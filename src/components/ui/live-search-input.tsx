@@ -12,6 +12,16 @@ interface LiveSearchInputProps {
   className?: string;
 }
 
+/**
+ * Debounced search input that syncs with the URL query string.
+ *
+ * Navigation only happens when the user actually types a different value.
+ * External URL changes (filter reset, back/forward, toolbar submit) are
+ * adopted into the field without re-navigating — this keeps the `page`
+ * parameter intact when the user moves between pages, fixing the previous
+ * "returns to page 1" bug caused by the effect stripping `page` on every
+ * searchParams change.
+ */
 export function LiveSearchInput({
   name = 'search',
   defaultValue = '',
@@ -22,30 +32,47 @@ export function LiveSearchInput({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [value, setValue] = useState(defaultValue);
-  const firstRender = useRef(true);
+  const committedRef = useRef(defaultValue);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setValue(defaultValue), 0);
-    return () => window.clearTimeout(timer);
-  }, [defaultValue]);
+  const pendingTimer = useRef<number | null>(null);
 
+  // Adopt external URL changes (filter reset, back/forward, toolbar submit).
+  // Skipped when the URL already matches both the committed value and what's
+  // currently shown — this is what prevents our own navigation from
+  // re-triggering this effect. When we DO adopt, cancel any in-flight debounce
+  // so a pending typed value can't re-commit (undoing the reset).
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
+    const urlValue = searchParams.get(name) || '';
+    if (urlValue === committedRef.current && urlValue === value) return;
+    if (pendingTimer.current) {
+      window.clearTimeout(pendingTimer.current);
+      pendingTimer.current = null;
     }
-    const timer = window.setTimeout(() => {
+    setValue(urlValue);
+    committedRef.current = urlValue;
+  }, [name, searchParams, value]);
+
+  // Debounced navigation — only fires when the typed value differs from the
+  // committed one. The search term changed, so we reset pagination to page 1;
+  // pagination is left untouched for any other searchParams change.
+  useEffect(() => {
+    const trimmed = value.trim();
+    if (trimmed === committedRef.current) return;
+    if (pendingTimer.current) window.clearTimeout(pendingTimer.current);
+    pendingTimer.current = window.setTimeout(() => {
+      pendingTimer.current = null;
       const params = new URLSearchParams(searchParams.toString());
-      const trimmed = value.trim();
-      const current = params.get(name) || '';
-      if (current === trimmed && !params.has('page')) return;
       if (trimmed) params.set(name, trimmed);
       else params.delete(name);
       params.delete('page');
+      committedRef.current = trimmed;
       const query = params.toString();
       router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
     }, 300);
-    return () => window.clearTimeout(timer);
+    return () => {
+      if (pendingTimer.current) window.clearTimeout(pendingTimer.current);
+      pendingTimer.current = null;
+    };
   }, [name, pathname, router, searchParams, value]);
 
   return (

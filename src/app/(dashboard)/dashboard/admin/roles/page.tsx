@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import {Card, CardContent} from '@/components/ui/card';
@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import {Shield, Plus, Loader2, Save, Pencil} from 'lucide-react';
+import {Shield, Plus, Loader2, Save, Pencil, LayoutGrid, Table2} from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
@@ -243,6 +243,8 @@ const PERMISSION_GROUPS: PermissionGroup[] = [
 export default function AdminRolesPage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
+  const [view, setView] = useState<'cards' | 'matrix'>('cards');
+  const [savingCell, setSavingCell] = useState<string | null>(null);
 
   // Edit role dialog
   const [editRole, setEditRole] = useState<Role | null>(null);
@@ -328,6 +330,40 @@ export default function AdminRolesPage() {
     }
   };
 
+  const toggleMatrixPermission = async (role: Role, code: string) => {
+    const has = role.permissionCodes.includes(code);
+    const nextCodes = has
+      ? role.permissionCodes.filter((c) => c !== code)
+      : [...role.permissionCodes, code];
+    const cellKey = `${role.id}:${code}`;
+    setSavingCell(cellKey);
+    try {
+      const res = await fetch('/api/admin/roles', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: role.id, permissionCodes: nextCodes }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to update role');
+      toast({
+        title: has ? 'Permission removed' : 'Permission granted',
+        description: `${code} ${has ? 'removed from' : 'granted to'} ${role.name}`,
+        variant: 'success',
+      });
+      // Wait for the refetch to land before unlocking the cell, so the
+      // checkbox never shows the pre-toggle state after a successful save.
+      await refetch();
+    } catch (err) {
+      toast({
+        title: 'Failed to update permission',
+        description: err instanceof Error ? err.message : 'Failed to update permission',
+        variant: 'error',
+      });
+    } finally {
+      setSavingCell(null);
+    }
+  };
+
   const handleCreateRole = async () => {
     if (!newName.trim()) return;
     setIsCreating(true);
@@ -395,6 +431,32 @@ export default function AdminRolesPage() {
           />
         </div>
         <ClientFilterReset isFiltered={Boolean(searchQuery)} onClear={() => setSearchQuery('')} />
+
+        {/* View toggle */}
+        <div className="border-border bg-muted/40 ml-auto flex items-center gap-1 rounded-[8px] border p-1">
+          <button
+            type="button"
+            onClick={() => setView('cards')}
+            className={`flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              view === 'cards'
+                ? 'bg-surface text-ink-950 shadow-sm'
+                : 'text-ink-500 hover:text-ink-800'
+            }`}
+          >
+            <LayoutGrid className="h-3.5 w-3.5" /> Cards
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('matrix')}
+            className={`flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              view === 'matrix'
+                ? 'bg-surface text-ink-950 shadow-sm'
+                : 'text-ink-500 hover:text-ink-800'
+            }`}
+          >
+            <Table2 className="h-3.5 w-3.5" /> Matrix
+          </button>
+        </div>
       </div>
 
       {/* Loading */}
@@ -427,8 +489,90 @@ export default function AdminRolesPage() {
         />
       )}
 
+      {/* Permission Matrix */}
+      {!isLoading && !error && view === 'matrix' && roles.length > 0 && (
+        <div className="border-border overflow-hidden rounded-[8px] border">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[820px] text-sm">
+              <thead>
+                <tr className="bg-muted border-border border-b">
+                  <th className="text-ink-700 px-4 py-2.5 text-left text-xs font-semibold uppercase">
+                    Permission
+                  </th>
+                  {roles.map((role) => (
+                    <th key={role.id} className="px-3 py-2.5 text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="text-ink-950 text-xs font-semibold">{role.name}</span>
+                        <span className="text-ink-400 text-[10px] font-normal">
+                          {role.memberCount ?? 0} member{(role.memberCount ?? 0) !== 1 ? 's' : ''}
+                        </span>
+                        {role.isSystem && <Badge variant="info" size="sm">System</Badge>}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {PERMISSION_GROUPS.map((group) => (
+                  <Fragment key={group.group}>
+                    <tr className="bg-muted/60 border-border border-b">
+                      <td colSpan={roles.length + 1} className="px-4 py-1.5">
+                        <p className="text-ink-700 text-[11px] font-semibold uppercase tracking-wide">
+                          {group.label}
+                        </p>
+                      </td>
+                    </tr>
+                    {group.permissions.map((perm) => (
+                      <tr
+                        key={perm.code}
+                        className="border-border hover:bg-muted/40 border-b transition-colors"
+                      >
+                        <td className="px-4 py-2">
+                          <p className="text-ink-950 text-[13px] font-medium">{perm.name}</p>
+                          <p className="text-ink-400 text-xs">{perm.description}</p>
+                          <code className="text-ink-400 mt-0.5 block font-mono text-[10px]">
+                            {perm.code}
+                          </code>
+                        </td>
+                        {roles.map((role) => {
+                          const checked = role.permissionCodes.includes(perm.code);
+                          const isSaving = savingCell === `${role.id}:${perm.code}`;
+                          return (
+                            <td
+                              key={role.id}
+                              className={`px-3 py-2 text-center transition-opacity ${
+                                savingCell && !isSaving ? 'opacity-50' : ''
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                aria-label={`${perm.name} for ${role.name}`}
+                                checked={checked}
+                                disabled={!!savingCell}
+                                onChange={() => toggleMatrixPermission(role, perm.code)}
+                                className="border-border text-brand-800 focus:ring-brand-600 h-4 w-4 cursor-pointer rounded disabled:cursor-not-allowed"
+                              />
+                              {isSaving && <Loader2 className="text-ink-400 mt-1 h-3 w-3 animate-spin" />}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="bg-muted/50 border-border border-t px-4 py-2">
+            <p className="text-ink-500 text-xs">
+              Toggle any cell to grant or revoke a permission. Changes save immediately.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Role Cards */}
-      {!isLoading && roles.length > 0 && (
+      {!isLoading && !error && view === 'cards' && roles.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {roles.map((role) => (
             <Card

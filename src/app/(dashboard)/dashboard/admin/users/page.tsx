@@ -26,6 +26,7 @@ import {
   Copy,
   ExternalLink,
   Smartphone,
+  Trash2,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
@@ -262,6 +263,10 @@ export default function AdminUsersPage() {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
 
+  // Remove-user flow (role-less / pending accounts only)
+  const [removeUser, setRemoveUser] = useState<TenantUser | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
+
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-users', searchQuery, page],
     queryFn: async () => {
@@ -371,6 +376,33 @@ export default function AdminUsersPage() {
       toast({ title: 'Invite Failed', description: msg, variant: 'error' });
     } finally {
       setIsInviting(false);
+    }
+  };
+
+  const handleRemoveUser = async () => {
+    if (!removeUser) return;
+    setIsRemoving(true);
+    try {
+      const res = await fetch(`/api/admin/users/${removeUser.id}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to remove user');
+      toast({
+        title: 'User removed',
+        description: `${removeUser.name || removeUser.email} removed from the organisation. The staff record is preserved.`,
+        variant: 'success',
+      });
+      setRemoveUser(null);
+      refetch();
+    } catch (err) {
+      toast({
+        title: 'Failed to remove user',
+        description: err instanceof Error ? err.message : 'Failed to remove user',
+        variant: 'error',
+      });
+    } finally {
+      setIsRemoving(false);
     }
   };
 
@@ -789,6 +821,27 @@ export default function AdminUsersPage() {
                         )}
                       </div>
                     )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (u.roles.length === 0) setRemoveUser(u);
+                      }}
+                      disabled={u.roles.length > 0}
+                      title={
+                        u.roles.length > 0
+                          ? 'Remove role assignments first, then this user can be removed'
+                          : 'Remove from organisation (staff record preserved)'
+                      }
+                      aria-label={`Remove ${u.name || u.email} from organisation`}
+                      className={`flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors ${
+                        u.roles.length === 0
+                          ? 'text-ink-400 hover:bg-red-50 hover:text-status-error-text dark:hover:bg-red-950/30'
+                          : 'cursor-not-allowed text-ink-300'
+                      }`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                     <ChevronRight className="text-ink-400 h-4 w-4" />
                   </div>
                 </div>
@@ -824,6 +877,40 @@ export default function AdminUsersPage() {
           </div>
         </div>
       )}
+      {/* Remove User Confirmation Dialog */}
+      <Dialog open={!!removeUser} onOpenChange={(open) => !open && setRemoveUser(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Remove User from Organisation</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-ink-700 text-sm">
+              Are you sure you want to remove{' '}
+              <strong>{removeUser?.name || removeUser?.email || 'this user'}</strong> from the
+              organisation? This removes their login access and any pending invitation.
+            </p>
+            <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
+              Their <strong>staff/employee record is preserved</strong> — the person will still
+              appear in the Staff Directory and can be re-invited later.
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" size="sm" onClick={() => setRemoveUser(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleRemoveUser}
+                loading={isRemoving}
+                className="bg-status-error-text hover:bg-red-700"
+              >
+                <Trash2 className="h-4 w-4" /> Remove User
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Credential Sharing Dialog */}
       <Dialog open={showCredentials} onOpenChange={setShowCredentials}>
         <DialogContent className="sm:max-w-lg">

@@ -372,6 +372,14 @@ export default async function StaffDirectoryPage({
           canManageStaff={canManageStaff}
           offices={allOffices}
           departments={allDepartments}
+          totalCount={totalCount}
+          filter={{
+            q: query,
+            office: officeFilter,
+            department: departmentFilter,
+            status: statusFilter,
+            availability: availabilityFilter,
+          }}
         />
       )}
 

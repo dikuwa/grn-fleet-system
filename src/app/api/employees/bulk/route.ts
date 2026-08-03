@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employeeAvailability, employees, userProfiles, tenantMemberships, offices, departments } from '@/db/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ilike, or } from 'drizzle-orm';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { AVAILABILITY_OPTIONS, normaliseAvailability, normaliseEmployeeStatus } from '@/lib/employee-status';
 
 const MAX_BULK = 500;
+// Select-all-across-pages mode resolves matching employee IDs server-side.
+// Safety cap prevents a mis-scoped filter from touching an entire tenant.
+const MAX_BULK_FILTER = 2000;
 
 const BULK_ACTIONS = [
   'mark_active',
@@ -35,24 +38,80 @@ export async function POST(request: NextRequest) {
     officeId?: string;
     departmentId?: string;
     reason?: string;
+    allSelected?: boolean;
+    filter?: {
+      q?: string;
+      office?: string;
+      department?: string;
+      status?: string;
+      availability?: string;
+    };
   };
 
-  const ids = Array.isArray(body.ids) ? [...new Set(body.ids.map(String))] : [];
-  if (ids.length === 0) return NextResponse.json({ error: 'No employees selected.' }, { status: 400 });
-  if (ids.length > MAX_BULK) return NextResponse.json({ error: `Bulk updates are limited to ${MAX_BULK} employees.` }, { status: 400 });
   if (!body.action || !BULK_ACTIONS.includes(body.action)) {
     return NextResponse.json({ error: 'Unsupported bulk action.' }, { status: 400 });
   }
   const action = body.action;
+
+  const db = getDb();
+  const tenantId = auth.session.tenantId;
+
+  // Resolve target employee IDs. Two modes:
+  //  1. Explicit ids (checkbox selection on the current page).
+  //  2. allSelected + filter — "select all N matching current filters" across
+  //     every page. IDs are resolved server-side, strictly tenant-scoped, using
+  //     the exact same filter conditions as the Staff Directory query.
+  let ids: string[] = [];
+  if (body.allSelected) {
+    const filter = body.filter || {};
+    const conditions: ReturnType<typeof and>[] = [eq(employees.tenantId, tenantId)];
+
+    const query = filter.q?.trim() || '';
+    if (query) {
+      conditions.push(
+        or(
+          ilike(employees.firstName, `%${query}%`),
+          ilike(employees.lastName, `%${query}%`),
+          ilike(employees.employeeNumber, `%${query}%`),
+          ilike(employees.email, `%${query}%`),
+          ilike(employees.jobTitle, `%${query}%`),
+        )!,
+      );
+    }
+    if (filter.office) conditions.push(eq(employees.officeId, filter.office));
+    if (filter.department) conditions.push(eq(employees.departmentId, filter.department));
+    if (filter.status) conditions.push(eq(employees.employmentStatus, filter.status));
+    if (filter.availability) conditions.push(eq(employees.availabilityStatus, filter.availability));
+
+    const matched = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(and(...conditions))
+      .limit(MAX_BULK_FILTER + 1);
+
+    if (matched.length > MAX_BULK_FILTER) {
+      return NextResponse.json(
+        {
+          error: `Select-all is limited to ${MAX_BULK_FILTER} employees. Narrow your filters and try again.`,
+        },
+        { status: 400 },
+      );
+    }
+    ids = matched.map((row) => row.id);
+  } else {
+    ids = Array.isArray(body.ids) ? [...new Set(body.ids.map(String))] : [];
+  }
+
+  if (ids.length === 0) return NextResponse.json({ error: 'No employees selected.' }, { status: 400 });
+  if (!body.allSelected && ids.length > MAX_BULK) {
+    return NextResponse.json({ error: `Bulk updates are limited to ${MAX_BULK} employees.` }, { status: 400 });
+  }
 
   // Office/department assignment additionally requires staff management rights.
   if (action === 'assign_office' || action === 'assign_department') {
     const staffPerm = await requirePermission(auth.session, Permissions.STAFF_MANAGE);
     if (staffPerm instanceof NextResponse) return staffPerm;
   }
-
-  const db = getDb();
-  const tenantId = auth.session.tenantId;
 
   const employeesFound = await db
     .select({

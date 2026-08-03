@@ -447,6 +447,175 @@ export const driverLicenceExpiryAlert = inngest
   : null;
 
 // ---------------------------------------------------------------------------
+// Expiry Alert Cron: Driver Licence — Transport Admin Daily Digest
+// ---------------------------------------------------------------------------
+//
+// Distinct from driverLicenceExpiryAlert (which pings each driver directly on
+// their own threshold days). This cron sends ONE tenant-scoped digest per day
+// to every Transport Administrator summarising all driver licences that expire
+// within the next 60 days (or are already expired) — idempotent per tenant per
+// day via a day-epoch eventVersion key.
+// ---------------------------------------------------------------------------
+
+export const driverLicenceExpiryDigest = inngest
+  ? inngest.createFunction(
+      { id: 'driver-licence-expiry-digest', retries: 2 },
+      { cron: '0 8 * * *' }, // Daily at 08:00
+      async ({ step }) => {
+        return step.run('Send daily driver licence digest to transport admins', async () => {
+          const db = getDb();
+          const { driverProfiles, driverLicences, employees } = await import('@/db/schema/people');
+          const { tenants } = await import('@/db/schema/tenants');
+          const { user } = await import('@/db/schema/better-auth');
+          const { notifications } = await import('@/db/schema/notifications');
+          const { and, eq, gte, inArray, lte, ne } = await import('drizzle-orm');
+          const { isBusinessDay } = await import('@/lib/business-day');
+
+          const today = new Date();
+          const sixtyDays = new Date();
+          sixtyDays.setDate(sixtyDays.getDate() + 60);
+          const horizon = sixtyDays.toISOString().split('T')[0];
+
+          // Day-epoch key used for idempotency — one digest per tenant per day.
+          const dayEpoch = Math.floor(today.getTime() / 86_400_000);
+
+          const [emailModule] = await Promise.all([import('@/lib/email')]);
+          const sendEmail = emailModule.sendNotificationEmail;
+
+          const allTenants = await db
+            .select({ id: tenants.id })
+            .from(tenants)
+            .catch(() => []);
+
+          if (allTenants.length === 0) {
+            return { skipped: true, reason: 'No tenants found' };
+          }
+
+          let tenantCount = 0;
+          let emailedCount = 0;
+
+          for (const tenant of allTenants) {
+            // Skip non-business days for this tenant.
+            if (!(await isBusinessDay(tenant.id, today))) continue;
+
+            // Idempotency: a digest for this tenant was already sent today.
+            const [alreadySent] = await db
+              .select({ id: notifications.id })
+              .from(notifications)
+              .where(
+                and(
+                  eq(notifications.tenantId, tenant.id),
+                  eq(notifications.eventType, 'driver_licence_expiry_digest'),
+                  eq(notifications.eventVersion, dayEpoch),
+                ),
+              )
+              .limit(1);
+            if (alreadySent) continue;
+
+            // Drivers with a licence expiring within 60 days (or already expired),
+            // excluding archived employees.
+            const expiring = await db
+              .select({
+                licenceId: driverLicences.id,
+                licenceNumber: driverLicences.licenceNumber,
+                licenceClass: driverLicences.licenceClass,
+                expiryDate: driverLicences.expiryDate,
+                firstName: employees.firstName,
+                lastName: employees.lastName,
+                email: employees.email,
+              })
+              .from(driverLicences)
+              .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
+              .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
+              .where(
+                and(
+                  eq(employees.tenantId, tenant.id),
+                  ne(employees.employmentStatus, 'archived'),
+                  gte(driverLicences.expiryDate, today.toISOString().split('T')[0]),
+                  lte(driverLicences.expiryDate, horizon),
+                ),
+              );
+
+            if (expiring.length === 0) continue;
+
+            const recipients = await resolveActiveRoleRecipients(tenant.id, [
+              SystemRoles.TRANSPORT_ADMIN,
+            ]);
+            if (recipients.length === 0) continue;
+
+            const hasUrgent = expiring.some((licence) => {
+              const daysLeft = Math.ceil(
+                (new Date(licence.expiryDate).getTime() - today.getTime()) / 86_400_000,
+              );
+              return daysLeft <= 7;
+            });
+
+            const lines = expiring
+              .map((licence) => {
+                const daysLeft = Math.ceil(
+                  (new Date(licence.expiryDate).getTime() - today.getTime()) / 86_400_000,
+                );
+                const when =
+                  daysLeft === 0
+                    ? 'expires today'
+                    : `expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`;
+                return `• ${licence.firstName} ${licence.lastName} — ${licence.licenceClass} (${licence.licenceNumber ?? 'no number'}) ${when} (${licence.expiryDate})`;
+              })
+              .join('\n');
+
+            await createScopedNotifications({
+              tenantId: tenant.id,
+              recipientUserIds: recipients,
+              category: 'reminder',
+              eventType: 'driver_licence_expiry_digest',
+              title: `🚗 Driver Licence Digest — ${expiring.length} expiring`,
+              body: `${expiring.length} driver licence(s) expire within 60 days:\n\n${lines}`,
+              entityType: 'driver_licence',
+              actionUrl: '/dashboard/drivers',
+              workspace: WorkspaceIds.TRANSPORT_ADMIN,
+              eventVersion: dayEpoch,
+              priority: hasUrgent ? 'high' : 'normal',
+            });
+            tenantCount += 1;
+
+            // Email each Transport Administrator with the same digest body.
+            const adminUsers = await db
+              .select({ id: user.id, email: user.email, name: user.name })
+              .from(user)
+              .where(inArray(user.id, recipients));
+
+            for (const admin of adminUsers) {
+              if (!admin.email) continue;
+              try {
+                await sendEmail({
+                  to: admin.email,
+                  type: 'reminder',
+                  title: `Driver Licence Expiry Digest — ${expiring.length} licence(s)`,
+                  body: `${expiring.length} driver licence(s) expire within 60 days:\n\n${lines}\n\nReview the driver roster for details.`,
+                  actionUrl: '/dashboard/drivers',
+                  recipientName: admin.name || 'Transport Administrator',
+                });
+                emailedCount += 1;
+              } catch (emailErr) {
+                console.warn(
+                  `[driverLicenceExpiryDigest] Email to ${admin.email} failed:`,
+                  emailErr,
+                );
+              }
+            }
+          }
+
+          return {
+            sent: tenantCount > 0,
+            tenantCount,
+            emailedCount,
+          };
+        });
+      },
+    )
+  : null;
+
+// ---------------------------------------------------------------------------
 // Maintenance Reminder Cron
 // ---------------------------------------------------------------------------
 
@@ -811,6 +980,7 @@ export const inngestFunctions = (
     approvalCompleted,
     vehicleLicenceExpiryAlert,
     driverLicenceExpiryAlert,
+    driverLicenceExpiryDigest,
     maintenanceReminder,
     documentExpiryAlert,
     tripReturnDueCheck,

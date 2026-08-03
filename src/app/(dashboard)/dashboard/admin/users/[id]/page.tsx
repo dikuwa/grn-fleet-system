@@ -13,8 +13,9 @@ import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
   User, Mail, Shield, CalendarDays, Loader2, ChevronLeft, ChevronRight, CheckCircle2, XCircle,
   Plus, Trash2, Database, KeyRound, Copy, CheckCheck, UserPlus,
-  Clock, Lock, Ban,
+  Clock, Lock, Ban, AlertTriangle,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
@@ -117,6 +118,11 @@ export default function AdminUserDetailPage({ params }: PageProps) {
   const [roleEndDate, setRoleEndDate] = useState('');
   const [resetResult, setResetResult] = useState<{ tempPassword: string; message: string } | null>(null);
   const [showResetResult, setShowResetResult] = useState(false);
+
+  // Remove-user flow (role-less / pending accounts only)
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+  const [isRemoving, setIsRemoving] = useState(false);
+  const router = useRouter();
 
   // Delegation dialog
   const [showDelegate, setShowDelegate] = useState(false);
@@ -254,6 +260,30 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       toast({ title: 'Failed to add role', description: err instanceof Error ? err.message : 'Failed to add role', variant: 'error' });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleRemoveFromOrganisation = async () => {
+    setIsRemoving(true);
+    try {
+      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to remove user');
+      toast({
+        title: 'User removed',
+        description: `${userData?.name || userData?.email || 'User'} removed from the organisation. Staff record preserved.`,
+        variant: 'success',
+      });
+      setShowRemoveConfirm(false);
+      router.push('/dashboard/admin/users');
+    } catch (err) {
+      toast({
+        title: 'Failed to remove user',
+        description: err instanceof Error ? err.message : 'Failed to remove user',
+        variant: 'error',
+      });
+    } finally {
+      setIsRemoving(false);
     }
   };
 
@@ -499,6 +529,33 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                 Joined: {formatDate(userData.joinedAt)}
               </div>
             )}
+
+            {/* Danger zone: remove from organisation (role-less / pending only) */}
+            <div className="border-border mt-3 pt-3 border-t">
+              {userData.roleAssignments.length === 0 ? (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setShowRemoveConfirm(true)}
+                    className="text-status-error-text hover:text-status-error-text"
+                  >
+                    <Trash2 className="h-4 w-4" /> Remove from Organisation
+                  </Button>
+                  <p className="text-ink-400 mt-2 text-xs">
+                    Removes this user&apos;s login access and any pending invitation. The linked
+                    staff/employee record is preserved and they will still appear in the Staff
+                    Directory.
+                  </p>
+                </>
+              ) : (
+                <p className="text-ink-400 flex items-start gap-1.5 text-xs">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  Remove this user&apos;s role assignments first — then they can be removed from the
+                  organisation.
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -607,6 +664,40 @@ export default function AdminUserDetailPage({ params }: PageProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* Remove from Organisation Confirmation Dialog */}
+      <Dialog open={showRemoveConfirm} onOpenChange={setShowRemoveConfirm}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Remove User from Organisation</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-ink-700 text-sm">
+              Are you sure you want to remove{' '}
+              <strong>{userData.name || userData.email || 'this user'}</strong> from the
+              organisation? This removes their login access and any pending invitation.
+            </p>
+            <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
+              Their <strong>staff/employee record is preserved</strong> — the person will still
+              appear in the Staff Directory and can be re-invited later.
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" size="sm" onClick={() => setShowRemoveConfirm(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleRemoveFromOrganisation}
+                loading={isRemoving}
+                className="bg-status-error-text hover:bg-red-700"
+              >
+                <Trash2 className="h-4 w-4" /> Remove User
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Delegation Dialog */}
       <Dialog open={showDelegate} onOpenChange={setShowDelegate}>

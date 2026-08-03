@@ -1,8 +1,9 @@
 /**
  * Admin User Detail API
  *
- * GET   /api/admin/users/[id]    — Get user details with roles
- * PATCH /api/admin/users/[id]    — Update user (name, status, role)
+ * GET    /api/admin/users/[id]    — Get user details with roles
+ * PATCH  /api/admin/users/[id]    — Update user (name, status, role)
+ * DELETE /api/admin/users/[id]    — Remove a role-less/pending user from the organisation
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -269,6 +270,118 @@ export async function PATCH(
     console.error('[Admin User Detail] PATCH failed:', error);
     return NextResponse.json(
       { error: 'Failed to update user: ' + String(error) },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DELETE — Remove a user from the organisation
+//
+// Only role-less users (or pending/never-activated accounts) can be removed.
+// Removing a user deletes their tenant membership and role assignments but
+// PRESERVES the linked employee/staff record — the person still appears in
+// the staff directory. The global user/account row is also kept so that if
+// the user belongs to other tenants, those memberships are untouched.
+// ---------------------------------------------------------------------------
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
+    if (id === session.user.id) {
+      return NextResponse.json(
+        { error: 'You cannot remove your own account from the organisation.' },
+        { status: 400 },
+      );
+    }
+
+    const db = getDb();
+
+    // Verify the user is a member of this tenant (cross-tenant protection)
+    const [membership] = await db
+      .select()
+      .from(tenantMemberships)
+      .where(
+        and(eq(tenantMemberships.userId, id), eq(tenantMemberships.tenantId, session.tenantId)),
+      )
+      .limit(1);
+
+    if (!membership) {
+      return NextResponse.json({ error: 'User not found in your organisation' }, { status: 404 });
+    }
+
+    // Role assignments must be cleared first — removing a user who still
+    // carries roles would silently drop their permissions.
+    const assignments = await db
+      .select({ id: roleAssignments.id, roleName: roles.name })
+      .from(roleAssignments)
+      .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
+      .where(eq(roleAssignments.tenantMembershipId, membership.id));
+
+    if (assignments.length > 0) {
+      const names = assignments.map((a) => a.roleName).join(', ');
+      return NextResponse.json(
+        {
+          error: `This user still holds role${assignments.length !== 1 ? 's' : ''}: ${names}. Remove their role${assignments.length !== 1 ? 's' : ''} before removing them from the organisation.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    // Unlink the employee record so the staff member remains in the directory
+    // but no longer has a login account for this tenant, remove any role
+    // assignments, then drop the membership — all atomically so a mid-sequence
+    // failure can never leave the employee unlinked while the membership still
+    // exists (or vice-versa). (role_assignments.tenant_membership_id is also
+    // FK-cascaded, but we delete explicitly for a clean audit trail.)
+    await db.transaction(async (tx) => {
+      await tx
+        .update(employees)
+        .set({ userId: null, updatedAt: new Date() })
+        .where(and(eq(employees.userId, id), eq(employees.tenantId, session.tenantId)));
+      await tx
+        .delete(roleAssignments)
+        .where(eq(roleAssignments.tenantMembershipId, membership.id));
+      await tx.delete(tenantMemberships).where(eq(tenantMemberships.id, membership.id));
+    });
+
+    // Audit is written after the transaction; a failure here must not surface
+    // as a client-facing 500 (the removal already succeeded and a retry would
+    // then 404).
+    try {
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        action: 'user_membership.removed',
+        entityType: 'tenant_membership',
+        entityId: membership.id,
+        summary: `User removed from the organisation. Staff record preserved.`,
+        after: {
+          userId: id,
+          removedFrom: new Date().toISOString(),
+          staffRecordPreserved: true,
+        },
+      });
+    } catch (auditErr) {
+      console.warn('[Admin User Detail] DELETE audit failed:', auditErr);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('[Admin User Detail] DELETE failed:', error);
+    return NextResponse.json(
+      { error: 'Failed to remove user: ' + String(error) },
       { status: 500 },
     );
   }

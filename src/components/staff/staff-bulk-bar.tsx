@@ -29,6 +29,16 @@ interface StaffBulkBarProps {
   canManageStaff: boolean;
   offices: Array<{ id: string; name: string }>;
   departments: Array<{ id: string; name: string }>;
+  /** Total employees matching the current directory filters (across all pages). */
+  totalCount: number;
+  /** Current directory filter state, used for select-all-across-pages mode. */
+  filter: {
+    q?: string;
+    office?: string;
+    department?: string;
+    status?: string;
+    availability?: string;
+  };
 }
 
 type BulkAction =
@@ -50,7 +60,15 @@ const ACTION_LABELS: Record<BulkAction, string> = {
   restore: 'Restore',
 };
 
-export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, offices, departments }: StaffBulkBarProps) {
+export function StaffBulkBar({
+  staff,
+  canManageLifecycle,
+  canManageStaff,
+  offices,
+  departments,
+  totalCount,
+  filter,
+}: StaffBulkBarProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [action, setAction] = useState<BulkAction>('mark_active');
@@ -60,6 +78,9 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
   const [availability, setAvailability] = useState('available');
   const [officeId, setOfficeId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
+  // Select-all-across-pages mode: apply the action to every employee matching
+  // the current directory filters, resolved server-side.
+  const [selectAll, setSelectAll] = useState(false);
 
   // Derive currently-selected rows from the shared selection store. Rows that
   // leave the page (pagination/filter change) are pruned server-side by the API.
@@ -69,6 +90,7 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
   );
   const count = useSyncExternalStore(subscribe, getCountSnapshot, () => 0);
   const allChecked = count > 0 && count === staff.length;
+  const effectiveCount = selectAll ? totalCount : count;
 
   function handleSelectAll(e: React.ChangeEvent<HTMLInputElement>) {
     const checked = e.target.checked;
@@ -111,9 +133,21 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
   }
 
   async function handleConfirm(): Promise<boolean> {
-    const ids = getSelectedIds();
-    if (ids.length === 0) return false;
-    const payload: Record<string, unknown> = { ids, action };
+    const payload: Record<string, unknown> = { action };
+    if (selectAll) {
+      payload.allSelected = true;
+      payload.filter = {
+        q: filter.q || undefined,
+        office: filter.office || undefined,
+        department: filter.department || undefined,
+        status: filter.status || undefined,
+        availability: filter.availability || undefined,
+      };
+    } else {
+      const ids = getSelectedIds();
+      if (ids.length === 0) return false;
+      payload.ids = ids;
+    }
     if (action === 'set_availability') payload.availability = availability;
     if (action === 'assign_office') payload.officeId = officeId;
     if (action === 'assign_department') payload.departmentId = departmentId;
@@ -125,6 +159,7 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
       setAvailability('available');
       setOfficeId('');
       setDepartmentId('');
+      setSelectAll(false);
     }
     return ok;
   }
@@ -133,7 +168,7 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
     canManageLifecycle &&
     (action === 'assign_office' || action === 'assign_department' ? canManageStaff : true);
 
-  if (count === 0 && !allChecked) {
+  if (count === 0 && !allChecked && !selectAll) {
     return (
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink-700 select-none">
@@ -145,10 +180,16 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
           />
           Select all on page
         </label>
-        {count > 0 && (
-          <span className="text-ink-500 text-xs">
-            {count} selected — {ACTION_LABELS[action].toLowerCase()}
-          </span>
+        {totalCount > 0 && (
+          <label className="text-ink-500 flex cursor-pointer items-center gap-2 text-xs select-none">
+            <input
+              type="checkbox"
+              checked={selectAll}
+              onChange={(e) => setSelectAll(e.target.checked)}
+              className="border-border text-brand-600 focus:ring-brand-500 h-4 w-4 rounded"
+            />
+            Select all {totalCount} matching filters
+          </label>
         )}
       </div>
     );
@@ -165,7 +206,30 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
         />
         All on page
       </label>
-      <span className="text-brand-800 text-xs font-semibold">{count} selected</span>
+      <span className="text-brand-800 text-xs font-semibold">
+        {selectAll ? `All ${totalCount} matching filters` : `${count} selected`}
+      </span>
+
+      {!selectAll && totalCount > staff.length && (
+        <label className="text-ink-600 flex cursor-pointer items-center gap-1.5 text-xs select-none">
+          <input
+            type="checkbox"
+            checked={selectAll}
+            onChange={(e) => setSelectAll(e.target.checked)}
+            className="border-border text-brand-600 focus:ring-brand-500 h-4 w-4 rounded"
+          />
+          Also select all {totalCount} matching filters
+        </label>
+      )}
+      {selectAll && (
+        <button
+          type="button"
+          onClick={() => setSelectAll(false)}
+          className="text-brand-700 hover:text-brand-800 text-xs font-medium"
+        >
+          Only on this page
+        </button>
+      )}
 
       <StyledSelect
         value={action}
@@ -213,14 +277,26 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={() => clearSelection()}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            clearSelection();
+            setSelectAll(false);
+          }}
+        >
           Clear
         </Button>
         <Button
           variant={action === 'archive' ? 'destructive' : 'primary'}
           size="sm"
           loading={busy}
-          disabled={!canRun || (action === 'assign_office' && !officeId) || (action === 'assign_department' && !departmentId)}
+          disabled={
+            !canRun ||
+            (!selectAll && count === 0) ||
+            (action === 'assign_office' && !officeId) ||
+            (action === 'assign_department' && !departmentId)
+          }
           onClick={() => {
             if (needsReason(action)) setConfirmOpen(true);
             else void handleConfirm();
@@ -234,7 +310,9 @@ export function StaffBulkBar({ staff, canManageLifecycle, canManageStaff, office
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Archive {count} employee{count !== 1 ? 's' : ''}?</DialogTitle>
+            <DialogTitle>
+              Archive {effectiveCount} employee{effectiveCount !== 1 ? 's' : ''}?
+            </DialogTitle>
             <DialogDescription>
               Archived staff are removed from normal operational use while history is preserved. This is a
               destructive action — provide a reason for the audit trail.
