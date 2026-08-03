@@ -224,6 +224,29 @@ Verified end-to-end: `POST /api/approvals/[id]/action` delegates to `WorkflowEng
 - **Tests**: 72/72 passing (5 files)
 - **TypeScript**: Clean compile (0 errors)
 
+## Session 35 — Driver Mobile PWA E2E, Cross-Tenant Browser Security Suite, Offline Sync Product Fixes
+
+### Added
+
+- **Driver mobile PWA E2E** (`src/e2e/driver-mobile-offline.spec.ts`) — 2 tests at 375×812 viewport: driver-mobile dashboard lists the assigned trip; offline departure inspection saves a draft, reconnects, auto-syncs to a DB row and is idempotent on re-sync. Self-cleaning `beforeAll` cancels stale allocations/trips so repeated runs never 409.
+- **Cross-tenant browser security suite** (`src/e2e/cross-tenant-isolation.spec.ts`) — 5 Playwright tests: tenant A fleet/reports never leak tenant B vehicles; vehicle by-id read/mutate blocked cross-tenant; tenant B request not visible/cancellable; audit log + notifications never include tenant B events; platform administration boundary (tenant users 403, platform admin 200).
+- **Generic branded email fallback** (`src/lib/email.ts` + `src/emails/notification.tsx`) — `notification` template entry + `action_required`/`awareness`/`outcome`/`alert` aliases so the workflow engine/notifications route never fall through to a missing template.
+
+### Fixed
+
+- **Inspection checklist bug** — `departure`/`return` pages shipped hardcoded checklists whose labels did NOT match the active server template (16/9 items), so every submission returned 422. Both pages now render the canonical template items with the dynamic photo gate.
+- **DRIVER inspection access** — DRIVER role grants `INSPECTION_PERFORM`, but the inspection page/API workspaces and DRIVER policy lacked the right to open/perform inspections. Added DRIVER to the departure/return/new page workspaces + granted `INSPECTION_PERFORM` in the DRIVER policy.
+- **Mount-time offline sync** — `OfflineSyncHandler` only synced on the `online` event or the 60s interval; it now syncs pending drafts immediately on mount once the profile resolves.
+- **Orphaned-draft scope fix** — drafts saved with `userId/tenantId: null` (profile not yet resolved) were excluded from sync forever; null-scoped drafts are now treated as device-owned and remain eligible for whoever is logged in.
+
+### Validation
+
+- **TypeScript**: Clean compile (0 errors)
+- **Lint**: 0 errors (2 pre-existing warnings in untouched lines)
+- **Unit tests**: 265/265 passing (23 files)
+- **Playwright**: driver-mobile 2/2 + cross-tenant 5/5 against fresh production build + e2e seed
+- **Build**: Production build green
+
 ## Known Gaps
 
 - SMS won't send until Twilio credentials are set

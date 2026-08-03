@@ -119,11 +119,18 @@ export async function listDrafts(
     const allowed = new Set(filters.syncStatuses);
     collection = collection.filter((d) => allowed.has(d.syncStatus)) as typeof collection;
   }
+  // A draft saved before the profile query resolved has no owner (null). On a
+  // single-user PWA device those device-owned drafts must still be eligible for
+  // sync by whoever is logged in — excluding them would orphan them forever.
   if (filters?.userId) {
-    collection = collection.filter((d) => d.userId === filters.userId) as typeof collection;
+    collection = collection.filter(
+      (d) => !d.userId || d.userId === filters.userId,
+    ) as typeof collection;
   }
   if (filters?.tenantId) {
-    collection = collection.filter((d) => d.tenantId === filters.tenantId) as typeof collection;
+    collection = collection.filter(
+      (d) => !d.tenantId || d.tenantId === filters.tenantId,
+    ) as typeof collection;
   }
 
   return collection.toArray();
@@ -137,8 +144,10 @@ export async function countUnsyncedDrafts(filters?: { userId?: string; tenantId?
   return db.drafts
     .filter((d) =>
       (d.syncStatus === 'pending' || d.syncStatus === 'failed')
-      && (!filters?.userId || d.userId === filters.userId)
-      && (!filters?.tenantId || d.tenantId === filters.tenantId),
+      // Device-owned drafts (saved before the profile resolved) count for
+      // whoever is logged in — same rule as listDrafts.
+      && (!filters?.userId || !d.userId || d.userId === filters.userId)
+      && (!filters?.tenantId || !d.tenantId || d.tenantId === filters.tenantId),
     )
     .count();
 }

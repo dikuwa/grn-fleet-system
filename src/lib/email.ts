@@ -83,6 +83,7 @@ async function getTemplateRegistry(): Promise<Record<string, TemplateEntry>> {
     ReminderEmail,
     AuditNotificationEmail,
     DocumentExpiryEmail,
+    NotificationEmail,
   ] = await Promise.all([
     import('@/emails/request-approved').then((m) => m.RequestApprovedEmail),
     import('@/emails/request-rejected').then((m) => m.RequestRejectedEmail),
@@ -92,7 +93,21 @@ async function getTemplateRegistry(): Promise<Record<string, TemplateEntry>> {
     import('@/emails/reminder').then((m) => m.ReminderEmail),
     import('@/emails/audit-notification').then((m) => m.AuditNotificationEmail),
     import('@/emails/document-expiry').then((m) => m.DocumentExpiryEmail),
+    import('@/emails/notification').then((m) => m.NotificationEmail),
   ]);
+
+  /** Generic branded template for event types without a dedicated layout. */
+  const genericEntry = (): TemplateEntry => ({
+    component: NotificationEmail,
+    buildProps: (data) => ({
+      recipientName: data.recipientName,
+      tenantName: data.tenantName,
+      title: stripEmoji(data.title),
+      body: data.body,
+      actionUrl: data.actionUrl,
+      isEmergency: data.type === 'escalation' || data.type === 'emergency',
+    }),
+  });
 
   return {
     request_approved: {
@@ -176,6 +191,14 @@ async function getTemplateRegistry(): Promise<Record<string, TemplateEntry>> {
         actionUrl: data.actionUrl,
       }),
     },
+    // Generic fallback — used by the workflow engine for results outside the
+    // dedicated map (e.g. submitted, allocated) and by the notifications route
+    // for category types without a dedicated layout.
+    notification: genericEntry(),
+    action_required: genericEntry(),
+    awareness: genericEntry(),
+    outcome: genericEntry(),
+    alert: genericEntry(),
     fuel_created: {
       component: AuditNotificationEmail,
       buildProps: (data) => ({
@@ -313,7 +336,9 @@ async function getTemplateRegistry(): Promise<Record<string, TemplateEntry>> {
       buildProps: (data) => ({
         recipientName: data.recipientName,
         tenantName: data.tenantName,
-        documentType: data.type.replace('document_expiry_', ''),
+        documentType:
+          data.type.replace('document_expiry_', '').replace('document_expiry', '') ||
+          'Document',
         documentReference: stripEmoji(data.title),
         expiryDate: data.body.split('on ')[1]?.split(' ')[0] || new Date().toISOString().split('T')[0],
         daysRemaining: 0,

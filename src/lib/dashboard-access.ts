@@ -8,7 +8,6 @@
 
 import {
   resolveActiveWorkspace,
-  SystemRoles,
   WorkspaceIds,
   type WorkspaceId,
 } from '@/lib/workspaces';
@@ -447,8 +446,12 @@ export const routeRegistry: readonly RouteDefinition[] = [
     path: '/dashboard/inspections/new',
     label: 'Perform Inspection',
     section: 'Inspections',
-    workspaces: [W.INSPECTOR, W.TRANSPORT_ADMIN],
-    access: { [W.INSPECTOR]: assignedManage(), [W.TRANSPORT_ADMIN]: tenantManage(OPERATE) },
+    workspaces: [W.DRIVER, W.INSPECTOR, W.TRANSPORT_ADMIN],
+    access: {
+      [W.DRIVER]: assignedManage(['view', 'create']),
+      [W.INSPECTOR]: assignedManage(),
+      [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
+    },
     tenantScoped: true,
     order: 191,
     navigationVisible: false,
@@ -459,8 +462,12 @@ export const routeRegistry: readonly RouteDefinition[] = [
     path: '/dashboard/inspections/departure',
     label: 'Departure Inspection',
     section: 'Inspections',
-    workspaces: [W.INSPECTOR, W.TRANSPORT_ADMIN],
-    access: { [W.INSPECTOR]: assignedManage(), [W.TRANSPORT_ADMIN]: tenantManage(OPERATE) },
+    workspaces: [W.DRIVER, W.INSPECTOR, W.TRANSPORT_ADMIN],
+    access: {
+      [W.DRIVER]: assignedManage(['view', 'create']),
+      [W.INSPECTOR]: assignedManage(),
+      [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
+    },
     tenantScoped: true,
     order: 192,
     navigationVisible: false,
@@ -471,8 +478,12 @@ export const routeRegistry: readonly RouteDefinition[] = [
     path: '/dashboard/inspections/return',
     label: 'Return Inspection',
     section: 'Inspections',
-    workspaces: [W.INSPECTOR, W.TRANSPORT_ADMIN],
-    access: { [W.INSPECTOR]: assignedManage(), [W.TRANSPORT_ADMIN]: tenantManage(OPERATE) },
+    workspaces: [W.DRIVER, W.INSPECTOR, W.TRANSPORT_ADMIN],
+    access: {
+      [W.DRIVER]: assignedManage(['view', 'create']),
+      [W.INSPECTOR]: assignedManage(),
+      [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
+    },
     tenantScoped: true,
     order: 193,
     navigationVisible: false,
@@ -484,8 +495,9 @@ export const routeRegistry: readonly RouteDefinition[] = [
     label: 'Assigned Inspections',
     icon: 'ClipboardCheck',
     section: 'Inspections',
-    workspaces: [W.INSPECTOR, W.TRANSPORT_ADMIN, W.AUDIT],
+    workspaces: [W.DRIVER, W.INSPECTOR, W.TRANSPORT_ADMIN, W.AUDIT],
     access: {
+      [W.DRIVER]: assignedManage(['view']),
       [W.INSPECTOR]: assignedManage(),
       [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
       [W.AUDIT]: tenantRead(true),

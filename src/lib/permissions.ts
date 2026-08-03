@@ -158,6 +158,11 @@ export function isPermissionAvailableInWorkspace(
       Permissions.DRIVER_FUEL_CREATE,
       Permissions.TRIP_VIEW,
       Permissions.INSPECTION_VIEW,
+      // Drivers perform departure/return inspections on their assigned trips
+      // from the mobile console (offline-first), so INSPECTION_PERFORM must be
+      // usable inside the DRIVER workspace even though the API also requires
+      // the dashboard-action gate on /dashboard/inspections/new.
+      Permissions.INSPECTION_PERFORM,
       Permissions.FILE_VIEW,
       Permissions.FILE_UPLOAD,
     ],

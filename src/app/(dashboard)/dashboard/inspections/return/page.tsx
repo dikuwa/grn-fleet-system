@@ -13,6 +13,7 @@ import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
+import { RETURN_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
 
 interface ChecklistItem {
   id: string;
@@ -25,31 +26,29 @@ interface ChecklistItem {
   isBlocking: boolean;
 }
 
-const DEFAULT_CHECKLIST: ChecklistItem[] = [
-  // Exterior
-  { id: 'ret-ext-1', category: 'exterior', label: 'Body panels — check for new damage', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-  { id: 'ret-ext-2', category: 'exterior', label: 'Windscreen — no new cracks', isCritical: true, result: 'na' as const, defectDescription: '', defectSeverity: 'major', isBlocking: false },
-  { id: 'ret-ext-3', category: 'exterior', label: 'Mirrors — present and undamaged', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-  // Tyres
-  { id: 'ret-tyr-1', category: 'tyres', label: 'Tyre condition — no new damage', isCritical: true, result: 'na' as const, defectDescription: '', defectSeverity: 'critical', isBlocking: false },
-  { id: 'ret-tyr-2', category: 'tyres', label: 'Spare wheel — still present', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-  // Interior
-  { id: 'ret-int-1', category: 'interior', label: 'Interior — clean, no damage', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-  { id: 'ret-int-2', category: 'interior', label: 'Seat belts — all functional', isCritical: true, result: 'na' as const, defectDescription: '', defectSeverity: 'critical', isBlocking: false },
-  // Equipment
-  { id: 'ret-eq-1', category: 'equipment', label: 'Fire extinguisher — present', isCritical: true, result: 'na' as const, defectDescription: '', defectSeverity: 'critical', isBlocking: false },
-  { id: 'ret-eq-2', category: 'equipment', label: 'First aid kit — present', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-  { id: 'ret-eq-3', category: 'equipment', label: 'Warning triangle — present', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-  { id: 'ret-eq-4', category: 'equipment', label: 'Tools and jack — present', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-  // Documents
-  { id: 'ret-doc-1', category: 'documents', label: 'Trip logbook — completed', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-  { id: 'ret-doc-2', category: 'documents', label: 'Fuel receipts — collected', isCritical: false, result: 'na' as const, defectDescription: '', defectSeverity: 'minor', isBlocking: false },
-];
+// The active server-side template (seeded from RETURN_INSPECTION_ITEMS) is the
+// source of truth for checklist labels — the API validates by label, so the
+// form must submit the exact same items or the inspection is rejected.
+const DEFAULT_CHECKLIST: ChecklistItem[] = RETURN_INSPECTION_ITEMS.map((item, index) => ({
+  id: `ret-${index + 1}`,
+  category: item.category,
+  label: item.label,
+  isCritical: item.isCritical,
+  result: 'na' as const,
+  defectDescription: '',
+  defectSeverity: 'minor',
+  isBlocking: false,
+}));
+
+const REQUIRED_PHOTOS = RETURN_INSPECTION_ITEMS.filter((item) => item.requiresPhoto).length;
 
 const CATEGORY_LABELS: Record<string, string> = {
   exterior: 'Exterior',
   tyres: 'Tyres & Wheels',
+  lights: 'Lights & Electrical',
   interior: 'Interior',
+  safety: 'Safety Equipment',
+  fuel: 'Fuel',
   equipment: 'Equipment',
   documents: 'Documents & Paperwork',
 };
@@ -194,7 +193,7 @@ export default function ReturnInspectionPage() {
 
   const criticalFails = checklist.filter((i) => i.isCritical && i.result === 'fail').length;
   const failsNeedingDescription = checklist.filter((i) => i.result === 'fail' && !i.defectDescription.trim());
-  const canComplete = odometer.length > 0 && criticalFails === 0 && failsNeedingDescription.length === 0 && inspectorAcknowledged && driverAcknowledged && photos.length >= 3;
+  const canComplete = odometer.length > 0 && criticalFails === 0 && failsNeedingDescription.length === 0 && inspectorAcknowledged && driverAcknowledged && photos.length >= REQUIRED_PHOTOS;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -854,7 +853,7 @@ export default function ReturnInspectionPage() {
           <CardContent className="space-y-3">
             <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={inspectorAcknowledged} onChange={(event) => setInspectorAcknowledged(event.target.checked)} /> I confirm that I performed and recorded this return inspection.</label>
             <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={driverAcknowledged} onChange={(event) => setDriverAcknowledged(event.target.checked)} /> The assigned driver confirms the returned vehicle condition.</label>
-            <p className="text-xs text-ink-500">Both acknowledgements and at least three inspection photos are required.</p>
+            <p className="text-xs text-ink-500">{`Both acknowledgements and at least ${REQUIRED_PHOTOS} inspection photos are required.`}</p>
           </CardContent>
         </Card>
 

@@ -13,6 +13,7 @@ import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { saveDraft } from '@/lib/offline-drafts';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
+import { DEPARTURE_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
 
 interface ChecklistItem {
   id: string;
@@ -22,40 +23,18 @@ interface ChecklistItem {
   result: 'pass' | 'fail' | 'na';
 }
 
-const DEFAULT_CHECKLIST: ChecklistItem[] = [
-  // Exterior
-  { id: 'ext-1', category: 'exterior', label: 'Body panels — no visible damage', isCritical: false, result: 'na' as const },
-  { id: 'ext-2', category: 'exterior', label: 'Windscreen — no cracks or chips', isCritical: true, result: 'na' as const },
-  { id: 'ext-3', category: 'exterior', label: 'Windows — all operate correctly', isCritical: false, result: 'na' as const },
-  { id: 'ext-4', category: 'exterior', label: 'Mirrors — present and adjusted', isCritical: false, result: 'na' as const },
-  { id: 'ext-5', category: 'exterior', label: 'Number plates — fitted and legible', isCritical: false, result: 'na' as const },
-  // Tyres
-  { id: 'tyr-1', category: 'tyres', label: 'Tyre pressure — all wheels checked', isCritical: true, result: 'na' as const },
-  { id: 'tyr-2', category: 'tyres', label: 'Tread depth — above minimum (1.6mm)', isCritical: true, result: 'na' as const },
-  { id: 'tyr-3', category: 'tyres', label: 'No visible cuts, bulges or foreign objects', isCritical: true, result: 'na' as const },
-  { id: 'tyr-4', category: 'tyres', label: 'Spare wheel — present and secured', isCritical: false, result: 'na' as const },
-  // Lights
-  { id: 'lgt-1', category: 'lights', label: 'Headlights — high and low beam', isCritical: true, result: 'na' as const },
-  { id: 'lgt-2', category: 'lights', label: 'Tail lights — both operational', isCritical: true, result: 'na' as const },
-  { id: 'lgt-3', category: 'lights', label: 'Brake lights — illuminate on pedal press', isCritical: true, result: 'na' as const },
-  { id: 'lgt-4', category: 'lights', label: 'Indicators — all four corners', isCritical: true, result: 'na' as const },
-  { id: 'lgt-5', category: 'lights', label: 'Hazard lights — functional', isCritical: true, result: 'na' as const },
-  // Interior
-  { id: 'int-1', category: 'interior', label: 'Seat belts — all positions functional', isCritical: true, result: 'na' as const },
-  { id: 'int-2', category: 'interior', label: 'Seats — secure and adjustable', isCritical: false, result: 'na' as const },
-  { id: 'int-3', category: 'interior', label: 'Dashboard warning lights — normal', isCritical: true, result: 'na' as const },
-  { id: 'int-4', category: 'interior', label: 'Horn — operational', isCritical: false, result: 'na' as const },
-  { id: 'int-5', category: 'interior', label: 'Wipers and washers — functional', isCritical: true, result: 'na' as const },
-  // Documents
-  { id: 'doc-1', category: 'documents', label: 'Vehicle licence disc — valid and displayed', isCritical: true, result: 'na' as const },
-  { id: 'doc-2', category: 'documents', label: 'Roadworthy certificate — current', isCritical: true, result: 'na' as const },
-  { id: 'doc-3', category: 'documents', label: 'Insurance certificate — in vehicle', isCritical: true, result: 'na' as const },
-  // Safety
-  { id: 'saf-1', category: 'safety', label: 'Fire extinguisher — present and charged', isCritical: true, result: 'na' as const },
-  { id: 'saf-2', category: 'safety', label: 'First aid kit — present', isCritical: false, result: 'na' as const },
-  { id: 'saf-3', category: 'safety', label: 'Warning triangle — present', isCritical: false, result: 'na' as const },
-  { id: 'saf-4', category: 'safety', label: 'Reflective vest — present', isCritical: false, result: 'na' as const },
-];
+// The active server-side template (seeded from DEPARTURE_INSPECTION_ITEMS) is
+// the source of truth for checklist labels — the API validates by label, so
+// the form must submit the exact same items or the inspection is rejected.
+const DEFAULT_CHECKLIST: ChecklistItem[] = DEPARTURE_INSPECTION_ITEMS.map((item, index) => ({
+  id: `dep-${index + 1}`,
+  category: item.category,
+  label: item.label,
+  isCritical: item.isCritical,
+  result: 'na' as const,
+}));
+
+const REQUIRED_PHOTOS = DEPARTURE_INSPECTION_ITEMS.filter((item) => item.requiresPhoto).length;
 
 const CATEGORY_LABELS: Record<string, string> = {
   exterior: 'Exterior',
@@ -163,7 +142,7 @@ export default function DepartureInspectionPage() {
   );
 
   const criticalFails = checklist.filter((i) => i.isCritical && i.result === 'fail').length;
-  const canComplete = odometer.length > 0 && criticalFails === 0 && inspectorAcknowledged && driverAcknowledged && photos.length >= 3;
+  const canComplete = odometer.length > 0 && criticalFails === 0 && inspectorAcknowledged && driverAcknowledged && photos.length >= REQUIRED_PHOTOS;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -524,7 +503,7 @@ export default function DepartureInspectionPage() {
           <CardContent className="space-y-3">
             <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={inspectorAcknowledged} onChange={(event) => setInspectorAcknowledged(event.target.checked)} /> I confirm that I performed and recorded this inspection.</label>
             <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={driverAcknowledged} onChange={(event) => setDriverAcknowledged(event.target.checked)} /> The assigned driver confirms the recorded vehicle condition.</label>
-            <p className="text-xs text-ink-500">Both acknowledgements and at least three inspection photos are required.</p>
+            <p className="text-xs text-ink-500">{`Both acknowledgements and at least ${REQUIRED_PHOTOS} inspection photos are required.`}</p>
           </CardContent>
         </Card>
 
