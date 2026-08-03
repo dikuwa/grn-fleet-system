@@ -259,8 +259,11 @@ export async function POST(request: NextRequest) {
     const userId = crypto.randomUUID?.() || `user-${Date.now()}`;
     const now = new Date();
 
-    // Derive username if not provided
-    const username = (inputUsername || name || email.split('@')[0])
+    // Derive username if not provided. Email is guaranteed unique (checked
+    // above), so its local part is a collision-safe base — deriving from the
+    // display name instead would 500 on `user_username_key` whenever two
+    // accounts share a name (e.g. after a soft-remove keeps the user row).
+    const username = (inputUsername || email.split('@')[0] || name)
       .toLowerCase()
       .replace(/\s+/g, '.')
       .replace(/[^a-z0-9._-]/g, '');

@@ -265,6 +265,19 @@ Verified end-to-end: `POST /api/approvals/[id]/action` delegates to `WorkflowEng
 - **Lint**: 0 errors (2 pre-existing warnings in untouched lines)
 - **Unit tests**: 265/265 passing (23 files)
 
+### Session 37 ✅ — Expiry-Digest Core Verified, Integration Suite Repaired
+
+- **Digest core extracted + integration-tested** — `runDriverLicenceExpiryDigest` moved to `src/lib/inngest/expiry-digest.ts` (testable `tenantIds`/`now`/`skipEmails` options; already-expired licences now included per spec); cron in `functions.ts` is a thin wrapper. New `src/test/expiry-digest.integration.test.ts` (3/3): tenant-scoped digest to Transport Administrators on a business day, idempotent per day-epoch, expired-inclusion, cross-tenant negative.
+- **Real production bugs fixed** — (1) `POST /api/admin/users` derived `username` from the display name → 500 on `user_username_key` whenever two accounts shared a name; now derived from the unique email local part. (2) `DELETE`/`restore` used `db.transaction()`, which the **neon-http driver does not support** (CI ran SQLite so Session 36's routes never hit it) → rewrote as sequential idempotent updates. (3) Permission codes `TRIP_AUTHORITY_OVERRIDE_NUMBER`/`USER_VIEW`/`USER_MANAGE_STATUS`/`USER_INVITE` were missing from `PermissionGroups` (invisible in the permission matrix + failed the permissions suite).
+- **Integration suite repaired** — `auth.integration.test.ts` tenant-status case fix (`'ACTIVE'` vs `'active'`); `user-access-lifecycle.integration.test.ts` fixed 9 response-body-consumed assertions, the vitest timeout-argument order, and a **cross-test race** (depended on seeded `availableEmployees[0]`, which the parallel digest suite deletes mid-run) by owning its employee fixture with `finally` cleanup.
+
+### Validation
+
+- **TypeScript**: Clean compile (0 errors)
+- **Lint**: 0 errors, 0 warnings (removed 2 pre-existing `functions.ts` warnings)
+- **Unit tests**: 265/265 passing (23 files)
+- **Integration tests**: 47/47 passing (5 files — incl. expiry-digest 3/3, user-access-lifecycle 2/2) against the dev server on :3000
+
 ## Known Gaps
 
 - SMS won't send until Twilio credentials are set

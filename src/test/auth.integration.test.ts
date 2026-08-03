@@ -104,7 +104,7 @@ describe('Session Resolution', () => {
       .where(
         and(
           eq(tenantMemberships.status, 'active'),
-          eq(tenants.status, 'active'),
+          eq(tenants.status, 'ACTIVE'),
         ),
       )
       .limit(1);
@@ -130,7 +130,8 @@ describe('Session Resolution', () => {
 
     expect(tenant).toBeDefined();
     expect(tenant.name).toBe('Kavango East Regional Council');
-    expect(tenant.status).toBe('active');
+    // The seed stores tenant status in uppercase ('ACTIVE').
+    expect(tenant.status.toUpperCase()).toBe('ACTIVE');
   });
 });
 

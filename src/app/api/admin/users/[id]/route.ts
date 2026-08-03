@@ -511,16 +511,17 @@ export async function DELETE(
     // The membership is marked `access_removed` (so the account leaves User
     // Management and session resolution fails) while the employee record stays
     // fully intact. Role history is preserved verbatim.
-    await db.transaction(async (tx) => {
-      await tx
-        .update(tenantMemberships)
-        .set({ status: 'access_removed' })
-        .where(eq(tenantMemberships.id, membership.id));
-      await tx
-        .update(userProfiles)
-        .set({ status: 'removed', updatedAt: new Date() })
-        .where(eq(userProfiles.userId, id));
-    });
+    // NOTE: the neon-http driver has no multi-statement transaction support,
+    // so these two idempotent updates run sequentially (same behaviour in
+    // SQLite). Re-removing an already-removed account re-applies both safely.
+    await db
+      .update(tenantMemberships)
+      .set({ status: 'access_removed' })
+      .where(eq(tenantMemberships.id, membership.id));
+    await db
+      .update(userProfiles)
+      .set({ status: 'removed', updatedAt: new Date() })
+      .where(eq(userProfiles.userId, id));
 
     try {
       await recordAuditEvent({

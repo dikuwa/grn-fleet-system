@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-03 — Session 37: Expiry-Digest Core Verified, Neon Transaction + Username Collision Fixes, Full Integration Suite Repaired
+
+### Added
+
+- **Digest core extracted for testability** (`src/lib/inngest/expiry-digest.ts`) — `runDriverLicenceExpiryDigest({ tenantIds, now, skipEmails })` pulled out of the Inngest cron handler (which is now a thin wrapper). Same tenant-scoped, day-epoch idempotent behaviour; already-expired licences now included per spec. Enables direct integration testing of the daily Transport-Administrator digest.
+- **Expiry-digest integration tests** (`src/test/expiry-digest.integration.test.ts`) — 3/3 passing against the seeded dev server: digest created for a business day with the correct recipient/body/day-epoch, idempotent on re-run, already-expired licences listed, and nothing sent to tenants without expiring licences or Transport Administrators (cross-tenant negative).
+
+### Fixed
+
+- **Username collision 500** (`src/app/api/admin/users/route.ts`) — POST derived `username` from the display name, so two accounts sharing a name (or an account re-created after a soft-remove, which keeps the `user` row) hit `user_username_key` and returned 500. Username is now derived from the unique email local part when not supplied.
+- **neon-http transaction support** (`src/app/api/admin/users/[id]/route.ts`, `restore/route.ts`) — `db.transaction()` is unsupported by the neon-http driver; Session 36's DELETE/RESTORE only ever ran against SQLite in CI. Both endpoints now apply their two idempotent updates sequentially, fixing a real production 500 on Neon.
+- **Permission matrix gap** (`src/lib/permissions.ts`) — `TRIP_AUTHORITY_OVERRIDE_NUMBER`, `USER_VIEW`, `USER_MANAGE_STATUS` and `USER_INVITE` were added to the enum but never to `PermissionGroups`, leaving them invisible in the permission matrix and failing the permissions integration suite.
+- **Integration test bugs** — `auth.integration.test.ts` asserted lowercase `'active'` tenant status (seed stores `'ACTIVE'`); `user-access-lifecycle.integration.test.ts` had 9 assertions that consumed the response body before `.json()`, a vitest timeout in the wrong argument position, and a cross-test race (it depended on seeded `availableEmployees[0]`, which the parallel expiry-digest suite deletes mid-run). It now creates and cleans up its own employee fixture.
+- **Lint 0/0** — removed the 2 pre-existing unused-variable warnings in `src/lib/inngest/functions.ts`.
+
+### Validation
+
+- TypeScript: 0 errors · Lint: 0 errors 0 warnings · Unit: 265/265 (23 files) · Integration: **47/47 (5 files)** against the dev server on :3000 (restarted with fixes live; preview re-registered).
+
 ## 2026-08-03 — Session 36: User Access Lifecycle, Phase 32 Driver Inspection Scope, Offline Incident E2E, Cross-Tenant Integration Tests
 
 ### Added

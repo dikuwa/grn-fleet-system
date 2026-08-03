@@ -580,7 +580,12 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   },
   trips: {
     label: 'Trip Management',
-    permissions: [Permissions.TRIP_CLOSE, Permissions.TRIP_VIEW, Permissions.TRIP_MANAGE],
+    permissions: [
+      Permissions.TRIP_CLOSE,
+      Permissions.TRIP_VIEW,
+      Permissions.TRIP_MANAGE,
+      Permissions.TRIP_AUTHORITY_OVERRIDE_NUMBER,
+    ],
   },
   drivers: {
     label: 'Driver Operations',
@@ -617,6 +622,14 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
       Permissions.DELEGATION_MANAGE,
       Permissions.LICENCE_VERIFY,
       Permissions.SECURE_REQUEST_ASSIST,
+    ],
+  },
+  userAccounts: {
+    label: 'User Accounts',
+    permissions: [
+      Permissions.USER_VIEW,
+      Permissions.USER_MANAGE_STATUS,
+      Permissions.USER_INVITE,
     ],
   },
   audit: {

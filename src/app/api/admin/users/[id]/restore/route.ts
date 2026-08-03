@@ -52,16 +52,17 @@ export async function POST(
       );
     }
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(tenantMemberships)
-        .set({ status: 'active' })
-        .where(eq(tenantMemberships.id, membership.id));
-      await tx
-        .update(userProfiles)
-        .set({ status: 'active', updatedAt: new Date() })
-        .where(eq(userProfiles.userId, id));
-    });
+    // NOTE: the neon-http driver has no multi-statement transaction support,
+    // so these two idempotent updates run sequentially (same behaviour in
+    // SQLite). Re-restoring an already-active account is a no-op on both.
+    await db
+      .update(tenantMemberships)
+      .set({ status: 'active' })
+      .where(eq(tenantMemberships.id, membership.id));
+    await db
+      .update(userProfiles)
+      .set({ status: 'active', updatedAt: new Date() })
+      .where(eq(userProfiles.userId, id));
 
     try {
       await recordAuditEvent({
