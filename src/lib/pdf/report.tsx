@@ -281,7 +281,7 @@ export const ReportDocument: React.FC<{ data: ReportData }> = ({ data }) => {
         <Text
           style={styles.pageNumber}
           render={({ pageNumber, totalPages }) =>
-            `${pageNumber} / ${totalPages}`
+            `Page ${pageNumber} of ${totalPages}`
           }
           fixed
         />

@@ -7,13 +7,14 @@ import {
   requestDrivers,
   requestRoutes,
 } from '@/db/schema/requests';
+import { programmes } from '@/db/schema/programmes';
 import { employees, departments, driverProfiles } from '@/db/schema/people';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { workflowDefinitions } from '@/db/schema/workflows';
 import { onRequestSubmitted } from '@/lib/document-generator';
 import { WorkflowEngine } from '@/lib/workflow-engine';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
@@ -50,6 +51,7 @@ export async function POST(req: NextRequest) {
       overnight,
       specialRequirements,
       vehicleRequirements,
+      programmeId,
     } = body;
     const clientSubmissionId = req.headers.get('idempotency-key') || bodySubmissionId;
 
@@ -66,6 +68,9 @@ export async function POST(req: NextRequest) {
 
     if (scope !== 'regional' && scope !== 'national') {
       return NextResponse.json({ error: 'Scope must be regional or national' }, { status: 400 });
+    }
+    if (programmeId != null && typeof programmeId !== 'string') {
+      return NextResponse.json({ error: 'Programme must be a valid identifier' }, { status: 400 });
     }
     if (activities !== undefined && !Array.isArray(activities)) {
       return NextResponse.json({ error: 'Activities must be a list' }, { status: 400 });
@@ -125,6 +130,30 @@ export async function POST(req: NextRequest) {
     const db = getDb();
     const userId = session.user.id;
     const tenantId = session.tenantId;
+
+    // Validate the linked programme (tenant-scoped, published/approved, not archived)
+    let resolvedProgrammeId: string | null = null;
+    if (programmeId) {
+      const [linkedProgramme] = await db
+        .select({ id: programmes.id, status: programmes.status })
+        .from(programmes)
+        .where(
+          and(
+            eq(programmes.id, programmeId),
+            eq(programmes.tenantId, tenantId),
+            sql`${programmes.status} IN ('approved', 'published')`,
+            sql`${programmes.archivedAt} IS NULL`,
+          ),
+        )
+        .limit(1);
+      if (!linkedProgramme) {
+        return NextResponse.json(
+          { error: 'The selected programme is not available. Only approved or published, non-archived programmes can be linked to transport requests.' },
+          { status: 400 },
+        );
+      }
+      resolvedProgrammeId = linkedProgramme.id;
+    }
 
     if (clientSubmissionId) {
       const [existingRequest] = await db
@@ -402,6 +431,7 @@ export async function POST(req: NextRequest) {
         officeId: requesterEmployee.officeId,
         department: requesterEmployee.departmentName || department || null,
         purpose,
+        programmeId: resolvedProgrammeId,
         specialAuthorityRequired: specialAuthorityRequired || false,
         specialAuthorityReason: specialAuthorityReason || null,
         totalAuthorisedKilometres: totalKm || null,

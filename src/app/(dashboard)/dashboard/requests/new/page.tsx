@@ -95,6 +95,7 @@ interface RequestFormData {
   drivers: Driver[];
   routes: Route[];
   driverPreference: string;
+  programmeId: string;
 }
 
 const STEPS = [
@@ -119,6 +120,7 @@ const EMPTY_FORM: RequestFormData = {
   drivers: [],
   routes: [],
   driverPreference: 'transport_admin_assign',
+  programmeId: '',
 };
 
 // ---------------------------------------------------------------------------
@@ -142,6 +144,59 @@ function generateReference(): string {
 // Step Components
 // ---------------------------------------------------------------------------
 
+function ProgrammeSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [options, setOptions] = useState<{ id: string; reference: string; title: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/programmes?selectable=1&limit=50')
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Failed to load'))))
+      .then((json) => {
+        if (!cancelled) setOptions(json.data || []);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Programmes are unavailable.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div>
+      <label className="text-ink-500 mb-1 block text-xs font-medium">
+        Link to an approved Programme (optional)
+      </label>
+      <StyledSelect value={value} onChange={(e) => onChange(e.target.value)} disabled={loading}>
+        <option value="">No programme link</option>
+        {options.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.reference} — {p.title}
+          </option>
+        ))}
+      </StyledSelect>
+      <p className="text-ink-500 mt-1 text-xs">
+        {loading
+          ? 'Loading approved programmes…'
+          : loadError
+            ? loadError
+            : 'Only approved or published, non-archived programmes can be linked.'}
+      </p>
+    </div>
+  );
+}
+
 function BasicInfoStep({
   data,
   onChange,
@@ -151,6 +206,10 @@ function BasicInfoStep({
 }) {
   return (
     <div className="space-y-4">
+      <ProgrammeSelector
+        value={data.programmeId}
+        onChange={(programmeId) => onChange({ programmeId })}
+      />
       <div className="border-border rounded-[8px] border p-4">
         <label className="text-ink-500 mb-1 block text-xs font-medium">Requesting employee</label>
         <EmployeeCombobox
@@ -1075,6 +1134,7 @@ export default function NewRequestPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           purpose: formData.purpose,
+          programmeId: formData.programmeId || undefined,
           requesterEmployeeNumber: formData.requesterEmployee?.employeeNumber,
           assistedReason: formData.assistedReason,
           confirmationMethod: formData.requesterEmployee

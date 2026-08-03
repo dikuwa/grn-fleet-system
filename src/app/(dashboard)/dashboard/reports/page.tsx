@@ -30,6 +30,7 @@ import {
   Shield,
 } from 'lucide-react';
 import Link from 'next/link';
+import { useToast } from '@/lib/use-toast';
 
 type ReportType =
   | 'fuel'
@@ -138,6 +139,7 @@ async function fetchReportData(type: ReportType, period: TimeRange) {
 // ---------------------------------------------------------------------------
 
 export default function ReportsPage() {
+  const { toast } = useToast();
   const [selectedReport, setSelectedReport] = useState<ReportType>('fuel');
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [reportData, setReportData] = useState<Record<string, unknown> | null>(null);
@@ -175,39 +177,86 @@ export default function ReportsPage() {
     setIsLoading(false);
   }, [selectedReport, timeRange]);
 
-  const handleExport = useCallback(() => {
-    // Navigate to the report data as CSV by calling the API with ?export=csv
-    window.open(`/api/reports?type=${selectedReport}&period=${timeRange}&export=csv`, '_blank');
-  }, [selectedReport, timeRange]);
+  const handleExport = useCallback(
+    async (format: 'csv' | 'excel' | 'pdf') => {
+      const periodParam = timeRange === 'custom' ? '30d' : timeRange;
+      const url =
+        selectedReport === 'enhanced'
+          ? `/api/reports/enhanced?period=${periodParam}&export=${format}`
+          : `/api/reports?type=${selectedReport}&period=${periodParam}&export=${format}`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          let message = 'Report export failed. Please try again.';
+          try {
+            const json = await res.json();
+            if (json?.error) message = String(json.error);
+          } catch {
+            /* non-JSON body */
+          }
+          toast({ title: 'Export Failed', description: message, variant: 'error' });
+          return;
+        }
+        const blob = await res.blob();
+        const disposition = res.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^";]+)"?/);
+        const filename =
+          match?.[1] ||
+          `${selectedReport}-report-${periodParam}-${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'xlsx' : format}`;
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+        toast({
+          title: 'Export Ready',
+          description: `${filename} downloaded.`,
+          variant: 'success',
+        });
+      } catch (err) {
+        console.error('Report export failed:', err);
+        toast({
+          title: 'Export Failed',
+          description: 'Could not generate the report. Please try again.',
+          variant: 'error',
+        });
+      }
+    },
+    [selectedReport, timeRange, toast],
+  );
 
   const activeReport = reportTypes.find((r) => r.value === selectedReport);
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Reports & Analytics' },
-      ]} />
+      <div className="no-print">
+        <Breadcrumbs items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Reports & Analytics' },
+        ]} />
       <PageHeader
         title="Reports & Analytics"
         description="KPI dashboards, operational reports, and data exports"
       >
-        <div className="flex items-center gap-2">
+        <div className="no-print flex items-center gap-2">
           <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
             reportData ? 'bg-status-success-bg text-status-success-text' : 'bg-muted text-ink-500'
           }`}>
             {reportData ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
             {reportData ? 'Live Data' : 'No Data'}
           </div>
-          <Button variant="secondary" size="sm" onClick={handleExport}>
+          <Button variant="secondary" size="sm" onClick={() => handleExport('csv')}>
             <Download className="h-4 w-4" />
             Export CSV
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => window.open(`/api/reports?type=${selectedReport}&period=${timeRange}&export=excel`, '_blank')}>
+          <Button variant="secondary" size="sm" onClick={() => handleExport('excel')}>
             <Download className="h-4 w-4" />
             Export Excel
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => window.open(`/api/reports?type=${selectedReport}&period=${timeRange}&export=pdf`, '_blank')}>
+          <Button variant="secondary" size="sm" onClick={() => handleExport('pdf')}>
             <FileText className="h-4 w-4" />
             Export PDF
           </Button>
@@ -218,8 +267,10 @@ export default function ReportsPage() {
         </div>
       </PageHeader>
 
+      </div>
+
       {/* Report Type Selector */}
-      <Card>
+      <Card className="no-print">
         <CardContent className="pt-4">
           <div className="flex flex-wrap gap-2">
             {reportTypes.map((r) => (
@@ -251,7 +302,7 @@ export default function ReportsPage() {
       </Card>
 
       {/* Time Range & Filters */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="no-print flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <CalendarRange className="h-4 w-4 text-ink-500" />
           <div className="flex gap-1">
@@ -278,6 +329,8 @@ export default function ReportsPage() {
         </div>
       </div>
 
+      {/* ============================== PRINTABLE REPORT ============================== */}
+      <main id="print-report" className="space-y-6">
       {/* Loading State */}
       {isLoading && (
         <div className="flex items-center justify-center py-16">
@@ -354,6 +407,7 @@ export default function ReportsPage() {
       {!isLoading && selectedReport === 'enhanced' && (
         <ReportEnhanced data={reportData as Record<string, unknown> | null} />
       )}
+      </main>
     </div>
   );
 }

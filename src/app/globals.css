@@ -507,3 +507,99 @@ body {
     opacity: 1;
   }
 }
+
+/* ===================================================================
+ * Print layout — browser Print must capture only the report content
+ * =================================================================== */
+@media print {
+  /* Hide application chrome */
+  .app-sidebar,
+  #app-sidebar,
+  .app-header,
+  #app-header,
+  #app-drawer,
+  .mobile-bottom-nav,
+  [data-print-hidden='true'],
+  .no-print {
+    display: none !important;
+  }
+
+  /* Force light background and full-bleed content */
+  html,
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+    min-width: 0 !important;
+  }
+
+  /* Hide scrollbars and overlays */
+  * {
+    scrollbar-width: none !important;
+  }
+  *::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  [data-print-overlay='true'],
+  .toast-container,
+  .toaster,
+  [role='dialog'],
+  [role='tooltip'] {
+    display: none !important;
+  }
+
+  /* Printable wrapper: expand to full width without app padding */
+  #print-report {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  #print-report,
+  #print-report * {
+    box-shadow: none !important;
+  }
+
+  /* Cards shouldn't split awkwardly mid-content */
+  #print-report .card-break-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Tables should break cleanly across pages */
+  #print-report table {
+    page-break-inside: auto;
+  }
+  #print-report tr {
+    page-break-inside: avoid;
+  }
+
+  /* Ensure charts and blocks keep their printed size */
+  #print-report .print-full-width {
+    width: 100% !important;
+    overflow: visible !important;
+  }
+  #print-report .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  /* Dark mode must never leak into print */
+  .dark {
+    --color-surface: #ffffff !important;
+    --color-canvas: #ffffff !important;
+    --color-ink-950: #111827 !important;
+    --color-ink-700: #374151 !important;
+    --color-ink-500: #6b7280 !important;
+    --color-ink-400: #9ca3af !important;
+    --color-border: #e5e7eb !important;
+  }
+
+  /* One consistent page numbering footer for browser print is not
+     injected by CSS; multi-page PDFs use the shared PDF footer. */
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}

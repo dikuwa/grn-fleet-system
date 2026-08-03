@@ -1,6 +1,7 @@
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Inbox, AlertCircle, ShieldAlert } from 'lucide-react';
+import Link from 'next/link';
 
 interface EmptyStateProps {
   icon?: React.ReactNode;
@@ -8,7 +9,8 @@ interface EmptyStateProps {
   description?: string;
   action?: {
     label: string;
-    onClick: () => void;
+    onClick?: () => void;
+    href?: string;
   };
   className?: string;
 }
@@ -34,11 +36,15 @@ export function EmptyState({
       {description && (
         <p className="mt-1 max-w-sm text-sm text-ink-500">{description}</p>
       )}
-      {action && (
+      {action && (action.href ? (
+        <Button variant="primary" size="sm" className="mt-4" asChild>
+          <Link href={action.href}>{action.label}</Link>
+        </Button>
+      ) : (
         <Button variant="primary" size="sm" className="mt-4" onClick={action.onClick}>
           {action.label}
         </Button>
-      )}
+      ))}
     </div>
   );
 }

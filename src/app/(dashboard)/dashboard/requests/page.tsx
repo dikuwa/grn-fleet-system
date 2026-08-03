@@ -44,8 +44,16 @@ async function fetchRequests(
   const search = normalizeOptionalFilter(sp.search);
   const status = normalizeOptionalFilter(sp.status);
   const scope = normalizeOptionalFilter(sp.scope);
+  const viewMode = sp.view === 'mine' ? 'mine' : sp.view === 'all' ? 'all' : null;
 
-  const baseConditions: SQL[] = [requestScopeCondition({ tenantId, userId, recordScope })];
+  // Tenant-scoped users may toggle between their own requests and the full
+  // tenant list. Any other scope is used as-is.
+  const effectiveScope: DashboardRecordScope =
+    viewMode === 'mine' ? 'self' : recordScope;
+
+  const baseConditions: SQL[] = [
+    requestScopeCondition({ tenantId, userId, recordScope: effectiveScope }),
+  ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
 
@@ -161,21 +169,20 @@ export default async function RequestsPage({ searchParams }: PageProps) {
 
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/requests', roleNames);
-  const canViewAll = access.recordScope === 'tenant';
   const canCreate = canPerformDashboardAction('/dashboard/requests/new', roleNames, 'create');
   const pageTitle = roleNames.includes(SystemRoles.REQUESTER)
     ? 'My Requests'
     : roleNames.includes(SystemRoles.TRANSPORT_ADMIN)
       ? 'Operational Requests'
       : 'Transport Request Oversight';
+  const canViewAll = access.recordScope === 'tenant';
+  const viewParam = sp.view === 'mine' ? 'mine' : sp.view === 'all' ? 'all' : null;
+  const effectiveRecordScope: DashboardRecordScope =
+    viewParam === 'mine' ? 'self' : access.recordScope ?? 'self';
+
   let result: Awaited<ReturnType<typeof fetchRequests>>;
   try {
-    result = await fetchRequests(
-      sp,
-      session.tenantId,
-      session.user.id,
-      access.recordScope ?? 'self',
-    );
+    result = await fetchRequests(sp, session.tenantId, session.user.id, effectiveRecordScope);
   } catch (error) {
     console.error('Requests query failed:', error);
     return (
@@ -204,6 +211,28 @@ export default async function RequestsPage({ searchParams }: PageProps) {
               : 'Create and follow your requests'
         }
       >
+        {canViewAll && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant={viewParam !== 'mine' ? 'primary' : 'secondary'}
+              size="sm"
+              asChild
+            >
+              <Link href={buildFilterUrl('/dashboard/requests', sp, { view: 'all', page: undefined })}>
+                All Requests
+              </Link>
+            </Button>
+            <Button
+              variant={viewParam === 'mine' ? 'primary' : 'secondary'}
+              size="sm"
+              asChild
+            >
+              <Link href={buildFilterUrl('/dashboard/requests', sp, { view: 'mine', page: undefined })}>
+                My Requests
+              </Link>
+            </Button>
+          </div>
+        )}
         {canCreate && (
           <Button variant="primary" size="sm" asChild>
             <Link href="/dashboard/requests/new">

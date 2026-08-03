@@ -20,7 +20,114 @@ import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { recordAuditEvent } from '@/lib/audit-event';
 import {sql, eq, and, gte, count, desc} from 'drizzle-orm';
+
+// ---------------------------------------------------------------------------
+// Export helpers
+// ---------------------------------------------------------------------------
+
+function exportCSV(sections: { title: string; columns: { key: string; label: string }[]; rows: Record<string, unknown>[] }[]): string {
+  const parts: string[] = [];
+  for (const section of sections) {
+    parts.push(`# ${section.title}`);
+    parts.push(section.columns.map((c) => JSON.stringify(c.label)).join(','));
+    for (const row of section.rows) {
+      parts.push(section.columns.map((c) => JSON.stringify(String(row[c.key] ?? ''))).join(','));
+    }
+    parts.push('');
+  }
+  return parts.join('\n');
+}
+
+function buildCSVResponse(csv: string, filename: string): NextResponse {
+  return new NextResponse(csv, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+  });
+}
+
+async function buildExcelResponse(
+  sections: { title: string; columns: { key: string; label: string }[]; rows: Record<string, unknown>[] }[],
+  filename: string,
+): Promise<NextResponse> {
+  const ExcelJS = await import('exceljs');
+  const workbook = new ExcelJS.default.Workbook();
+  for (const section of sections) {
+    const sheetName = section.title.slice(0, 31) || 'Data';
+    const sheet = workbook.addWorksheet(sheetName);
+    sheet.columns = section.columns.map((c) => ({
+      header: c.label,
+      key: c.key,
+      width: Math.max(c.label.length + 5, 15),
+    }));
+    section.rows.forEach((row) => sheet.addRow(row));
+    sheet.getRow(1).font = { bold: true };
+  }
+  const buf = await workbook.xlsx.writeBuffer();
+  return new NextResponse(new Uint8Array(buf as ArrayBuffer) as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+  });
+}
+
+async function buildPDFResponse(
+  sections: { title: string; columns: { key: string; label: string }[]; rows: Record<string, unknown>[] }[],
+  opts: {
+    title: string;
+    periodLabel: string;
+    tenantName: string;
+    tenantDocumentFooter?: string;
+    generatedAt: string;
+    filters: { label: string; value: string }[];
+    kpis: { label: string; value: string }[];
+  },
+  filename: string,
+): Promise<NextResponse> {
+  const { renderToStream } = await import('@react-pdf/renderer');
+  const { EnhancedReportDocument } = await import('@/lib/pdf/enhanced-report');
+  const React = await import('react');
+
+  const element = React.createElement(EnhancedReportDocument as never, {
+    data: {
+      title: opts.title,
+      periodLabel: opts.periodLabel,
+      tenantName: opts.tenantName,
+      tenantDocumentFooter: opts.tenantDocumentFooter,
+      generatedAt: opts.generatedAt,
+      filters: opts.filters,
+      kpis: opts.kpis,
+      sections,
+    },
+  }) as never;
+
+  const stream = await renderToStream(element as unknown as React.ReactElement<Record<string, unknown>>);
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of stream) {
+    chunks.push(new Uint8Array(chunk as unknown as ArrayBuffer));
+  }
+  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+  const pdfBuffer = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    pdfBuffer.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return new NextResponse(pdfBuffer as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Date helpers
@@ -483,6 +590,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const period = searchParams.get('period') || '30d';
+    const exportFormat = searchParams.get('export'); // 'pdf' | 'csv' | 'excel'
     const { start, end } = getDateRange(period);
     const db = getDb();
     const tenantId = session.tenantId;
@@ -497,6 +605,198 @@ export async function GET(request: NextRequest) {
         getRejectionMetrics(db, tenantId, start),
       ]);
 
+    // -------------------------------------------------------------------
+    // Export handling (PDF / CSV / Excel) — same dataset as the screen
+    // -------------------------------------------------------------------
+    if (exportFormat) {
+      const [tenant] = (await db
+        .select({ name: sql`name`, documentFooter: sql`document_footer` })
+        .from(sql`tenants`)
+        .where(eq(sql`id`, tenantId))
+        .limit(1)) as unknown as { name: string; documentFooter: string | null }[];
+
+      const tenantName = tenant?.name || 'Fleet Management';
+      const periodLabel =
+        period === '7d'
+          ? 'Last 7 Days'
+          : period === '30d'
+            ? 'Last 30 Days'
+            : period === '90d'
+              ? 'Last Quarter'
+              : 'Year to Date';
+      const generatedAt = new Date().toISOString();
+      const filename = `enhanced-analytics-${period}-${generatedAt.split('T')[0]}`;
+
+      const sections = [
+        {
+          key: 'approvalTurnaround',
+          title: 'Approval Turnover Detail',
+          columns: [
+            { key: 'step', label: 'Step' },
+            { key: 'value', label: 'Avg Hours' },
+          ],
+          rows: (approvalTurnaround.stepDurations || []).map((s) => ({
+            step: `Step ${s.stepOrder}`,
+            value: Math.round(s.avgHours * 10) / 10,
+          })),
+          emptyText: 'No workflow actions recorded in this period.',
+        },
+        {
+          key: 'approvalTrend',
+          title: 'Approval Duration Trend',
+          columns: [
+            { key: 'month', label: 'Month' },
+            { key: 'avgHours', label: 'Avg Hours' },
+            { key: 'actions', label: 'Actions' },
+          ],
+          rows: (approvalTurnaround.monthlyTrend || []).map((m) => ({
+            month: m.month,
+            avgHours: Math.round(m.avgHours * 10) / 10,
+            actions: m.actionCount,
+          })),
+          emptyText: 'No approval trend data for this period.',
+        },
+        {
+          key: 'vehicleUtilisation',
+          title: 'Vehicle Utilisation',
+          columns: [
+            { key: 'licenceNumber', label: 'Vehicle' },
+            { key: 'totalTrips', label: 'Trips' },
+            { key: 'totalTripHours', label: 'Hours' },
+            { key: 'utilisationPct', label: 'Utilisation %' },
+          ],
+          rows: (vehicleUtilisation.vehicleBreakdown || []).map((v) => ({
+            licenceNumber: v.licenceNumber,
+            totalTrips: v.totalTrips,
+            totalTripHours: v.totalTripHours,
+            utilisationPct: v.utilisationPct,
+          })),
+          emptyText: 'No trips recorded in this period.',
+        },
+        {
+          key: 'fuelEfficiency',
+          title: 'Fuel Efficiency',
+          columns: [
+            { key: 'licenceNumber', label: 'Vehicle' },
+            { key: 'totalLitres', label: 'Litres' },
+            { key: 'routeDistanceKm', label: 'Route km' },
+            { key: 'estimatedDistanceKm', label: 'Driven km' },
+            { key: 'kmPerLitre', label: 'km/L' },
+            { key: 'avgCostPerLitre', label: 'N$/L' },
+          ],
+          rows: (fuelEfficiency.perVehicle || []).map((v) => ({
+            licenceNumber: v.licenceNumber,
+            totalLitres: v.totalLitres,
+            routeDistanceKm: v.routeDistanceKm,
+            estimatedDistanceKm: v.estimatedDistanceKm,
+            kmPerLitre: v.kmPerLitre ?? '',
+            avgCostPerLitre: v.avgCostPerLitre ?? '',
+          })),
+          emptyText: 'No fuel transactions recorded in this period.',
+        },
+        {
+          key: 'lateReturns',
+          title: 'Late Returns',
+          columns: [
+            { key: 'vehicleLicence', label: 'Vehicle' },
+            { key: 'actualHours', label: 'Actual Hours' },
+            { key: 'delayHours', label: 'Delay Hours' },
+          ],
+          rows: (lateReturns.lateTrips || []).map((t) => ({
+            vehicleLicence: t.vehicleLicence,
+            actualHours: t.actualHours,
+            delayHours: t.delayHours,
+          })),
+          emptyText: 'No late returns in this period.',
+        },
+        {
+          key: 'rejectionMetrics',
+          title: 'Rejection Metrics',
+          columns: [
+            { key: 'reason', label: 'Reason' },
+            { key: 'date', label: 'Date' },
+          ],
+          rows: (rejectionMetrics.rejectionReasons || []).map((r) => ({
+            reason: r.reason,
+            date: r.date,
+          })),
+          emptyText: 'No rejections recorded in this period.',
+        },
+      ];
+
+      const kpis = [
+        {
+          label: 'Avg Approval Time',
+          value: `${approvalTurnaround.avgTotalHours} hrs`,
+        },
+        {
+          label: 'Fleet Utilisation',
+          value: `${vehicleUtilisation.avgUtilisation}%`,
+        },
+        {
+          label: 'Fuel Efficiency',
+          value:
+            fuelEfficiency.fleetAvgKmPerLitre != null
+              ? `${fuelEfficiency.fleetAvgKmPerLitre} km/L`
+              : '—',
+        },
+        {
+          label: 'Late Return Rate',
+          value: `${lateReturns.lateRate}%`,
+        },
+        {
+          label: 'Rejection Rate',
+          value: `${rejectionMetrics.rejectionRate}%`,
+        },
+      ];
+
+      const filters = [
+        { label: 'Period', value: periodLabel },
+        { label: 'Generated', value: generatedAt.slice(0, 19).replace('T', ' ') },
+      ];
+
+      let response: NextResponse;
+      if (exportFormat === 'pdf') {
+        response = await buildPDFResponse(
+          sections,
+          {
+            title: 'Enhanced Analytics',
+            periodLabel,
+            tenantName,
+            tenantDocumentFooter: tenant?.documentFooter || undefined,
+            generatedAt: new Date().toLocaleDateString('en-NA', {
+              weekday: 'short',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            }),
+            filters,
+            kpis,
+          },
+          `${filename}.pdf`,
+        );
+      } else if (exportFormat === 'csv') {
+        response = buildCSVResponse(exportCSV(sections), `${filename}.csv`);
+      } else if (exportFormat === 'excel') {
+        response = await buildExcelResponse(sections, `${filename}.xlsx`);
+      } else {
+        return NextResponse.json({ error: `Unsupported export format: ${exportFormat}` }, { status: 400 });
+      }
+
+      // Audit the export (non-failing)
+      await recordAuditEvent({
+        tenantId,
+        actorUserId: session.user.id,
+        action: 'report.exported',
+        entityType: 'report',
+        entityId: 'enhanced_analytics',
+        sourceChannel: 'web',
+        after: { format: exportFormat, period },
+        summary: `Enhanced Analytics exported as ${exportFormat.toUpperCase()} (${periodLabel})`,
+      }).catch(() => undefined);
+
+      return response;
+    }
     return NextResponse.json({
       success: true,
       period,

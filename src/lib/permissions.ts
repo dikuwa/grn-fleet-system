@@ -91,6 +91,18 @@ export const Permissions = {
   PLATFORM_ADMIN: 'platform:admin',
   PLATFORM_SUPPORT: 'platform:support',
 
+  // Programmes
+  PROGRAMME_VIEW: 'programme:view',
+  PROGRAMME_CREATE: 'programme:create',
+  PROGRAMME_EDIT_OWN: 'programme:edit-own',
+  PROGRAMME_EDIT_ANY: 'programme:edit-any',
+  PROGRAMME_SUBMIT: 'programme:submit',
+  PROGRAMME_REVIEW: 'programme:review',
+  PROGRAMME_APPROVE: 'programme:approve',
+  PROGRAMME_REJECT: 'programme:reject',
+  PROGRAMME_PUBLISH: 'programme:publish',
+  PROGRAMME_ARCHIVE: 'programme:archive',
+
   // Reports
   REPORT_VIEW: 'report:view',
   REPORT_EXPORT: 'report:export',
@@ -117,7 +129,14 @@ export function isPermissionAvailableInWorkspace(
     Permissions.REQUEST_VIEW,
     Permissions.REQUEST_WITHDRAW,
   ];
+  const commonProgrammePermissions: readonly PermissionCode[] = [
+    Permissions.PROGRAMME_VIEW,
+    Permissions.PROGRAMME_CREATE,
+    Permissions.PROGRAMME_EDIT_OWN,
+    Permissions.PROGRAMME_SUBMIT,
+  ];
   if (commonRequestPermissions.includes(permission) && workspace !== W.PLATFORM_ADMIN) return true;
+  if (commonProgrammePermissions.includes(permission) && workspace !== W.PLATFORM_ADMIN) return true;
 
   const policies: Record<string, readonly PermissionCode[]> = {
     [W.PERSONAL]: [...commonRequestPermissions, Permissions.FILE_VIEW, Permissions.FILE_UPLOAD],
@@ -162,6 +181,7 @@ export function isPermissionAvailableInWorkspace(
     ],
     [W.TRANSPORT_ADMIN]: [
       ...commonRequestPermissions,
+      Permissions.PROGRAMME_VIEW,
       Permissions.REQUEST_REVIEW_TRANSPORT,
       Permissions.REQUEST_CANCEL,
       Permissions.ALLOCATION_MANAGE,
@@ -196,6 +216,13 @@ export function isPermissionAvailableInWorkspace(
     ],
     [W.TENANT_ADMIN]: [
       ...commonRequestPermissions,
+      ...commonProgrammePermissions,
+      Permissions.PROGRAMME_EDIT_ANY,
+      Permissions.PROGRAMME_REVIEW,
+      Permissions.PROGRAMME_APPROVE,
+      Permissions.PROGRAMME_REJECT,
+      Permissions.PROGRAMME_PUBLISH,
+      Permissions.PROGRAMME_ARCHIVE,
       Permissions.REQUEST_CANCEL,
       Permissions.TENANT_VIEW,
       Permissions.TENANT_MANAGE,
@@ -293,6 +320,16 @@ export const RoleDefinitions = {
       Permissions.REQUEST_CREATE,
       Permissions.REQUEST_VIEW,
       Permissions.REQUEST_CANCEL,
+      Permissions.PROGRAMME_VIEW,
+      Permissions.PROGRAMME_CREATE,
+      Permissions.PROGRAMME_EDIT_OWN,
+      Permissions.PROGRAMME_EDIT_ANY,
+      Permissions.PROGRAMME_SUBMIT,
+      Permissions.PROGRAMME_REVIEW,
+      Permissions.PROGRAMME_APPROVE,
+      Permissions.PROGRAMME_REJECT,
+      Permissions.PROGRAMME_PUBLISH,
+      Permissions.PROGRAMME_ARCHIVE,
       Permissions.VEHICLE_VIEW,
       Permissions.VEHICLE_UPDATE,
       Permissions.ALLOCATION_CREATE,
@@ -391,6 +428,10 @@ export const RoleDefinitions = {
       Permissions.REQUEST_CREATE,
       Permissions.REQUEST_VIEW,
       Permissions.REQUEST_WITHDRAW,
+      Permissions.PROGRAMME_VIEW,
+      Permissions.PROGRAMME_CREATE,
+      Permissions.PROGRAMME_EDIT_OWN,
+      Permissions.PROGRAMME_SUBMIT,
     ],
   },
   SUPERVISOR: {
@@ -591,6 +632,21 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   reports: {
     label: 'Reports',
     permissions: [Permissions.REPORT_VIEW, Permissions.REPORT_EXPORT],
+  },
+  programmes: {
+    label: 'Programmes',
+    permissions: [
+      Permissions.PROGRAMME_VIEW,
+      Permissions.PROGRAMME_CREATE,
+      Permissions.PROGRAMME_EDIT_OWN,
+      Permissions.PROGRAMME_EDIT_ANY,
+      Permissions.PROGRAMME_SUBMIT,
+      Permissions.PROGRAMME_REVIEW,
+      Permissions.PROGRAMME_APPROVE,
+      Permissions.PROGRAMME_REJECT,
+      Permissions.PROGRAMME_PUBLISH,
+      Permissions.PROGRAMME_ARCHIVE,
+    ],
   },
   files: {
     label: 'File Storage',

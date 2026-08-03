@@ -1,21 +1,19 @@
-/**
- * Programme Activities API
- *
- * GET  /api/programmes  — List all programme activities across requests (tenant-scoped)
- * POST /api/programmes  — Create a new programme activity (creates a draft transport request)
- */
-
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { transportRequests, requestActivities } from '@/db/schema/requests';
-import { employees } from '@/db/schema/people';
+import { programmes } from '@/db/schema/programmes';
+import { employees, departments, offices } from '@/db/schema/people';
+import { regions } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, desc, like, or, sql, type SQL } from 'drizzle-orm';
+import { eq, and, like, or, desc, sql, type SQL } from 'drizzle-orm';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 /**
- * GET /api/programmes
- * List all programme activities with transport request details.
+ * Programme management API
+ *
+ * GET  /api/programmes             — list programmes (tenant-scoped, status/search/pagination)
+ * GET  /api/programmes?selectable=1 — only approved/published, current/future, non-archived
+ * POST /api/programmes             — create a programme draft (requires programme:create)
  */
 export async function GET(request: NextRequest) {
   try {
@@ -23,176 +21,244 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const db = getDb();
-    const { searchParams } = new URL(request.url);
-    const q = searchParams.get('q') || '';
-    const status = searchParams.get('status') || '';
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10)));
+    const permCheck = await requirePermission(session, Permissions.PROGRAMME_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
 
-    // Build conditions
-    const conditions: SQL<unknown>[] = [eq(transportRequests.tenantId, session.tenantId)];
-    if (status) {
-      conditions.push(eq(transportRequests.status, status));
-    }
+    const { searchParams } = new URL(request.url);
+    const q = (searchParams.get('q') || '').trim();
+    const status = (searchParams.get('status') || '').trim();
+    const selectable = searchParams.get('selectable') === '1';
+    const page = Math.max(1, Number(searchParams.get('page')) || 1);
+    const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit')) || 25));
+    const offset = (page - 1) * limit;
+
+    const db = getDb();
+    const tenantId = session.tenantId;
+
+    const conditions: SQL[] = [eq(programmes.tenantId, tenantId)];
+    if (status) conditions.push(eq(programmes.status, status));
     if (q) {
       conditions.push(
         or(
-          like(requestActivities.title, `%${q}%`),
-          like(transportRequests.reference, `%${q}%`),
+          like(programmes.title, `%${q}%`),
+          like(programmes.reference, `%${q}%`),
+          like(programmes.department, `%${q}%`),
+          like(programmes.venue, `%${q}%`),
         )!,
       );
     }
+    if (selectable) {
+      conditions.push(sql`${programmes.status} IN ('approved', 'published')`);
+      conditions.push(sql`(${programmes.endDate} IS NULL OR ${programmes.endDate} >= now())`);
+    }
 
-    // Count total
-    const [countResult] = await db
-      .select({ count: sql<number>`COUNT(*)` })
-      .from(requestActivities)
-      .innerJoin(transportRequests, eq(requestActivities.requestId, transportRequests.id))
-      .where(and(...conditions)!);
+    const where = and(...conditions);
 
-    const total = Number(countResult?.count || 0);
-    const totalPages = Math.ceil(total / limit);
-    const offset = (page - 1) * limit;
+    const [rows, totalResult] = await Promise.all([
+      db
+        .select({
+          id: programmes.id,
+          reference: programmes.reference,
+          title: programmes.title,
+          description: programmes.description,
+          purpose: programmes.purpose,
+          department: programmes.department,
+          status: programmes.status,
+          venue: programmes.venue,
+          region: programmes.region,
+          startDate: programmes.startDate,
+          endDate: programmes.endDate,
+          expectedParticipants: programmes.expectedParticipants,
+          estimatedKilometres: programmes.estimatedKilometres,
+          createdByUserId: programmes.createdByUserId,
+          createdAt: programmes.createdAt,
+          ownerFirstName: employees.firstName,
+          ownerLastName: employees.lastName,
+          departmentName: departments.name,
+          officeName: offices.name,
+          regionName: regions.name,
+        })
+        .from(programmes)
+        .leftJoin(employees, eq(programmes.ownerEmployeeId, employees.id))
+        .leftJoin(departments, eq(programmes.departmentId, departments.id))
+        .leftJoin(offices, eq(programmes.officeId, offices.id))
+        .leftJoin(regions, eq(programmes.regionId, regions.id))
+        .where(where)
+        .orderBy(desc(programmes.createdAt))
+        .limit(limit)
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)` }).from(programmes).where(where),
+    ]);
 
-    // Fetch activities with request info
-    const rows = await db
-      .select({
-        id: requestActivities.id,
-        title: requestActivities.title,
-        description: requestActivities.description,
-        venue: requestActivities.venue,
-        startDate: requestActivities.startDate,
-        endDate: requestActivities.endDate,
-        estimatedKilometres: requestActivities.estimatedKilometres,
-        requestId: requestActivities.requestId,
-        requestReference: transportRequests.reference,
-        requestStatus: transportRequests.status,
-        requestScope: transportRequests.scope,
-      })
-      .from(requestActivities)
-      .innerJoin(transportRequests, eq(requestActivities.requestId, transportRequests.id))
-      .where(and(...conditions)!)
-      .orderBy(desc(requestActivities.startDate))
-      .limit(limit)
-      .offset(offset);
-
+    const total = Number(totalResult[0]?.count || 0);
     return NextResponse.json({
       success: true,
-      data: rows,
+      data: rows.map((r) => ({
+        ...r,
+        ownerName: r.ownerFirstName
+          ? `${r.ownerFirstName} ${r.ownerLastName ?? ''}`.trim()
+          : null,
+      })),
       total,
       page,
-      totalPages,
-      limit,
+      totalPages: Math.ceil(total / limit),
     });
   } catch (error) {
     console.error('[Programmes] GET failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to list programmes: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to load programmes' }, { status: 500 });
   }
 }
 
-/**
- * POST /api/programmes
- * Create a new programme activity by creating a draft transport request with the activity.
- */
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
-    const auth = await requireRequestAuth(req);
+    const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.REQUEST_CREATE);
+    const permCheck = await requirePermission(session, Permissions.PROGRAMME_CREATE);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const body = await req.json();
-    const { title, description, venue, startDate, endDate, estimatedKilometres } = body;
+    const body = await request.json();
+    const {
+      title,
+      description,
+      purpose,
+      department,
+      departmentId,
+      ownerEmployeeId,
+      startDate,
+      endDate,
+      venue,
+      officeId,
+      regionId,
+      region,
+      expectedParticipants,
+      plannedActivities,
+      estimatedTravelRequirement,
+      estimatedKilometres,
+    } = body;
 
-    if (!title?.trim()) {
-      return NextResponse.json({ error: 'Title is required' }, { status: 400 });
+    if (typeof title !== 'string' || !title.trim()) {
+      return NextResponse.json({ error: 'Programme title is required' }, { status: 400 });
     }
-    if (!startDate) {
-      return NextResponse.json({ error: 'Start date is required' }, { status: 400 });
-    }
-
-    const db = getDb();
-
-    // Resolve the user's employee record for requester
-    const [employee] = await db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(
-        and(
-          eq(employees.userId, session.user.id),
-          eq(employees.tenantId, session.tenantId),
-        ),
-      )
-      .limit(1);
-
-    if (!employee) {
+    if (title.trim().length > 300) {
       return NextResponse.json(
-        { error: 'No employee record found for your user account' },
+        { error: 'Programme title must be 300 characters or fewer' },
         { status: 400 },
       );
     }
+    if (startDate && endDate && new Date(endDate) < new Date(startDate)) {
+      return NextResponse.json(
+        { error: 'End date must be on or after the start date' },
+        { status: 400 },
+      );
+    }
+    if (estimatedKilometres != null && (!Number.isFinite(Number(estimatedKilometres)) || Number(estimatedKilometres) < 0)) {
+      return NextResponse.json({ error: 'Estimated kilometres must be a non-negative number' }, { status: 400 });
+    }
 
-    // Generate a reference number
-    const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-    const [refCount] = await db
-      .select({ count: sql<number>`COUNT(*)` })
-      .from(transportRequests)
-      .where(eq(transportRequests.tenantId, session.tenantId));
-    const seq = String((refCount?.count || 0) + 1).padStart(4, '0');
+    const db = getDb();
+    const tenantId = session.tenantId;
+    const userId = session.user.id;
 
-    // Create a draft transport request with the activity
+    // Validate tenant-scoped references where provided
+    if (departmentId) {
+      const [dept] = await db
+        .select({ id: departments.id, name: departments.name })
+        .from(departments)
+        .where(and(eq(departments.id, departmentId), eq(departments.tenantId, tenantId)))
+        .limit(1);
+      if (!dept) {
+        return NextResponse.json({ error: 'Department not found in your organisation' }, { status: 400 });
+      }
+    }
+    if (ownerEmployeeId) {
+      const [owner] = await db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.id, ownerEmployeeId), eq(employees.tenantId, tenantId)))
+        .limit(1);
+      if (!owner) {
+        return NextResponse.json({ error: 'Programme owner not found in your organisation' }, { status: 400 });
+      }
+    }
+    if (officeId) {
+      const [office] = await db
+        .select({ id: offices.id })
+        .from(offices)
+        .where(and(eq(offices.id, officeId), eq(offices.tenantId, tenantId)))
+        .limit(1);
+      if (!office) {
+        return NextResponse.json({ error: 'Office not found in your organisation' }, { status: 400 });
+      }
+    }
+    if (regionId) {
+      const [regionRow] = await db
+        .select({ id: regions.id })
+        .from(regions)
+        .where(and(eq(regions.id, regionId), eq(regions.tenantId, tenantId)))
+        .limit(1);
+      if (!regionRow) {
+        return NextResponse.json({ error: 'Region not found in your organisation' }, { status: 400 });
+      }
+    }
+
+    // Generate a programme reference
     const now = new Date();
-    const ref = `POA-${dateStr}-${seq}`;
+    const seq = String(Math.floor(Math.random() * 900) + 100);
+    const reference = `GRN/PGM/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}/${seq}`;
 
-    const [request] = await db
-      .insert(transportRequests)
+    const [created] = await db
+      .insert(programmes)
       .values({
-        tenantId: session.tenantId,
-        reference: ref,
-        scope: 'regional',
-        status: 'draft',
-        requesterEmployeeId: employee.id,
-        requesterUserId: session.user.id,
-        purpose: description?.slice(0, 500) || `Programme: ${title}`,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-
-    // Create the activity record linked to the request
-    const [activity] = await db
-      .insert(requestActivities)
-      .values({
-        requestId: request.id,
+        tenantId,
+        reference,
         title: title.trim(),
         description: description?.trim() || null,
+        purpose: purpose?.trim() || null,
+        department: department?.trim() || null,
+        departmentId: departmentId || null,
+        ownerEmployeeId: ownerEmployeeId || null,
+        ownerUserId: ownerEmployeeId ? null : userId,
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
         venue: venue?.trim() || null,
-        startDate: new Date(startDate),
-        endDate: endDate ? new Date(endDate) : new Date(startDate),
-        estimatedKilometres: estimatedKilometres ? Number(estimatedKilometres) : null,
+        officeId: officeId || null,
+        regionId: regionId || null,
+        region: region?.trim() || null,
+        expectedParticipants:
+          expectedParticipants != null && Number.isFinite(Number(expectedParticipants))
+            ? Number(expectedParticipants)
+            : null,
+        plannedActivities: plannedActivities?.trim() || null,
+        estimatedTravelRequirement: estimatedTravelRequirement?.trim() || null,
+        estimatedKilometres:
+          estimatedKilometres != null && Number.isFinite(Number(estimatedKilometres))
+            ? Number(estimatedKilometres)
+            : null,
+        status: 'draft',
+        createdByUserId: userId,
       })
       .returning();
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        ...activity,
-        requestReference: ref,
-        requestId: request.id,
-        requestStatus: 'draft',
+    await recordAuditEvent({
+      tenantId,
+      actorUserId: userId,
+      action: 'programme.created',
+      entityType: 'programme',
+      entityId: created.id,
+      sourceChannel: 'web',
+      after: {
+        reference: created.reference,
+        title: created.title,
+        status: 'draft',
       },
-    }, { status: 201 });
+      summary: `Programme ${created.reference} created as a draft`,
+    });
+
+    return NextResponse.json({ success: true, data: created });
   } catch (error) {
     console.error('[Programmes] POST failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to create programme: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to create programme' }, { status: 500 });
   }
 }

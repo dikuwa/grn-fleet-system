@@ -165,6 +165,15 @@ export default async function ApprovalDetailPage({ params }: PageProps) {
       detail: `${override.reason} Bypassed steps: ${override.bypassedSteps.join(', ')}.`,
     });
   }
+  // Conflict-of-interest guard: surface why a requester cannot decide on their own request
+  if (instance.requesterUserId === session.user.id) {
+    alerts.unshift({
+      id: 'self-approval-conflict',
+      tone: 'warning',
+      title: 'Conflict of interest — you requested this trip',
+      detail: 'You cannot approve or act on a request you created. Another officer with the required permission must decide this step.',
+    });
+  }
 
   const stepByOrder = new Map(steps.map((step) => [step.stepOrder, step]));
   const actionByOrder = new Map(actions.map((action) => [action.stepOrder, action]));

@@ -8,6 +8,7 @@ import {
   requestAttachments,
 } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
+import { programmes } from '@/db/schema/programmes';
 import { workflowActions, workflowInstances, workflowSteps } from '@/db/schema/workflows';
 import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -30,9 +31,11 @@ import {
   Clock,
   Paperclip,
   ArrowRight,
+  ClipboardList,
 } from 'lucide-react';
 import Link from 'next/link';
 import { CancelRequestButton } from './CancelRequestButton';
+import { DiscardDraftButton } from './DiscardDraftButton';
 import { RouteMapWrapper } from './route-map-wrapper';
 import { ResubmitRequestButton } from './ResubmitRequestButton';
 import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
@@ -58,6 +61,7 @@ async function fetchRequestDetail(id: string, tenantId: string) {
       status: transportRequests.status,
       purpose: transportRequests.purpose,
       department: transportRequests.department,
+      programmeId: transportRequests.programmeId,
       specialAuthorityRequired: transportRequests.specialAuthorityRequired,
       specialAuthorityReason: transportRequests.specialAuthorityReason,
       specialAuthorityApproved: transportRequests.specialAuthorityApproved,
@@ -78,7 +82,8 @@ async function fetchRequestDetail(id: string, tenantId: string) {
 
   if (!request) notFound();
 
-  const [activities, passengers, drivers, routes, attachments] = await Promise.all([
+  const [activities, passengers, drivers, routes, attachments, linkedProgramme] =
+    await Promise.all([
     db
       .select()
       .from(requestActivities)
@@ -123,9 +128,27 @@ async function fetchRequestDetail(id: string, tenantId: string) {
       .from(requestAttachments)
       .where(eq(requestAttachments.requestId, id))
       .orderBy(desc(requestAttachments.createdAt)),
+    request.programmeId
+      ? db
+          .select({
+            id: programmes.id,
+            reference: programmes.reference,
+            title: programmes.title,
+            status: programmes.status,
+            startDate: programmes.startDate,
+            endDate: programmes.endDate,
+            venue: programmes.venue,
+          })
+          .from(programmes)
+          .where(
+            and(eq(programmes.id, request.programmeId), eq(programmes.tenantId, tenantId)),
+          )
+          .limit(1)
+          .then((r) => r[0] ?? null)
+      : Promise.resolve(null),
   ]);
 
-  return { request, activities, passengers, drivers, routes, attachments };
+  return { request, activities, passengers, drivers, routes, attachments, linkedProgramme };
 }
 
 export default async function RequestDetailPage({ params }: PageProps) {
@@ -196,7 +219,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
     );
   }
 
-  const { request, activities, passengers, drivers, routes, attachments } = data;
+  const { request, activities, passengers, drivers, routes, attachments, linkedProgramme } = data;
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/requests', roleNames);
   if (
@@ -277,7 +300,12 @@ export default async function RequestDetailPage({ params }: PageProps) {
           ['returned', 'rejected', 'supervisor_rejected'].includes(request.status) && (
             <ResubmitRequestButton requestId={id} />
           )}
-        {canModify && <CancelRequestButton requestId={id} currentStatus={request.status} />}
+        {canModify && request.status === 'draft' && (
+          <DiscardDraftButton requestId={id} currentStatus={request.status} />
+        )}
+        {canModify && request.status !== 'draft' && (
+          <CancelRequestButton requestId={id} currentStatus={request.status} />
+        )}
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/requests">
             <ChevronLeft className="h-4 w-4" /> Back to Requests
@@ -372,6 +400,42 @@ export default async function RequestDetailPage({ params }: PageProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* Linked Programme */}
+      {linkedProgramme && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ClipboardList className="h-4 w-4" /> Linked Programme
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="border-border flex flex-wrap items-center justify-between gap-3 rounded-[10px] border px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-ink-950 text-sm font-[650]">{linkedProgramme.title}</p>
+                <div className="text-ink-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <span className="font-medium">{linkedProgramme.reference}</span>
+                  {linkedProgramme.venue && <span>{linkedProgramme.venue}</span>}
+                  {linkedProgramme.startDate && (
+                    <span>
+                      {formatDate(linkedProgramme.startDate)}
+                      {linkedProgramme.endDate && ` → ${formatDate(linkedProgramme.endDate)}`}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="info" size="sm">
+                  {linkedProgramme.status.replace(/_/g, ' ')}
+                </Badge>
+                <Button variant="secondary" size="sm" asChild>
+                  <Link href={`/dashboard/programmes/${linkedProgramme.id}`}>View Programme</Link>
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Activities */}
       <Card>

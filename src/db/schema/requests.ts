@@ -1,6 +1,7 @@
 import { pgTable, uuid, text, timestamp, boolean, integer, jsonb } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { employees, departments, offices } from './people';
+import { programmes } from './programmes';
 
 /**
  * Transport requests
@@ -48,6 +49,7 @@ export const transportRequests = pgTable('transport_requests', {
   specialAuthorityApproved: boolean('special_authority_approved'),
   totalAuthorisedKilometres: integer('total_authorised_kilometres'),
   workflowInstanceId: uuid('workflow_instance_id'),
+  programmeId: uuid('programme_id').references(() => programmes.id, { onDelete: 'set null' }),
   version: integer('version').notNull().default(1),
   submittedAt: timestamp('submitted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
