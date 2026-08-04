@@ -243,7 +243,7 @@ export function VehicleSelector({
             aria-label="Retry"
           >
             <RefreshCw />
-          }
+          </button>
         </div>
       )}
       {!loading && options.length > 0 && (

@@ -1,9 +1,9 @@
 /**
  * Eligibility checking utilities for drivers and vehicles
  */
-import { db } from '@/db';
+import { getDb } from '@/db';
 import { 
-  and, asc, count, desc, eq, gt, inArray, lte, gte, isNull, isNotNull, not, or, sql
+  and, asc, count, desc, eq, gt, inArray, lt, lte, gte, isNull, isNotNull, not, or, sql
 } from 'drizzle-orm';
 import { 
   employees, 
@@ -30,13 +30,14 @@ import {
  * @returns 
  */
 export async function checkDriverEligibility(params: {
+  tenantId: string;
   driverId: string;
   vehicleId?: string;
   startDate: Date | string;
   endDate: Date | string;
 }) {
-  const { driverId, vehicleId, startDate, endDate } = params;
-  const dbInstance = db;
+  const { tenantId, driverId, vehicleId, startDate, endDate } = params;
+  const dbInstance = getDb();
   
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -73,7 +74,7 @@ export async function checkDriverEligibility(params: {
     .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
     .where(and(
       eq(employees.id, driverId),
-      eq(employees.tenantId, dbInstance.$ctx?.tenantId) // TODO: get tenant from context
+      eq(employees.tenantId, tenantId)
     ))
     .orderBy(desc(driverLicences.version))
     .limit(1);
@@ -161,13 +162,14 @@ export async function checkDriverEligibility(params: {
  * @returns 
  */
 export async function checkVehicleEligibility(params: {
+  tenantId: string;
   vehicleId: string;
   driverId?: string;
   startDate: Date | string;
   endDate: Date | string;
 }) {
-  const { vehicleId, driverId, startDate, endDate } = params;
-  const dbInstance = db;
+  const { tenantId, vehicleId, driverId, startDate, endDate } = params;
+  const dbInstance = getDb();
   
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -214,7 +216,7 @@ export async function checkVehicleEligibility(params: {
     .leftJoin(vehicleCategories, eq(vehicles.categoryId, vehicleCategories.id))
     .where(and(
       eq(vehicles.id, vehicleId),
-      eq(vehicles.tenantId, dbInstance.$ctx?.tenantId) // TODO: get tenant from context
+      eq(vehicles.tenantId, tenantId)
     ))
     .limit(1);
 

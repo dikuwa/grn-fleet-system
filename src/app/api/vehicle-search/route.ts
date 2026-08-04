@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
         ilike(vehicles.model, `%${query}%`),
         ilike(vehicleCategories.name, `%${query}%`),
         ilike(vehicleCategories.code, `%${query}%`),
-      )
+      )!
     );
   }
 

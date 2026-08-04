@@ -1,15 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, asc, count, eq, ilike, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { 
-  transportRequests, 
-  employees, 
-  requestActivities, 
-  requestRoutes, 
-  requestPassengers,
-  vehicleAllocations,
-  trips
-} from '@/db/schema/requests';
+import { transportRequests } from '@/db/schema/requests';
+import { employees } from '@/db/schema/people';
 import { hasPermission, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -26,6 +19,7 @@ export async function GET(request: NextRequest) {
   const limit = Math.min(100, Math.max(1, Number(request.nextUrl.searchParams.get('limit')) || 25));
   const page = Math.max(1, Number(request.nextUrl.searchParams.get('page')) || 1);
   const offset = (page - 1) * limit;
+  const db = getDb();
 
   // We want to show requests that are in allocatable states (as defined in allocations/route.ts)
   const ALLOCATABLE_STATUSES = [
@@ -43,7 +37,6 @@ export async function GET(request: NextRequest) {
   ];
 
   // We'll build the query with joins to get the necessary data for display and filtering.
-  const db = getDb();
 
   // We'll do a complex query to get the request with:
   // - requester name and employee number
@@ -255,17 +248,6 @@ export async function GET(request: NextRequest) {
   // We'll build a search condition using or of ilike on the relevant fields.
 
   if (query) {
-    const searchTerms = `
-      ${transportRequests.ilike} OR 
-      ${employees.firstName.ilike} OR 
-      ${employees.lastName.ilike} OR 
-      {employees.employeeNumber.ilike} OR 
-      ${transportRequests.purpose.ilike} OR 
-      (SELECT rr.originName FROM requestRoutes rr WHERE rr.requestId = transportRequests.id ORDER BY rr.id LIMIT 1).ilike OR 
-      (SELECT rr.destinationName FROM requestRoutes rr WHERE rr.requestId = transportRequests.id ORDER BY rr.id LIMIT 1).ilike
-    `;
-    // This is getting too complex for a string.
-
     // Instead, we'll do the search in the application after fetching? But we want to do it at the database level.
 
     // We'll do a simpler search: only on the request reference and requester name and purpose.
@@ -284,13 +266,11 @@ export async function GET(request: NextRequest) {
         ilike(employees.lastName, `%${query}%`),
         ilike(employees.employeeNumber, `%${query}%`),
         ilike(transportRequests.purpose, `%${query}%`),
-      )
+      )!
     ];
   }
 
   // Now, we run the query.
-
-  const db = getDb();
 
   // First, get the total count for pagination.
   const [{ count: total }] = await db
@@ -310,16 +290,16 @@ export async function GET(request: NextRequest) {
       requesterLastName: employees.lastName,
       requesterEmployeeId: employees.employeeNumber,
       // Subqueries for the other fields
-      startDate: sql`(SELECT ra.startDate FROM requestActivities ra WHERE ra.requestId = ${transportRequests.id} ORDER BY ra.startDate LIMIT 1)`,
-      endDate: sql`(SELECT ra.endDate FROM requestActivities ra WHERE ra.requestId = ${transportRequests.id} ORDER BY ra.startDate LIMIT 1)`,
-      originName: sql`(SELECT rr.originName FROM requestRoutes rr WHERE rr.requestId = ${transportRequests.id} ORDER BY rr.id LIMIT 1)`,
-      destinationName: sql`(SELECT rr.destinationName FROM requestRoutes rr WHERE rr.requestId = ${transportRequests.id} ORDER BY rr.id LIMIT 1)`,
-      passengerCount: sql`(SELECT COUNT(*) FROM requestPassengers rp WHERE rp.requestId = ${transportRequests.id} AND rp.status = 'confirmed')`,
-      allocationStatus: sql`
+      startDate: sql<Date | null>`(SELECT ra.start_date FROM request_activities ra WHERE ra.request_id = ${transportRequests.id} ORDER BY ra.start_date LIMIT 1)`,
+      endDate: sql<Date | null>`(SELECT ra.end_date FROM request_activities ra WHERE ra.request_id = ${transportRequests.id} ORDER BY ra.start_date LIMIT 1)`,
+      originName: sql<string | null>`(SELECT rr.origin_name FROM request_routes rr WHERE rr.request_id = ${transportRequests.id} ORDER BY rr.id LIMIT 1)`,
+      destinationName: sql<string | null>`(SELECT rr.destination_name FROM request_routes rr WHERE rr.request_id = ${transportRequests.id} ORDER BY rr.id LIMIT 1)`,
+      passengerCount: sql<number>`(SELECT COUNT(*) FROM request_passengers rp WHERE rp.request_id = ${transportRequests.id} AND rp.status = 'confirmed')`,
+      allocationStatus: sql<'Allocated' | 'Not allocated'>`
         CASE 
           WHEN EXISTS (
-            SELECT 1 FROM vehicleAllocations va 
-            WHERE va.requestId = ${transportRequests.id} 
+            SELECT 1 FROM vehicle_allocations va
+            WHERE va.request_id = ${transportRequests.id}
               AND va.state IN ('provisional', 'confirmed', 'issued')
           ) THEN 'Allocated'
           ELSE 'Not allocated'
