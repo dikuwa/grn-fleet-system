@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, asc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { departments, driverProfiles, employees, offices } from '@/db/schema/people';
 import { hasPermission, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
@@ -18,7 +18,10 @@ export async function GET(request: NextRequest) {
   const canViewUnavailable =
     requestedUnavailable && (await hasPermission(session, Permissions.STAFF_VIEW));
   const query = request.nextUrl.searchParams.get('q')?.trim().slice(0, 100) || '';
-  const limit = Math.min(30, Math.max(1, Number(request.nextUrl.searchParams.get('limit')) || 20));
+  const limit = Math.min(100, Math.max(1, Number(request.nextUrl.searchParams.get('limit')) || 25));
+  const page = Math.max(1, Number(request.nextUrl.searchParams.get('page')) || 1);
+  const offset = (page - 1) * limit;
+
   const conditions = [
     eq(employees.tenantId, session.tenantId),
     eq(employees.employmentStatus, 'active'),
@@ -37,6 +40,8 @@ export async function GET(request: NextRequest) {
         ilike(employees.employeeNumber, `%${query}%`),
         ilike(employees.email, `%${query}%`),
         ilike(employees.phone, `%${query}%`),
+        ilike(employees.nationalIdNumber, `%${query}%`),
+        ilike(employees.passportNumber, `%${query}%`),
         ilike(departments.name, `%${query}%`),
         ilike(offices.name, `%${query}%`),
         ilike(
@@ -48,6 +53,16 @@ export async function GET(request: NextRequest) {
   }
 
   const db = getDb();
+
+  // Get total count for pagination
+  const [{ count: total }] = await db
+    .select({ count: count() })
+    .from(employees)
+    .leftJoin(departments, eq(employees.departmentId, departments.id))
+    .leftJoin(offices, eq(employees.officeId, offices.id))
+    .leftJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
+    .where(and(...conditions));
+
   const rows = await db
     .select({
       id: employees.id,
@@ -68,7 +83,8 @@ export async function GET(request: NextRequest) {
     .leftJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
     .where(and(...conditions))
     .orderBy(asc(employees.firstName), asc(employees.lastName))
-    .limit(limit);
+    .limit(limit)
+    .offset(offset);
 
   const data = rows.map((row) => ({
     ...row,
@@ -76,7 +92,16 @@ export async function GET(request: NextRequest) {
   }));
 
   return NextResponse.json(
-    { success: true, data },
+    {
+      success: true,
+      data,
+      pagination: {
+        total: Number(total),
+        page,
+        limit,
+        totalPages: Math.ceil(Number(total) / limit),
+      },
+    },
     { headers: { 'Cache-Control': 'private, no-store' } },
   );
 }
