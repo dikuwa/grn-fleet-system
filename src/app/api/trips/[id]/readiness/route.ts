@@ -200,7 +200,8 @@ export async function GET(
         required: true,
       });
 
-      // Driver licence check
+      // Driver licence check — the ACTIVE VERIFIED licence (highest version),
+      // never an unverified renewal or a superseded record.
       const [profile] = await db
         .select({
           driverStatus: driverProfiles.driverStatus,
@@ -210,8 +211,13 @@ export async function GET(
         })
         .from(driverProfiles)
         .leftJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
-        .where(eq(driverProfiles.employeeId, driverEmployeeId))
-        .orderBy(desc(driverLicences.expiryDate))
+        .where(
+          and(
+            eq(driverProfiles.employeeId, driverEmployeeId),
+            eq(driverLicences.isActive, true),
+          ),
+        )
+        .orderBy(desc(driverLicences.version))
         .limit(1);
 
       const isAuthorised = profile?.driverStatus === 'authorised';

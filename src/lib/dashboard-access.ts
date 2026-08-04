@@ -725,6 +725,23 @@ export const routeRegistry: readonly RouteDefinition[] = [
     navigationVisible: true,
   },
   {
+    id: 'drivers-licence-verification',
+    path: '/dashboard/drivers/licences',
+    label: 'Licence Verification',
+    icon: 'ShieldCheck',
+    section: 'Operational Management',
+    workspaces: [W.TRANSPORT_ADMIN, W.TENANT_ADMIN],
+    access: {
+      [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
+      [W.TENANT_ADMIN]: tenantRead(),
+    },
+    sectionByWorkspace: { [W.TENANT_ADMIN]: 'People & Organisation' },
+    tenantScoped: true,
+    order: 271,
+    navigationVisible: true,
+    badgeQuery: 'licences:pending-review',
+  },
+  {
     id: 'documents',
     path: '/dashboard/documents',
     label: 'My Documents',

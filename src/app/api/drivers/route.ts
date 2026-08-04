@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, departments, offices, driverProfiles, driverLicences } from '@/db/schema/people';
-import { eq, and, or, ilike, asc } from 'drizzle-orm';
+import { eq, and, or, asc } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { auditEvents } from '@/db/schema/audit';
@@ -24,6 +24,9 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const q = searchParams.get('q')?.trim() || '';
+    const statusFilter = searchParams.get('status')?.trim() || 'all';
+    const page = Math.max(1, Number(searchParams.get('page') || '1') || 1);
+    const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') || '25') || 25));
 
     const db = getDb();
 
@@ -33,16 +36,6 @@ export async function GET(request: NextRequest) {
       eq(employees.isDriver, true),
       eq(employees.employmentStatus, 'active'),
     ];
-
-    if (q) {
-      conditions.push(
-        or(
-          ilike(employees.firstName, `%${q}%`),
-          ilike(employees.lastName, `%${q}%`),
-          ilike(employees.employeeNumber, `%${q}%`),
-        )!,
-      );
-    }
 
     const driverEmployees = await db
       .select({
@@ -62,7 +55,15 @@ export async function GET(request: NextRequest) {
       .orderBy(asc(employees.lastName));
 
     if (driverEmployees.length === 0) {
-      return NextResponse.json({ success: true, data: [] });
+      return NextResponse.json({
+        success: true,
+        data: [],
+        stats: emptyStats(),
+        total: 0,
+        page,
+        limit,
+        totalPages: 1,
+      });
     }
 
     // Fetch all driver profiles for these employees
@@ -129,6 +130,11 @@ export async function GET(request: NextRequest) {
       const hasExpiredLicence = expiries.some((e) => e.daysUntil < 0);
       const hasExpiringLicence = expiries.some((e) => e.daysUntil >= 0 && e.daysUntil <= 60);
       const hasValidLicence = expiries.length > 0 && !hasExpiredLicence;
+      const hasVerifiedLicence = licences.some((l) => l.verificationStatus === 'verified');
+      const pendingVerification =
+        licences.length > 0 &&
+        !hasVerifiedLicence &&
+        licences.some((l) => ['uploaded', 'awaiting_review', 'needs_correction', 'pending'].includes(l.verificationStatus));
 
       return {
         ...emp,
@@ -141,15 +147,74 @@ export async function GET(request: NextRequest) {
         hasExpiredLicence,
         hasExpiringLicence,
         hasValidLicence,
-        licences,
+        pendingVerification,
+        licences: licences.map((l) => ({
+          id: l.id,
+          licenceNumber: l.licenceNumber,
+          licenceClass: l.licenceClass,
+          expiryDate: l.expiryDate,
+          verificationStatus: l.verificationStatus,
+          isActive: l.isActive,
+        })),
       };
     });
 
-    return NextResponse.json({ success: true, data: enrichedDrivers });
+    // Server-side stats across the whole tenant roster (not the filtered page).
+    const stats = {
+      total: enrichedDrivers.length,
+      verifiedValid: enrichedDrivers.filter((d) => d.activeLicenceCount > 0).length,
+      expiring: enrichedDrivers.filter((d) => d.hasExpiringLicence && !d.hasExpiredLicence).length,
+      expired: enrichedDrivers.filter((d) => d.hasExpiredLicence).length,
+      pendingVerification: enrichedDrivers.filter((d) => d.pendingVerification).length,
+      ineligible: enrichedDrivers.filter(
+        (d) => d.driverStatus !== 'authorised' || d.hasExpiredLicence || (d.licenceCount > 0 && d.activeLicenceCount === 0 && !d.pendingVerification),
+      ).length,
+      available: enrichedDrivers.filter((d) => d.driverStatus === 'authorised' && d.hasValidLicence).length,
+    };
+
+    // Search across driver + licence fields (name, employee number, licence
+    // number, licence class).
+    let filtered = enrichedDrivers;
+    if (q) {
+      const needle = q.toLowerCase();
+      filtered = enrichedDrivers.filter(
+        (driver) =>
+          `${driver.firstName} ${driver.lastName}`.toLowerCase().includes(needle) ||
+          driver.employeeNumber.toLowerCase().includes(needle) ||
+          driver.licences.some(
+            (l) =>
+              l.licenceNumber.toLowerCase().includes(needle) ||
+              l.licenceClass.toLowerCase().includes(needle),
+          ),
+      );
+    }
+    if (statusFilter === 'expired') filtered = filtered.filter((d) => d.hasExpiredLicence);
+    else if (statusFilter === 'expiring') filtered = filtered.filter((d) => d.hasExpiringLicence && !d.hasExpiredLicence);
+    else if (statusFilter === 'valid') filtered = filtered.filter((d) => d.hasValidLicence);
+    else if (statusFilter === 'pending') filtered = filtered.filter((d) => d.pendingVerification);
+    else if (statusFilter === 'no_licence') filtered = filtered.filter((d) => d.licenceCount === 0);
+
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const pageRows = filtered.slice((page - 1) * limit, (page - 1) * limit + limit);
+
+    return NextResponse.json({ success: true, data: pageRows, stats, total, page, limit, totalPages });
   } catch (error) {
     console.error('[Drivers] GET failed:', error);
     return NextResponse.json({ error: 'Failed to list drivers' }, { status: 500 });
   }
+}
+
+function emptyStats() {
+  return {
+    total: 0,
+    verifiedValid: 0,
+    expiring: 0,
+    expired: 0,
+    pendingVerification: 0,
+    ineligible: 0,
+    available: 0,
+  };
 }
 
 /** Convert an active staff member into a driver with verified or pending licence data. */

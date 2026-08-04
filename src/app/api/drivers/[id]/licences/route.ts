@@ -9,15 +9,88 @@ import {
   driverProfiles,
   employees,
 } from '@/db/schema';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { hasPermission, requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { licenceOcrConfidence, parseNamibianLicenceOcr } from '@/lib/driver-licence-ocr';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
+
+/** Roles that receive licence-renewal review notifications. */
+const REVIEW_ROLES = ['Transport Administrator', 'Control Administrative Officer', 'Tenant Administrator'] as const;
+
+async function notifyTransportAdmins(tenantId: string, input: {
+  title: string;
+  body: string;
+  entityType: string;
+  entityId: string;
+  actionUrl: string;
+}) {
+  try {
+    const recipients = await resolveActiveRoleRecipients(tenantId, REVIEW_ROLES);
+    if (!recipients.length) return;
+    await createScopedNotifications({
+      tenantId,
+      recipientUserIds: recipients,
+      category: 'action_required',
+      eventType: 'driver_licence_review_pending',
+      title: input.title,
+      body: input.body,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      actionUrl: input.actionUrl,
+      workspace: 'transport_admin',
+    });
+  } catch (error) {
+    console.warn('[licences] admin notification failed:', error);
+  }
+}
+
+async function notifyDriver(
+  tenantId: string,
+  driverUserId: string | null | undefined,
+  driverEmail: string | null | undefined,
+  driverName: string | null | undefined,
+  input: { title: string; body: string; entityType: string; entityId: string; actionUrl: string },
+) {
+  try {
+    if (driverUserId) {
+      await createScopedNotifications({
+        tenantId,
+        recipientUserIds: [driverUserId],
+        category: 'outcome',
+        eventType: 'driver_licence_review',
+        title: input.title,
+        body: input.body,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        actionUrl: input.actionUrl,
+        workspace: 'driver',
+      });
+    }
+    if (driverEmail) {
+      const { sendNotificationEmail } = await import('@/lib/email');
+      await sendNotificationEmail({
+        to: driverEmail,
+        type: 'licence_review',
+        title: input.title,
+        body: input.body,
+        actionUrl: input.actionUrl,
+        recipientName: driverName || 'Driver',
+      });
+    }
+  } catch (error) {
+    console.warn('[licences] driver notification failed:', error);
+  }
+}
 
 const accepted = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 const maxBytes = 12 * 1024 * 1024;
+
+function masked(value: string): string {
+  return value.length > 4 ? `••••${value.slice(-4)}` : '••••';
+}
 
 async function access(request: NextRequest, employeeId: string) {
   const auth = await requireRequestAuth(request);
@@ -161,6 +234,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     after: { version, verificationStatus: licence.verificationStatus, qualityWarnings, extractedFields: Object.keys(extracted) },
     summary: `Driver licence version ${version} uploaded for employee ${id}`,
   });
+
+  // Notify Transport Administration that a renewal is pending review.
+  if (licence.verificationStatus === 'awaiting_review' || licence.verificationStatus === 'needs_correction') {
+    await notifyTransportAdmins(auth.session.tenantId, {
+      title: 'Driver licence renewal pending review',
+      body: `A renewed licence (version ${version}) was submitted for driver ${id.slice(0, 8)} and awaits verification.`, // masked below
+      entityType: 'driver_licence',
+      entityId: licence.id,
+      actionUrl: `/dashboard/drivers/licences/${licence.id}`,
+    });
+  }
   return NextResponse.json({ data: licence, extracted, confidence, qualityWarnings, manualEntryRequired: !rawText }, { status: 201 });
 }
 
@@ -170,7 +254,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!auth.ok) return auth.error;
   const body = await request.json() as {
     licenceId: string;
-    action: 'correct' | 'verify' | 'reject' | 'request_upload';
+    action: 'correct' | 'verify' | 'approve' | 'reject' | 'request_upload';
     corrections?: Record<string, string>;
     reason?: string;
   };
@@ -201,10 +285,43 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       verificationStatus: 'awaiting_review',
       updatedAt: new Date(),
     }).where(eq(driverLicences.id, current.id));
-  } else if (body.action === 'verify') {
+  } else if (body.action === 'verify' || body.action === 'approve') {
     if (!current.frontImageKey || !current.backImageKey) return NextResponse.json({ error: 'Front and back images are required before verification.' }, { status: 409 });
+    // Approve may carry final corrected values confirmed by the reviewer.
+    if (body.action === 'approve' && body.corrections) {
+      const allowed = ['licenceNumber', 'licenceClass', 'issueDate', 'expiryDate', 'holderName', 'dateOfBirth', 'nationalIdNumber', 'issueNumber', 'driverRestrictionCode'];
+      const confirmed = Object.entries(body.corrections).filter(([field]) => allowed.includes(field));
+      if (confirmed.length) {
+        await db.insert(driverLicenceCorrections).values(confirmed.map(([fieldName, correctedValue]) => ({
+          licenceId: current.id,
+          fieldName,
+          originalValue: String((current as unknown as Record<string, unknown>)[fieldName] ?? ''),
+          correctedValue: String(correctedValue),
+          correctedByUserId: auth.session.user.id,
+          source: 'review_approval',
+        })));
+        await db.update(driverLicences).set({
+          ...(Object.fromEntries(confirmed) as Partial<typeof driverLicences.$inferInsert>),
+          updatedAt: new Date(),
+        }).where(eq(driverLicences.id, current.id));
+      }
+    }
+    // Supersede any other active licence version for this driver profile so
+    // exactly one licence is the current active verified record.
+    await db.update(driverLicences)
+      .set({
+        isActive: false,
+        verificationStatus: sql`CASE WHEN ${driverLicences.verificationStatus} = 'verified' THEN 'superseded' ELSE ${driverLicences.verificationStatus} END`,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(driverLicences.driverProfileId, current.driverProfileId),
+        eq(driverLicences.isActive, true),
+        ne(driverLicences.id, current.id),
+      ));
     await db.update(driverLicences).set({
       verificationStatus: new Date(`${current.expiryDate}T23:59:59Z`) < new Date() ? 'expired' : 'verified',
+      isActive: true,
       isVerified: true,
       verifiedByUserId: auth.session.user.id,
       verifiedAt: new Date(),
@@ -231,5 +348,47 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     after: body.corrections || { action: body.action },
     reason: body.reason,
   });
+
+  // Notify the driver of the review outcome (best-effort, never blocks).
+  const [driverRow] = await db
+    .select({ userId: employees.userId, email: employees.email, firstName: employees.firstName })
+    .from(employees)
+    .where(eq(employees.id, id))
+    .limit(1);
+  const outcomeMap: Record<string, { title: string; body: string }> = {
+    verify: {
+      title: 'Your driving licence has been verified',
+      body: `Licence ${masked(current.licenceNumber)} (${current.licenceClass}) is now verified and active.`,
+    },
+    approve: {
+      title: 'Your licence renewal has been approved',
+      body: `Licence ${masked(current.licenceNumber)} (${current.licenceClass}) is now verified and active.`,
+    },
+    reject: {
+      title: 'Your licence renewal was rejected',
+      body: `Licence ${masked(current.licenceNumber)} was rejected: ${body.reason ?? 'No reason provided'}`,
+    },
+    request_upload: {
+      title: 'Action needed on your licence submission',
+      body: `Your licence submission needs changes: ${body.reason ?? 'Please re-upload clear images.'}`,
+    },
+  };
+  const outcome = outcomeMap[body.action];
+  if (outcome && (driverRow?.userId || driverRow?.email)) {
+    await notifyDriver(
+      auth.session.tenantId,
+      driverRow.userId,
+      driverRow.email,
+      driverRow.firstName,
+      {
+        title: outcome.title,
+        body: outcome.body,
+        entityType: 'driver_licence',
+        entityId: current.id,
+        actionUrl: '/dashboard/driver-self-service',
+      },
+    );
+  }
+
   return NextResponse.json({ success: true });
 }

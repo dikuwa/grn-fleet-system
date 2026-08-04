@@ -6,10 +6,18 @@
 - **Implementation execution:** CONTINUOUS AUTO-BUILD
 - **VibeKit/JB:** A — full foundation with documented exceptions
 - **Discovery approval:** Approved 2026-07-14
-- **Current phase:** Phase 14 — Auth, SMS, CI & Test Completion
+- **Current phase:** Phase 14 — Transport Administration (allocation workflow, licence verification), Auth, CI & Test Completion
 - **Deployment:** Live at https://grn-fleet-system.vercel.app
 - **Database:** Neon Postgres — migrated, seeded, verified
-- **Latest audit:** 13/13 roles, 76 dashboard pages and 96 API handlers reviewed; 82 unit, 42 integration and 110 browser cases passing locally (2026-07-27)
+- **Latest audit:** 13/13 roles, 76 dashboard pages and 96 API handlers reviewed; 265 unit and 47 integration cases passing locally (2026-08-04)
+
+## Latest — Session 38 (2026-08-04): Transport Administration Delivery
+
+- [x] New-allocation page rebuilt: searchable request selector, vehicle picker (no UUID entry, no auto-create-on-recommend), driver picker with real-time eligibility verdicts.
+- [x] Driver licence verification queue (`/dashboard/drivers/licences`, 7 tabs) + review screen (zoomable documents, OCR provisional vs verified, warnings, version history, approve/request-changes/reject with notifications).
+- [x] Release readiness uses the active-verified licence (pending renewals no longer make readiness green).
+- [x] Driver Management: licence search, status filters, pagination and server-side stats; licence upload/review notifications wired.
+- [x] TypeScript 0 errors · Lint 0/0 · Unit 265/265 · Integration 47/47.
 
 ## Latest Functional Audit — Complete (2026-07-27)
 

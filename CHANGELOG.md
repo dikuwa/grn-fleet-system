@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-04 — Session 38: Transport Administration — Allocation Workflow, Driver Licence Verification Queue & Review, Driver Management Upgrades
+
+### Added
+
+- **Shared licence-class utility** (`src/lib/licence-classes.ts`) — single source of truth for the Namibian licence-class hierarchy (`licenceCoversClass`), used by release readiness, driver assignment validation and licence review.
+- **Searchable eligible-request selector** (`src/app/api/allocations/requests/route.ts`) — `GET /api/allocations/requests?q=&status=` returns tenant-scoped, allocatable transport requests (reference, purpose, dates, requester) for the new-allocation page.
+- **Driver eligibility picker** (`src/app/api/allocations/drivers/route.ts`) — `GET /api/allocations/drivers?requestId=&vehicleId=` returns every tenant driver with a real-time `calculateDriverCompliance` verdict (active-verified licence, class compatibility, professional authorisation, schedule conflicts) so officers see *why* a driver is excluded — never hidden silently.
+- **Advisory recommendation mode** — allocation POST now supports `recommendOnly` (recommender runs with zero side effects) and `recommendAuto`; the new-allocation page no longer auto-creates a confirmed allocation + trip when the user clicks “Get Vehicle Recommendation”.
+- **Driver licence verification queue** (`src/app/api/drivers/licences/queue/route.ts` + `/dashboard/drivers/licences`) — 7 tabs (Pending Review / Expiring Soon / Expired / Changes Requested / Rejected / Approved / All), search by name/employee number/licence number/class, expiry-range filter, real pagination, and server-side queue stats. Accessible under Driver Management via the new `Licence Verification` nav item (`dashboard-access.ts`).
+- **Licence review screen** (`src/app/api/drivers/licences/[id]/review/route.ts` + `/dashboard/drivers/licences/[id]`) — driver identity, staff/driver status, zoomable front/back images + source PDF, OCR extraction with confidence and quality warnings, comparison against the current verified licence, corrections history, version history, and the three actions: Approve (atomic: applies reviewer corrections, marks previous version superseded, recalculates eligibility), Request Changes (reason required, notifies driver) and Reject (reason required, preserves current verified licence).
+- **Licence upload/review notifications** — `src/app/api/drivers/[id]/licences/route.ts` now notifies Transport Administration when a renewal is uploaded (`driver.licence_uploaded`) and notifies the driver on approve / request changes / reject, with action links to the queue/review.
+- **Driver Management upgrade** (`src/app/api/drivers/route.ts` + `/dashboard/drivers`) — server-side stats (total, verified-valid, expiring, expired, pending verification, ineligible, available), licence search across number/class, status filter tabs and real pagination; page no longer shows empty stats while an error occurs (distinct error state with retry).
+
+### Fixed
+
+- **Release readiness licence gate** (`src/app/api/trips/[id]/readiness/route.ts`) — the driver licence condition now uses the **active verified** licence (highest-version `isActive` + `isVerified`), not the newest-expiry row; pending renewal submissions no longer make readiness falsely green, and expired-while-pending drivers become ineligible.
+- **Allocation page UUID + auto-create defect** — the new-allocation page no longer asks officers to type a raw UUID and no longer creates an allocation/trip when merely requesting a recommendation.
+
+### Validation
+
+- TypeScript: 0 errors · Lint: 0 errors 0 warnings · Unit: 265/265 (23 files) · Integration: **47/47 (5 files)** against the dev server on :3000.
+
 ## 2026-08-03 — Session 37: Expiry-Digest Core Verified, Neon Transaction + Username Collision Fixes, Full Integration Suite Repaired
 
 ### Added

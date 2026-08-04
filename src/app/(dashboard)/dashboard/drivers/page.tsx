@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { Search, Car, User, Loader2, AlertCircle, RefreshCw, CalendarClock, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Search, Car, User, Loader2, AlertCircle, RefreshCw, CalendarClock, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
@@ -33,9 +33,20 @@ interface DriverListEntry {
   hasExpiredLicence: boolean;
   hasExpiringLicence: boolean;
   hasValidLicence: boolean;
+  pendingVerification: boolean;
 }
 
-type ExpiryFilter = 'all' | 'expired' | 'expiring' | 'valid';
+interface DriverStats {
+  total: number;
+  verifiedValid: number;
+  expiring: number;
+  expired: number;
+  pendingVerification: number;
+  ineligible: number;
+  available: number;
+}
+
+type StatusFilter = 'all' | 'expired' | 'expiring' | 'valid' | 'pending' | 'no_licence';
 
 function daysLabel(days: number): string {
   if (days < 0) return `Expired ${Math.abs(days)}d ago`;
@@ -53,50 +64,76 @@ function expiryBadgeVariant(days: number | null): 'success' | 'warning' | 'emerg
 
 export default function DriversPage() {
   const [drivers, setDrivers] = useState<DriverListEntry[]>([]);
+  const [stats, setStats] = useState<DriverStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<ExpiryFilter>('all');
+  const [filter, setFilter] = useState<StatusFilter>('all');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
   const initialLoadRef = useRef(false);
 
-  const fetchDrivers = useCallback(async (q?: string) => {
-    const params = q ? `?q=${encodeURIComponent(q)}` : '';
-    try {
-      const res = await fetch(`/api/drivers${params}`);
-      if (!res.ok) throw new Error('Failed to load drivers');
-      const json = await res.json();
-      setDrivers(json.success ? json.data : []);
-      setError('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load drivers');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const fetchDrivers = useCallback(
+    async (q?: string, status?: StatusFilter, nextPage?: number) => {
+      const params = new URLSearchParams({
+        status: status ?? filter,
+        page: String(nextPage ?? page),
+        limit: '25',
+      });
+      if ((q ?? search).trim()) params.set('q', (q ?? search).trim());
+      try {
+        const res = await fetch(`/api/drivers?${params}`);
+        if (!res.ok) throw new Error('Failed to load drivers');
+        const json = await res.json();
+        setDrivers(json.data || []);
+        setStats(json.stats || null);
+        setTotal(json.total || 0);
+        setTotalPages(json.totalPages || 1);
+        setError('');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load drivers');
+        setDrivers([]);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [filter, page, search],
+  );
 
   useEffect(() => {
     if (!initialLoadRef.current) {
       initialLoadRef.current = true;
-      fetchDrivers();
+      void fetchDrivers();
     }
   }, [fetchDrivers]);
 
   const handleSearch = useCallback(() => {
-    fetchDrivers(search || undefined);
-  }, [search, fetchDrivers]);
+    setPage(1);
+    void fetchDrivers(search || undefined, filter, 1);
+  }, [search, filter, fetchDrivers]);
 
-  const filtered = drivers.filter((d) => {
-    if (filter === 'all') return true;
-    if (filter === 'expired') return d.hasExpiredLicence;
-    if (filter === 'expiring') return d.hasExpiringLicence;
-    return d.hasValidLicence;
-  });
+  const handleFilterChange = useCallback(
+    (value: StatusFilter) => {
+      setFilter(value);
+      setPage(1);
+      void fetchDrivers(search || undefined, value, 1);
+    },
+    [search, fetchDrivers],
+  );
 
-  const expiredCount = drivers.filter((d) => d.hasExpiredLicence).length;
-  const expiringCount = drivers.filter((d) => d.hasExpiringLicence).length;
-  const validCount = drivers.filter((d) => d.hasValidLicence).length;
-  const noLicenceCount = drivers.filter((d) => d.licenceCount === 0).length;
+  const statsCards: Array<{ label: string; value: number | null; tone?: string }> = [
+    { label: 'Total Drivers', value: stats?.total ?? null },
+    { label: 'Verified Valid', value: stats?.verifiedValid ?? null, tone: 'text-status-success-text' },
+    { label: 'Expiring ≤ 60d', value: stats?.expiring ?? null, tone: 'text-status-emergency-text' },
+    { label: 'Expired', value: stats?.expired ?? null, tone: 'text-status-error-text' },
+    { label: 'Pending Verification', value: stats?.pendingVerification ?? null, tone: 'text-status-pending-text' },
+    { label: 'Ineligible', value: stats?.ineligible ?? null, tone: 'text-status-error-text' },
+    { label: 'Available', value: stats?.available ?? null, tone: 'text-status-success-text' },
+  ];
+
+  const isFiltered = Boolean(search || filter !== 'all');
 
   return (
     <div className="space-y-6">
@@ -104,38 +141,31 @@ export default function DriversPage() {
         items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Driver Management' }]}
       />
       <PageHeader title="Driver Management" description="Driver roster with licence expiry monitoring">
-        <Button variant="secondary" size="sm" onClick={() => fetchDrivers()} loading={isLoading}>
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" asChild>
+            <Link href="/dashboard/drivers/licences">
+              <ShieldCheck className="h-4 w-4" /> Licence Verification
+            </Link>
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => void fetchDrivers()} loading={isLoading}>
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+        </div>
       </PageHeader>
 
-      {/* Licence-expiry summary */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-2xl font-[650] tabular-nums text-ink-950">{drivers.length}</p>
-            <p className="text-xs text-ink-500">Total Drivers</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-2xl font-[650] tabular-nums text-status-error-text">{expiredCount}</p>
-            <p className="text-xs text-ink-500">Licences Expired</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-2xl font-[650] tabular-nums text-status-emergency-text">{expiringCount}</p>
-            <p className="text-xs text-ink-500">Expiring ≤ 60 days</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-2xl font-[650] tabular-nums text-status-success-text">{validCount}</p>
-            <p className="text-xs text-ink-500">Licences Valid</p>
-          </CardContent>
-        </Card>
+      {/* Server-side summary stats — real tenant values, never zeroed on error */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+        {statsCards.map((card) => (
+          <Card key={card.label}>
+            <CardContent className="pt-3 pb-3 text-center">
+              <p className={`text-2xl font-[650] tabular-nums ${card.tone ?? 'text-ink-950'}`}>
+                {card.value ?? '—'}
+              </p>
+              <p className="text-[11px] text-ink-500">{card.label}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       <Card>
@@ -144,7 +174,7 @@ export default function DriversPage() {
             <div className="relative max-w-md flex-1">
               <Search className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
               <Input
-                placeholder="Search drivers by name or number..."
+                placeholder="Search name, employee number, licence number or class..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => {
@@ -158,7 +188,7 @@ export default function DriversPage() {
             </Button>
             <StyledSelect
               value={filter}
-              onChange={(e) => setFilter(e.target.value as ExpiryFilter)}
+              onChange={(e) => handleFilterChange(e.target.value as StatusFilter)}
               aria-label="Licence status filter"
               className="w-44"
             >
@@ -166,13 +196,16 @@ export default function DriversPage() {
               <option value="expired">Licence expired</option>
               <option value="expiring">Expiring ≤ 60 days</option>
               <option value="valid">Licence valid</option>
+              <option value="pending">Pending verification</option>
+              <option value="no_licence">No licence on file</option>
             </StyledSelect>
             <ClientFilterReset
-              isFiltered={Boolean(search) || filter !== 'all'}
+              isFiltered={isFiltered}
               onClear={() => {
                 setSearch('');
                 setFilter('all');
-                fetchDrivers();
+                setPage(1);
+                void fetchDrivers('', 'all', 1);
               }}
             />
           </div>
@@ -185,6 +218,9 @@ export default function DriversPage() {
             <div className="text-status-error-text flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
               <p className="text-sm">{error}</p>
+              <Button variant="secondary" size="sm" className="ml-auto" onClick={() => void fetchDrivers()}>
+                Retry
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -196,16 +232,16 @@ export default function DriversPage() {
         </div>
       )}
 
-      {!isLoading && !error && filtered.length === 0 && (
+      {!isLoading && !error && drivers.length === 0 && (
         <Card>
           <CardContent className="pt-4">
             <div className="flex flex-col items-center py-12 text-center">
               <Car className="text-ink-300 mb-3 h-10 w-10" />
               <p className="text-ink-700 text-sm font-medium">
-                {drivers.length === 0 ? 'No drivers found' : 'No drivers match this filter'}
+                {stats?.total === 0 ? 'No drivers found' : 'No drivers match this filter'}
               </p>
               <p className="text-ink-500 mt-1 text-xs">
-                {drivers.length === 0
+                {stats?.total === 0
                   ? 'Mark staff members as drivers in their employee profile.'
                   : 'Try adjusting your search or licence filter.'}
               </p>
@@ -214,9 +250,9 @@ export default function DriversPage() {
         </Card>
       )}
 
-      {!isLoading && filtered.length > 0 && (
+      {!isLoading && drivers.length > 0 && (
         <div className="space-y-2">
-          {filtered.map((d) => (
+          {drivers.map((d) => (
             <Link key={d.id} href={`/dashboard/drivers/${d.id}`} className="block">
               <Card hover>
                 <CardContent className="py-3.5">
@@ -241,6 +277,9 @@ export default function DriversPage() {
                             }
                             label={d.driverStatus.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}
                           />
+                          {d.pendingVerification && (
+                            <Badge variant="pending" size="sm">Licence pending review</Badge>
+                          )}
                         </div>
                         <div className="text-ink-500 mt-0.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                           <span className="flex items-center gap-1">
@@ -291,10 +330,39 @@ export default function DriversPage() {
         </div>
       )}
 
-      {!isLoading && noLicenceCount > 0 && filter === 'all' && (
-        <p className="text-ink-500 text-center text-xs">
-          {noLicenceCount} driver{noLicenceCount === 1 ? '' : 's'} {noLicenceCount === 1 ? 'has' : 'have'} no licence on file yet.
-        </p>
+      {/* Pagination */}
+      {!isLoading && totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-ink-500 text-xs">
+            {total} driver{total === 1 ? '' : 's'} · Page {page} of {totalPages}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => {
+                const next = page - 1;
+                setPage(next);
+                void fetchDrivers(search || undefined, filter, next);
+              }}
+            >
+              <ChevronLeft className="h-4 w-4" /> Previous
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page >= totalPages}
+              onClick={() => {
+                const next = page + 1;
+                setPage(next);
+                void fetchDrivers(search || undefined, filter, next);
+              }}
+            >
+              Next <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );
