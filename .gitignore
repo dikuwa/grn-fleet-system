@@ -49,3 +49,6 @@
 
 # Sentry Config File
 .env.sentry-build-plugin
+
+# local test/desktop artifacts
+.freebuff/

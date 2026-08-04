@@ -1,3 +1,9 @@
-ignoredBuiltDependencies:
-  - sharp
-  - unrs-resolver
+allowBuilds:
+  '@sentry/cli': true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+  tesseract.js: true
+  unrs-resolver: true
+  bcrypt: true
+ignoredBuiltDependencies: []
