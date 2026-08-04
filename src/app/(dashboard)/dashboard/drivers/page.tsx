@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { Search, Car, User, Loader2, AlertCircle, RefreshCw, CalendarClock, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Car, User, Loader2, AlertCircle, RefreshCw, CalendarClock, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
@@ -123,17 +123,23 @@ export default function DriversPage() {
     [search, fetchDrivers],
   );
 
-  const statsCards: Array<{ label: string; value: number | null; tone?: string }> = [
+  const statsCards: Array<{
+    label: string;
+    value: number | null;
+    tone?: string;
+    linkFilter?: StatusFilter;
+  }> = [
     { label: 'Total Drivers', value: stats?.total ?? null },
     { label: 'Verified Valid', value: stats?.verifiedValid ?? null, tone: 'text-status-success-text' },
-    { label: 'Expiring ≤ 60d', value: stats?.expiring ?? null, tone: 'text-status-emergency-text' },
-    { label: 'Expired', value: stats?.expired ?? null, tone: 'text-status-error-text' },
-    { label: 'Pending Verification', value: stats?.pendingVerification ?? null, tone: 'text-status-pending-text' },
+    { label: 'Expiring ≤ 60d', value: stats?.expiring ?? null, tone: 'text-status-emergency-text', linkFilter: 'expiring' },
+    { label: 'Expired', value: stats?.expired ?? null, tone: 'text-status-error-text', linkFilter: 'expired' },
+    { label: 'Pending Verification', value: stats?.pendingVerification ?? null, tone: 'text-status-pending-text', linkFilter: 'pending' },
     { label: 'Ineligible', value: stats?.ineligible ?? null, tone: 'text-status-error-text' },
     { label: 'Available', value: stats?.available ?? null, tone: 'text-status-success-text' },
   ];
 
   const isFiltered = Boolean(search || filter !== 'all');
+  const urgentCount = (stats?.expired ?? 0) + (stats?.expiring ?? 0);
 
   return (
     <div className="space-y-6">
@@ -154,18 +160,87 @@ export default function DriversPage() {
         </div>
       </PageHeader>
 
+      {/* Licence-expiry alert banner — shown when any licence is expired or expiring */}
+      {stats && urgentCount > 0 && (
+        <div
+          role="alert"
+          className="border-status-error-bg bg-status-error-bg/10 flex flex-wrap items-center gap-3 rounded-[10px] border px-4 py-3"
+        >
+          <ShieldAlert className="text-status-error-text h-5 w-5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-ink-950 text-sm font-semibold">
+              {stats.expired > 0
+                ? `${stats.expired} driver licence${stats.expired === 1 ? '' : 's'} expired`
+                : 'Driver licences expiring soon'}
+              {stats.expired > 0 && stats.expiring > 0 && ' · '}
+              {stats.expiring > 0
+                ? `${stats.expiring} expiring within 60 days`
+                : ''}
+            </p>
+            <p className="text-ink-500 text-xs">
+              Drivers with expired or expiring licences cannot be assigned to trips. Review the
+              licence queue to verify renewals or uploads.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {stats.expired > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleFilterChange('expired')}
+              >
+                View expired
+              </Button>
+            )}
+            {stats.expiring > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleFilterChange('expiring')}
+              >
+                View expiring
+              </Button>
+            )}
+            <Button variant="primary" size="sm" asChild>
+              <Link href="/dashboard/drivers/licences">
+                Licence Queue <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Server-side summary stats — real tenant values, never zeroed on error */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
-        {statsCards.map((card) => (
-          <Card key={card.label}>
-            <CardContent className="pt-3 pb-3 text-center">
-              <p className={`text-2xl font-[650] tabular-nums ${card.tone ?? 'text-ink-950'}`}>
-                {card.value ?? '—'}
-              </p>
-              <p className="text-[11px] text-ink-500">{card.label}</p>
-            </CardContent>
-          </Card>
-        ))}
+        {statsCards.map((card) =>
+          card.linkFilter ? (
+            <button
+              key={card.label}
+              type="button"
+              onClick={() => handleFilterChange(card.linkFilter!)}
+              className="focus-ring group text-left"
+              aria-label={`Filter drivers: ${card.label}`}
+            >
+              <Card hover>
+                <CardContent className="pt-3 pb-3 text-center">
+                  <p className={`text-2xl font-[650] tabular-nums ${card.tone ?? 'text-ink-950'}`}>
+                    {card.value ?? '—'}
+                  </p>
+                  <p className="text-[11px] text-ink-500 group-hover:text-ink-700">{card.label}</p>
+                </CardContent>
+              </Card>
+            </button>
+          ) : (
+            <Card key={card.label}>
+              <CardContent className="pt-3 pb-3 text-center">
+                <p className={`text-2xl font-[650] tabular-nums ${card.tone ?? 'text-ink-950'}`}>
+                  {card.value ?? '—'}
+                </p>
+                <p className="text-[11px] text-ink-500">{card.label}</p>
+              </CardContent>
+            </Card>
+          ),
+        )}
       </div>
 
       <Card>

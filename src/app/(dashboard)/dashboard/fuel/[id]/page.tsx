@@ -1,7 +1,9 @@
 import { getDb, isDbConnected } from '@/db';
 import { fuelTransactions, fuelReceipts, reimbursements } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { and, eq } from 'drizzle-orm';
+import { employees } from '@/db/schema/people';
+import { and, eq, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +33,8 @@ interface PageProps {
 
 async function fetchFuelDetail(id: string, tenantId: string) {
   const db = getDb();
+  const driverEmp = alias(employees, 'fuel_driver');
+  const recorderEmp = alias(employees, 'fuel_recorder');
 
   const transaction = await db
     .select({
@@ -50,6 +54,9 @@ async function fetchFuelDetail(id: string, tenantId: string) {
       createdAt: fuelTransactions.createdAt,
       vehicleId: fuelTransactions.vehicleId,
       tripId: fuelTransactions.tripId,
+      driverEmployeeId: fuelTransactions.driverEmployeeId,
+      driverName: sql<string>`concat_ws(' ', ${driverEmp.firstName}, ${driverEmp.lastName})`,
+      recordedByName: sql<string>`concat_ws(' ', ${recorderEmp.firstName}, ${recorderEmp.lastName})`,
       make: vehicles.make,
       model: vehicles.model,
       licenceNumber: vehicles.licenceNumber,
@@ -57,6 +64,8 @@ async function fetchFuelDetail(id: string, tenantId: string) {
     })
     .from(fuelTransactions)
     .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+    .leftJoin(driverEmp, eq(fuelTransactions.driverEmployeeId, driverEmp.id))
+    .leftJoin(recorderEmp, eq(fuelTransactions.recordedByUserId, recorderEmp.userId))
     .where(and(eq(fuelTransactions.id, id), eq(vehicles.tenantId, tenantId)))
     .then((r) => r[0] ?? null);
 
@@ -208,6 +217,18 @@ export default async function FuelDetailPage({ params }: PageProps) {
               <span className="text-ink-500">Fuel Type</span>
               <span className="text-ink-950 capitalize">{t.fuelType}</span>
             </div>
+            {t.driverName && (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-ink-500">Driver</span>
+                <span className="text-ink-950">{t.driverName}</span>
+              </div>
+            )}
+            {t.recordedByName && (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-ink-500">Recorded By</span>
+                <span className="text-ink-950">{t.recordedByName}</span>
+              </div>
+            )}
             <div className="flex items-center justify-between text-sm">
               <span className="text-ink-500">Litres</span>
               <span className="text-ink-950 font-medium tabular-nums">

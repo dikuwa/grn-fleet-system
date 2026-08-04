@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-04 — Session 39: Fuel On-Behalf Attribution, Transport Decision Workspace, Driver Roster Licence Alerts
+
+### Added
+
+- **Fuel on-behalf-of attribution** — `fuel_transactions` gained `driver_employee_id` (schema + hand-written migration `0032_fuel_driver_attribution.sql`, applied to production). `POST /api/fuel` accepts and validates `driverEmployeeId` against the tenant (and derives it from the linked trip when absent); the new-entry form has a driver picker ("entered on behalf of"); fuel list and detail pages display the attributed driver.
+- **Transport Decision workspace** (`src/components/approvals/transport-decision-panel.tsx`) — wired into the approval action page at the `transport_review` step. Lets the transport officer assign or replace the vehicle and driver with live eligibility verdicts (licence class, professional authorisation, schedule conflicts) before advancing the workflow; driver replacement fires driver notifications; `approval-detail.ts` now exposes `vehicleId` for the existing allocation.
+- **Driver roster licence-expiry alerts** — `/dashboard/drivers` gained an alert banner when any licence is expired/expiring and a clickable Expiring Soon stat card that links through to the Licence Verification queue; licence-status filter already present.
+- **Licence expiry Inngest wiring verified** — per-driver alert cron (`driver-licence-expiry-alert`) and the admin digest cron (`driver-licence-expiry-digest` → `runDriverLicenceExpiryDigest`, idempotent per tenant/day, business-day aware) both registered in `inngestFunctions`; integration coverage in `expiry-digest.integration.test.ts`.
+
+### Validation
+
+- TypeScript **0 errors** · ESLint **0 errors / 0 warnings** · Unit **265/265** · Integration **47/47** (5 files) · Migration 0032 applied to production Neon.
+
 ## 2026-08-04 — Session 38: Transport Administration — Allocation Workflow, Driver Licence Verification Queue & Review, Driver Management Upgrades
 
 ### Added

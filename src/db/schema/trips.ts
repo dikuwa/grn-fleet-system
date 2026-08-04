@@ -557,6 +557,9 @@ export const fuelTransactions = pgTable('fuel_transactions', {
   anomalyNotes: text('anomaly_notes'),
   isVerified: boolean('is_verified').notNull().default(false),
   verifiedByUserId: text('verified_by_user_id'),
+  /** Driver the fuel is attributed to (may differ from the recorder for on-behalf entries). */
+  driverEmployeeId: uuid('driver_employee_id').references(() => employees.id),
+  /** The user who physically recorded the entry (may be an officer on behalf of a driver). */
   recordedByUserId: text('recorded_by_user_id').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

@@ -6,6 +6,7 @@ import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   getSessionRoleNames,
   requireDashboardAction,
@@ -45,6 +46,9 @@ export async function GET(request: NextRequest) {
       }),
     ];
 
+    const driverEmp = alias(employees, 'fuel_driver');
+    const recorderEmp = alias(employees, 'fuel_recorder');
+
     const rows = await db
       .select({
         id: fuelTransactions.id,
@@ -57,12 +61,17 @@ export async function GET(request: NextRequest) {
         anomalyState: fuelTransactions.anomalyState,
         isVerified: fuelTransactions.isVerified,
         vehicleId: fuelTransactions.vehicleId,
+        driverEmployeeId: fuelTransactions.driverEmployeeId,
+        driverName: sql<string>`concat_ws(' ', ${driverEmp.firstName}, ${driverEmp.lastName})`,
+        recordedByName: sql<string>`concat_ws(' ', ${recorderEmp.firstName}, ${recorderEmp.lastName})`,
         make: vehicles.make,
         model: vehicles.model,
         licenceNumber: vehicles.licenceNumber,
       })
       .from(fuelTransactions)
       .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+      .leftJoin(driverEmp, eq(fuelTransactions.driverEmployeeId, driverEmp.id))
+      .leftJoin(recorderEmp, eq(fuelTransactions.recordedByUserId, recorderEmp.userId))
       .where(and(...conditions))
       .orderBy(desc(fuelTransactions.transactionAt))
       .limit(limit)
@@ -122,6 +131,7 @@ export async function POST(req: NextRequest) {
       referenceNumber,
       fillType,
       clientSyncId,
+      driverEmployeeId,
     } = body;
 
     if ((!vehicleId && !vehicleGrn) || !fuelType || !litres || !amount || !paymentMethod) {
@@ -280,6 +290,49 @@ export async function POST(req: NextRequest) {
       if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
     }
 
+    // ── On-behalf-of attribution ───────────────────────────────────────────
+    // Resolve the driver this entry is attributed to. An explicit selection wins;
+    // otherwise fall back to the trip's allocated driver (so officers recording
+    // fuel for a trip still attribute it to the correct driver).
+    let resolvedDriverId: string | null = null;
+    if (driverEmployeeId) {
+      const [driverEmp] = await db
+        .select({
+          id: employees.id,
+          isDriver: employees.isDriver,
+          employmentStatus: employees.employmentStatus,
+        })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.id, String(driverEmployeeId)),
+            eq(employees.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      if (!driverEmp) {
+        return NextResponse.json(
+          { error: 'Driver not found in your tenant' },
+          { status: 404 },
+        );
+      }
+      if (driverEmp.isDriver !== true || driverEmp.employmentStatus !== 'active') {
+        return NextResponse.json(
+          { error: 'Selected driver is not an active driver' },
+          { status: 422 },
+        );
+      }
+      resolvedDriverId = driverEmp.id;
+    } else if (resolvedTripId) {
+      const [tripDriver] = await db
+        .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
+        .from(trips)
+        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+        .where(eq(trips.id, resolvedTripId))
+        .limit(1);
+      resolvedDriverId = tripDriver?.driverEmployeeId ?? null;
+    }
+
     const [transaction] = await db
       .insert(fuelTransactions)
       .values({
@@ -295,6 +348,7 @@ export async function POST(req: NextRequest) {
         referenceNumber: referenceNumber || null,
         paymentMethod,
         fillType: fillType || 'full',
+        driverEmployeeId: resolvedDriverId,
         recordedByUserId: session.user.id,
       })
       .returning();

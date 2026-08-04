@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea, Label } from '@/components/ui/input';
 import { StyledSelect, StyledDateInput } from '@/components/ui/styled-select';
+import { EmployeeCombobox, type EmployeeSearchOption } from '@/components/ui/employee-combobox';
 import { Camera, ChevronLeft, CheckCircle2, Save, WifiOff } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
@@ -49,6 +50,8 @@ export default function NewFuelEntryPage() {
   const [vehicles, setVehicles] = useState<Array<{ id: string; licenceNumber: string; make: string; model: string }>>([]);
   const [vehicleLoading, setVehicleLoading] = useState(false);
   const [vehicleDropdown, setVehicleDropdown] = useState(false);
+  const [driverId, setDriverId] = useState('');
+  const [driverOption, setDriverOption] = useState<EmployeeSearchOption | null>(null);
   const tripId = searchParams.get('tripId') || '';
 
   useEffect(() => {
@@ -136,6 +139,7 @@ export default function NewFuelEntryPage() {
           vehicleGrn: formData.vehicleGrn,
           tripId: tripId || undefined,
           tripRef: formData.tripRef || null,
+          driverEmployeeId: driverId || undefined,
           clientSyncId: crypto.randomUUID(),
           transactionAt: formData.transactionDate,
           stationName: formData.stationName,
@@ -186,7 +190,7 @@ export default function NewFuelEntryPage() {
       toast({ title: 'Failed to record', description: err instanceof Error ? err.message : 'Transaction could not be saved', variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [router, formData, session, profile, draftId, isOnline, receiptFile, toast, tripId]);
+  }, [router, formData, session, profile, draftId, isOnline, receiptFile, toast, tripId, driverId]);
 
   return (
     <div className="space-y-6">
@@ -248,6 +252,22 @@ export default function NewFuelEntryPage() {
                 )}
               </div>
               <div className="space-y-1.5"><Label>Trip Reference</Label><Input placeholder="Optional trip ref" value={formData.tripRef} onChange={(e) => updateForm({ tripRef: e.target.value })} /></div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Driver (on behalf of)</Label>
+              <EmployeeCombobox
+                kind="driver"
+                value={driverId}
+                selectedOption={driverOption}
+                onSelect={(option) => {
+                  setDriverId(option?.id || '');
+                  setDriverOption(option);
+                }}
+                placeholder="Optional — attribute this entry to a driver"
+              />
+              <p className="text-ink-500 text-xs">
+                Leave blank to attribute the entry to the trip&apos;s allocated driver.
+              </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5"><Label required>Transaction Date</Label><StyledDateInput type="datetime-local" value={formData.transactionDate} onChange={(e) => updateForm({ transactionDate: e.target.value })} required /></div>

@@ -164,6 +164,7 @@ export async function getApprovalDetail(input: {
         id: vehicleAllocations.id,
         state: vehicleAllocations.state,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        vehicleId: vehicleAllocations.vehicleId,
         seatedCapacity: vehicles.seatedCapacity,
         licenceNumber: vehicles.licenceNumber,
         make: vehicles.make,

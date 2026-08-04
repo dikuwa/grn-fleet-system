@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
 import { ApprovalActionPanel } from '@/components/approvals/approval-action-panel';
+import { TransportDecisionPanel } from '@/components/approvals/transport-decision-panel';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { buildApprovalRequestTitle } from '@/lib/approval-decision';
@@ -33,6 +34,8 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
     })),
   });
 
+  const isTransportReview = detail.currentStep.actionType === 'transport_review';
+
   return (
     <div className="space-y-6">
       <Breadcrumbs
@@ -53,6 +56,16 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
           </Link>
         </Button>
       </PageHeader>
+      {isTransportReview && (
+        <TransportDecisionPanel
+          requestId={detail.instance.requestId}
+          requestReference={detail.instance.requestReference}
+          requestTitle={title}
+          activities={detail.activities}
+          existingAllocation={detail.allocation}
+        />
+      )}
+
       <ApprovalActionPanel
         instanceId={id}
         requestTitle={title}

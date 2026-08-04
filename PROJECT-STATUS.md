@@ -11,7 +11,15 @@
 - **Database:** Neon Postgres — migrated, seeded, verified
 - **Latest audit:** 13/13 roles, 76 dashboard pages and 96 API handlers reviewed; 265 unit and 47 integration cases passing locally (2026-08-04)
 
-## Latest — Session 38 (2026-08-04): Transport Administration Delivery
+## Latest — Session 39 (2026-08-04): Fuel Attribution, Transport Decision Workspace, Licence-Alert Roster
+
+- [x] Fuel on-behalf-of attribution: `fuel_transactions.driver_employee_id` (migration 0032 applied to production), validated `driverEmployeeId` in `POST /api/fuel` (derived from trip when absent), driver picker on the new-entry form, attribution shown on fuel list + detail.
+- [x] Transport Decision workspace: vehicle + driver assign/replace with live eligibility verdicts at the `transport_review` step, driver-replacement notifications, `approval-detail` exposes `vehicleId`.
+- [x] Driver roster licence-expiry alerts: alert banner + clickable Expiring Soon stat linking to the Licence Verification queue.
+- [x] Licence expiry Inngest wiring verified: per-driver alert cron + admin digest cron (idempotent, business-day aware) registered; integration-tested.
+- [x] TypeScript 0 errors · Lint 0/0 · Unit 265/265 · Integration 47/47 · Migration 0032 applied.
+
+## Session 38 (2026-08-04): Transport Administration Delivery
 
 - [x] New-allocation page rebuilt: searchable request selector, vehicle picker (no UUID entry, no auto-create-on-recommend), driver picker with real-time eligibility verdicts.
 - [x] Driver licence verification queue (`/dashboard/drivers/licences`, 7 tabs) + review screen (zoomable documents, OCR provisional vs verified, warnings, version history, approve/request-changes/reject with notifications).

@@ -1,7 +1,9 @@
 import { getDb, isDbConnected } from '@/db';
 import { fuelTransactions } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
+import { employees } from '@/db/schema/people';
 import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 
@@ -24,6 +26,8 @@ import { fuelScopeCondition } from '@/lib/record-scope';
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
 }
+
+const driverEmp = alias(employees, 'fuel_driver');
 
 async function fetchFuelEntries(
   sp: Record<string, string | undefined>,
@@ -77,6 +81,8 @@ async function fetchFuelEntries(
         anomalyState: fuelTransactions.anomalyState,
         isVerified: fuelTransactions.isVerified,
         vehicleId: fuelTransactions.vehicleId,
+        driverEmployeeId: fuelTransactions.driverEmployeeId,
+        driverName: sql<string>`concat_ws(' ', ${driverEmp.firstName}, ${driverEmp.lastName})`,
         make: vehicles.make,
         model: vehicles.model,
         licenceNumber: vehicles.licenceNumber,
@@ -84,6 +90,7 @@ async function fetchFuelEntries(
       })
       .from(fuelTransactions)
       .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+      .leftJoin(driverEmp, eq(fuelTransactions.driverEmployeeId, driverEmp.id))
       .where(where)
       .orderBy(desc(fuelTransactions.transactionAt))
       .limit(limit)
@@ -335,6 +342,9 @@ export default async function FuelPage({ searchParams }: PageProps) {
                       <span className="tabular-nums">{entry.licenceNumber}</span>
                       <span>{entry.stationName || 'Unknown station'}</span>
                       <span>{formatDate(entry.transactionAt)}</span>
+                      {entry.driverName && (
+                        <span>Driver: {entry.driverName}</span>
+                      )}
                     </div>
                   </div>
                 </div>
