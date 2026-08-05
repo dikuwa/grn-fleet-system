@@ -22,7 +22,16 @@
     "db:push": "drizzle-kit push",
     "db:seed": "tsx src/seed/index.ts",
     "db:seed-e2e": "tsx src/seed/seed-e2e.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "seed:minimal-test-data": "tsx src/seed/seed-minimal-test-data.ts",
+    "data-reset:dry-run": "tsx src/scripts/data-reset-cli.ts --mode=operational --dry-run",
+    "data-reset:execute": "tsx src/scripts/data-reset-cli.ts --mode=operational --execute",
+    "data-reset:operational:dry-run": "tsx src/scripts/data-reset-cli.ts --mode=operational --dry-run",
+    "data-reset:operational:execute": "tsx src/scripts/data-reset-cli.ts --mode=operational --execute",
+    "data-reset:demo-accounts:dry-run": "tsx src/scripts/data-reset-cli.ts --mode=demo-accounts --dry-run",
+    "data-reset:demo-accounts:execute": "tsx src/scripts/data-reset-cli.ts --mode=demo-accounts --execute",
+    "data-reset:demo-vehicles:dry-run": "tsx src/scripts/data-reset-cli.ts --mode=demo-vehicles --dry-run",
+    "data-reset:demo-vehicles:execute": "tsx src/scripts/data-reset-cli.ts --mode=demo-vehicles --execute"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.750.0",
