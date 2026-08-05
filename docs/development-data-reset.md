@@ -74,8 +74,15 @@ pnpm data-reset:demo-accounts:execute --tenant=<tenant-id> --ids=<id1,id2,...>
 
 # Mode C — demo-vehicle review (explicit demo licence prefixes only)
 pnpm data-reset:demo-vehicles:dry-run --tenant=<tenant-id>
-pnpm data-reset:demo-vehicles:execute --tenant=<tenant-id> --vehicle-ids=<id1,id2,...>
+pnpm data-reset:demo-vehicles:execute --tenant=<tenant-id> --ids=<id1,id2,...>
 ```
+
+> **Mode C requires `--ids` from the dry-run.** Omitting it makes the CLI
+> target every listed demo vehicle, which fails the whole run whenever any of
+> them still has operational records (trips, allocations, odometer events,
+> defects) — the guard is all-or-nothing by design. Vehicles with only fuel
+> transactions or inspections are safe to delete: those child records are
+> removed with the vehicle.
 
 ### Environment
 
@@ -95,9 +102,6 @@ DATABASE_URL=postgres://...            # already configured in the app
 | `--tenant=<uuid>` | all | Tenant scope. **Required.** |
 | `--confirm="RESET GRN FLEET DEVELOPMENT DATA"` | all execute | Confirmation phrase. |
 | `--ids=<id1,id2>` | demo-accounts / demo-vehicles execute | Explicitly approved demo account / vehicle ids (from the dry-run). |
-| `--vehicle-ids=<id1,id2>` | demo-vehicles execute | Explicit approved demo vehicle ids. |
-| `--skip-backup` | all execute | Skips the JSON row export (not recommended). |
-| `--commit` | all execute | When set, the CLI pushes the git commit hash into the audit record. |
 
 ---
 

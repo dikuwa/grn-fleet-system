@@ -592,4 +592,44 @@ describe('demo modes', () => {
     expect(result.deleted).toBe(1);
     expect(result.blocked).toHaveLength(0);
   });
+
+  it('cleans RESTRICT-FK children (fuel transactions, inspections) before deleting demo vehicles', async () => {
+    // Regression (live DB): fuel_transactions.vehicle_id and
+    // vehicle_inspections.vehicle_id both reference vehicles.id WITHOUT
+    // cascade, so deleting a vehicle without removing them first fails with
+    // "violates foreign key constraint". reimbursements/fuel_receipts cascade
+    // from fuel_transactions; inspection photos/results cascade from
+    // vehicle_inspections.
+    const deletes: string[] = [];
+    const db: ResetDb = {
+      execute: async (query: unknown) => {
+        const text = normalized(query).toLowerCase();
+        if (text.includes('from vehicles v where')) {
+          return {
+            rows: [
+              { id: 'v-e2e', licence_number: 'E2E-SEDAN-001', make: 'Toyota', model: 'Corolla', status: 'available', has_operational_records: false },
+            ],
+          };
+        }
+        if (text.startsWith('delete from')) {
+          deletes.push(text);
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+    };
+    const result = await deleteDemoVehicles(db, TENANT_ID, ['v-e2e']);
+    expect(result.deleted).toBe(1);
+    expect(result.blocked).toHaveLength(0);
+
+    const tables = deletes.map((d) => (d.match(/delete from "?([a-z_]+)"?/i) ?? [])[1]);
+    expect(tables).toContain('fuel_transactions');
+    expect(tables).toContain('vehicle_inspections');
+    // FK-restricted children must precede the vehicle row.
+    expect(tables.indexOf('fuel_transactions')).toBeLessThan(tables.indexOf('vehicles'));
+    expect(tables.indexOf('vehicle_inspections')).toBeLessThan(tables.indexOf('vehicles'));
+    // vehicle_inspections before vehicle_defects: inspection_item_results
+    // reference vehicle_defects (RESTRICT).
+    expect(tables.indexOf('vehicle_inspections')).toBeLessThan(tables.indexOf('vehicle_defects'));
+  });
 });

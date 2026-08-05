@@ -227,12 +227,22 @@ export async function deleteDemoVehicles(
   if (idsToDelete.length === 0) return { deleted: 0, blocked };
 
   // Vehicle children that are safe to remove with the vehicle.
+  //
+  // Order matters for RESTRICT FKs into vehicles and across children:
+  //  - vehicle_inspections before vehicle_defects: inspection_item_results
+  //    carries a RESTRICT reference to vehicle_defects and cascades from
+  //    vehicle_inspections (photos + item results go with it).
+  //  - fuel_transactions.vehicle_id -> vehicles.id is RESTRICT (no cascade);
+  //    reimbursements, fuel_receipts and receipt_field_corrections cascade
+  //    from fuel_transactions.
   const childTables: Array<[string, string]> = [
     ['vehicle_documents', 'vehicle_id'],
-    ['vehicle_odometer_events', 'vehicle_id'],
     ['vehicle_status_events', 'vehicle_id'],
+    ['vehicle_inspections', 'vehicle_id'],
+    ['vehicle_odometer_events', 'vehicle_id'],
     ['vehicle_defects', 'vehicle_id'],
     ['maintenance_events', 'vehicle_id'],
+    ['fuel_transactions', 'vehicle_id'],
   ];
   for (const [table, column] of childTables) {
     await db.execute(
