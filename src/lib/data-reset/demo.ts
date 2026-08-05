@@ -195,6 +195,22 @@ export async function listDemoVehicles(db: ResetDb, tenantId: string): Promise<D
   }));
 }
 
+/** Collect child ids for a set of vehicle ids (used to clean loose refs). */
+async function collectChildIds(
+  db: ResetDb,
+  table: string,
+  column: string,
+  vehicleIds: string[],
+): Promise<string[]> {
+  if (vehicleIds.length === 0) return [];
+  const result = await db.execute(
+    sql`SELECT id FROM ${sql.raw(quoteTable(table))} WHERE ${sql.raw(column)} = ANY(${sql.raw(uuidArrayLiteral(vehicleIds))})`,
+  );
+  return (result.rows ?? [])
+    .map((row) => String(row.id ?? ''))
+    .filter((id) => id.length > 0);
+}
+
 /**
  * Delete demo vehicles by id. Refuses when operational records still
  * reference them — run the operational reset first.
@@ -225,6 +241,20 @@ export async function deleteDemoVehicles(
     .filter((v) => requested.has(v.id) && !v.hasOperationalRecords)
     .map((v) => v.id);
   if (idsToDelete.length === 0) return { deleted: 0, blocked };
+
+  // Notifications referencing the deleted fuel transactions / inspections are
+  // loose polymorphic rows (no FK), so they must be removed explicitly — first
+  // collect the child ids, then delete the notifications, then the children.
+  const [fuelIds, inspectionIds] = await Promise.all([
+    collectChildIds(db, 'fuel_transactions', 'vehicle_id', idsToDelete),
+    collectChildIds(db, 'vehicle_inspections', 'vehicle_id', idsToDelete),
+  ]);
+  const notificationEntityIds = [...fuelIds, ...inspectionIds];
+  if (notificationEntityIds.length > 0) {
+    await db.execute(
+      sql`DELETE FROM ${sql.raw(quoteTable('notifications'))} WHERE tenant_id = ${tenantId} AND entity_id = ANY(${sql.raw(uuidArrayLiteral(notificationEntityIds))})`,
+    );
+  }
 
   // Vehicle children that are safe to remove with the vehicle.
   //

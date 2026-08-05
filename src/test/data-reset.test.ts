@@ -277,6 +277,56 @@ describe('resolveStepCondition', () => {
     expect(sqlText(condition)).toContain('entity_id');
   });
 
+  it('scopes trip-sourced odometer events by trip id (regression: trip_return events)', () => {
+    // Regression (live DB): trip_return odometer events carry the trip id in
+    // source_entity_id but were never matched — only inspection/fuel sources
+    // were. They survived the reset and blocked Mode C demo-vehicle deletion.
+    const condition = resolveStepCondition(
+      { table: 'vehicle_odometer_events', label: '', scope: 'inspection' },
+      IDS,
+      TENANT_ID,
+    );
+    const text = sqlText(condition);
+    expect(text).toMatch(/source_entity_type = 'trip' AND source_entity_id = ANY\(ARRAY\['trip-1'\]::uuid\[\]\)/i);
+    expect(text).toMatch(/source_entity_type = 'inspection'/i);
+    expect(text).toMatch(/source_entity_type = 'fuel_transaction'/i);
+  });
+
+  it('omits the trip branch when no trips are targeted (odometer events)', () => {
+    const emptyTrips: EntityIdSets = {
+      ...IDS,
+      tripIds: [],
+      removedEntityIds: IDS.removedEntityIds.filter((id) => id !== 'trip-1'),
+    };
+    const condition = resolveStepCondition(
+      { table: 'vehicle_odometer_events', label: '', scope: 'inspection' },
+      emptyTrips,
+      TENANT_ID,
+    );
+    expect(condition).not.toBeNull();
+    const text = sqlText(condition);
+    expect(text).not.toMatch(/source_entity_type = 'trip'/i);
+    expect(text).toMatch(/source_entity_type = 'inspection'/i);
+  });
+
+  it('returns null for odometer events when every source id set is empty', () => {
+    const empty: EntityIdSets = {
+      requestIds: [],
+      tripIds: [],
+      allocationIds: [],
+      authorityIds: [],
+      inspectionIds: [],
+      fuelTransactionIds: [],
+      workflowInstanceIds: [],
+      generatedDocumentIds: [],
+      notificationIds: [],
+      removedEntityIds: [],
+    };
+    expect(
+      resolveStepCondition({ table: 'vehicle_odometer_events', label: '', scope: 'inspection' }, empty, TENANT_ID),
+    ).toBeNull();
+  });
+
   it('uses a text[] literal for text-typed id columns (vehicle_status_events)', () => {
     // reference_entity_id is text, so ANY(...) must be text[], not uuid[].
     const condition = resolveStepCondition(
@@ -591,6 +641,44 @@ describe('demo modes', () => {
     const result = await deleteDemoVehicles(db, TENANT_ID, ['v-e2e']);
     expect(result.deleted).toBe(1);
     expect(result.blocked).toHaveLength(0);
+  });
+
+  it('removes notifications referencing the deleted fuel transactions and inspections', async () => {
+    const deletes: string[] = [];
+    const db: ResetDb = {
+      execute: async (query: unknown) => {
+        const text = normalized(query).toLowerCase();
+        if (text.includes('from vehicles v where')) {
+          return {
+            rows: [
+              { id: 'v-e2e', licence_number: 'E2E-SEDAN-001', make: 'Toyota', model: 'Corolla', status: 'available', has_operational_records: false },
+            ],
+          };
+        }
+        if (text.includes('select id from "fuel_transactions"')) {
+          return { rows: [{ id: 'fuel-e2e' }] };
+        }
+        if (text.includes('select id from "vehicle_inspections"')) {
+          return { rows: [{ id: 'insp-e2e' }] };
+        }
+        if (text.startsWith('delete from')) {
+          deletes.push(text);
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+    };
+    const result = await deleteDemoVehicles(db, TENANT_ID, ['v-e2e']);
+    expect(result.deleted).toBe(1);
+    const notifDelete = deletes.find((d) => d.includes('delete from "notifications"'));
+    expect(notifDelete).toBeTruthy();
+    expect(notifDelete).toMatch(/entity_id = ANY\(ARRAY\['fuel-e2e','insp-e2e'\]::uuid\[\]\)/i);
+    expect(notifDelete).toContain('tenant_id');
+    // The notification delete must run before the fuel/inspection children are
+    // removed (ids are collected first), i.e. before the vehicle row itself.
+    expect(deletes.indexOf(notifDelete as string)).toBeLessThan(
+      deletes.findIndex((d) => d.includes('delete from "vehicles"')),
+    );
   });
 
   it('cleans RESTRICT-FK children (fuel transactions, inspections) before deleting demo vehicles', async () => {

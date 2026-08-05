@@ -140,7 +140,7 @@ export function resolveStepCondition(
       if (tripIds.length === 0) return null;
       return sql`tenant_id = ${tenantId} AND trip_id = ANY(${sql.raw(uuidArrayLiteral(tripIds))})`;
     }
-    // -- odometer events produced by removed inspections / fuel entries
+    // -- odometer events produced by removed inspections / fuel entries / trips
     case 'vehicle_odometer_events': {
       const parts: SQL[] = [];
       if (inspectionIds.length > 0) {
@@ -151,6 +151,14 @@ export function resolveStepCondition(
       if (fuelIds.length > 0) {
         parts.push(
           sql`(source_entity_type = 'fuel_transaction' AND source_entity_id = ANY(${sql.raw(uuidArrayLiteral(fuelIds))}))`,
+        );
+      }
+      // Trip lifecycle events (trip_start / trip_return) carry the trip id in
+      // source_entity_id. Without this branch they survive the reset and later
+      // block Mode C demo-vehicle deletion.
+      if (tripIds.length > 0) {
+        parts.push(
+          sql`(source_entity_type = 'trip' AND source_entity_id = ANY(${sql.raw(uuidArrayLiteral(tripIds))}))`,
         );
       }
       if (parts.length === 0) return null;

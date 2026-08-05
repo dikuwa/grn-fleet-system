@@ -45,8 +45,9 @@ users, roles, staff, tenants, configuration, vehicles and reference data.
 - trips, allocations, trip authorities, passengers, assigned drivers, routes,
   schedules, status history, QR records
 - vehicle inspections, responses, photos, defects, signatures
-- driver logsheets, odometer events, fuel entries, receipts, OCR results,
-  trip remarks, offline drafts, breakdown/accident records
+- driver logsheets, odometer events (raised by removed trips, inspections or
+  fuel entries), fuel entries, receipts, OCR results, trip remarks, offline
+  drafts, breakdown/accident records
 - generated documents and share links tied to removed entities
 - notifications caused by removed operational entities
 - workflow instances tied to removed requests
@@ -87,7 +88,8 @@ pnpm data-reset:demo-vehicles:execute --tenant=<tenant-id> --ids=<id1,id2,...>
 ### Environment
 
 ```env
-# Required to allow any reset execution (dry-run does not need it)
+# Required for every mode — including dry-run (the guard refuses to run
+# without it; never set it in production)
 ALLOW_DEV_DATA_RESET=true
 
 # Required confirmation phrase passed to execute commands
@@ -172,10 +174,15 @@ audit event is recorded.
 
 ### Mode C — demo vehicles
 
-Only vehicles whose licence number starts with an explicit demo prefix
-(`E2E-*`, `DEMO-*`) are listed. The execute mode refuses to delete any vehicle
-that still has operational records (trips, allocations, odometer events,
-defects) — run the operational reset first.
+Only vehicles whose licence number starts with the configured demo prefix
+(`E2E-*` — see `DEMO_VEHICLE_LICENCE_PREFIXES` in `src/lib/data-reset/config.ts`)
+are listed. The execute mode refuses to delete any vehicle that still has
+operational records (trips, allocations, odometer events, defects) — run the
+operational reset first.
+
+Notifications referencing the deleted vehicles' fuel transactions and
+inspections are removed along with those children (they are loose polymorphic
+rows with no FK), so Mode C never leaves orphaned notifications behind.
 
 ---
 
@@ -246,7 +253,7 @@ The guard aborts when **any** of these is true:
 - `VERCEL_ENV === 'production'` (and other PaaS production signals)
 - the resolved database host carries a production marker (a `prod` host label
   such as `ep-….prod.aws.neon.tech`, or `-prod-` in the hostname) — hard block
-- `ALLOW_DEV_DATA_RESET !== 'true'` for execute modes
+- `ALLOW_DEV_DATA_RESET !== 'true'` (all modes, including dry-run)
 
 Other non-local hosts (e.g. a shared staging database) only produce a warning
 so you can still run against an explicitly chosen staging environment.
