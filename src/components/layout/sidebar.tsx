@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -90,50 +90,12 @@ interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
   activeWorkspace: WorkspaceId;
+  badgeCounts: Record<string, number>;
 }
 
-const BADGE_ENDPOINTS: Record<string, string> = {
-  'trips:assigned-attention': '/api/trips/attention',
-  'approvals:assigned': '/api/approvals/attention',
-};
-
-export function Sidebar({ collapsed, onToggle, activeWorkspace }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, activeWorkspace, badgeCounts }: SidebarProps) {
   const pathname = usePathname();
-  const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({});
   const navGroups = getNavGroups(activeWorkspace);
-
-  useEffect(() => {
-    // Fetch attention counts for every badge query the current workspace's
-    // navigation actually uses (trips attention for driver/transport admins,
-    // approvals attention for approvers/transport admins). Unknown queries
-    // are skipped so the sidebar never calls an endpoint it cannot consume.
-    const needed = Array.from(
-      new Set(
-        getWorkspaceNavigation(activeWorkspace)
-          .map((item) => item.badgeQuery)
-          .filter((query): query is string => Boolean(query && BADGE_ENDPOINTS[query])),
-      ),
-    );
-    if (needed.length === 0) return;
-    let cancelled = false;
-    Promise.all(
-      needed.map(async (query) => {
-        try {
-          const res = await fetch(BADGE_ENDPOINTS[query]);
-          const data = res.ok ? await res.json() : null;
-          return [query, Number(data?.data?.total ?? 0)] as const;
-        } catch {
-          return [query, 0] as const;
-        }
-      }),
-    ).then((entries) => {
-      if (cancelled) return;
-      setBadgeCounts(Object.fromEntries(entries));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeWorkspace]);
 
   return (
     <aside
@@ -405,9 +367,11 @@ export function MobileSidebar({
 export function MobileBottomNav({
   activeWorkspace,
   onMore,
+  badgeCounts,
 }: {
   activeWorkspace: WorkspaceId;
   onMore: () => void;
+  badgeCounts: Record<string, number>;
 }) {
   const pathname = usePathname();
   // Only render quick links the current workspace can actually navigate to.
@@ -416,11 +380,14 @@ export function MobileBottomNav({
   // must not see /dashboard/requests, which is a tenant-only route).
   const navPaths = new Set(getWorkspaceNavigation(activeWorkspace).map((item) => item.path));
   const canNavigateTo = (path: string) => navPaths.has(path);
+  // badgeQuery mirrors the desktop nav item's badgeQuery so the quick link
+  // shows the same live attention count (approvals for approvers, trips for
+  // drivers).
   const primary =
     activeWorkspace === 'driver'
-      ? { href: '/dashboard/driver-mobile', label: 'Trips', icon: Gauge }
+      ? { href: '/dashboard/driver-mobile', label: 'Trips', icon: Gauge, badgeQuery: 'trips:assigned-attention' as const }
       : activeWorkspace === 'approver'
-        ? { href: '/dashboard/approvals', label: 'Approvals', icon: ClipboardCheck }
+        ? { href: '/dashboard/approvals', label: 'Approvals', icon: ClipboardCheck, badgeQuery: 'approvals:assigned' as const }
         : { href: '/dashboard/requests', label: 'Requests', icon: FileText };
   const items = [
     { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
@@ -441,6 +408,7 @@ export function MobileBottomNav({
           pathname === item.href ||
           (item.href !== '/dashboard' && pathname.startsWith(`${item.href}/`));
         const Icon = item.icon;
+        const badgeCount = item.badgeQuery ? badgeCounts[item.badgeQuery] : 0;
         return (
           <Link
             key={item.href}
@@ -451,7 +419,17 @@ export function MobileBottomNav({
               active ? 'text-brand-700' : 'text-ink-500',
             )}
           >
-            <Icon className="h-5 w-5" aria-hidden="true" />
+            <span className="relative">
+              <Icon className="h-5 w-5" aria-hidden="true" />
+              {badgeCount > 0 && (
+                <span
+                  className="bg-status-error-text absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white"
+                  title={`${badgeCount} item${badgeCount === 1 ? '' : 's'} require your attention`}
+                >
+                  {badgeCount > 99 ? '99+' : badgeCount}
+                </span>
+              )}
+            </span>
             <span className="max-w-full truncate">{item.label}</span>
           </Link>
         );

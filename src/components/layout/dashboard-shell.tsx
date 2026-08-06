@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Sidebar, MobileBottomNav, MobileSidebar } from '@/components/layout/sidebar';
+import { useAttentionBadges } from '@/lib/use-attention-badges';
 import { Topbar } from '@/components/layout/topbar';
 import { OfflineIndicator } from '@/components/ui/offline-status';
 import { OfflineSyncHandler } from '@/components/ui/offline-sync-handler';
@@ -33,6 +34,9 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Live attention badge counts, fetched once per workspace change and shared
+  // by the desktop sidebar and the mobile bottom nav.
+  const badgeCounts = useAttentionBadges(activeWorkspace);
 
   return (
     <div className="bg-canvas min-h-screen transition-colors duration-200">
@@ -41,6 +45,7 @@ export function DashboardShell({
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         activeWorkspace={activeWorkspace}
+        badgeCounts={badgeCounts}
       />
 
       {/* Mobile sidebar */}
@@ -78,7 +83,11 @@ export function DashboardShell({
         <OfflineIndicator />
         <OfflineSyncHandler />
         <InstallPwaBanner />
-        <MobileBottomNav activeWorkspace={activeWorkspace} onMore={() => setMobileMenuOpen(true)} />
+        <MobileBottomNav
+          activeWorkspace={activeWorkspace}
+          onMore={() => setMobileMenuOpen(true)}
+          badgeCounts={badgeCounts}
+        />
       </div>
     </div>
   );
