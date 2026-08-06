@@ -93,6 +93,13 @@ jobs:
           NEXT_PUBLIC_APP_URL: ${{ env.NEXT_PUBLIC_APP_URL }}
           NEXT_PUBLIC_APP_NAME: ${{ env.NEXT_PUBLIC_APP_NAME }}
 
+      - name: Perf regression guard (page render budgets)
+        run: node scripts/bench-pages.mjs --budget
+        env:
+          NEXT_PUBLIC_APP_URL: ${{ env.NEXT_PUBLIC_APP_URL }}
+          SEED_ADMIN_EMAIL: ${{ env.SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ env.SEED_ADMIN_PASSWORD }}
+
       - name: Run integration tests
         run: pnpm test:integration
         env:

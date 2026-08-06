@@ -62,6 +62,11 @@ async function main() {
   const results = [];
 
   for (const page of pages) {
+    // Warm the page first (untimed): in CI the bench runs against `next dev`,
+    // which compiles pages on demand. We want to budget the render, not the
+    // one-off dev compile.
+    await timeRender(page, cookieJar).catch(() => {});
+
     const durations = [];
     for (let run = 0; run < RUNS; run++) {
       durations.push(await timeRender(page, cookieJar));
@@ -84,7 +89,7 @@ async function main() {
   console.log('─'.repeat(72));
 
   let failed = false;
-  for (const { page, best, runs, before } of results) {
+  for (const { page, best, before } of results) {
     const budget = BUDGETS[page];
     const delta = before !== undefined ? best - before : NaN;
     const ok = best <= budget;

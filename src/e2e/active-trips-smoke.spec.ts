@@ -14,18 +14,22 @@ import { test, expect, Page } from '@playwright/test';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
-async function signIn(page: Page) {
-  const email = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
+async function signIn(page: Page, email?: string) {
+  const resolvedEmail = email || process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
+  // Operational workspaces are role-gated (tenant admin no longer holds them):
+  // clear any previous session before switching to the role that owns the page.
+  if (email) await page.context().clearCookies();
+
   let res = await page.request.post(`${BASE}/api/auth/sign-in`, {
-    data: { email, password },
+    data: { email: resolvedEmail, password },
   });
   // Retry on rate limit (429) with backoff
   for (let attempt = 0; attempt < 5 && res.status() === 429; attempt++) {
     await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
     res = await page.request.post(`${BASE}/api/auth/sign-in`, {
-      data: { email, password },
+      data: { email: resolvedEmail, password },
     });
   }
   expect(res.status()).toBe(200);
@@ -54,6 +58,7 @@ test.describe('Active Trips Tracking', () => {
   });
 
   test('active trips page loads with status stats', async ({ page }) => {
+    await signIn(page, 'transport.admin@kavangoeast.test');
     await page.goto('/dashboard/trips/active', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Page header should be visible
@@ -66,6 +71,7 @@ test.describe('Active Trips Tracking', () => {
   });
 
   test('active trips list shows trip cards with duration', async ({ page }) => {
+    await signIn(page, 'transport.admin@kavangoeast.test');
     await page.goto('/dashboard/trips/active', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Check for trip cards (the linked blocks with make/model)
@@ -86,6 +92,7 @@ test.describe('Active Trips Tracking', () => {
   });
 
   test('active trips page link navigates to trip detail', async ({ page }) => {
+    await signIn(page, 'transport.admin@kavangoeast.test');
     await page.goto('/dashboard/trips/active', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const tripCard = page.getByTestId('active-trip-card').first();
@@ -128,16 +135,22 @@ test.describe('Dashboard UI Smoke Tests', () => {
   });
 
   test('expiry alerts dashboard loads', async ({ page }) => {
+    // Expiry alerts is a maintenance-officer workspace; the tenant admin has no access.
+    await signIn(page, 'maintenance@kavangoeast.test');
     await page.goto('/dashboard/expiry-alerts', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Expiry")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('vehicle compliance page loads', async ({ page }) => {
+    // Compliance belongs to the transport administration workspace.
+    await signIn(page, 'transport.admin@kavangoeast.test');
     await page.goto('/dashboard/fleet/compliance', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Compliance")').first()).toBeVisible({ timeout: 20000 });
   });
 
   test('vehicle defects page loads', async ({ page }) => {
+    // Defects is a maintenance-officer workspace; the tenant admin has no access.
+    await signIn(page, 'maintenance@kavangoeast.test');
     await page.goto('/dashboard/fleet/defects', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Defects")').first()).toBeVisible({ timeout: 20000 });
   });
