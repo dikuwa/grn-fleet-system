@@ -5,6 +5,7 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/badge';
+import { fetchWithRetry } from '@/lib/fetch-with-retry';
 import {
   Mail,
   Send,
@@ -102,7 +103,7 @@ export default function DeliveryDashboardPage() {
       if (statusFilter) params.set('status', statusFilter);
       if (channelFilter) params.set('channel', channelFilter);
 
-      const res = await fetch(`/api/notifications/deliveries?${params.toString()}`);
+      const res = await fetchWithRetry(`/api/notifications/deliveries?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to load delivery data');
       const json = await res.json();
       setDeliveries(json.data.deliveries ?? []);

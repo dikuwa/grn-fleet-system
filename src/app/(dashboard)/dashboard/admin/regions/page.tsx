@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState } from 'react';
+import { useLoadWithRetry } from '@/lib/use-load-with-retry';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -43,9 +44,6 @@ interface Region {
 
 export default function AdminRegionsPage() {
   const { toast } = useToast();
-  const [regions, setRegions] = useState<Region[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -58,28 +56,10 @@ export default function AdminRegionsPage() {
   const [formDescription, setFormDescription] = useState('');
   const [formSortOrder, setFormSortOrder] = useState('0');
 
-  const fetchedRef = useRef(false);
-
-  const fetchRegions = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/regions');
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to load regions');
-      setRegions(json.rows || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load regions');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
-    fetchRegions();
-  }, [fetchRegions]);
+  const { data, loading, error, reload } = useLoadWithRetry<{ rows: Region[] }>('/api/regions', {
+    errorMessage: 'Failed to load regions',
+  });
+  const regions = data?.rows ?? [];
 
   const openCreateForm = () => {
     setEditingId(null);
@@ -130,7 +110,7 @@ export default function AdminRegionsPage() {
 
       toast({ title: `Region ${editingId ? 'updated' : 'created'}`, description: formName.trim(), variant: 'success' });
       closeForm();
-      fetchRegions();
+      reload();
     } catch (err) {
       toast({ title: 'Failed to save region', description: err instanceof Error ? err.message : 'Failed to save region', variant: 'error' });
     } finally {
@@ -147,7 +127,7 @@ export default function AdminRegionsPage() {
       if (!res.ok) throw new Error(json.error || 'Failed to delete region');
       toast({ title: 'Region deleted', description: 'Region removed successfully', variant: 'success' });
       setPendingDelete(null);
-      fetchRegions();
+      reload();
     } catch (err) {
       toast({ title: 'Failed to delete region', description: err instanceof Error ? err.message : 'Failed to delete region', variant: 'error' });
     } finally {
@@ -165,7 +145,7 @@ export default function AdminRegionsPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update region');
       toast({ title: `Region ${region.isActive ? 'deactivated' : 'activated'}`, description: region.name, variant: 'success' });
-      fetchRegions();
+      reload();
     } catch (err) {
       toast({ title: 'Failed to update region', description: err instanceof Error ? err.message : 'Failed to update region', variant: 'error' });
     }
@@ -186,7 +166,7 @@ export default function AdminRegionsPage() {
         description={`${activeRegions.length} active region${activeRegions.length !== 1 ? 's' : ''}${inactiveRegions.length > 0 ? ` · ${inactiveRegions.length} inactive` : ''}`}
       >
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={fetchRegions}>
+          <Button variant="secondary" size="sm" onClick={reload}>
             <RefreshCw className="h-4 w-4" /> Refresh
           </Button>
           <Button variant="primary" size="sm" onClick={openCreateForm}>
@@ -298,7 +278,7 @@ export default function AdminRegionsPage() {
           icon={<MapPin className="h-6 w-6" />}
           title="Failed to Load Regions"
           description={error}
-          action={{ label: 'Retry', onClick: fetchRegions }}
+          action={{ label: 'Retry', onClick: reload }}
         />
       )}
 

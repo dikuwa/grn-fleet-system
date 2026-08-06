@@ -6,6 +6,7 @@ import {Card, CardContent} from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { fetchWithRetry } from '@/lib/fetch-with-retry';
 
 import {
   AlertTriangle,
@@ -51,7 +52,7 @@ export default function PredictiveMaintenancePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/fleet/predictive-maintenance');
+      const res = await fetchWithRetry('/api/fleet/predictive-maintenance');
       if (!res.ok) throw new Error('Failed to load predictions');
       const json = await res.json();
       setPredictions(json.predictions || []);

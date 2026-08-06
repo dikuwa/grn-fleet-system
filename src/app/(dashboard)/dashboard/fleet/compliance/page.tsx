@@ -7,6 +7,7 @@ import {Badge} from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StyledSelect } from '@/components/ui/styled-select';
+import { fetchWithRetry } from '@/lib/fetch-with-retry';
 import {
   ShieldCheck,
   AlertTriangle,
@@ -70,7 +71,7 @@ export default function CompliancePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/fleet/compliance');
+      const res = await fetchWithRetry('/api/fleet/compliance');
       if (!res.ok) throw new Error('Failed to load compliance data');
       const json = await res.json();
       setVehicles(json.vehicles || []);

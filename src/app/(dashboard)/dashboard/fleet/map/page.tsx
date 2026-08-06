@@ -9,6 +9,7 @@ import { Car, AlertTriangle, Loader2, RefreshCw, WifiOff } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ResponsiveMapContainer, ResponsiveStatsGrid } from '@/components/ui/responsive';
+import { fetchWithRetry } from '@/lib/fetch-with-retry';
 
 interface VehicleMarker {
   id: string;
@@ -48,7 +49,7 @@ export default function FleetMapPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/fleet/map');
+      const res = await fetchWithRetry('/api/fleet/map');
       if (!res.ok) throw new Error('Failed to load map data');
       const json = await res.json();
       setVehicles(json.vehicles || []);

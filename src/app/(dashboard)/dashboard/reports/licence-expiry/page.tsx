@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { fetchWithRetry } from '@/lib/fetch-with-retry';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 
 import { StatCard } from '@/components/ui/card';
@@ -92,7 +93,7 @@ export default function LicenceExpiryReportPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch('/api/reports/licence-expiry');
+      const res = await fetchWithRetry('/api/reports/licence-expiry');
       if (!res.ok) throw new Error('Failed to load licence expiry data');
       const json = await res.json();
       setLicences(json.licences ?? []);
