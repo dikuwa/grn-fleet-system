@@ -78,9 +78,81 @@ test('trip count badge uses the universal notification red token', async ({ brow
   });
   await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
 
-  const tripBadge = page.getByRole('link', { name: /^Trips/ }).getByText('6', { exact: true });
+  // The badge pill is aria-hidden (its meaning is exposed via sr-only text on
+  // the link, asserted below), so locate it by class rather than by text.
+  const tripBadge = page.getByRole('link', { name: /^Trips/ }).locator('span.bg-status-error-text');
   await expect(tripBadge).toBeVisible();
   await expect(tripBadge).toHaveClass(/bg-status-error-text/);
+  await expect(tripBadge).toHaveText('6');
+
+  // A11y: the accessible name of the link carries the descriptive text.
+  await expect(
+    page.getByRole('link', { name: /6 items require your attention/ }),
+  ).toBeVisible();
+
+  await context.close();
+  await api.dispose();
+});
+
+test('draft request badge shows count with accessible description', async ({ browser }) => {
+  const api = await playwrightRequest.newContext({ baseURL: BASE });
+  const signIn = await api.post('/api/auth/sign-in', {
+    data: { email: 'requester@kavangoeast.test', password: PASSWORD },
+  });
+  expect(signIn.status(), await signIn.text()).toBe(200);
+
+  const context = await browser.newContext({
+    storageState: await api.storageState(),
+    viewport: { width: 1440, height: 900 },
+  });
+  const page = await context.newPage();
+  await page.route('**/api/requests/attention', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { total: 3 } }),
+    });
+  });
+  await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+
+  const draftsBadge = page
+    .getByRole('link', { name: /My Drafts/ })
+    .locator('span.bg-status-error-text');
+  await expect(draftsBadge).toBeVisible();
+  await expect(draftsBadge).toHaveText('3');
+  await expect(
+    page.getByRole('link', { name: /My Drafts.*3 items require your attention/ }),
+  ).toBeVisible();
+
+  await context.close();
+  await api.dispose();
+});
+
+test('mobile bottom nav shows the drafts badge on the Requests quick link', async ({
+  browser,
+}) => {
+  const api = await playwrightRequest.newContext({ baseURL: BASE });
+  const signIn = await api.post('/api/auth/sign-in', {
+    data: { email: 'requester@kavangoeast.test', password: PASSWORD },
+  });
+  expect(signIn.status(), await signIn.text()).toBe(200);
+
+  const context = await browser.newContext({
+    storageState: await api.storageState(),
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  await page.route('**/api/requests/attention', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { total: 2 } }),
+    });
+  });
+  await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+
+  const navLink = page.getByRole('link', { name: /^Requests/ });
+  await expect(navLink).toBeVisible();
+  await expect(navLink.locator('span.bg-status-error-text')).toHaveText('2');
+  await expect(page.getByRole('link', { name: /Requests.*2 items require your attention/ })).toBeVisible();
 
   await context.close();
   await api.dispose();

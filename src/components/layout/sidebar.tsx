@@ -175,14 +175,22 @@ export function Sidebar({ collapsed, onToggle, activeWorkspace, badgeCounts }: S
                         <>
                           <span className="flex-1 truncate">{item.label}</span>
                           {item.badgeQuery && badgeCounts[item.badgeQuery] > 0 && (
-                            <span
-                              className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white"
-                              title={`${badgeCounts[item.badgeQuery]} item${badgeCounts[item.badgeQuery] === 1 ? '' : 's'} require your attention`}
-                            >
-                              {badgeCounts[item.badgeQuery] > 99
-                                ? '99+'
-                                : badgeCounts[item.badgeQuery]}
-                            </span>
+                            <>
+                              <span className="sr-only">
+                                {badgeCounts[item.badgeQuery]} item
+                                {badgeCounts[item.badgeQuery] === 1 ? '' : 's'} require your
+                                attention.
+                              </span>
+                              <span
+                                aria-hidden="true"
+                                className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white"
+                                title={`${badgeCounts[item.badgeQuery]} item${badgeCounts[item.badgeQuery] === 1 ? '' : 's'} require your attention`}
+                              >
+                                {badgeCounts[item.badgeQuery] > 99
+                                  ? '99+'
+                                  : badgeCounts[item.badgeQuery]}
+                              </span>
+                            </>
                           )}
                         </>
                       )}
@@ -388,7 +396,9 @@ export function MobileBottomNav({
       ? { href: '/dashboard/driver-mobile', label: 'Trips', icon: Gauge, badgeQuery: 'trips:assigned-attention' as const }
       : activeWorkspace === 'approver'
         ? { href: '/dashboard/approvals', label: 'Approvals', icon: ClipboardCheck, badgeQuery: 'approvals:assigned' as const }
-        : { href: '/dashboard/requests', label: 'Requests', icon: FileText };
+        : activeWorkspace === 'personal'
+          ? { href: '/dashboard/requests', label: 'Requests', icon: FileText, badgeQuery: 'requests:drafts' as const }
+          : { href: '/dashboard/requests', label: 'Requests', icon: FileText };
   const items = [
     { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
     ...(canNavigateTo(primary.href) ? [primary] : []),
@@ -423,6 +433,7 @@ export function MobileBottomNav({
               <Icon className="h-5 w-5" aria-hidden="true" />
               {badgeCount > 0 && (
                 <span
+                  aria-hidden="true"
                   className="bg-status-error-text absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white"
                   title={`${badgeCount} item${badgeCount === 1 ? '' : 's'} require your attention`}
                 >
@@ -431,6 +442,11 @@ export function MobileBottomNav({
               )}
             </span>
             <span className="max-w-full truncate">{item.label}</span>
+            {badgeCount > 0 && (
+              <span className="sr-only">
+                {badgeCount} item{badgeCount === 1 ? '' : 's'} require your attention.
+              </span>
+            )}
           </Link>
         );
       })}

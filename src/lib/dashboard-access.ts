@@ -204,6 +204,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     order: 50,
     navigationVisible: true,
     exact: true,
+    badgeQuery: 'requests:drafts',
   },
   {
     id: 'programmes',
