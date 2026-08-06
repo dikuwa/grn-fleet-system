@@ -354,6 +354,8 @@ The engine resolves step holders at runtime (availability, delegations, dynamic 
 
 Reminder and escalation notifications follow the same rule. When a step is permission-routed, the reminder goes to **every user who can act on it**; for the acknowledgment step it goes to the **allocated driver** only. A new reminder and escalation timer is scheduled each time the workflow advances, using that step's own configured hours — so every step of a multi-step route is covered, not just the first.
 
+The **Assigned Approvals** sidebar item shows a live badge with the count of active approvals visible to you (the same rule as the queue), and the **Driver Console** item shows the trips-attention badge — both update when the page loads.
+
 ### Driver Acknowledgment
 
 The final step of both workflows is the **Driver Acknowledgment** — the assigned driver must acknowledge the trip details and vehicle condition before departure.

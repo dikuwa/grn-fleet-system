@@ -8,7 +8,7 @@
  * Run with: `pnpm test`
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Mock types
@@ -17,6 +17,7 @@ import { describe, it, expect, vi } from 'vitest';
 interface MockDb {
   select: ReturnType<typeof vi.fn>;
   from: ReturnType<typeof vi.fn>;
+  innerJoin?: ReturnType<typeof vi.fn>;
   where: ReturnType<typeof vi.fn>;
   limit: ReturnType<typeof vi.fn>;
   orderBy: ReturnType<typeof vi.fn>;
@@ -544,5 +545,112 @@ describe('WorkflowEngine — Tenant isolation by role', () => {
     // TENANT_ADMIN is the only tenant role that has TENANT_MANAGE
     expect(RoleDefinitions.TENANT_ADMIN.permissions).toContain(Permissions.TENANT_MANAGE);
     expect(RoleDefinitions.TENANT_ADMIN.permissions).not.toContain(Permissions.PLATFORM_ADMIN);
+  });
+});
+
+describe('WorkflowEngine — getCurrentStepRecipients (reminder/escalation recipients)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns the explicitly assigned user for an assigned step', async () => {
+    const { WorkflowEngine } = await import('@/lib/workflow-engine');
+    const mockDb = createMockDb();
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
+
+    vi.spyOn(engine, 'getWorkflowStatus').mockResolvedValue({
+      instance: { requestId: 'request-1' },
+      currentStep: {
+        assignedUserId: 'user-approver',
+        actionType: 'supervisor_approve',
+        requiredPermission: null,
+      },
+    } as never);
+
+    await expect(engine.getCurrentStepRecipients('wf-1', 'tenant-1')).resolves.toEqual([
+      'user-approver',
+    ]);
+  });
+
+  it('resolves the allocated driver for an unassigned acknowledge step', async () => {
+    const { WorkflowEngine } = await import('@/lib/workflow-engine');
+    const mockDb = createMockDb();
+    // The driver lookup: vehicleAllocations join employees → the driver's userId.
+    // innerJoin is supplied only here so the shared mock keeps short-circuiting
+    // the engine's role-resolution guard in the other tests.
+    mockDb.innerJoin = vi.fn().mockReturnThis();
+    mockDb.limit = vi
+      .fn()
+      .mockResolvedValueOnce([{ userId: 'user-driver' }]);
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
+
+    vi.spyOn(engine, 'getWorkflowStatus').mockResolvedValue({
+      instance: { requestId: 'request-1' },
+      currentStep: {
+        assignedUserId: null,
+        actionType: 'acknowledge',
+        requiredPermission: 'driver:log-create',
+      },
+    } as never);
+
+    await expect(engine.getCurrentStepRecipients('wf-1', 'tenant-1')).resolves.toEqual([
+      'user-driver',
+    ]);
+    // The permission fallback must NOT be consulted — the driver is the
+    // sole recipient of acknowledge reminders.
+    expect(mockDb.limit).toHaveBeenCalledTimes(1);
+  });
+
+  it('fans out to every permission holder for an unassigned, permission-routed step', async () => {
+    const { WorkflowEngine } = await import('@/lib/workflow-engine');
+    const mockDb = createMockDb();
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
+
+    const permissionSpy = vi
+      .spyOn(await import('@/lib/notification-service'), 'resolvePermissionRecipients')
+      .mockResolvedValue(['user-a', 'user-b']);
+
+    vi.spyOn(engine, 'getWorkflowStatus').mockResolvedValue({
+      instance: { requestId: 'request-1' },
+      currentStep: {
+        assignedUserId: null,
+        actionType: 'release',
+        requiredPermission: 'vehicle:release-regional',
+      },
+    } as never);
+
+    await expect(engine.getCurrentStepRecipients('wf-1', 'tenant-1')).resolves.toEqual([
+      'user-a',
+      'user-b',
+    ]);
+    expect(permissionSpy).toHaveBeenCalledWith('tenant-1', 'vehicle:release-regional');
+    // The mocked db must never be reached — permission fan-out is the fallback.
+    expect(permissionSpy).toHaveBeenCalledTimes(1);
+    expect(mockDb.limit).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty list when the workflow has no current step', async () => {
+    const { WorkflowEngine } = await import('@/lib/workflow-engine');
+    const mockDb = createMockDb();
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
+
+    vi.spyOn(engine, 'getWorkflowStatus').mockResolvedValue({
+      instance: { requestId: 'request-1' },
+      currentStep: null,
+    } as never);
+
+    await expect(engine.getCurrentStepRecipients('wf-1', 'tenant-1')).resolves.toEqual([]);
+    expect(mockDb.limit).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty list for a nonexistent workflow', async () => {
+    const { WorkflowEngine } = await import('@/lib/workflow-engine');
+    const mockDb = createMockDb();
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
+
+    vi.spyOn(engine, 'getWorkflowStatus').mockResolvedValue(null as never);
+
+    await expect(engine.getCurrentStepRecipients('wf-1', 'tenant-1')).resolves.toEqual([]);
+    expect(mockDb.limit).not.toHaveBeenCalled();
   });
 });

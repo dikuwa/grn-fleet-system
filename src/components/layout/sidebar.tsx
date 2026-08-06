@@ -92,21 +92,47 @@ interface SidebarProps {
   activeWorkspace: WorkspaceId;
 }
 
+const BADGE_ENDPOINTS: Record<string, string> = {
+  'trips:assigned-attention': '/api/trips/attention',
+  'approvals:assigned': '/api/approvals/attention',
+};
+
 export function Sidebar({ collapsed, onToggle, activeWorkspace }: SidebarProps) {
   const pathname = usePathname();
-  const [activeTripCount, setActiveTripCount] = useState(0);
+  const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({});
   const navGroups = getNavGroups(activeWorkspace);
 
   useEffect(() => {
-    if (activeWorkspace !== 'driver' && activeWorkspace !== 'transport_admin') return;
-    fetch('/api/trips/attention')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.data?.total != null) setActiveTripCount(Number(d.data.total));
-      })
-      .catch(() => {
-        /* silent */
-      });
+    // Fetch attention counts for every badge query the current workspace's
+    // navigation actually uses (trips attention for driver/transport admins,
+    // approvals attention for approvers/transport admins). Unknown queries
+    // are skipped so the sidebar never calls an endpoint it cannot consume.
+    const needed = Array.from(
+      new Set(
+        getWorkspaceNavigation(activeWorkspace)
+          .map((item) => item.badgeQuery)
+          .filter((query): query is string => Boolean(query && BADGE_ENDPOINTS[query])),
+      ),
+    );
+    if (needed.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      needed.map(async (query) => {
+        try {
+          const res = await fetch(BADGE_ENDPOINTS[query]);
+          const data = res.ok ? await res.json() : null;
+          return [query, Number(data?.data?.total ?? 0)] as const;
+        } catch {
+          return [query, 0] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setBadgeCounts(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [activeWorkspace]);
 
   return (
@@ -186,15 +212,16 @@ export function Sidebar({ collapsed, onToggle, activeWorkspace }: SidebarProps) 
                       {!collapsed && (
                         <>
                           <span className="flex-1 truncate">{item.label}</span>
-                          {item.badgeQuery === 'trips:assigned-attention' &&
-                            activeTripCount > 0 && (
-                              <span
-                                className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white"
-                                title={`${activeTripCount} trip${activeTripCount === 1 ? '' : 's'} require your attention`}
-                              >
-                                {activeTripCount > 99 ? '99+' : activeTripCount}
-                              </span>
-                            )}
+                          {item.badgeQuery && badgeCounts[item.badgeQuery] > 0 && (
+                            <span
+                              className="bg-status-error-text flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold text-white"
+                              title={`${badgeCounts[item.badgeQuery]} item${badgeCounts[item.badgeQuery] === 1 ? '' : 's'} require your attention`}
+                            >
+                              {badgeCounts[item.badgeQuery] > 99
+                                ? '99+'
+                                : badgeCounts[item.badgeQuery]}
+                            </span>
+                          )}
                         </>
                       )}
                     </Link>

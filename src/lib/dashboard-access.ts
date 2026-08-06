@@ -228,7 +228,6 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: every(ALL_WORKSPACES, ownManage(['view', 'update'])),
     tenantScoped: true,
     personalRoute: true,
-    badgeQuery: 'notifications:unread',
     order: 900,
     navigationVisible: true,
   },
@@ -244,6 +243,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     order: 100,
     navigationVisible: true,
     directUrlBehaviour: '404',
+    badgeQuery: 'approvals:assigned',
   },
   {
     id: 'delegations',
@@ -511,7 +511,6 @@ export const routeRegistry: readonly RouteDefinition[] = [
     tenantScoped: true,
     order: 190,
     navigationVisible: true,
-    badgeQuery: 'inspections:assigned',
   },
   {
     id: 'fleet-new',
@@ -672,7 +671,6 @@ export const routeRegistry: readonly RouteDefinition[] = [
     tenantScoped: true,
     order: 230,
     navigationVisible: true,
-    badgeQuery: 'maintenance:assigned',
   },
   {
     id: 'allocations-new',
@@ -738,7 +736,6 @@ export const routeRegistry: readonly RouteDefinition[] = [
     tenantScoped: true,
     order: 271,
     navigationVisible: true,
-    badgeQuery: 'licences:pending-review',
   },
   {
     id: 'documents',
