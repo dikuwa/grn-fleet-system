@@ -6,6 +6,7 @@
  * handler and server component that needs auth gating.
  */
 
+import { cache } from 'react';
 import { getDb } from '@/db';
 import { tenantMemberships, roleAssignments, rolePermissions, roles } from '@/db/schema';
 import { getServerSession, getServerSessionFromRequest } from '@/lib/session';
@@ -137,6 +138,93 @@ export async function requireValidTenant(session: AuthSession): Promise<true | N
 // ---------------------------------------------------------------------------
 
 /**
+ * Per-request memoized role/permission context for a tenant user.
+ *
+ * A single page render calls hasPermission / getSessionRoleNames many times
+ * (e.g. the staff directory gates four actions on top of the shared layout).
+ * Each call used to issue its own chain of remote queries (membership →
+ * assignments → rolePermissions → role names), which made simple pages take
+ * several seconds against a remote Neon HTTP endpoint. React.cache collapses
+ * those repeated lookups into one fetch set per (user, tenant) per request.
+ */
+const loadRoleContext = cache(
+  async (
+    userId: string,
+    tenantId: string,
+  ): Promise<{
+    roleNames: string[];
+    permissionCodes: PermissionCode[];
+    activeWorkspace: WorkspaceId;
+  } | null> => {
+    const db = getDb();
+    const now = new Date();
+
+    const [membership] = await db
+      .select({
+        id: tenantMemberships.id,
+        activeWorkspace: tenantMemberships.activeWorkspace,
+      })
+      .from(tenantMemberships)
+      .where(
+        and(
+          eq(tenantMemberships.userId, userId),
+          eq(tenantMemberships.tenantId, tenantId),
+          eq(tenantMemberships.status, 'active'),
+        ),
+      )
+      .limit(1);
+
+    if (!membership) return null;
+
+    // All role assignments for this membership, time-filtered in JS exactly as
+    // the previous implementation did.
+    const assignments = await db
+      .select({
+        roleId: roleAssignments.roleId,
+        startDate: roleAssignments.startDate,
+        endDate: roleAssignments.endDate,
+      })
+      .from(roleAssignments)
+      .where(eq(roleAssignments.tenantMembershipId, membership.id));
+
+    const validAssignments = assignments.filter((a) => {
+      if (new Date(a.startDate) > now) return false;
+      if (a.endDate && new Date(a.endDate) < now) return false;
+      return true;
+    });
+
+    if (validAssignments.length === 0) {
+      return {
+        roleNames: [],
+        permissionCodes: [],
+        activeWorkspace: resolveActiveWorkspace([], membership.activeWorkspace),
+      };
+    }
+
+    const roleIds = validAssignments.map((a) => a.roleId);
+
+    const [roleRows, permissionRows] = await Promise.all([
+      db.select({ name: roles.name }).from(roles).where(inArray(roles.id, roleIds)),
+      db
+        .select({ permissionCode: rolePermissions.permissionCode })
+        .from(rolePermissions)
+        .where(inArray(rolePermissions.roleId, roleIds)),
+    ]);
+
+    return {
+      roleNames: Array.from(new Set(roleRows.map((r) => r.name))),
+      permissionCodes: Array.from(
+        new Set(permissionRows.map((p) => p.permissionCode as PermissionCode)),
+      ),
+      activeWorkspace: resolveActiveWorkspace(
+        roleRows.map((r) => r.name),
+        membership.activeWorkspace,
+      ),
+    };
+  },
+);
+
+/**
  * Check whether the current user has a specific permission within their
  * active tenant context. Returns true/false.
  */
@@ -144,126 +232,26 @@ export async function hasPermission(
   session: AuthSession,
   permissionCode: PermissionCode,
 ): Promise<boolean> {
-  const db = getDb();
-
-  // Find the user's tenant membership
-  const [membership] = await db
-    .select({ id: tenantMemberships.id })
-    .from(tenantMemberships)
-    .where(
-      and(
-        eq(tenantMemberships.userId, session.user.id),
-        eq(tenantMemberships.tenantId, session.tenantId),
-        eq(tenantMemberships.status, 'active'),
-      ),
-    )
-    .limit(1);
-
-  if (!membership) return false;
-
-  // Get all active role assignments for this membership (respecting time bounds)
-  const now = new Date();
-  const assignments = await db
-    .select({
-      roleId: roleAssignments.roleId,
-      startDate: roleAssignments.startDate,
-      endDate: roleAssignments.endDate,
-    })
-    .from(roleAssignments)
-    .where(and(eq(roleAssignments.tenantMembershipId, membership.id)));
-
-  // Filter by time bounds: startDate must be <= now, endDate must be null or >= now
-  const validAssignments = assignments.filter((a) => {
-    if (new Date(a.startDate) > now) {
-      return false;
-    }
-    if (a.endDate && new Date(a.endDate) < now) {
-      return false;
-    }
-    return true;
-  });
-
-  if (validAssignments.length === 0) return false;
-
-  const roleIds = validAssignments.map((a) => a.roleId);
-
-  // Get all permission codes for these roles
-  const permissions = await db
-    .select({ permissionCode: rolePermissions.permissionCode })
-    .from(rolePermissions)
-    .where(inArray(rolePermissions.roleId, roleIds));
-
-  const assigned = permissions.some((p) => p.permissionCode === permissionCode);
-  if (!assigned) return false;
-  const workspace = await getSessionWorkspace(session);
-  return isPermissionAvailableInWorkspace(permissionCode, workspace.activeWorkspace);
+  const context = await loadRoleContext(session.user.id, session.tenantId);
+  if (!context) return false;
+  if (!context.permissionCodes.includes(permissionCode)) return false;
+  return isPermissionAvailableInWorkspace(permissionCode, context.activeWorkspace);
 }
 
 /** Resolve every active permission for the current tenant session. */
 export async function getSessionPermissions(session: AuthSession): Promise<PermissionCode[]> {
-  const db = getDb();
-  const now = new Date();
-  const rows = await db
-    .select({
-      permissionCode: rolePermissions.permissionCode,
-      startDate: roleAssignments.startDate,
-      endDate: roleAssignments.endDate,
-    })
-    .from(roleAssignments)
-    .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
-    .innerJoin(rolePermissions, eq(rolePermissions.roleId, roleAssignments.roleId))
-    .where(
-      and(
-        eq(tenantMemberships.userId, session.user.id),
-        eq(tenantMemberships.tenantId, session.tenantId),
-        eq(tenantMemberships.status, 'active'),
-      ),
-    );
-
-  const assignedPermissions = Array.from(
-    new Set(
-      rows
-        .filter((row) => row.startDate <= now && (!row.endDate || row.endDate >= now))
-        .map((row) => row.permissionCode as PermissionCode),
-    ),
-  );
-  const workspace = await getSessionWorkspace(session);
-  return assignedPermissions.filter((permission) =>
-    isPermissionAvailableInWorkspace(permission, workspace.activeWorkspace),
+  const context = await loadRoleContext(session.user.id, session.tenantId);
+  if (!context) return [];
+  return context.permissionCodes.filter((permission) =>
+    isPermissionAvailableInWorkspace(permission, context.activeWorkspace),
   );
 }
 
 /** Resolve every currently active substantive or acting role name. */
 export async function getSessionRoleNames(session: AuthSession): Promise<string[]> {
-  const db = getDb();
-  const now = new Date();
-  const rows = await db
-    .select({
-      roleName: roles.name,
-      startDate: roleAssignments.startDate,
-      endDate: roleAssignments.endDate,
-      activeWorkspace: tenantMemberships.activeWorkspace,
-    })
-    .from(roleAssignments)
-    .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
-    .innerJoin(roles, eq(roles.id, roleAssignments.roleId))
-    .where(
-      and(
-        eq(tenantMemberships.userId, session.user.id),
-        eq(tenantMemberships.tenantId, session.tenantId),
-        eq(tenantMemberships.status, 'active'),
-      ),
-    );
-
-  const roleNames = Array.from(
-    new Set(
-      rows
-        .filter((row) => row.startDate <= now && (!row.endDate || row.endDate >= now))
-        .map((row) => row.roleName),
-    ),
-  );
-  const activeWorkspace = resolveActiveWorkspace(roleNames, rows[0]?.activeWorkspace);
-  return [...roleNames, `workspace:${activeWorkspace}`];
+  const context = await loadRoleContext(session.user.id, session.tenantId);
+  if (!context) return [`workspace:${resolveActiveWorkspace([], undefined)}`];
+  return [...context.roleNames, `workspace:${context.activeWorkspace}`];
 }
 
 /** Resolve the user's eligible and currently selected workspace. */
