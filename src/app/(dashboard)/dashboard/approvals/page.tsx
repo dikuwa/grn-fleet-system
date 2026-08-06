@@ -24,8 +24,11 @@ import {
   XCircle,
 } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
+import type { PermissionCode } from '@/lib/permissions';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { getSessionPermissions } from '@/lib/auth-helpers';
+import { activeApprovalVisibleTo } from '@/lib/approval-queue';
 import Link from 'next/link';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
@@ -46,6 +49,7 @@ async function fetchApprovals(
   sp: Record<string, string | undefined>,
   tenantId: string,
   userId: string,
+  permissionCodes: readonly PermissionCode[],
 ) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
@@ -65,7 +69,10 @@ async function fetchApprovals(
               and ${workflowActions.actorUserId} = ${userId}
           )`,
         )!
-      : and(eq(workflowInstances.status, 'active'), eq(workflowSteps.assignedUserId, userId))!,
+      : and(
+          eq(workflowInstances.status, 'active'),
+          activeApprovalVisibleTo(userId, permissionCodes),
+        )!,
   ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
@@ -183,7 +190,8 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
 
   let result: Awaited<ReturnType<typeof fetchApprovals>>;
   try {
-    result = await fetchApprovals(sp, session.tenantId, session.user.id);
+    const permissionCodes = await getSessionPermissions(session);
+    result = await fetchApprovals(sp, session.tenantId, session.user.id, permissionCodes);
   } catch (error) {
     console.error('Approvals query failed:', error);
     return (

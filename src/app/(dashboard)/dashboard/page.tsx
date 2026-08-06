@@ -30,8 +30,10 @@ import {
   workflowSteps,
 } from '@/db/schema';
 import { getServerSession } from '@/lib/session';
-import { getSessionWorkspace } from '@/lib/auth-helpers';
+import { getSessionPermissions, getSessionWorkspace } from '@/lib/auth-helpers';
 import { getWorkspaceNavigation } from '@/lib/dashboard-access';
+import { activeApprovalVisibleTo } from '@/lib/approval-queue';
+import type { PermissionCode } from '@/lib/permissions';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -48,6 +50,7 @@ async function getWorkspaceMetrics(
   tenantId: string,
   userId: string,
   workspace: WorkspaceId,
+  permissionCodes: readonly PermissionCode[],
 ): Promise<Metric[]> {
   const db = getDb();
   const count = sql<number>`count(*)`;
@@ -391,7 +394,7 @@ async function getWorkspaceMetrics(
             and(
               eq(transportRequests.tenantId, tenantId),
               eq(workflowInstances.status, 'active'),
-              eq(workflowSteps.assignedUserId, userId),
+              activeApprovalVisibleTo(userId, permissionCodes),
             ),
           ),
       ),
@@ -437,10 +440,12 @@ export default async function DashboardPage() {
   }
 
   const workspaceContext = await getSessionWorkspace(session);
+  const permissionCodes = await getSessionPermissions(session);
   const metrics = await getWorkspaceMetrics(
     session.tenantId,
     session.user.id,
     workspaceContext.activeWorkspace,
+    permissionCodes,
   );
   const unreadActivity = await getUnreadNotificationCount(
     session.tenantId,
