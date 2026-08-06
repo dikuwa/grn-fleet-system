@@ -1,6 +1,12 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { notifications, roleAssignments, roles, tenantMemberships } from '@/db/schema';
+import {
+  notifications,
+  roleAssignments,
+  rolePermissions,
+  roles,
+  tenantMemberships,
+} from '@/db/schema';
 import type { WorkspaceId } from '@/lib/workspaces';
 
 export type NotificationCategory =
@@ -48,6 +54,51 @@ export function buildNotificationDedupeKey(input: {
     input.workflowStage ?? 'none',
     input.eventVersion ?? 1,
   ].join(':');
+}
+
+/**
+ * Resolve every active user in a tenant whose current role assignments grant
+ * the given permission code.
+ *
+ * Mirrors the role-assignment join in `getSessionPermissions` (role
+ * assignment → role_permissions join, active membership, start/end date
+ * window) but tenant-wide rather than for a single session. Note it does not
+ * apply the session-level workspace filter — reminders intentionally reach
+ * every active holder of the permission, not only users whose currently
+ * active workspace surfaces the step. Used to fan out workflow
+ * reminders/escalations to every user who can act on a permission-routed
+ * (unassigned) step.
+ */
+export async function resolvePermissionRecipients(
+  tenantId: string,
+  permissionCode: string,
+): Promise<string[]> {
+  const now = new Date();
+  const db = getDb();
+  const rows = await db
+    .select({
+      userId: tenantMemberships.userId,
+      startDate: roleAssignments.startDate,
+      endDate: roleAssignments.endDate,
+    })
+    .from(roleAssignments)
+    .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+    .innerJoin(rolePermissions, eq(rolePermissions.roleId, roleAssignments.roleId))
+    .where(
+      and(
+        eq(tenantMemberships.tenantId, tenantId),
+        eq(tenantMemberships.status, 'active'),
+        eq(rolePermissions.permissionCode, permissionCode),
+      ),
+    );
+
+  return Array.from(
+    new Set(
+      rows
+        .filter((row) => row.startDate <= now && (!row.endDate || row.endDate >= now))
+        .map((row) => row.userId),
+    ),
+  );
 }
 
 export async function resolveActiveRoleRecipients(tenantId: string, roleNames: readonly string[]) {

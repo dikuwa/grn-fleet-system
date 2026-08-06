@@ -543,19 +543,11 @@ export async function POST(req: NextRequest) {
     // Initialise the workflow engine for this request
     const engine = new WorkflowEngine({ db });
     const wfResult = await engine.initializeForRequest(request.id, tenantId);
-    if (wfResult.ok) {
-      // Schedule reminders using the correct workflow instance ID
-      try {
-        const { scheduleStepReminder, scheduleStepEscalation } =
-          await import('@/lib/inngest/client');
-        await Promise.all([
-          scheduleStepReminder(wfResult.instance.id, 1, 2),
-          scheduleStepEscalation(wfResult.instance.id, 1, 4),
-        ]);
-      } catch {
-        // Inngest is optional — silently skip if not configured
-      }
-    } else {
+    // initializeForRequest schedules the first step's reminder + escalation
+    // timers internally (with each step's configured hours), so no separate
+    // Inngest call is needed here — resubmits and public submissions flow
+    // through the same single path.
+    if (!wfResult.ok) {
       console.warn('[transport-requests] Workflow initialisation failed:', wfResult.error);
       // Non-blocking — the request is still created
     }

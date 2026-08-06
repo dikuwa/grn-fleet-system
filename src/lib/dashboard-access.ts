@@ -240,7 +240,6 @@ export const routeRegistry: readonly RouteDefinition[] = [
     section: 'Approvals',
     workspaces: [W.APPROVER, W.TRANSPORT_ADMIN],
     access: { [W.APPROVER]: assignedManage(APPROVE), [W.TRANSPORT_ADMIN]: assignedManage(APPROVE) },
-    badgeQuery: 'approvals:assigned',
     tenantScoped: true,
     order: 100,
     navigationVisible: true,

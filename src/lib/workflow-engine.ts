@@ -44,7 +44,11 @@ import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { resolveRoleHolder } from '@/lib/employee-lifecycle';
 import { provisionTripAuthority, setAuthorityStatus } from '@/lib/trip-authority';
 import { userProfiles } from '@/db/schema/auth';
-import { createScopedNotifications, resolveActionNotifications } from '@/lib/notification-service';
+import {
+  createScopedNotifications,
+  resolveActionNotifications,
+  resolvePermissionRecipients,
+} from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 
 // ---------------------------------------------------------------------------
@@ -291,6 +295,10 @@ export class WorkflowEngine {
 
     const resolvedSteps = await this.getDefinitionSteps(instance);
     const firstStep = resolvedSteps.find((step) => step.stepOrder === 1);
+    // Schedule the first step's reminder + escalation timers (the caller no
+    // longer hardcodes step 1 at request creation — resubmits and public
+    // submissions get the same timers through this single path).
+    if (firstStep) this.scheduleStepTimers(instance.id, firstStep);
     if (firstStep?.assignedUserId) {
       await createScopedNotifications({
         tenantId,
@@ -794,6 +802,9 @@ export class WorkflowEngine {
       .set({ currentStepOrder: nextStepOrder, updatedAt: new Date() })
       .where(eq(workflowInstances.id, instance.id));
 
+    // Chain the reminder + escalation timers for the step we just entered.
+    this.scheduleStepTimers(instance.id, nextStep);
+
     await this.db
       .update(transportRequests)
       .set({ status: businessStatus, updatedAt: new Date() })
@@ -983,6 +994,67 @@ export class WorkflowEngine {
   /**
    * Get the current step and full workflow status for display purposes.
    */
+  /**
+   * Resolve the users who can currently act on a workflow's active step.
+   *
+   * Mirrors the approvals queue visibility model (`activeApprovalVisibleTo`)
+   * and the action-time authorization gates:
+   *   1. A runtime-resolved explicit holder (delegation / acting role) wins.
+   *   2. The acknowledge step is never pre-assigned in the DB — the allocated
+   *      driver is resolved dynamically from the vehicle allocation.
+   *   3. Otherwise every active user holding the step's required permission
+   *      (the population the queue's permission branch surfaces the step to).
+   *
+   * Used by the Inngest reminder/escalation jobs so permission-routed steps
+   * are not left without any recipient.
+   */
+  async getCurrentStepRecipients(instanceId: string, tenantId: string): Promise<string[]> {
+    const status = await this.getWorkflowStatus(instanceId);
+    const currentStep = status?.currentStep;
+    if (!currentStep) return [];
+
+    if (currentStep.assignedUserId) return [currentStep.assignedUserId];
+
+    if (currentStep.actionType === 'acknowledge') {
+      const [allocated] = await this.db
+        .select({ userId: employees.userId })
+        .from(vehicleAllocations)
+        .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
+        .where(eq(vehicleAllocations.requestId, status.instance.requestId))
+        .orderBy(vehicleAllocations.createdAt)
+        .limit(1);
+      return allocated?.userId ? [allocated.userId] : [];
+    }
+
+    if (currentStep.requiredPermission) {
+      return resolvePermissionRecipients(tenantId, currentStep.requiredPermission);
+    }
+
+    return [];
+  }
+
+  /**
+   * Schedule the Inngest reminder + escalation timers for a workflow step.
+   * Fire-and-forget and best-effort: Inngest is optional, and a slow or
+   * unconfigured client must never block an action/creation request.
+   */
+  private scheduleStepTimers(
+    instanceId: string,
+    step: { stepOrder: number; reminderAfterHours?: number | null; escalationAfterHours?: number | null },
+  ) {
+    void (async () => {
+      try {
+        const { scheduleStepReminder, scheduleStepEscalation } = await import('@/lib/inngest/client');
+        await Promise.all([
+          scheduleStepReminder(instanceId, step.stepOrder, step.reminderAfterHours ?? 2),
+          scheduleStepEscalation(instanceId, step.stepOrder, step.escalationAfterHours ?? 4),
+        ]);
+      } catch {
+        // Inngest is optional — silently skip if not configured
+      }
+    })();
+  }
+
   async getWorkflowStatus(instanceId: string) {
     const [instance] = await this.db
       .select()

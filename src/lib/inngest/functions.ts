@@ -12,10 +12,11 @@
 
 import { inngest, Events } from './client';
 import { getDb } from '@/db';
-import { workflowInstances, workflowActions, workflowSteps } from '@/db/schema/workflows';
+import { workflowInstances, workflowActions } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { eq, and } from 'drizzle-orm';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
+import { WorkflowEngine } from '@/lib/workflow-engine';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 // ---------------------------------------------------------------------------
@@ -37,7 +38,6 @@ async function getInstanceWithTenant(workflowInstanceId: string): Promise<{
   requestId: string;
   tenantId: string;
   currentStepOrder: number;
-  assignedUserId: string | null;
   requesterUserId: string | null;
 } | null> {
   const db = getDb();
@@ -47,22 +47,33 @@ async function getInstanceWithTenant(workflowInstanceId: string): Promise<{
       requestId: workflowInstances.requestId,
       currentStepOrder: workflowInstances.currentStepOrder,
       tenantId: transportRequests.tenantId,
-      assignedUserId: workflowSteps.assignedUserId,
       requesterUserId: transportRequests.requesterUserId,
     })
     .from(workflowInstances)
     .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-    .leftJoin(
-      workflowSteps,
-      and(
-        eq(workflowSteps.definitionId, workflowInstances.definitionId),
-        eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
-      ),
-    )
     .where(eq(workflowInstances.id, workflowInstanceId))
     .limit(1);
 
   return row || null;
+}
+
+/**
+ * Resolve the users who can currently act on the workflow's active step.
+ * Uses the engine's runtime resolution (delegations, acting roles, the
+ * allocated driver for acknowledge steps, or every holder of the step's
+ * required permission) — mirroring the approvals queue visibility model.
+ */
+async function resolveCurrentStepRecipients(
+  workflowInstanceId: string,
+  tenantId: string,
+): Promise<string[]> {
+  try {
+    const engine = new WorkflowEngine({ db: getDb() });
+    return await engine.getCurrentStepRecipients(workflowInstanceId, tenantId);
+  } catch (err) {
+    console.warn('[inngest] Failed to resolve workflow step recipients:', err);
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,12 +172,13 @@ export const stepReminder = inngest
             return { skipped: true, reason: 'Step already completed' };
           }
 
-          if (!instance.assignedUserId) {
-            return { skipped: true, reason: 'Workflow step has no current assignee' };
+          const recipients = await resolveCurrentStepRecipients(workflowInstanceId, instance.tenantId);
+          if (recipients.length === 0) {
+            return { skipped: true, reason: 'No resolvable user holds the current step' };
           }
           const [notif] = await createScopedNotifications({
             tenantId: instance.tenantId,
-            recipientUserIds: [instance.assignedUserId],
+            recipientUserIds: recipients,
             category: 'reminder',
             eventType: 'approval_due_reminder',
             title: 'Workflow Action Reminder',
@@ -181,7 +193,7 @@ export const stepReminder = inngest
 
           const emailed = await emailUserIds({
             tenantId: instance.tenantId,
-            userIds: [instance.assignedUserId],
+            userIds: recipients,
             type: 'reminder',
             title: 'Workflow Action Reminder',
             body: `Step ${stepOrder} requires attention in workflow ${workflowInstanceId.slice(0, 8)}. Please review and take action.`,
@@ -189,7 +201,12 @@ export const stepReminder = inngest
             defaultName: 'Approver',
           });
 
-          return { sent: Boolean(notif), notificationId: notif?.id, emailed };
+          return {
+            sent: Boolean(notif),
+            notificationId: notif?.id,
+            emailed,
+            recipientCount: recipients.length,
+          };
         });
       },
     )
@@ -230,12 +247,13 @@ export const stepEscalation = inngest
             return { skipped: true, reason: 'Step already completed' };
           }
 
-          if (!instance.assignedUserId) {
-            return { skipped: true, reason: 'Workflow step has no current assignee' };
+          const recipients = await resolveCurrentStepRecipients(workflowInstanceId, instance.tenantId);
+          if (recipients.length === 0) {
+            return { skipped: true, reason: 'No resolvable user holds the current step' };
           }
           const [notif] = await createScopedNotifications({
             tenantId: instance.tenantId,
-            recipientUserIds: [instance.assignedUserId],
+            recipientUserIds: recipients,
             category: 'escalation',
             eventType: 'approval_overdue_escalation',
             title: '⚠️ Workflow Escalation',
@@ -251,7 +269,7 @@ export const stepEscalation = inngest
 
           const emailed = await emailUserIds({
             tenantId: instance.tenantId,
-            userIds: [instance.assignedUserId],
+            userIds: recipients,
             type: 'escalation',
             title: '⚠️ Workflow Escalation',
             body: `Step ${stepOrder} in workflow ${workflowInstanceId.slice(0, 8)} has exceeded its time limit. Immediate attention required.`,
@@ -259,7 +277,12 @@ export const stepEscalation = inngest
             defaultName: 'Approver',
           });
 
-          return { sent: Boolean(notif), notificationId: notif?.id, emailed };
+          return {
+            sent: Boolean(notif),
+            notificationId: notif?.id,
+            emailed,
+            recipientCount: recipients.length,
+          };
         });
       },
     )

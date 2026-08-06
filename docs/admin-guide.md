@@ -352,6 +352,8 @@ A request appears in your queue when its **current step** is:
 
 The engine resolves step holders at runtime (availability, delegations, dynamic drivers) without persisting them to the database, so the queue mirrors the same rules the action panel enforces: if you can act on a step, it appears in your queue.
 
+Reminder and escalation notifications follow the same rule. When a step is permission-routed, the reminder goes to **every user who can act on it**; for the acknowledgment step it goes to the **allocated driver** only. A new reminder and escalation timer is scheduled each time the workflow advances, using that step's own configured hours — so every step of a multi-step route is covered, not just the first.
+
 ### Driver Acknowledgment
 
 The final step of both workflows is the **Driver Acknowledgment** — the assigned driver must acknowledge the trip details and vehicle condition before departure.
@@ -506,8 +508,8 @@ When configured, Inngest runs scheduled background jobs:
 
 | Function | Schedule | Purpose |
 |----------|----------|---------|
-| **Step Reminder** | Before step deadline | Reminds users of pending approvals |
-| **Step Escalation** | After deadline | Escalates overdue steps to next authority |
+| **Step Reminder** | Before each step's deadline | Reminds the step's holders (assigned officer, permission holders, or the allocated driver) of pending approvals — chained automatically as the workflow advances |
+| **Step Escalation** | After each step's deadline | Escalates overdue steps to the same holders with high-priority, mandatory notifications |
 | **Approval Completed** | On action | Sends notification on approval/rejection |
 | **Vehicle Licence Expiry** | Daily | Checks and alerts on vehicle licence expiry |
 | **Driver Licence Expiry** | Daily | Checks and alerts on driver licence expiry |
