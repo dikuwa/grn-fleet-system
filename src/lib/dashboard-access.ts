@@ -512,6 +512,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     tenantScoped: true,
     order: 190,
     navigationVisible: true,
+    badgeQuery: 'inspections:assigned',
   },
   {
     id: 'fleet-new',
@@ -737,6 +738,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     tenantScoped: true,
     order: 271,
     navigationVisible: true,
+    badgeQuery: 'licences:pending-verification',
   },
   {
     id: 'documents',

@@ -15,6 +15,8 @@ const BADGE_ENDPOINTS: Record<string, string> = {
   'trips:assigned-attention': '/api/trips/attention',
   'approvals:assigned': '/api/approvals/attention',
   'requests:drafts': '/api/requests/attention',
+  'inspections:assigned': '/api/inspections/attention',
+  'licences:pending-verification': '/api/drivers/licences/attention',
 };
 
 /** How often to re-poll for fresh counts while the tab is visible. */

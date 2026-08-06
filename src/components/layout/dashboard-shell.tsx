@@ -75,6 +75,7 @@ export function DashboardShell({
           roleNames={roleNames}
           activeWorkspace={activeWorkspace}
           eligibleWorkspaces={eligibleWorkspaces}
+          attentionBadgeCounts={badgeCounts}
         />
 
         <main className="page-enter mx-auto max-w-[1440px] min-w-0 px-3 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] min-[360px]:px-4 sm:py-6 md:px-6 md:pb-6 lg:px-8">
