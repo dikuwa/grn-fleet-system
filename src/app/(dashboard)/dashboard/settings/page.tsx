@@ -18,6 +18,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
+import { fetchWithRetry } from '@/lib/fetch-with-retry';
 
 export default function SettingsPage() {
   const { data: session } = useSession();
@@ -53,7 +54,7 @@ export default function SettingsPage() {
     if (!session) return;
     let cancelled = false;
 
-    fetch('/api/settings')
+    fetchWithRetry('/api/settings')
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;

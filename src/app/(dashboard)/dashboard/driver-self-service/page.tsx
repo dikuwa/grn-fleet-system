@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { LicenceUploadPanel } from '@/app/(dashboard)/dashboard/staff/[id]/LicenceUploadPanel';
+import { fetchWithRetry } from '@/lib/fetch-with-retry';
 
 interface DriverInfo {
   id: string;
@@ -88,9 +89,9 @@ export default function DriverSelfServicePage() {
     setError(null);
     try {
       const [driverRes, tripsRes, notifRes] = await Promise.all([
-        fetch('/api/drivers/me').catch(() => null),
-        fetch('/api/trips?driver_assigned=true&limit=10'),
-        fetch('/api/notifications?limit=5'),
+        fetchWithRetry('/api/drivers/me').catch(() => null),
+        fetchWithRetry('/api/trips?driver_assigned=true&limit=10'),
+        fetchWithRetry('/api/notifications?limit=5'),
       ]);
 
       if (driverRes?.ok) {

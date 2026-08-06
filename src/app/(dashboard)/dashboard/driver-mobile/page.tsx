@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { statusConfig } from '@/lib/request-status';
+import { fetchWithRetry } from '@/lib/fetch-with-retry';
 import {
   Gauge,
   ClipboardCheck,
@@ -62,7 +63,7 @@ export default function DriverMobileDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/trips?driver_assigned=true&limit=20');
+      const res = await fetchWithRetry('/api/trips?driver_assigned=true&limit=20');
       if (!res.ok) throw new Error('Failed to load trips');
       const json = await res.json();
       const tripsList = json.trips || json.data?.trips || json.rows || json.data || [];
