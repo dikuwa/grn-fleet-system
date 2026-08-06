@@ -46,12 +46,20 @@ test.describe('Regional Trip Workflow', () => {
   });
 
   test('dashboard loads with key metrics', async ({ page }) => {
+    // The dashboard h1 is the active workspace label (never the literal text
+    // "Dashboard") and fleet pages belong to the transport workspace.
+    await page.context().clearCookies();
+    await signInAndSetCookie(page, 'transport.admin@kavangoeast.test');
     await page.goto('/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await expect(page.locator('h1:has-text("Dashboard")').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('h1').first()).toContainText(/Transport Administration|Active requests/, {
+      timeout: 20000,
+    });
     await expect(page.locator('[class*="tabular-nums"]').first()).toBeAttached({ timeout: 15000 });
   });
 
   test('can view fleet list with active vehicles', async ({ page }) => {
+    await page.context().clearCookies();
+    await signInAndSetCookie(page, 'transport.admin@kavangoeast.test');
     await page.goto('/dashboard/fleet', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Fleet")').first()).toBeVisible({ timeout: 20000 });
   });
@@ -130,6 +138,9 @@ test.describe('Regional Trip Workflow', () => {
   });
 
   test('maintenance list page loads', async ({ page }) => {
+    // Maintenance is a maintenance-officer workspace; the tenant admin has no access.
+    await page.context().clearCookies();
+    await signInAndSetCookie(page, 'maintenance@kavangoeast.test');
     await page.goto('/dashboard/maintenance', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Maintenance")').first()).toBeVisible({
       timeout: 20000,
@@ -137,6 +148,8 @@ test.describe('Regional Trip Workflow', () => {
   });
 
   test('reimbursements list page loads', async ({ page }) => {
+    await page.context().clearCookies();
+    await signInAndSetCookie(page, 'transport.admin@kavangoeast.test');
     await page.goto('/dashboard/reimbursements', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Reimbursements")').first()).toBeVisible({
       timeout: 20000,
@@ -144,6 +157,8 @@ test.describe('Regional Trip Workflow', () => {
   });
 
   test('vehicle defects page loads', async ({ page }) => {
+    await page.context().clearCookies();
+    await signInAndSetCookie(page, 'maintenance@kavangoeast.test');
     await page.goto('/dashboard/fleet/defects', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Defects")').first()).toBeVisible({ timeout: 20000 });
   });

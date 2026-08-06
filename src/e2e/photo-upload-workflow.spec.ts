@@ -45,10 +45,10 @@ function createTestImageBuffer(): Buffer {
 }
 
 async function signIn(page: Page) {
-  // Release Officer holds FILE_UPLOAD + INSPECTION_PERFORM and the
-  // /dashboard/inspections/new dashboard grant, so both the upload and the
-  // inspection-creation calls in this spec pass their authorisation gates.
-  const email = process.env.SEED_INSPECTOR_EMAIL || 'release.officer@kavangoeast.test';
+  // The Inspector holds FILE_UPLOAD + INSPECTION_PERFORM in BOTH its role
+  // definition and its inspections workspace policy, so the upload, fleet
+  // read, and inspection-creation calls in this spec all pass their gates.
+  const email = process.env.SEED_INSPECTOR_EMAIL || 'inspector@kavangoeast.test';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
   let res = await page.request.post(`${BASE}/api/auth/sign-in`, {

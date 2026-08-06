@@ -213,6 +213,16 @@ export function isPermissionAvailableInWorkspace(
       Permissions.DRIVER_ARCHIVE,
       Permissions.DRIVER_UPLOAD_LICENCE,
       Permissions.DRIVER_REVIEW_LICENCE,
+      // The Transport Administrator runs the driver roster and licence
+      // verification queue, which are backed by the staff APIs.  These staff
+      // grants must stay in lockstep with the role definition below.
+      Permissions.STAFF_MANAGE,
+      Permissions.STAFF_IMPORT,
+      Permissions.STAFF_VIEW,
+      Permissions.STAFF_LIFECYCLE_MANAGE,
+      Permissions.DELEGATION_MANAGE,
+      Permissions.LICENCE_VERIFY,
+      Permissions.SECURE_REQUEST_ASSIST,
       Permissions.USER_VIEW,
       Permissions.USER_MANAGE_STATUS,
       Permissions.FILE_VIEW,
@@ -362,6 +372,12 @@ export const RoleDefinitions = {
       Permissions.INSPECTION_VIEW,
       Permissions.TRIP_VIEW,
       Permissions.VEHICLE_VIEW,
+      // Inspectors perform official departure/return inspections and attach
+      // photo evidence, so they need the same file permissions as release
+      // officers. The inspections workspace policy already grants these —
+      // this keeps the role grant in lockstep with it.
+      Permissions.FILE_VIEW,
+      Permissions.FILE_UPLOAD,
     ],
   },
   MAINTENANCE_OFFICER: {

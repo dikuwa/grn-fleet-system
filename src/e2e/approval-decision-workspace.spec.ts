@@ -1,5 +1,12 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, request as playwrightRequest, test, type Page } from '@playwright/test';
+import {
+  expect,
+  request as playwrightRequest,
+  test,
+  type APIRequestContext,
+  type Browser,
+  type Page,
+} from '@playwright/test';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -21,31 +28,74 @@ async function login(email: string) {
   return api;
 }
 
-async function openFirstAssignedApproval(page: Page, knownPath?: string) {
-  if (knownPath) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await page.goto(knownPath, { waitUntil: 'load' });
-      const summary = page.getByRole('heading', { name: 'Request Summary' });
-      if (await summary.isVisible().catch(() => false)) {
-        await page.waitForTimeout(500);
-        return;
-      }
-      await page.waitForTimeout(500);
+/**
+ * Create a regional transport request through the public API and return its
+ * workflow instance id.  The seeded database never carries fixed approval
+ * request UUIDs, so the workspace tests must provision their own pending
+ * approval instead of navigating to a hardcoded id.
+ */
+async function createPendingApproval(requester: APIRequestContext) {
+  const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 3 * 60 * 60 * 1000);
+  const response = await requester.post('/api/transport-requests', {
+    headers: { 'idempotency-key': crypto.randomUUID() },
+    data: {
+      purpose: 'Approval decision workspace E2E field visit',
+      scope: 'regional',
+      activities: [
+        {
+          title: 'Field visit',
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+          estimatedKilometres: 180,
+        },
+      ],
+    },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  const created = await response.json();
+  const workflowId = created.request.workflowInstanceId as string;
+  expect(workflowId).toBeTruthy();
+  return workflowId;
+}
+
+async function approve(api: APIRequestContext, workflowId: string) {
+  const response = await api.post(`/api/approvals/${workflowId}/action`, {
+    data: { actionType: 'approved' },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+}
+
+async function openApproval(
+  browser: Browser,
+  email: string,
+  workflowId: string,
+  viewport: { width: number; height: number },
+  initScript?: () => void,
+) {
+  const api = await login(email);
+  const storageState = await api.storageState();
+  const context = await browser.newContext({ storageState, viewport });
+  if (initScript) await context.addInitScript(initScript);
+  const page = await context.newPage();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await page.goto(`/dashboard/approvals/${workflowId}`, { waitUntil: 'load' });
+    } catch {
+      // A stale server or transient SSR hiccup can abort the navigation;
+      // retry the goto itself rather than only re-checking the heading.
+      await page.waitForTimeout(750);
+      continue;
     }
-    await expect(page.getByRole('heading', { name: 'Request Summary' })).toBeVisible();
-    return;
+    const summary = page.getByRole('heading', { name: 'Request Summary' });
+    if (await summary.isVisible().catch(() => false)) {
+      await page.waitForTimeout(500);
+      return { api, context, page };
+    }
+    await page.waitForTimeout(500);
   }
-  await page.goto('/dashboard/approvals', { waitUntil: 'load' });
-  const link = page
-    .locator('a[href^="/dashboard/approvals/"]')
-    .filter({ hasText: /GRN\// })
-    .first();
-  await expect(link).toBeVisible();
-  const href = await link.getAttribute('href');
-  expect(href).toBeTruthy();
-  await page.goto(href!, { waitUntil: 'load' });
   await expect(page.getByRole('heading', { name: 'Request Summary' })).toBeVisible();
-  await page.waitForTimeout(500);
+  return { api, context, page };
 }
 
 async function expectNoPageOverflow(page: Page) {
@@ -59,15 +109,15 @@ async function expectNoPageOverflow(page: Page) {
 test('supervisor can review a complete decision workspace and contextual action panel on mobile', async ({
   browser,
 }) => {
-  const api = await login('supervisor@kavangoeast.test');
-  const context = await browser.newContext({
-    storageState: await api.storageState(),
-    viewport: { width: 390, height: 844 },
-  });
-  const page = await context.newPage();
-  await openFirstAssignedApproval(
-    page,
-    '/dashboard/approvals/e71bed4c-0132-4c43-b50b-440b3c0554d0',
+  const requester = await login('requester@kavangoeast.test');
+  const workflowId = await createPendingApproval(requester);
+  await requester.dispose();
+
+  const { api, context, page } = await openApproval(
+    browser,
+    'supervisor@kavangoeast.test',
+    workflowId,
+    { width: 390, height: 844 },
   );
   await expectNoPageOverflow(page);
   const mobileAction = page.getByTestId('mobile-approval-action');
@@ -98,6 +148,9 @@ test('supervisor can review a complete decision workspace and contextual action 
   await expect(page.getByRole('heading', { name: 'Workflow Timeline' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Action History' })).toBeVisible();
 
+  // The axe scan scopes to the workspace testid; assert it is actually in the
+  // DOM first so an empty include set cannot vacuously pass the scan.
+  await expect(page.getByTestId('approval-decision-workspace')).toBeVisible();
   const axe = await new AxeBuilder({ page })
     .include('[data-testid="approval-decision-workspace"]')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
@@ -137,16 +190,22 @@ test('supervisor can review a complete decision workspace and contextual action 
 });
 
 test('decision workspace remains contained on desktop dark mode', async ({ browser }) => {
-  const api = await login('transport.admin@kavangoeast.test');
-  const context = await browser.newContext({
-    storageState: await api.storageState(),
-    viewport: { width: 1440, height: 900 },
-  });
-  const page = await context.newPage();
-  await page.addInitScript(() => localStorage.setItem('govfleet-theme', 'dark'));
-  await openFirstAssignedApproval(
-    page,
-    '/dashboard/approvals/3cdf9ab3-b507-42a9-a296-85b310d39c4e',
+  const requester = await login('requester@kavangoeast.test');
+  const workflowId = await createPendingApproval(requester);
+  await requester.dispose();
+
+  // Advance the request past Supervisor Approval so it sits at Transport
+  // Review — the step the transport administrator decides.
+  const supervisor = await login('supervisor@kavangoeast.test');
+  await approve(supervisor, workflowId);
+  await supervisor.dispose();
+
+  const { api, context, page } = await openApproval(
+    browser,
+    'transport.admin@kavangoeast.test',
+    workflowId,
+    { width: 1440, height: 900 },
+    () => localStorage.setItem('govfleet-theme', 'dark'),
   );
   await expect(page.locator('html')).toHaveClass(/dark/);
   await page.getByRole('button', { name: 'Expand request details' }).click();
@@ -156,6 +215,8 @@ test('decision workspace remains contained on desktop dark mode', async ({ brows
     .evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length);
   expect(detailColumns).toBe(5);
   await expectNoPageOverflow(page);
+  // Same guard as the supervisor test: confirm the axe include target exists.
+  await expect(page.getByTestId('approval-decision-workspace')).toBeVisible();
   const axe = await new AxeBuilder({ page })
     .include('[data-testid="approval-decision-workspace"]')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])

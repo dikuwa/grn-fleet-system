@@ -2,12 +2,12 @@
 
 import { Button } from '@/components/ui/button';
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/input';
 import { useToast } from '@/lib/use-toast';
@@ -38,7 +38,11 @@ export function DelegationRevokeButton({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Revoke failed');
-      toast({ title: 'Delegation revoked', description: 'The acting appointment has ended.', variant: 'success' });
+      toast({
+        title: 'Delegation revoked',
+        description: 'The acting appointment has ended.',
+        variant: 'success',
+      });
       setOpen(false);
       setReason('');
       router.refresh();
@@ -80,12 +84,7 @@ export function DelegationRevokeButton({
             <Button variant="secondary" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              loading={busy}
-              disabled={!reason.trim()}
-              onClick={revoke}
-            >
+            <Button variant="destructive" loading={busy} disabled={!reason.trim()} onClick={revoke}>
               <Ban className="h-4 w-4" /> Revoke appointment
             </Button>
           </DialogFooter>

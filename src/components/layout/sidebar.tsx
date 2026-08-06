@@ -98,7 +98,7 @@ export function Sidebar({ collapsed, onToggle, activeWorkspace }: SidebarProps) 
   const navGroups = getNavGroups(activeWorkspace);
 
   useEffect(() => {
-    if (activeWorkspace !== 'driver') return;
+    if (activeWorkspace !== 'driver' && activeWorkspace !== 'transport_admin') return;
     fetch('/api/trips/attention')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -383,6 +383,12 @@ export function MobileBottomNav({
   onMore: () => void;
 }) {
   const pathname = usePathname();
+  // Only render quick links the current workspace can actually navigate to.
+  // The desktop sidebar derives its links from getWorkspaceNavigation; the
+  // bottom nav must not leak denied routes into the DOM (e.g. platform admins
+  // must not see /dashboard/requests, which is a tenant-only route).
+  const navPaths = new Set(getWorkspaceNavigation(activeWorkspace).map((item) => item.path));
+  const canNavigateTo = (path: string) => navPaths.has(path);
   const primary =
     activeWorkspace === 'driver'
       ? { href: '/dashboard/driver-mobile', label: 'Trips', icon: Gauge }
@@ -391,8 +397,10 @@ export function MobileBottomNav({
         : { href: '/dashboard/requests', label: 'Requests', icon: FileText };
   const items = [
     { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
-    primary,
-    { href: '/dashboard/requests/new', label: 'New', icon: FilePlus2 },
+    ...(canNavigateTo(primary.href) ? [primary] : []),
+    ...(canNavigateTo('/dashboard/requests/new')
+      ? [{ href: '/dashboard/requests/new', label: 'New', icon: FilePlus2 }]
+      : []),
     { href: '/dashboard/notifications', label: 'Alerts', icon: Bell },
   ];
 

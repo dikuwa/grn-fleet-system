@@ -12,9 +12,10 @@ import {
   transportRequests,
   trips,
   vehicles,
+  vehicleAllocations,
   vehicleDefects,
 } from '@/db/schema';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
 import { DEPARTURE_INSPECTION_ITEMS, RETURN_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -100,10 +101,19 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     const admin = await login(accounts.tenantAdmin);
     const regionResponse = await admin.get('/api/regions');
     expect(regionResponse.status()).toBe(200);
-    const fleet = await admin.get('/api/fleet?limit=100');
+    // Role narrowing: tenant administration no longer includes operational
+    // transport workspaces, so the fleet API denies the tenant admin outright.
+    const adminFleet = await admin.get('/api/fleet?limit=100');
+    expect(adminFleet.status()).toBe(403);
+    await admin.dispose();
+
+    // The operational fleet register belongs to Transport Administration. It
+    // must not expose vehicles belonging to a different tenant.
+    const transport = await login(accounts.transport);
+    const fleet = await transport.get('/api/fleet?limit=100');
     expect(fleet.status()).toBe(200);
     expect(JSON.stringify(await fleet.json())).not.toContain('ZRC-ISOLATION-001');
-    await admin.dispose();
+    await transport.dispose();
 
     const requesterUi = await openAs(browser, accounts.requester, '/dashboard', {
       width: 390,
@@ -176,6 +186,24 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     expect(availableVehicles.length).toBeGreaterThanOrEqual(1);
     const vehicleId = availableVehicles[0].id as string;
 
+    // A previous attempt of this serial test (or an earlier spec in the same
+    // CI run) may have left an active allocation on this vehicle for an
+    // overlapping window — seed-e2e only cleans stale data at server start,
+    // not between retries.  Cancel any such allocation so the retry starts
+    // from a clean slate instead of 409ing on its own leftovers.
+    const db = getDb();
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'cancelled' })
+      .where(
+        and(
+          eq(vehicleAllocations.vehicleId, vehicleId),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+          lt(vehicleAllocations.startAt, end),
+          gt(vehicleAllocations.endAt, start),
+        ),
+      );
+
     const allocationResponse = await transport.post('/api/allocations', {
       data: { requestId, vehicleId, startDate: start.toISOString(), endDate: end.toISOString() },
     });
@@ -190,6 +218,20 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     const driverEmployeeId = driverRows.find(
       (row: { employeeNumber: string }) => row.employeeNumber === 'KERC008',
     ).id as string;
+    // The driver-overlap check is keyed on the driver, not the vehicle: a
+    // previous attempt could have assigned KERC008 to a different vehicle for
+    // this window, which would 409 this assignment.  Cancel those leftovers.
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'cancelled' })
+      .where(
+        and(
+          eq(vehicleAllocations.driverEmployeeId, driverEmployeeId),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+          lt(vehicleAllocations.startAt, end),
+          gt(vehicleAllocations.endAt, start),
+        ),
+      );
     const driverAssignment = await transport.patch(`/api/allocations/${allocationId}/driver`, {
       data: { driverEmployeeId },
     });
@@ -328,7 +370,6 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     expect(close.status(), await close.text()).toBe(200);
     expect((await auditor.get('/api/audit?limit=100')).status()).toBe(200);
 
-    const db = getDb();
     const [savedRequest] = await db
       .select()
       .from(transportRequests)
