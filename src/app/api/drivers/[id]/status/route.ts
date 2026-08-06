@@ -54,6 +54,7 @@ export async function PATCH(
         id: employees.id,
         isDriver: employees.isDriver,
         employmentStatus: employees.employmentStatus,
+        availabilityStatus: employees.availabilityStatus,
         firstName: employees.firstName,
         lastName: employees.lastName,
       })
@@ -97,6 +98,14 @@ export async function PATCH(
           updatedAt: new Date(),
         })
         .where(eq(driverProfiles.id, profile.id));
+
+      // Keep the staff record in lockstep — a suspended driver is unavailable.
+      // Only swap when currently available so a real leave isn't clobbered.
+      if (employee.availabilityStatus === 'available') {
+        await db.update(employees)
+          .set({ availabilityStatus: 'temporarily_unavailable', updatedAt: new Date() })
+          .where(eq(employees.id, employee.id));
+      }
 
       // If a document was provided, attach it as supporting evidence
       if (documentKey) {
@@ -167,6 +176,14 @@ export async function PATCH(
           updatedAt: new Date(),
         })
         .where(eq(driverProfiles.id, profile.id));
+
+      // Undo the availability swap made on suspension (only if the status is
+      // still the suspension-induced one).
+      if (employee.availabilityStatus === 'temporarily_unavailable') {
+        await db.update(employees)
+          .set({ availabilityStatus: 'available', updatedAt: new Date() })
+          .where(eq(employees.id, employee.id));
+      }
 
       // Reactivate licences that were active before suspension
       await db

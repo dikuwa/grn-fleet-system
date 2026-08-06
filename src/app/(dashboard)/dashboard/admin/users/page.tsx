@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
-import { getEmployeeStatusDisplay } from '@/lib/employee-status';
+import { getAccountStatusDisplay, getEmployeeStatusDisplay } from '@/lib/employee-status';
 
 interface TenantUser {
   id: string;
@@ -796,7 +796,25 @@ export default function AdminUsersPage() {
         <Card>
           <CardContent className="p-0">
             <div className="divide-border divide-y">
-              {users.map((u) => (
+              {users.map((u) => {
+                // Account badge — labelled/variant via the shared status model so
+                // it never renders a raw lowercase value like "active".
+                const accountDisplay =
+                  u.tenantStatus === 'access_removed'
+                    ? { label: 'Removed', variant: 'cancelled' as const }
+                    : u.tenantStatus === 'pending'
+                      ? { label: 'Pending', variant: 'pending' as const }
+                      : getAccountStatusDisplay(u.tenantStatus);
+                const employeeDisplay = u.employee
+                  ? getEmployeeStatusDisplay(u.employee.employmentStatus)
+                  : null;
+                // Skip the linked-staff badge when it duplicates the account
+                // badge (e.g. an active account + active staff = two "Active"
+                // labels). Show it only when it adds information — e.g.
+                // archived/inactive staff behind an otherwise active account.
+                const showEmployeeStatus =
+                  employeeDisplay !== null && employeeDisplay.canonical !== 'active';
+                return (
                 <div
                   key={u.id}
                   className="hover:bg-muted/50 flex cursor-pointer items-center justify-between px-5 py-3.5 transition-colors"
@@ -811,21 +829,8 @@ export default function AdminUsersPage() {
                         <span className="text-ink-950 truncate text-sm font-medium">
                           {u.name || 'Unnamed'}
                         </span>
-                        <Badge
-                          variant={
-                            u.tenantStatus === 'active'
-                              ? 'success'
-                              : u.tenantStatus === 'suspended'
-                                ? 'error'
-                                : u.tenantStatus === 'access_removed'
-                                  ? 'cancelled'
-                                  : 'pending'
-                          }
-                          size="sm"
-                        >
-                          {u.tenantStatus === 'access_removed'
-                            ? 'Removed'
-                            : u.tenantStatus}
+                        <Badge variant={accountDisplay.variant} size="sm">
+                          {accountDisplay.label}
                         </Badge>
                       </div>
                       <div className="mt-0.5 flex items-center gap-2">
@@ -840,12 +845,11 @@ export default function AdminUsersPage() {
                           </span>
                           <span className="text-ink-400">·</span>
                           <span>{u.employee.employeeNumber}</span>
-                          <Badge
-                            variant={getEmployeeStatusDisplay(u.employee.employmentStatus).variant}
-                            size="sm"
-                          >
-                            {getEmployeeStatusDisplay(u.employee.employmentStatus).label}
-                          </Badge>
+                          {showEmployeeStatus && employeeDisplay && (
+                            <Badge variant={employeeDisplay.variant} size="sm">
+                              {employeeDisplay.label}
+                            </Badge>
+                          )}
                         </div>
                       )}
                     </div>
@@ -902,7 +906,8 @@ export default function AdminUsersPage() {
                     <ChevronRight className="text-ink-400 h-4 w-4" />
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>

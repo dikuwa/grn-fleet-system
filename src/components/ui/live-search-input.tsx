@@ -18,9 +18,17 @@ interface LiveSearchInputProps {
  * Navigation only happens when the user actually types a different value.
  * External URL changes (filter reset, back/forward, toolbar submit) are
  * adopted into the field without re-navigating — this keeps the `page`
- * parameter intact when the user moves between pages, fixing the previous
- * "returns to page 1" bug caused by the effect stripping `page` on every
- * searchParams change.
+ * parameter intact when the user moves between pages.
+ *
+ * Two effects:
+ *  1. URL adoption — reacts to URL/keystroke renders but is a strict no-op
+ *     whenever the displayed value has not yet been committed to the URL
+ *     (i.e. the user is mid-typing, `value !== committedRef`). This is what
+ *     prevents keystrokes from being reverted. Note `useSearchParams` returns
+ *     a fresh instance every render, so the effect re-runs on keystrokes too —
+ *     the guard is what keeps it harmless.
+ *  2. Debounced navigation — commits the typed value after a pause, resetting
+ *     pagination to page 1; any other URL change leaves pagination intact.
  */
 export function LiveSearchInput({
   name = 'search',
@@ -32,17 +40,20 @@ export function LiveSearchInput({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [value, setValue] = useState(defaultValue);
+  // Last value committed to the URL (either navigated-to or adopted).
   const committedRef = useRef(defaultValue);
 
   const pendingTimer = useRef<number | null>(null);
 
   // Adopt external URL changes (filter reset, back/forward, toolbar submit).
-  // Skipped when the URL already matches both the committed value and what's
-  // currently shown — this is what prevents our own navigation from
-  // re-triggering this effect. When we DO adopt, cancel any in-flight debounce
-  // so a pending typed value can't re-commit (undoing the reset).
   useEffect(() => {
     const urlValue = searchParams.get(name) || '';
+    // Mid-typing: the user's keystrokes take priority over URL churn. Without
+    // this guard, an effect run on the same commit as a keystroke (the
+    // debounce timer is set by the effect BELOW, which runs later) would adopt
+    // the old URL value and revert the typed character.
+    if (value !== committedRef.current) return;
+    // Already in sync with the URL.
     if (urlValue === committedRef.current && urlValue === value) return;
     if (pendingTimer.current) {
       window.clearTimeout(pendingTimer.current);

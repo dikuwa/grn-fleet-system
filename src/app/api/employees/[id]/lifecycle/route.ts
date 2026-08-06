@@ -27,6 +27,17 @@ async function getEmployee(id: string, tenantId: string) {
   return employee;
 }
 
+/**
+ * Map an employee availability value to the driver-profile availability
+ * vocabulary (available / assigned / unavailable / leave) so the staff record
+ * and the driver roster never drift apart.
+ */
+function driverAvailabilityFromEmployee(status: string): string {
+  if (status === 'available') return 'available';
+  if (status === 'annual_leave' || status === 'sick_leave') return 'leave';
+  return 'unavailable';
+}
+
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
@@ -99,6 +110,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       archivedByUserId: auth.session.user.id,
       updatedAt: now,
     }).where(eq(employees.id, id));
+    // Keep the driver roster in lockstep: an archived employee is unavailable.
+    if (employee.isDriver) {
+      await db.update(driverProfiles)
+        .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
+        .where(eq(driverProfiles.employeeId, id));
+    }
     if (employee.userId) {
       await Promise.all([
         db.update(userProfiles).set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
@@ -116,6 +133,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       archivedByUserId: null,
       updatedAt: now,
     }).where(eq(employees.id, id));
+    // Restore the driver profile alongside the staff record.
+    if (employee.isDriver) {
+      await db.update(driverProfiles)
+        .set({ availabilityStatus: 'available', unavailableUntil: null, updatedAt: now })
+        .where(eq(driverProfiles.employeeId, id));
+    }
     if (employee.userId) {
       await Promise.all([
         db.update(userProfiles).set({ accountEnabled: true, status: 'active', disabledAt: null, updatedAt: now })
@@ -134,6 +157,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: 'Invalid employment status. Use Mark Active or Mark Inactive for routine status changes.' }, { status: 400 });
     }
     await db.update(employees).set({ employmentStatus: canonical, updatedAt: now }).where(eq(employees.id, id));
+    // An inactive employee must not remain selectable on the driver roster.
+    // Marking active never auto-clears availability — being employed is not
+    // the same as being available to drive, so that stays an explicit choice.
+    if (employee.isDriver && canonical === 'inactive') {
+      await db.update(driverProfiles)
+        .set({ availabilityStatus: 'unavailable', updatedAt: now })
+        .where(eq(driverProfiles.employeeId, id));
+    }
     after = { employmentStatus: canonical };
   } else if (body.action === 'deactivate_account') {
     if (!employee.userId) return NextResponse.json({ error: 'Employee has no linked login account' }, { status: 400 });
@@ -181,6 +212,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       enteredByUserId: auth.session.user.id,
     });
     await db.update(employees).set({ availabilityStatus: canonicalAvailability, updatedAt: now }).where(eq(employees.id, id));
+    // Keep the driver profile in lockstep so leave/unavailable staff drop out
+    // of driver allocation searches immediately.
+    if (employee.isDriver) {
+      await db.update(driverProfiles)
+        .set({
+          availabilityStatus: driverAvailabilityFromEmployee(canonicalAvailability),
+          unavailableUntil: endAt,
+          updatedAt: now,
+        })
+        .where(eq(driverProfiles.employeeId, id));
+    }
     after = { availabilityStatus: canonicalAvailability, startAt, endAt };
   } else if (body.action === 'transfer') {
     if (!body.officeId || !body.jobTitle) return NextResponse.json({ error: 'Office and job title are required' }, { status: 400 });
