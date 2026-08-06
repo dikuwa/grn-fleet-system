@@ -1,7 +1,7 @@
 # GovFleet Namibia — Administrator Guide
 
 > **Version:** 1.0  
-> **Last Updated:** 2026-07-20  
+> **Last Updated:** 2026-08-06  
 > **App URL:** https://grn-fleet-system.vercel.app
 
 ---
@@ -16,13 +16,14 @@
 6. [Organisation Setup](#6-organisation-setup)
 7. [Fleet Management](#7-fleet-management)
 8. [Driver Management](#8-driver-management)
-9. [Expiry Alerts & Compliance](#9-expiry-alerts--compliance)
-10. [Bulk Imports](#10-bulk-imports)
-11. [Settings](#11-settings)
-12. [Reports & Audit](#12-reports--audit)
-13. [Background Jobs](#13-background-jobs)
-14. [Security](#14-security)
-15. [Troubleshooting](#15-troubleshooting)
+9. [Transport Workflow & Approvals](#9-transport-workflow--approvals)
+10. [Expiry Alerts & Compliance](#10-expiry-alerts--compliance)
+11. [Bulk Imports](#11-bulk-imports)
+12. [Settings](#12-settings)
+13. [Reports & Audit](#13-reports--audit)
+14. [Background Jobs](#14-background-jobs)
+15. [Security](#15-security)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
@@ -323,7 +324,50 @@ Drivers with expiring licences are shown on:
 
 ---
 
-## 9. Expiry Alerts & Compliance
+## 9. Transport Workflow & Approvals
+
+### Approval Workflow
+
+Every transport request runs through an approval workflow defined per tenant and trip scope. Each step requires a specific permission and may additionally be assigned to a specific officer.
+
+**Regional scope (5 steps):**
+
+| Step | Action | Required Permission |
+|------|--------|---------------------|
+| 1 | Supervisor Approval | `request:approve-supervisor` |
+| 2 | Transport Review | `request:review-transport` |
+| 3 | Vehicle Release | `vehicle:release-regional` |
+| 4 | Trip Authorisation | `trip:authorize-regional` |
+| 5 | Driver Acknowledgment | `driver:log-create` |
+
+**National scope (6 steps):** the same route with a dedicated national release and authorisation step (`vehicle:release-national`, `trip:authorize-national`).
+
+### The Approvals Queue
+
+The **Assigned Approvals** page (`/dashboard/approvals`) lists every active workflow that currently needs the signed-in user's action. The dashboard's **"Assigned approvals"** card shows the same count.
+
+A request appears in your queue when its **current step** is:
+- **Assigned to you** — the workflow engine resolved you as the step holder (substantive role, acting delegation, or automatic conflict reassignment), or
+- **Unassigned but within your permission** — the step carries no fixed assignment and you hold its required permission.
+
+The engine resolves step holders at runtime (availability, delegations, dynamic drivers) without persisting them to the database, so the queue mirrors the same rules the action panel enforces: if you can act on a step, it appears in your queue.
+
+### Driver Acknowledgment
+
+The final step of both workflows is the **Driver Acknowledgment** — the assigned driver must acknowledge the trip details and vehicle condition before departure.
+
+- **Visibility:** the step is always stored without a fixed assignment, so it appears in the approvals queue for any user holding the `driver:log-create` permission who can also access the approvals page (Approver or Transport Administration workspace). Drivers themselves see the trip on the Driver Console instead.
+- **Action:** only the **allocated driver** — the employee linked to the vehicle allocation for that request — can complete it. Any other user, even another driver holding the permission, receives: *"Only the driver assigned to this request may acknowledge it."*
+
+Visibility and action are intentionally separated: the queue shows what a user could be responsible for, while the action API always enforces the allocation. Drivers see their pending trips on the **Driver Console** (`/dashboard/driver-mobile`).
+
+### Approvals Access
+
+The approvals pages are available in the **Approver** and **Transport Administration** workspaces only. Drivers use the Driver Console for their assigned trips. Tenants can restrict who holds approval permissions through **Administration → Roles & Permissions**.
+
+---
+
+## 10. Expiry Alerts & Compliance
 
 ### Expiry Alerts Dashboard
 
@@ -348,7 +392,7 @@ When Inngest is configured, daily cron jobs send email alerts for:
 
 ---
 
-## 10. Bulk Imports
+## 11. Bulk Imports
 
 ### Staff Import
 
@@ -378,7 +422,7 @@ Each batch shows:
 
 ---
 
-## 11. Settings
+## 12. Settings
 
 ### General Settings
 
@@ -422,7 +466,7 @@ Customise your tenant's appearance:
 
 ---
 
-## 12. Reports & Audit
+## 13. Reports & Audit
 
 ### Reports Dashboard
 
@@ -454,7 +498,7 @@ The `/dashboard/audit` page provides an immutable event trail:
 
 ---
 
-## 13. Background Jobs
+## 14. Background Jobs
 
 ### Inngest Integration
 
@@ -479,7 +523,7 @@ The Inngest serve endpoint is at `/api/inngest`.
 
 ---
 
-## 14. Security
+## 15. Security
 
 ### Tenant Isolation
 
@@ -510,7 +554,7 @@ All data is strictly isolated by tenant:
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 ### Common Issues
 
