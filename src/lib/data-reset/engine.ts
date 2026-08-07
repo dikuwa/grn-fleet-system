@@ -30,6 +30,7 @@ import {
   quoteTable,
   type ResetMode,
 } from './config';
+export type { ResetMode } from './config';
 import { sql } from 'drizzle-orm';
 
 export interface ResetOptions {

@@ -12,6 +12,7 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { Shield, Mail, Building2, Palette, CheckCircle2, Loader2, ChevronLeft, ChevronRight, Clock, Info } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { format } from 'date-fns';
+import type { PackageWithEntitlements } from '@/lib/platform/packages';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,7 +112,7 @@ export default function OnboardTenantPage() {
   const { toast } = useToast();
 
   // Fetch available packages
-  const { data: packagesData, isLoading: packagesLoading } = useQuery({
+  const { data: packagesData, isLoading: packagesLoading } = useQuery<PackageWithEntitlements[]>({
     queryKey: ['onboarding-packages'],
     queryFn: async () => {
       const res = await fetch('/api/platform/onboard');
@@ -445,7 +446,7 @@ export default function OnboardTenantPage() {
                       <div className="space-y-1">
                         <p><span className="text-ink-500">Code:</span> {pkg.code}</p>
                         <p><span className="text-ink-500">Trial:</span> {pkg.trialDays > 0 ? `${pkg.trialDays} days` : 'None'}</p>
-                        <p><span className="text-ink-500">Features:</span> {pkg.features?.join(', ') || 'Standard features'}</p>
+                        <p><span className="text-ink-500">Features:</span> {Object.entries(pkg.features ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'Standard features'}</p>
                       </div>
                     );
                   })()}

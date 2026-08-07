@@ -57,7 +57,7 @@ export async function listPackages(): Promise<PackageWithEntitlements[]> {
       asc(subscriptionPackages.sortOrder),
     );
 
-  if (packages.length === 0) return packages;
+  if (packages.length === 0) return [];
 
   const packageIds = packages.map((p) => p.id);
   const entitlementRows = await db

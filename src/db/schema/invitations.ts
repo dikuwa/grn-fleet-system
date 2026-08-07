@@ -92,7 +92,7 @@ export const tenantSetupProgress = pgTable('tenant_setup_progress', {
   stepStatus: jsonb('step_status').$type<Record<string, unknown>>().default({}),
 
   // Overall progress
-  completedSteps: integer('completed_steps').notNull().default(0),
+  completedSteps: jsonb('completed_steps').$type<number[]>().notNull().default([]),
   totalSteps: integer('total_steps').notNull().default(11), // From specification: 11 steps
   currentStep: integer('current_step').notNull().default(0),
 

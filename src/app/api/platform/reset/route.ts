@@ -197,6 +197,7 @@ export async function POST(request: NextRequest) {
         reason,
         requestedByUserId: session.user.id,
         backupRequired,
+        confirmationPhrase: '',
         status: 'draft',
       })
       .returning();

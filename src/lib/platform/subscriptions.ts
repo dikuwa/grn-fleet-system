@@ -12,7 +12,6 @@ import {
   paymentSubmissions,
   billingSettings,
   subscriptionAddons,
-  type tenantSubscriptions as tenantSubscriptionsType,
 } from '@/db/schema/subscriptions';
 import { tenants } from '@/db/schema/tenants';
 import { subscriptionPackages } from '@/db/schema/packages';
@@ -38,11 +37,11 @@ export type SubscriptionStatus =
 export type BillingInterval = 'monthly' | 'quarterly' | 'annually';
 export type PaymentMethod = 'bank_transfer' | 'mobile_payment' | 'card' | 'invoice' | 'other';
 
-export interface SubscriptionWithDetails extends tenantSubscriptionsType.$inferSelect {
+export type SubscriptionWithDetails = typeof tenantSubscriptions.$inferSelect & {
   packageName: string;
   packageCode: string;
   tenantName: string;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Lifecycle helpers

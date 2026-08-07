@@ -7,7 +7,7 @@
  */
 
 import { getDb } from '@/db';
-import { tenantInvitations, invitationRoles, type tenantInvitations as tenantInvitationsType } from '@/db/schema/invitations';
+import { tenantInvitations, invitationRoles } from '@/db/schema/invitations';
 import { tenantMemberships } from '@/db/schema/tenants';
 import { tenants } from '@/db/schema/tenants';
 import { user, account } from '@/db/schema/better-auth';
@@ -50,7 +50,7 @@ export function invitationAcceptUrl(rawToken: string): string {
 // Queries
 // ---------------------------------------------------------------------------
 
-export type InvitationWithDetails = tenantInvitationsType.$inferSelect & {
+export type InvitationWithDetails = typeof tenantInvitations.$inferSelect & {
   tenantName: string;
 };
 
