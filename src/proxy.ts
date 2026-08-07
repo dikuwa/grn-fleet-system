@@ -14,6 +14,7 @@ const publicRoutes = [
   '/manifest.json',
   '/sw.js',
   '/images',
+  '/icons',
   '/request',
   '/v',
   '/share',
