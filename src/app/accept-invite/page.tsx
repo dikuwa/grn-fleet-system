@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,7 +25,7 @@ interface InvitationInfo {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function AcceptInvitePage() {
+function AcceptInviteContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
@@ -267,5 +267,24 @@ export default function AcceptInvitePage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+const LoadingFallback = () => (
+  <div className="min-h-screen bg-muted flex items-center justify-center p-4">
+    <Card className="w-full max-w-md">
+      <CardContent className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-600" />
+        <span className="ml-2 text-ink-500 text-sm">Loading invitation…</span>
+      </CardContent>
+    </Card>
+  </div>
+);
+
+export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <AcceptInviteContent />
+    </Suspense>
   );
 }
