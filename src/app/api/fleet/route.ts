@@ -8,9 +8,10 @@ import {
   requirePermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, like, or, type SQL } from 'drizzle-orm';
+import { eq, and, like, or, count, type SQL } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
+import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 
 /**
  * GET /api/fleet
@@ -105,6 +106,27 @@ export async function POST(req: NextRequest) {
 
     const db = getDb();
     const body = await req.json();
+
+    // Enforce the tenant's subscription vehicle limit before creating.
+    const entitlements = await getTenantEntitlements(session.tenantId);
+    if (entitlements) {
+      const [countRow] = await db
+        .select({ total: count() })
+        .from(vehicles)
+        .where(eq(vehicles.tenantId, session.tenantId));
+      const vehicleCheck = checkEntitlement(
+        entitlements,
+        'vehicles',
+        countRow?.total ?? 0,
+        1,
+      );
+      if (!vehicleCheck.ok) {
+        return NextResponse.json(
+          { error: vehicleCheck.message || 'Vehicle limit reached' },
+          { status: 409 },
+        );
+      }
+    }
 
     // Validate required fields
     if (!body.licenceNumber) {

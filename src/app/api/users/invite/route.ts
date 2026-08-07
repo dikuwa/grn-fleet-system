@@ -6,9 +6,10 @@ import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { employees } from '@/db/schema/people';
 import { userProfiles } from '@/db/schema/auth';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, count } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { sendReactEmail } from '@/lib/email';
 import { UserInviteEmail } from '@/emails/user-invite';
 import { createElement } from 'react';
@@ -46,6 +47,27 @@ export async function POST(req: NextRequest) {
     }
     if (employee.userId) {
       return NextResponse.json({ error: 'This staff member already has a login account' }, { status: 409 });
+    }
+
+    // Enforce the tenant's subscription user limit before creating the account.
+    const entitlements = await getTenantEntitlements(session.tenantId);
+    if (entitlements) {
+      const [countRow] = await db
+        .select({ total: count() })
+        .from(tenantMemberships)
+        .where(eq(tenantMemberships.tenantId, session.tenantId));
+      const userCheck = checkEntitlement(
+        entitlements,
+        'users',
+        countRow?.total ?? 0,
+        1,
+      );
+      if (!userCheck.ok) {
+        return NextResponse.json(
+          { error: userCheck.message || 'User limit reached' },
+          { status: 409 },
+        );
+      }
     }
 
     // Multi-role support: accept roleIds[] (preferred) with roleId kept for

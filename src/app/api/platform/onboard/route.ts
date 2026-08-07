@@ -263,6 +263,7 @@ export async function POST(request: NextRequest) {
     // -----------------------------------------------------------------------
 
     const roleNames = body.roles || [
+      'TENANT_ADMIN',
       'TRANSPORT_ADMIN',
       'REQUESTER',
       'SUPERVISOR',

@@ -28,6 +28,7 @@ interface TenantRow {
   slug: string;
   type: string;
   status: string;
+  lifecycleStatus: string | null;
   timezone: string;
   createdAt: string;
   updatedAt: string;
@@ -41,6 +42,7 @@ export default function PlatformTenantsPage() {
   const [page, setPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [lifecycleFilter, setLifecycleFilter] = useState('');
 
   // Create tenant dialog
   const [showCreate, setShowCreate] = useState(false);
@@ -54,11 +56,12 @@ export default function PlatformTenantsPage() {
   const [createError, setCreateError] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['platform-tenants', searchQuery, statusFilter, page],
+    queryKey: ['platform-tenants', searchQuery, statusFilter, lifecycleFilter, page],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (searchQuery) params.set('q', searchQuery);
       if (statusFilter) params.set('status', statusFilter);
+      if (lifecycleFilter) params.set('lifecycle', lifecycleFilter);
       params.set('page', String(page));
       params.set('limit', '25');
 
@@ -220,11 +223,30 @@ export default function PlatformTenantsPage() {
             </button>
           ))}
         </div>
+        <div className="flex gap-1">
+          {['', 'PENDING_INVITATION', 'SETUP_IN_PROGRESS', 'PENDING_PLATFORM_REVIEW', 'READY_FOR_ACTIVATION', 'ACTIVE', 'ONBOARDING_FAILED'].map((s) => (
+            <button
+              key={s}
+              onClick={() => {
+                setLifecycleFilter(s);
+                setPage(1);
+              }}
+              className={`rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                lifecycleFilter === s
+                  ? 'bg-amber-800 text-white'
+                  : 'text-ink-500 hover:text-ink-700 hover:bg-muted'
+              }`}
+            >
+              {s ? s.replace(/_/g, ' ') : 'All Lifecycle'}
+            </button>
+          ))}
+        </div>
         <ClientFilterReset
-          isFiltered={Boolean(searchQuery || statusFilter)}
+          isFiltered={Boolean(searchQuery || statusFilter || lifecycleFilter)}
           onClear={() => {
             setSearchQuery('');
             setStatusFilter('');
+            setLifecycleFilter('');
             setPage(1);
           }}
         />
@@ -304,6 +326,20 @@ export default function PlatformTenantsPage() {
                         >
                           {t.status}
                         </Badge>
+                        {t.lifecycleStatus && t.lifecycleStatus !== 'ACTIVE' && (
+                          <Badge
+                            variant={
+                              t.lifecycleStatus === 'PENDING_PLATFORM_REVIEW'
+                                ? 'warning'
+                                : t.lifecycleStatus === 'ONBOARDING_FAILED'
+                                  ? 'error'
+                                  : 'default'
+                            }
+                            size="sm"
+                          >
+                            {t.lifecycleStatus.replace(/_/g, ' ')}
+                          </Badge>
+                        )}
                       </div>
                       <div className="mt-0.5 flex items-center gap-3">
                         <span className="text-ink-400 font-mono text-xs">{t.code}</span>

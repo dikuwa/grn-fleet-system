@@ -10,7 +10,9 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { listPaymentSubmissions, approvePaymentSubmission, rejectPaymentSubmission } from '@/lib/platform/subscriptions';
 import { getDb } from '@/db';
-import { paymentSubmissions, tenantSubscriptions, tenants, subscriptionPackages } from '@/db/schema/subscriptions';
+import { paymentSubmissions, tenantSubscriptions } from '@/db/schema/subscriptions';
+import { tenants } from '@/db/schema/tenants';
+import { subscriptionPackages } from '@/db/schema/packages';
 import { eq, desc, and, or, like, count } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------

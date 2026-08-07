@@ -147,6 +147,9 @@ export async function POST(request: NextRequest) {
     const body: SetupProgressData & { action?: string } = await request.json();
     const { currentStep, completedSteps, stepData, action } = body;
 
+    const db = getDb();
+    const now = new Date();
+
     // Finalize action — marks setup complete and flips the tenant lifecycle
     if (action === 'complete') {
       await db
@@ -177,9 +180,6 @@ export async function POST(request: NextRequest) {
     if (currentStep < 0 || currentStep >= TOTAL_STEPS) {
       return NextResponse.json({ error: 'Invalid step number' }, { status: 400 });
     }
-
-    const db = getDb();
-    const now = new Date();
 
     // Check existing progress
     const [existing] = await db

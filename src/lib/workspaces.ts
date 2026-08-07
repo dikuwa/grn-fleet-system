@@ -1,5 +1,7 @@
 export const SystemRoles = {
   PLATFORM_ADMIN: 'Platform Super Administrator',
+  PLATFORM_SUPPORT: 'Platform Support Administrator',
+  PLATFORM_AUDITOR: 'Platform Auditor',
   TENANT_ADMIN: 'Tenant Administrator',
   TRANSPORT_ADMIN: 'Transport Administrator',
   REQUESTER: 'Requester / Programme Owner',
@@ -104,7 +106,7 @@ export const workspaceRegistry: readonly WorkspaceDefinition[] = [
   {
     id: WorkspaceIds.PLATFORM_ADMIN,
     label: 'Platform Administration',
-    roleNames: [R.PLATFORM_ADMIN],
+    roleNames: [R.PLATFORM_ADMIN, R.PLATFORM_SUPPORT, R.PLATFORM_AUDITOR],
     tenantWorkspace: false,
     order: 90,
   },
@@ -117,8 +119,10 @@ export function isWorkspaceId(value: unknown): value is WorkspaceId {
 }
 
 export function getEligibleWorkspaces(roleNames: readonly string[]): WorkspaceDefinition[] {
-  const platformOnly = roleNames.includes(R.PLATFORM_ADMIN);
-  if (platformOnly) {
+  const isPlatformRole = roleNames.some((r) =>
+    [R.PLATFORM_ADMIN, R.PLATFORM_SUPPORT, R.PLATFORM_AUDITOR].includes(r),
+  );
+  if (isPlatformRole) {
     return workspaceRegistry.filter((workspace) => workspace.id === WorkspaceIds.PLATFORM_ADMIN);
   }
 

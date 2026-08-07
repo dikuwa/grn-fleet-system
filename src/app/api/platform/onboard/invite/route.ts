@@ -7,7 +7,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { createInvitation, markInvitationSent, sendInvitationEmail } from '@/lib/platform/invitations';
+import { createInvitation, markInvitationSent } from '@/lib/platform/invitations';
+import { sendInvitationEmail } from '@/lib/platform/email-templates';
 import { getPackageById } from '@/lib/platform/packages';
 
 // ---------------------------------------------------------------------------

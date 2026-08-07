@@ -19,7 +19,12 @@ export type SubscriptionStatusType = 'NOT_CONFIGURED' | 'PENDING_PAYMENT' | 'TRI
 export interface TenantEntitlements {
   tenantId: string;
   name: string;
+  // Legacy subscription status (ACTIVE/SUSPENDED/TRIAL/ARCHIVED)
   status: TenantStatus;
+  // Onboarding lifecycle status (DRAFT → … → ACTIVE). This is the column the
+  // lifecycle gate in `canTenantOperate` reads — keep it populated from
+  // `tenants.lifecycle_status`, NOT the legacy `status` column.
+  lifecycleStatus: TenantStatus;
   planCode: PlanCode;
   subscriptionStatus: SubscriptionStatusType;
   trialEndsAt: Date | null;
@@ -71,6 +76,10 @@ export async function getTenantEntitlements(tenantId: string): Promise<TenantEnt
     tenantId: tenantRow.id,
     name: tenantRow.name,
     status: (tenantRow.status as TenantStatus) ?? 'ACTIVE',
+    // lifecycleStatus is the authoritative onboarding gate column. Default to
+    // ACTIVE so tenants created before the lifecycle column existed are not
+    // accidentally blocked.
+    lifecycleStatus: (tenantRow.lifecycleStatus as TenantStatus) ?? 'ACTIVE',
     planCode: (tenantRow.planCode as PlanCode) ?? (pkg?.code ?? 'INTERNAL_DEFAULT'),
     subscriptionStatus: (tenantRow.subscriptionStatus as SubscriptionStatusType) ?? 'NOT_CONFIGURED',
     trialEndsAt: tenantRow.trialEndsAt,
@@ -86,27 +95,35 @@ export async function getTenantEntitlements(tenantId: string): Promise<TenantEnt
 /**
  * Is the tenant allowed to log in and operate at all?
  * Suspended, archived, and onboarding/pending tenants are blocked platform-wide.
+ *
+ * The lifecycle gate reads `lifecycleStatus` (the onboarding column), NOT the
+ * legacy `status` column — tenants are created with `status: 'ACTIVE'` while
+ * `lifecycleStatus` drives the DRAFT → … → ACTIVE onboarding flow.
  */
 export function canTenantOperate(e: TenantEntitlements): {
   ok: boolean;
   reason?: string;
   lifecycleBlock?: boolean;
 } {
-  // First check lifecycle status blocks
+  // First check lifecycle status blocks.
+  // SETUP_IN_PROGRESS is intentionally NOT blocked here: the tenant admin needs
+  // session access to log in and complete the setup wizard. The dashboard layer
+  // funnels them to /dashboard/setup while setup is incomplete.
   const blockedLifecycleStatuses: TenantStatus[] = [
     'DRAFT',
     'PENDING_INVITATION',
     'INVITATION_SENT',
     'INVITATION_EXPIRED',
-    'SETUP_IN_PROGRESS',
     'PENDING_PLATFORM_REVIEW',
+    'READY_FOR_ACTIVATION',
     'ONBOARDING_FAILED',
     'ARCHIVED',
     'SUSPENDED',
     'RESTRICTED',
   ];
 
-  if (blockedLifecycleStatuses.includes(e.status)) {
+  const lifecycle = e.lifecycleStatus;
+  if (blockedLifecycleStatuses.includes(lifecycle)) {
     const reasonMap: Record<string, string> = {
       DRAFT: 'This tenant is still being configured. Please complete onboarding.',
       PENDING_INVITATION: 'Awaiting invitation to be sent.',
@@ -114,6 +131,7 @@ export function canTenantOperate(e: TenantEntitlements): {
       INVITATION_EXPIRED: 'The invitation has expired. Request a new one.',
       SETUP_IN_PROGRESS: 'Tenant setup is in progress. Complete the setup wizard.',
       PENDING_PLATFORM_REVIEW: 'This tenant is pending platform administrator review.',
+      READY_FOR_ACTIVATION: 'This tenant is awaiting activation. Contact the platform administrator.',
       ONBOARDING_FAILED: 'Onboarding failed. Contact support.',
       ARCHIVED: 'This tenant is archived and no longer active.',
       SUSPENDED: 'This tenant is suspended. Contact the platform administrator.',
@@ -121,7 +139,7 @@ export function canTenantOperate(e: TenantEntitlements): {
     };
     return {
       ok: false,
-      reason: reasonMap[e.status] || 'This tenant cannot operate in its current state.',
+      reason: reasonMap[lifecycle] || 'This tenant cannot operate in its current state.',
       lifecycleBlock: true,
     };
   }
@@ -137,7 +155,7 @@ export function canTenantOperate(e: TenantEntitlements): {
     return { ok: false, reason: 'Subscription is past due. Please make a payment to restore access.' };
   }
 
-  // Legacy trial check
+  // Legacy trial check (reads the legacy `status` column)
   if (e.status === 'TRIAL' && e.trialEndsAt && e.trialEndsAt.getTime() < Date.now()) {
     return { ok: false, reason: 'The trial period has ended. Contact the platform administrator.' };
   }

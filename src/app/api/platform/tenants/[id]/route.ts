@@ -11,6 +11,7 @@ import { tenants, tenantBranding, tenantMemberships } from '@/db/schema/tenants'
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, count } from 'drizzle-orm';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 // ---------------------------------------------------------------------------
 // GET — Tenant detail with branding and stats
@@ -107,6 +108,30 @@ export async function PATCH(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
+    // Controlled lifecycle transitions (only platform admin may drive these).
+    // Mirrors the lifecycle documented on the tenants schema:
+    //   PENDING_PLATFORM_REVIEW → READY_FOR_ACTIVATION | ACTIVE | ONBOARDING_FAILED
+    //   READY_FOR_ACTIVATION    → ACTIVE
+    //   ONBOARDING_FAILED       → DRAFT (allow re-onboarding)
+    const LIFECYCLE_TRANSITIONS: Record<string, string[]> = {
+      PENDING_PLATFORM_REVIEW: ['READY_FOR_ACTIVATION', 'ACTIVE', 'ONBOARDING_FAILED'],
+      READY_FOR_ACTIVATION: ['ACTIVE'],
+      ONBOARDING_FAILED: ['DRAFT'],
+    };
+
+    const lifecycleTarget = body.lifecycleStatus;
+    if (lifecycleTarget !== undefined) {
+      const allowed = LIFECYCLE_TRANSITIONS[existing.lifecycleStatus];
+      if (!allowed || !allowed.includes(lifecycleTarget)) {
+        return NextResponse.json(
+          {
+            error: `Invalid lifecycle transition from ${existing.lifecycleStatus} to ${lifecycleTarget}.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Update tenant fields
     const tenantUpdate: Record<string, unknown> = {};
     if (body.name !== undefined) tenantUpdate.name = body.name;
@@ -115,6 +140,11 @@ export async function PATCH(
     if (body.locale !== undefined) tenantUpdate.locale = body.locale;
     if (body.type !== undefined) tenantUpdate.type = body.type;
     if (body.metadata !== undefined) tenantUpdate.metadata = body.metadata;
+    if (lifecycleTarget !== undefined) {
+      tenantUpdate.lifecycleStatus = lifecycleTarget;
+      tenantUpdate.lifecycleChangedAt = new Date();
+      tenantUpdate.lifecycleReason = body.lifecycleReason ?? null;
+    }
     tenantUpdate.updatedAt = new Date();
 
     if (Object.keys(tenantUpdate).length > 1) {
@@ -123,6 +153,20 @@ export async function PATCH(
         .update(tenants)
         .set(tenantUpdate)
         .where(eq(tenants.id, id));
+    }
+
+    // Audit lifecycle transitions
+    if (lifecycleTarget !== undefined && lifecycleTarget !== existing.lifecycleStatus) {
+      await recordAuditEvent({
+        tenantId: existing.id,
+        actorUserId: session.user.id,
+        action: 'tenant.lifecycle_changed',
+        entityType: 'tenant',
+        entityId: existing.id,
+        summary: `Tenant lifecycle changed from ${existing.lifecycleStatus} to ${lifecycleTarget}`,
+        before: { lifecycleStatus: existing.lifecycleStatus },
+        after: { lifecycleStatus: lifecycleTarget },
+      }).catch(() => {});
     }
 
     // Update branding fields

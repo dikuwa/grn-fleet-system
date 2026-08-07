@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const q = searchParams.get('q') || '';
     const status = searchParams.get('status') || '';
+    const lifecycle = searchParams.get('lifecycle') || '';
     const page = parseInt(searchParams.get('page') || '1', 10);
     const limit = parseInt(searchParams.get('limit') || '25', 10);
     const offset = (page - 1) * limit;
@@ -47,6 +48,9 @@ export async function GET(request: NextRequest) {
     }
     if (status) {
       conditions.push(eq(tenants.status, status.toUpperCase()));
+    }
+    if (lifecycle) {
+      conditions.push(eq(tenants.lifecycleStatus, lifecycle.toUpperCase()));
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -68,6 +72,7 @@ export async function GET(request: NextRequest) {
         slug: tenants.slug,
         type: tenants.type,
         status: tenants.status,
+        lifecycleStatus: tenants.lifecycleStatus,
         timezone: tenants.timezone,
         createdAt: tenants.createdAt,
         updatedAt: tenants.updatedAt,

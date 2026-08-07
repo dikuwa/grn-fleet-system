@@ -26,6 +26,8 @@ import {
   AlertTriangle,
   ShieldAlert,
   ShieldCheck,
+  CheckCircle2,
+  XCircle,
   Activity
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
@@ -40,6 +42,7 @@ interface TenantDetail {
   slug: string;
   type: string;
   status: string;
+  lifecycleStatus: string;
   timezone: string;
   locale: string;
   metadata: Record<string, unknown> | null;
@@ -76,6 +79,11 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
   // Suspend/activate confirmation
   const [showSuspendDialog, setShowSuspendDialog] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
+
+  // Platform review / lifecycle approval
+  const [isApproving, setIsApproving] = useState(false);
+  const [showReviewDialog, setShowReviewDialog] = useState(false);
+  const [lifecycleReason, setLifecycleReason] = useState('');
 
   // Editable fields
   const [editName, setEditName] = useState('');
@@ -147,6 +155,40 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
     }
   };
 
+  // Advance the tenant lifecycle (approve for review, activate, etc.)
+  const handleLifecycleChange = async (target: string) => {
+    if (!tenant) return;
+    setIsApproving(true);
+    try {
+      const res = await fetch(`/api/platform/tenants/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lifecycleStatus: target,
+          lifecycleReason: lifecycleReason || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to update lifecycle');
+      toast({
+        title: `Tenant ${target.replace(/_/g, ' ').toLowerCase()}`,
+        description: `Lifecycle updated to ${target.replace(/_/g, ' ').toLowerCase()}`,
+        variant: 'success',
+      });
+      setLifecycleReason('');
+      refetch();
+    } catch (err) {
+      toast({
+        title: 'Lifecycle update failed',
+        description: err instanceof Error ? err.message : 'Failed to update lifecycle',
+        variant: 'error',
+      });
+    } finally {
+      setIsApproving(false);
+      setShowReviewDialog(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -199,6 +241,25 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
             Created {formatDate(tenant.createdAt)}
           </span>
           <div className="flex items-center gap-2">
+            {tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW' && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setShowReviewDialog(true)}
+              >
+                <CheckCircle2 className="h-4 w-4" /> Review Setup
+              </Button>
+            )}
+            {tenant.lifecycleStatus === 'READY_FOR_ACTIVATION' && (
+              <Button
+                variant="primary"
+                size="sm"
+                loading={isApproving}
+                onClick={() => handleLifecycleChange('ACTIVE')}
+              >
+                <ShieldCheck className="h-4 w-4" /> Activate
+              </Button>
+            )}
             <Button
               variant={editStatus === 'suspended' ? 'primary' : 'destructive'}
               size="sm"
@@ -262,6 +323,9 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
             </div>
             <div>
               <p className="text-xs text-ink-500">Status</p>
+              <p className="text-[11px] text-ink-400 mt-0.5">
+                Lifecycle: {tenant.lifecycleStatus?.replace(/_/g, ' ').toLowerCase()}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -397,6 +461,70 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review / Approval Dialog */}
+      {showReviewDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50" onClick={() => setShowReviewDialog(false)} />
+          <div className="relative z-10 w-full max-w-lg rounded-xl bg-white p-6 shadow-xl dark:bg-ink-900">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-ink-900 dark:text-ink-100">Review Tenant Setup</h3>
+              <button onClick={() => setShowReviewDialog(false)} className="text-ink-400 hover:text-ink-600">
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-ink-600 dark:text-ink-400 mb-4">
+              {tenant?.name} has completed the setup wizard. Choose an action below.
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-ink-700 dark:text-ink-300 mb-1">
+                Reason (optional)
+              </label>
+              <textarea
+                className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm dark:border-ink-700 dark:bg-ink-800"
+                rows={3}
+                placeholder="Add a note about this decision…"
+                value={lifecycleReason}
+                onChange={(e) => setLifecycleReason(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2 mb-4">
+              <button
+                onClick={() => handleLifecycleChange('READY_FOR_ACTIVATION')}
+                disabled={isApproving}
+                className="flex items-center gap-2 w-full rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-left text-sm font-medium text-green-800 hover:bg-green-100 disabled:opacity-50 dark:border-green-800/40 dark:bg-green-950/30 dark:text-green-300"
+              >
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                Approve for Activation — move to READY_FOR_ACTIVATION
+              </button>
+              <button
+                onClick={() => handleLifecycleChange('ACTIVE')}
+                disabled={isApproving}
+                className="flex items-center gap-2 w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-medium text-blue-800 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-800/40 dark:bg-blue-950/30 dark:text-blue-300"
+              >
+                <ShieldCheck className="h-4 w-4 flex-shrink-0" />
+                Activate Now — move directly to ACTIVE
+              </button>
+              <button
+                onClick={() => handleLifecycleChange('ONBOARDING_FAILED')}
+                disabled={isApproving}
+                className="flex items-center gap-2 w-full rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50 dark:border-red-800/40 dark:bg-red-950/30 dark:text-red-300"
+              >
+                <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                Reject — move to ONBOARDING_FAILED (tenant must re-onboard)
+              </button>
+            </div>
+            <div className="flex justify-end">
+              <Button variant="secondary" size="sm" onClick={() => setShowReviewDialog(false)}>Cancel</Button>
+            </div>
+            {isApproving && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-ink-900/80 rounded-xl">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            )}
           </div>
         </div>
       )}
