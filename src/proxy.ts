@@ -21,6 +21,13 @@ const publicRoutes = [
   '/staff-import-template.csv',
   '/vehicle-import-template.csv',
   '/office-import-template.csv',
+  // Public marketing site (CMS-driven) — these pages must render for
+  // unauthenticated visitors instead of redirecting to /login.
+  '/',
+  '/about',
+  '/services',
+  '/contact',
+  '/privacy',
 ];
 
 export async function proxy(request: NextRequest) {

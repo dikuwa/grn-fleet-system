@@ -75,6 +75,9 @@ async function seed() {
       status: 'ACTIVE',
       planCode: 'INTERNAL_DEFAULT',
       subscriptionStatus: 'NOT_CONFIGURED',
+      // Explicit onboarding lifecycle: ACTIVE so the session entitlement gate
+      // (canTenantOperate) never blocks this existing tenant.
+      lifecycleStatus: 'ACTIVE',
       timezone: 'Africa/Windhoek',
       locale: 'en-NA',
     })
@@ -653,7 +656,9 @@ async function seed() {
   }
 
   // A second tenant with a known vehicle provides a stable cross-tenant isolation fixture.
-  await db.insert(tenants).values({ id: ISOLATION_TENANT_ID as any, name: 'Zambezi Regional Council — Isolation Fixture', code: 'ZRC', slug: 'zambezi-isolation', type: 'regional_council', status: 'ACTIVE', planCode: 'INTERNAL_DEFAULT', subscriptionStatus: 'NOT_CONFIGURED', timezone: 'Africa/Windhoek', locale: 'en-NA' }).onConflictDoNothing();
+  // status + lifecycleStatus both ARCHIVED so its (empty) user set can never
+  // authenticate — matching the state a production archive would leave behind.
+  await db.insert(tenants).values({ id: ISOLATION_TENANT_ID as any, name: 'Zambezi Regional Council — Isolation Fixture', code: 'ZRC', slug: 'zambezi-isolation', type: 'regional_council', status: 'ARCHIVED', planCode: 'INTERNAL_DEFAULT', subscriptionStatus: 'NOT_CONFIGURED', lifecycleStatus: 'ARCHIVED', timezone: 'Africa/Windhoek', locale: 'en-NA' }).onConflictDoNothing();
   let [isolationOffice] = await db.select({ id: offices.id }).from(offices).where(and(eq(offices.tenantId, ISOLATION_TENANT_ID as any), eq(offices.code, 'ZHO'))).limit(1);
   if (!isolationOffice) [isolationOffice] = await db.insert(offices).values({ tenantId: ISOLATION_TENANT_ID as any, name: 'Zambezi Head Office', type: 'head_office', code: 'ZHO' }).returning({ id: offices.id });
   let [isolationCategory] = await db.select({ id: vehicleCategories.id }).from(vehicleCategories).where(and(eq(vehicleCategories.tenantId, ISOLATION_TENANT_ID as any), eq(vehicleCategories.code, 'ISO-SEDAN'))).limit(1);

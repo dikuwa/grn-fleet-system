@@ -267,6 +267,34 @@
       "when": 1786352400000,
       "tag": "0037_mva_report_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786440000000,
+      "tag": "0038_cms_seed_content",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786443600000,
+      "tag": "0039_vehicle_replacement",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786447200000,
+      "tag": "0040_incident_attachment_dedup",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786450800000,
+      "tag": "0041_tenant_lifecycle_backfill",
+      "breakpoints": true
     }
   ]
 }

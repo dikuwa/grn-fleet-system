@@ -57,6 +57,7 @@ SELECT
     '{"title":"GovFleet Namibia","description":"Digital fleet management for every organisation."}',
     'published',
     now(),
+    1,
     true,
     true,
     10,
@@ -122,7 +123,7 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM cms_content WHERE slug = 'services');
 
 -- Default FAQ entries (idempotent by question+category)
-INSERT INTO cms_faqs (category, question, answer, sort_order, is_published)
+INSERT INTO cms_faqs (category, question, answer, sort_order)
 SELECT * FROM (VALUES
     ('general', 'What is GovFleet Namibia?', 'GovFleet Namibia is a digital fleet management platform that replaces paper-based transport requests, approval, vehicle allocation, inspections, fuel records, trip closure and maintenance with one secure, traceable workflow.', 10),
     ('general', 'Who can use the platform?', 'The platform is designed for government institutions, regional councils, municipalities, public enterprises, mines, logistics providers, NGOs and private companies that manage vehicles or transport workflows.', 20),
