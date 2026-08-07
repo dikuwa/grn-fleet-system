@@ -23,8 +23,8 @@ import { useToast } from '@/lib/use-toast';
 import {
   emergencyContactRoleLabel,
   EMERGENCY_CONTACT_ROLES,
-} from '@/lib/incidents/emergency-contacts';
-import type { EmergencyContactRole } from '@/lib/incidents/emergency-contacts';
+} from '@/lib/incidents/emergency-contact-constants';
+import type { EmergencyContactRole } from '@/lib/incidents/emergency-contact-constants';
 
 // ---------------------------------------------------------------------------
 // Types

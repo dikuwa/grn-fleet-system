@@ -12,19 +12,20 @@ import { emergencyContacts } from '@/db/schema/trips';
 import { eq, and, asc, or, isNull } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+// Re-export client-safe constants and types
+export {
+  EMERGENCY_CONTACT_ROLES,
+  isEmergencyContactRole,
+  emergencyContactRoleLabel,
+} from './emergency-contact-constants';
+import type { EmergencyContactRole } from './emergency-contact-constants';
+export type { EmergencyContactRole } from './emergency-contact-constants';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type EmergencyContact = typeof emergencyContacts.$inferSelect;
-
-export type EmergencyContactRole =
-  | 'hospital'
-  | 'police'
-  | 'towing'
-  | 'fire'
-  | 'insurance'
-  | 'internal';
 
 export type EmergencyContactInput = {
   name: string;
@@ -34,42 +35,6 @@ export type EmergencyContactInput = {
   sortOrder?: number;
   isActive?: boolean;
 };
-
-// ---------------------------------------------------------------------------
-// Lookup helpers
-// ---------------------------------------------------------------------------
-
-export const EMERGENCY_CONTACT_ROLES: EmergencyContactRole[] = [
-  'hospital',
-  'police',
-  'towing',
-  'fire',
-  'insurance',
-  'internal',
-];
-
-export function isEmergencyContactRole(value: string): value is EmergencyContactRole {
-  return (EMERGENCY_CONTACT_ROLES as string[]).includes(value);
-}
-
-export function emergencyContactRoleLabel(role: EmergencyContactRole): string {
-  switch (role) {
-    case 'hospital':
-      return 'Hospital / Ambulance';
-    case 'police':
-      return 'Police';
-    case 'towing':
-      return 'Towing / Recovery';
-    case 'fire':
-      return 'Fire / Rescue';
-    case 'insurance':
-      return 'Insurance';
-    case 'internal':
-      return 'Internal (Transport Office)';
-    default:
-      return role;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Queries
