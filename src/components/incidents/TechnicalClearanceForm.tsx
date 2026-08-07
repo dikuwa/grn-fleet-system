@@ -11,7 +11,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
-import type { TechnicalClearanceStatus } from '@/lib/incidents/mva';
+import type { TechnicalClearanceStatus } from '@/lib/incidents/mva-constants';
 
 // ---------------------------------------------------------------------------
 // Types

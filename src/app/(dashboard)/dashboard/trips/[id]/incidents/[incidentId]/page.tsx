@@ -21,7 +21,7 @@ import { useToast } from '@/lib/use-toast';
 import { InvestigationPanel } from '@/components/incidents/InvestigationPanel';
 import { InsuranceTrackingPanel } from '@/components/incidents/InsuranceTrackingPanel';
 import { TechnicalClearanceForm } from '@/components/incidents/TechnicalClearanceForm';
-import type { InvestigationStatus, TechnicalClearanceStatus } from '@/lib/incidents/mva';
+import type { InvestigationStatus, TechnicalClearanceStatus } from '@/lib/incidents/mva-constants';
 
 // ---------------------------------------------------------------------------
 // Types

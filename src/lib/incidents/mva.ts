@@ -12,25 +12,20 @@ import { and, eq } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { generateDocument } from '@/lib/document-generator';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export type InvestigationStatus = 'pending' | 'in_progress' | 'closed' | 'no_action';
-export type TechnicalClearanceStatus = 'pending' | 'cleared' | 'not_cleared';
-
-export const INVESTIGATION_STATUSES: InvestigationStatus[] = [
-  'pending',
-  'in_progress',
-  'closed',
-  'no_action',
-];
-
-export const TECHNICAL_CLEARANCE_STATUSES: TechnicalClearanceStatus[] = [
-  'pending',
-  'cleared',
-  'not_cleared',
-];
+// Re-export client-safe constants and types
+export {
+  INVESTIGATION_STATUSES,
+  TECHNICAL_CLEARANCE_STATUSES,
+  INVESTIGATION_STATUS_LABELS,
+  TECHNICAL_CLEARANCE_STATUS_LABELS,
+  type InvestigationStatus,
+  type TechnicalClearanceStatus,
+} from './mva-constants';
+import {
+  INVESTIGATION_STATUSES,
+  type InvestigationStatus,
+  type TechnicalClearanceStatus,
+} from './mva-constants';
 
 // ---------------------------------------------------------------------------
 // Authorization-aware fetch

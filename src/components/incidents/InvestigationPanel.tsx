@@ -15,8 +15,8 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
-import { INVESTIGATION_STATUSES } from '@/lib/incidents/mva';
-import type { InvestigationStatus } from '@/lib/incidents/mva';
+import { INVESTIGATION_STATUSES } from '@/lib/incidents/mva-constants';
+import type { InvestigationStatus } from '@/lib/incidents/mva-constants';
 
 // ---------------------------------------------------------------------------
 // Types
