@@ -4,7 +4,7 @@
 var CACHE_NAME = 'grn-fleet-v2';
 var STATIC_CACHE = 'grn-fleet-static-v2';
 
-var STATIC_ASSETS = ['/manifest.json', '/icons/icon-192.svg', '/icons/icon-512.svg'];
+var STATIC_ASSETS = ['/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 // Install event: cache static shell
 self.addEventListener('install', function (event) {

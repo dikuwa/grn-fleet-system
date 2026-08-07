@@ -14,14 +14,18 @@
  * Usage (from repo root):
  *   node scripts/apply-pending-migrations.mjs [env-file]   # default .env.local
  *   DATABASE_URL=... node scripts/apply-pending-migrations.mjs
+ *
+ * Used as the Vercel "prebuild" hook (see package.json). In that context the
+ * production DATABASE_URL is injected by Vercel, so pass --allow-missing-db
+ * to skip gracefully when no database is configured (e.g. preview builds).
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 
 const ROOT = process.cwd(); // run from the project root
-const envFile = process.argv[2] || '.env.local';
+const allowMissingDb = process.argv.includes('--allow-missing-db');
+const envFile = process.argv.find((a) => !a.startsWith('-') && a !== process.argv[1]) || '.env.local';
 
 function loadEnv(file) {
   const out = {};
@@ -39,7 +43,14 @@ function loadEnv(file) {
 
 const env = { ...loadEnv(path.join(ROOT, '.env')), ...loadEnv(path.join(ROOT, envFile)) };
 const DATABASE_URL = process.env.DATABASE_URL || env.DATABASE_URL;
-if (!DATABASE_URL) { console.error('No DATABASE_URL found'); process.exit(1); }
+if (!DATABASE_URL) {
+  if (allowMissingDb) {
+    console.log('No DATABASE_URL available; skipping migrations (--allow-missing-db).');
+    process.exit(0);
+  }
+  console.error('No DATABASE_URL found');
+  process.exit(1);
+}
 
 const postgres = (await import('postgres')).default;
 const sql = postgres(DATABASE_URL, { max: 2 });
