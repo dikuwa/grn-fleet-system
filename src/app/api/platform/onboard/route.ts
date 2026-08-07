@@ -27,6 +27,7 @@ import { createSubscription } from '@/lib/platform/subscriptions';
 import { createInvitation, invitationAcceptUrl } from '@/lib/platform/invitations';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { sendInvitationEmail } from '@/lib/platform/email-templates';
+import { seedDefaultIncidentCategories } from '@/lib/incidents/categories';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -339,7 +340,13 @@ export async function POST(request: NextRequest) {
     }
 
     // -----------------------------------------------------------------------
-    // Step 8: Audit trail
+    // Step 8: Seed default incident categories & metadata
+    // -----------------------------------------------------------------------
+
+    await seedDefaultIncidentCategories(tenant.id, session.user.id).catch(() => {});
+
+    // -----------------------------------------------------------------------
+    // Step 9: Audit trail
     // -----------------------------------------------------------------------
 
     await recordAuditEvent({

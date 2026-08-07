@@ -10,6 +10,7 @@
 
 import { listDrafts, getDraft, markDraftSynced, markDraftFailed, removeSyncedDrafts, updateDraft } from '@/lib/offline-drafts';
 import type { OfflineDraft } from '@/lib/offline-drafts';
+import { computeSha256 } from '@/lib/storage-dedup';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -152,19 +153,51 @@ export async function syncSingleDraft(
     if (draft.draftType === 'trip_incident') {
       const files = fd<File[]>(draft.formData, 'attachmentFiles', []);
       const attachmentKeys = fd<string[]>(draft.formData, 'attachmentKeys', []);
+      const attachmentHashes = fd<Record<string, string>>(draft.formData, 'attachmentHashes', {});
       for (let index = attachmentKeys.length; index < files.length; index++) {
-        const uploadBody = new FormData();
-        uploadBody.append('file', files[index]);
-        uploadBody.append('category', 'trip-incident');
-        const upload = await fetch('/api/upload', { method: 'POST', body: uploadBody });
-        const uploaded = await upload.json().catch(() => ({}));
-        if (!upload.ok || !uploaded.data?.key) throw new Error(uploaded.error || 'Incident attachment upload failed during sync');
-        attachmentKeys.push(uploaded.data.key);
+        // Compute SHA-256 client-side so we can skip re-uploading identical
+        // photo bytes that already exist in storage.
+        const file = files[index];
+        const sha256 = await computeSha256(file);
+
+        // Ask the server whether this exact file already exists.
+        const dedupRes = await fetch('/api/storage/check-dup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sha256, category: 'trip-incident' }),
+        });
+        const dedup = dedupRes.ok
+          ? await dedupRes.json().catch(() => null)
+          : null;
+        const existingKey = dedup?.data?.keys?.[0];
+
+        let key: string;
+        if (existingKey) {
+          key = existingKey;
+        } else {
+          const uploadBody = new FormData();
+          uploadBody.append('file', file);
+          uploadBody.append('category', 'trip-incident');
+          uploadBody.append('sha256', sha256);
+          const upload = await fetch('/api/upload', { method: 'POST', body: uploadBody });
+          const uploaded = await upload.json().catch(() => ({}));
+          if (!upload.ok || !uploaded.data?.key) throw new Error(uploaded.error || 'Incident attachment upload failed during sync');
+          key = uploaded.data.key;
+        }
+
+        attachmentKeys.push(key);
+        attachmentHashes[key] = sha256;
         await updateDraft(draft.id, {
-          formData: { ...draft.formData, attachmentFiles: files, attachmentKeys: [...attachmentKeys] },
+          formData: {
+            ...draft.formData,
+            attachmentFiles: files,
+            attachmentKeys: [...attachmentKeys],
+            attachmentHashes: { ...attachmentHashes },
+          },
         });
       }
       payload.attachmentKeys = attachmentKeys;
+      payload.attachmentHashes = attachmentHashes;
       delete payload.attachmentFiles;
     }
     if (draft.draftType === 'inspection_departure' || draft.draftType === 'inspection_return') {

@@ -14,6 +14,7 @@ import { FuelSummaryDocument, type FuelSummaryData } from './fuel-summary';
 import { TripCompletionDocument, type TripCompletionData } from './trip-completion';
 import { MaintenanceReportDocument, type MaintenanceReportData } from './maintenance-report';
 import { InspectionReportDocument, type InspectionReportData } from './inspection-report';
+import { MvaReportDocument, type MvaReportData } from './mva-report';
 import { SnapshotDocument, type SnapshotDocumentData } from './snapshot-document';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
@@ -530,6 +531,10 @@ export async function generateDocumentPdf(
       buffer = await generateDocumentPdfFromSnapshot(documentId);
       break;
     }
+    case 'accident_report': {
+      buffer = await generateDocumentPdfFromSnapshot(documentId);
+      break;
+    }
     default: {
       // Use the generic snapshot PDF for all other document types
       if (doc.snapshotData) {
@@ -706,6 +711,61 @@ async function generateDocumentPdfFromSnapshot(
       };
       element = React.createElement(
         MaintenanceReportDocument as React.ComponentType<{ data: MaintenanceReportData }>,
+        { data },
+      ) as React.ReactElement;
+      break;
+    }
+    case 'accident_report': {
+      const data: MvaReportData = {
+        reference: String(snapshot.reference ?? doc.entityId ?? ''),
+        severity: String(snapshot.severity ?? 'minor'),
+        status: String(snapshot.status ?? 'reported'),
+        occurredAt: String(snapshot.occurredAt ?? generatedAt),
+        location: (snapshot.location as string | null) ?? null,
+        description: String(snapshot.description ?? ''),
+        immediateAction: (snapshot.immediateAction as string | null) ?? null,
+        continuationState: (snapshot.continuationState as string | null) ?? null,
+        vehicleSafe: (snapshot.vehicleSafe as boolean | null) ?? null,
+        passengerSafe: (snapshot.passengerSafe as boolean | null) ?? null,
+        injuries: Boolean(snapshot.injuries),
+        numberInjured: Number(snapshot.numberInjured ?? 0),
+        vehicleDamage: Boolean(snapshot.vehicleDamage),
+        thirdPartyInvolvement: Boolean(snapshot.thirdPartyInvolvement),
+        policeReference: (snapshot.policeReference as string | null) ?? null,
+        emergencyServicesContacted: Boolean(snapshot.emergencyServicesContacted),
+        detailsRequired: Boolean(snapshot.detailsRequired),
+        tripReferences: {
+          transportRequest: String((snapshot.tripReferences as { transportRequest?: string } | undefined)?.transportRequest ?? '—'),
+          tripAuthority: String((snapshot.tripReferences as { tripAuthority?: string } | undefined)?.tripAuthority ?? '—'),
+        },
+        vehicle: {
+          registration: String((snapshot.vehicle as { registration?: string } | undefined)?.registration ?? ''),
+          registerNumber: String((snapshot.vehicle as { registerNumber?: string } | undefined)?.registerNumber ?? ''),
+          make: String((snapshot.vehicle as { make?: string } | undefined)?.make ?? ''),
+          model: String((snapshot.vehicle as { model?: string } | undefined)?.model ?? ''),
+        },
+        accidentReportNumber: (snapshot.accidentReportNumber as string | null) ?? null,
+        investigationStatus: String(snapshot.investigationStatus ?? 'pending'),
+        investigationNotes: (snapshot.investigationNotes as string | null) ?? null,
+        investigationClosedAt: (snapshot.investigationClosedAt as string | null) ?? null,
+        witnessStatements: (snapshot.witnessStatements as Array<Record<string, unknown>> | null) ?? [],
+        thirdPartyDetails: (snapshot.thirdPartyDetails as Record<string, unknown> | null) ?? null,
+        insuranceClaimReference: (snapshot.insuranceClaimReference as string | null) ?? null,
+        insuranceNotified: Boolean(snapshot.insuranceNotified),
+        insuranceNotifiedAt: (snapshot.insuranceNotifiedAt as string | null) ?? null,
+        policeReportFiled: Boolean(snapshot.policeReportFiled),
+        thirdPartyInsuranceDetails: (snapshot.thirdPartyInsuranceDetails as Record<string, unknown> | null) ?? null,
+        technicalClearanceStatus: String(snapshot.technicalClearanceStatus ?? 'pending'),
+        technicalClearanceAt: (snapshot.technicalClearanceAt as string | null) ?? null,
+        technicalClearanceByUserId: (snapshot.technicalClearanceByUserId as string | null) ?? null,
+        tenantName: tenant?.name,
+        branding: resolvedBranding,
+        documentVersion: doc.documentVersion,
+        generatedAt,
+        verificationCode: doc.id.slice(0, 8).toUpperCase(),
+      };
+      element = React.createElement(
+        MvaReportDocument as React.ComponentType<{ data: MvaReportData }>,
         { data },
       ) as React.ReactElement;
       break;

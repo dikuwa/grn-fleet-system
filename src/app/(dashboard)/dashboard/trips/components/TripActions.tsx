@@ -3,26 +3,63 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Play, RotateCcw, CheckSquare, KeyRound, UserCheck } from 'lucide-react';
+import { Play, RotateCcw, CheckSquare, KeyRound, UserCheck, Repeat } from 'lucide-react';
 import Link from 'next/link';
+import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
+import { Permissions } from '@/lib/permissions';
 
 interface TripActionsProps {
   tripId: string;
+  allocationId: string;
   status: string;
   hasIssue?: boolean;
   hasAcknowledge?: boolean;
   hasDepartureInspection?: boolean;
   vehicleId: string;
+  vehicle?: {
+    id: string;
+    make: string;
+    model: string;
+    licenceNumber: string;
+    currentOdometer: number | null;
+  };
   canManage: boolean;
   canDrive: boolean;
   canInspect: boolean;
+  canReplaceVehicle: boolean;
   currentOdometer?: number;
 }
 
-export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepartureInspection, vehicleId, canManage, canDrive, canInspect, currentOdometer }: TripActionsProps) {
+export function TripActions({
+  tripId,
+  allocationId,
+  status,
+  hasIssue,
+  hasAcknowledge,
+  hasDepartureInspection,
+  vehicleId,
+  vehicle,
+  canManage,
+  canDrive,
+  canInspect,
+  canReplaceVehicle = false,
+  currentOdometer,
+}: TripActionsProps) {
   const router = useRouter();
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState('');
+  const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+
+  // A trip is "mid-trip" once it has been issued; replacements then require an
+  // odometer handover reading so the closure can split kilometres per vehicle.
+  const midTrip = status !== 'pending' && status !== 'return_inspection' && status !== 'closure_review' && status !== 'closed';
+
+  const handleReplaceSuccess = useCallback(
+    (result: { replacementVehicleId: string; originalVehicleId: string; handoverOdometer: number | null }) => {
+      router.refresh();
+    },
+    [router],
+  );
 
   const handleStartTrip = useCallback(async () => {
     setIsWorking(true);
@@ -112,6 +149,11 @@ export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepar
             <CheckSquare className="h-4 w-4" /> Departure Inspection
           </Button>
         )}
+        {canReplaceVehicle && allocationId && !hasIssue && (
+          <Button variant="secondary" size="sm" onClick={() => setReplaceDialogOpen(true)}>
+            <Repeat className="h-4 w-4" /> Replace Vehicle
+          </Button>
+        )}
         {canManage && hasAcknowledge && hasDepartureInspection && !hasIssue && (
           <Button variant="secondary" size="sm" loading={isWorking} onClick={handleIssueVehicle}>
             <KeyRound className="h-4 w-4" /> Issue Vehicle
@@ -121,6 +163,16 @@ export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepar
           <Play className="h-4 w-4" /> Start Trip
         </Button>}
         {error && <p className="mt-1 w-full text-xs text-status-error-text">{error}</p>}
+        {canReplaceVehicle && allocationId && vehicle && (
+          <VehicleReplacementDialog
+            open={replaceDialogOpen}
+            onOpenChange={setReplaceDialogOpen}
+            allocationId={allocationId}
+            currentVehicle={vehicle}
+            midTrip={midTrip}
+            onSuccess={handleReplaceSuccess}
+          />
+        )}
       </div>
     );
   }
@@ -128,10 +180,27 @@ export function TripActions({ tripId, status, hasIssue, hasAcknowledge, hasDepar
   if (status === 'in_progress') {
     return (
       <div>
-        {canDrive && <Button variant="primary" size="sm" loading={isWorking} onClick={handleMarkReturned}>
-          <RotateCcw className="h-4 w-4" /> Mark Returned
-        </Button>}
+        <div className="flex flex-wrap gap-2">
+          {canDrive && <Button variant="primary" size="sm" loading={isWorking} onClick={handleMarkReturned}>
+            <RotateCcw className="h-4 w-4" /> Mark Returned
+          </Button>}
+          {canReplaceVehicle && allocationId && (
+            <Button variant="secondary" size="sm" onClick={() => setReplaceDialogOpen(true)}>
+              <Repeat className="h-4 w-4" /> Replace Vehicle
+            </Button>
+          )}
+        </div>
         {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
+        {canReplaceVehicle && allocationId && vehicle && (
+          <VehicleReplacementDialog
+            open={replaceDialogOpen}
+            onOpenChange={setReplaceDialogOpen}
+            allocationId={allocationId}
+            currentVehicle={vehicle}
+            midTrip={midTrip}
+            onSuccess={handleReplaceSuccess}
+          />
+        )}
       </div>
     );
   }

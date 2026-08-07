@@ -18,6 +18,8 @@ import { eq, and } from 'drizzle-orm';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { WorkflowEngine } from '@/lib/workflow-engine';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
+import { subscriptionLifecycleFunctions } from '@/inngest/functions/subscription-lifecycle';
+import { usageEnforcementInngestFunctions } from '@/inngest/functions/usage-enforcement';
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -992,5 +994,7 @@ export const inngestFunctions = (
     maintenanceReminder,
     documentExpiryAlert,
     tripReturnDueCheck,
+    ...subscriptionLifecycleFunctions,
+    ...usageEnforcementInngestFunctions,
   ] as const
 ).filter((f): f is NonNullable<typeof f> => f !== null);

@@ -246,6 +246,27 @@
       "when": 1754554286201,
       "tag": "0034_completed_steps_jsonb",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786276800000,
+      "tag": "0035_incident_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786284000000,
+      "tag": "0036_emergency_contacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786352400000,
+      "tag": "0037_mva_report_columns",
+      "breakpoints": true
     }
   ]
 }

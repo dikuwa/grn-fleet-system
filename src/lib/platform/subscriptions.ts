@@ -11,11 +11,12 @@ import {
   tenantSubscriptions,
   paymentSubmissions,
   billingSettings,
-  subscriptionAddons,
 } from '@/db/schema/subscriptions';
-import { tenants } from '@/db/schema/tenants';
+import { tenants, tenantMemberships } from '@/db/schema/tenants';
 import { subscriptionPackages } from '@/db/schema/packages';
-import { eq, and, desc, or } from 'drizzle-orm';
+import { vehicles } from '@/db/schema/fleet';
+import { employees, driverProfiles, offices, departments } from '@/db/schema/people';
+import { eq, and, desc, sql, ne } from 'drizzle-orm';
 import { getPackageById, getPackagePrice } from './packages';
 
 // ---------------------------------------------------------------------------
@@ -450,17 +451,102 @@ export async function upsertBillingSettings(
 // Usage counters
 // ---------------------------------------------------------------------------
 
+export type UsageCounters = {
+  vehicles: number;
+  users: number;
+  drivers: number;
+  departments: number;
+  offices: number;
+  storageGb: number;
+};
+
+/**
+ * Count live usage for a tenant across vehicles, users, drivers,
+ * departments, offices, and (approximately) storage.
+ */
+export async function countTenantUsage(tenantId: string): Promise<UsageCounters> {
+  const db = getDb();
+
+  const [vehicleRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(vehicles)
+    .where(eq(vehicles.tenantId, tenantId));
+  const [membershipRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(tenantMemberships)
+    .where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.status, 'active')));
+  const [driverRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(driverProfiles)
+    .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
+    .where(and(eq(employees.tenantId, tenantId), ne(employees.employmentStatus, 'archived')));
+  const [departmentRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(departments)
+    .where(eq(departments.tenantId, tenantId));
+  const [officeRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(offices)
+    .where(eq(offices.tenantId, tenantId));
+
+  // Storage usage — attempt to measure from R2 if configured; fall back to the
+  // tenant's recorded storageLimit (an upper bound estimate) when storage is
+  // not configured, so the counter remains meaningful in development.
+  let storageGb = 0;
+  try {
+    const { isStorageConfigured, listFiles } = await import('@/lib/storage');
+    if (isStorageConfigured()) {
+      const tenantPrefix = `tenants/${tenantId}`;
+      const files = await listFiles(tenantPrefix);
+      storageGb = Math.ceil(files.reduce((sum, f) => sum + f.size, 0) / (1024 ** 3));
+    } else {
+      const [t] = await db
+        .select({ storageLimit: tenants.storageLimit })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+      storageGb = t?.storageLimit ?? 0;
+    }
+  } catch (err) {
+    console.warn('[subscriptions] Storage usage measurement failed:', err);
+  }
+
+  return {
+    vehicles: Number(vehicleRow?.count ?? 0),
+    users: Number(membershipRow?.count ?? 0),
+    drivers: Number(driverRow?.count ?? 0),
+    departments: Number(departmentRow?.count ?? 0),
+    offices: Number(officeRow?.count ?? 0),
+    storageGb,
+  };
+}
+
 /** Refresh the usage counters on a tenant's subscription from the live tables. */
-export async function refreshUsageCounters(tenantId: string): Promise<void> {
+export async function refreshUsageCounters(tenantId: string): Promise<UsageCounters> {
   const db = getDb();
   const [subscription] = await db
     .select()
     .from(tenantSubscriptions)
     .where(eq(tenantSubscriptions.tenantId, tenantId))
     .limit(1);
-  if (!subscription) return;
+  if (!subscription) {
+    throw new Error(`No subscription found for tenant ${tenantId}`);
+  }
 
-  // Vehicles, users, drivers, departments, offices are counted from their tables.
-  // Storage is approximated from the storage usage; kept simple here.
-  // TODO: wire to real counts when schema queries are available.
+  const usage = await countTenantUsage(tenantId);
+
+  await db
+    .update(tenantSubscriptions)
+    .set({
+      currentVehicles: usage.vehicles,
+      currentUsers: usage.users,
+      currentDrivers: usage.drivers,
+      currentDepartments: usage.departments,
+      currentOffices: usage.offices,
+      currentStorageGb: usage.storageGb,
+      updatedAt: new Date(),
+    })
+    .where(eq(tenantSubscriptions.id, subscription.id));
+
+  return usage;
 }

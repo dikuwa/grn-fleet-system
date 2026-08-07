@@ -26,6 +26,12 @@ export const vehicleAllocations = pgTable('vehicle_allocations', {
   vehicleId: uuid('vehicle_id')
     .notNull()
     .references(() => vehicles.id),
+  /** The vehicle this allocation was originally assigned before a mid-trip replacement. */
+  replacedFromVehicleId: uuid('replaced_from_vehicle_id').references(() => vehicles.id),
+  /** Free-text reason recorded when the vehicle was replaced mid-trip. */
+  replacementReason: text('replacement_reason'),
+  /** Timestamp of the mid-trip replacement (odometer handover point). */
+  replacementAt: timestamp('replacement_at', { withTimezone: true }),
   driverEmployeeId: uuid('driver_employee_id').references(() => employees.id),
   startAt: timestamp('start_at', { withTimezone: true }).notNull(),
   endAt: timestamp('end_at', { withTimezone: true }).notNull(),
@@ -329,6 +335,7 @@ export const tripIncidents = pgTable(
     clientSyncId: text('client_sync_id'),
     officialNumber: text('official_number'),
     incidentType: text('incident_type').notNull(),
+    incidentCategoryCode: text('incident_category_code'),
     severity: text('severity').notNull().default('minor'),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
     location: text('location'),
@@ -355,9 +362,24 @@ export const tripIncidents = pgTable(
     notificationState: jsonb('notification_state').$type<Record<string, unknown>>(),
     actionTaken: text('action_taken'),
     attachmentKeys: jsonb('attachment_keys').$type<string[]>().default([]),
+    attachmentHashes: jsonb('attachment_hashes').$type<Record<string, string>>().default({}),
     administratorResponse: text('administrator_response'),
     status: text('status').notNull().default('reported'),
     reportedByUserId: text('reported_by_user_id').notNull(),
+    // Motor Vehicle Accident (MVA) report fields
+    accidentReportNumber: text('accident_report_number'),
+    investigationStatus: text('investigation_status').notNull().default('pending'),
+    insuranceClaimReference: text('insurance_claim_reference'),
+    insuranceNotified: boolean('insurance_notified').notNull().default(false),
+    insuranceNotifiedAt: timestamp('insurance_notified_at', { withTimezone: true }),
+    policeReportFiled: boolean('police_report_filed').notNull().default(false),
+    thirdPartyInsuranceDetails: jsonb('third_party_insurance_details').$type<Record<string, unknown>>(),
+    witnessStatements: jsonb('witness_statements').$type<Array<Record<string, unknown>>>().default([]),
+    investigationNotes: text('investigation_notes'),
+    investigationClosedAt: timestamp('investigation_closed_at', { withTimezone: true }),
+    technicalClearanceStatus: text('technical_clearance_status').notNull().default('pending'),
+    technicalClearanceAt: timestamp('technical_clearance_at', { withTimezone: true }),
+    technicalClearanceByUserId: text('technical_clearance_by_user_id'),
     offlineCreatedAt: timestamp('offline_created_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -367,6 +389,10 @@ export const tripIncidents = pgTable(
     uniqueIndex('uq_trip_incidents_tenant_number').on(table.tenantId, table.officialNumber),
     index('idx_trip_incidents_trip_status').on(table.tripId, table.status),
     index('idx_trip_incidents_tenant_severity').on(table.tenantId, table.severity),
+    index('idx_trip_incidents_tenant_mva').on(table.tenantId, table.accidentReportNumber),
+    index('idx_trip_incidents_investigation_status').on(table.tenantId, table.investigationStatus),
+    index('idx_trip_incidents_technical_clearance').on(table.tenantId, table.technicalClearanceStatus),
+    index('idx_trip_incidents_insurance_notified').on(table.tenantId, table.insuranceNotified),
   ],
 );
 
@@ -643,6 +669,10 @@ export const tripClosures = pgTable('trip_closures', {
   authorisedKilometres: integer('authorised_kilometres'),
   actualKilometres: integer('actual_kilometres'),
   kilometreVariance: integer('kilometre_variance'),
+  /** Per-vehicle odometer breakdown when a trip used more than one vehicle. { [vehicleId]: { start, end } } */
+  vehicleOdometerReadings: jsonb('vehicle_odometer_readings').$type<
+    Record<string, { start: number; end: number }>
+  >().default({}),
   totalFuelLitres: numeric('total_fuel_litres', { precision: 10, scale: 2 }),
   totalFuelCost: numeric('total_fuel_cost', { precision: 12, scale: 2 }),
   missingItemFlags: jsonb('missing_item_flags').$type<string[]>(),
@@ -651,3 +681,54 @@ export const tripClosures = pgTable('trip_closures', {
   decision: text('decision').notNull(), // closed, requires_correction, follow_up
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Tenant-configurable incident categories
+ */
+export const incidentCategories = pgTable(
+  'incident_categories',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    group: text('group').notNull(), // vehicle, route_safety, security, other
+    isActive: boolean('is_active').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+    requiresMvaForm: boolean('requires_mva_form').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_incident_categories_tenant_code').on(table.tenantId, table.code),
+    index('idx_incident_categories_tenant_active').on(table.tenantId, table.isActive),
+  ],
+);
+
+/**
+ * Emergency contacts cached per tenant and region
+ */
+export const emergencyContacts = pgTable(
+  'emergency_contacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    phone: text('phone').notNull(),
+    role: text('role').notNull(), // hospital, police, towing, fire, insurance, internal
+    region: text('region'), // nullable; NULL means available for all regions
+    isActive: boolean('is_active').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_emergency_contacts_tenant_phone').on(table.tenantId, table.phone, table.role),
+    index('idx_emergency_contacts_tenant_active').on(table.tenantId, table.isActive),
+    index('idx_emergency_contacts_tenant_region').on(table.tenantId, table.region),
+  ],
+);

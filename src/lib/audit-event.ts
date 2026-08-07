@@ -20,8 +20,10 @@ interface AuditEventInput {
   correlationId?: string | null;
 }
 
-export async function recordAuditEvent(input: AuditEventInput) {
-  const db = getDb();
+type Tx = Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0];
+
+export async function recordAuditEvent(input: AuditEventInput, client?: Tx) {
+  const db = client ?? getDb();
   const [sequence] = await db
     .select({ value: sql<number>`COALESCE(MAX(${auditEvents.tenantSequence}), 0) + 1` })
     .from(auditEvents)

@@ -9,7 +9,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { demoRequests } from '@/db/schema/demo-requests';
 import { eq, and, count } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 // ---------------------------------------------------------------------------
 // POST — Submit a demo request
@@ -122,7 +123,8 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // TODO: Add platform admin permission check
+    const permCheck = await requirePermission(session, Permissions.DEMO_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || '';

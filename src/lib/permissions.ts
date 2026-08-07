@@ -44,6 +44,16 @@ export const Permissions = {
   TRIP_MANAGE: 'trip:manage',
   TRIP_AUTHORITY_OVERRIDE_NUMBER: 'tripAuthority:overrideNumber',
 
+  // Incidents
+  TRIP_INCIDENT_MANAGE: 'tripIncident:manage',
+  TRIP_INCIDENT_REPORT: 'tripIncident:report',
+  INCIDENT_COMPLETE_DETAILS: 'incident:complete-details',
+  INCIDENT_INVESTIGATE: 'incident:investigate',
+  INCIDENT_CLOSE_INVESTIGATION: 'incident:close-investigation',
+  INCIDENT_TECHNICAL_CLEARANCE: 'incident:technical-clearance',
+  INCIDENT_INSURANCE_UPDATE: 'incident:insurance-update',
+  EMERGENCY_CONTACTS_MANAGE: 'emergencyContacts:manage',
+
   // Drivers
   DRIVER_LOG_CREATE: 'driver:log-create',
   DRIVER_LOG_VIEW: 'driver:log-view',
@@ -161,6 +171,7 @@ export function isPermissionAvailableInWorkspace(
       Permissions.DRIVER_LOG_VIEW,
       Permissions.DRIVER_FUEL_CREATE,
       Permissions.TRIP_VIEW,
+      Permissions.TRIP_INCIDENT_REPORT,
       Permissions.INSPECTION_VIEW,
       // Drivers do NOT perform official inspections (Phase 32): official
       // departure/arrival inspections are performed by Inspectors and Release
@@ -202,6 +213,12 @@ export function isPermissionAvailableInWorkspace(
       Permissions.TRIP_CLOSE,
       Permissions.TRIP_VIEW,
       Permissions.TRIP_MANAGE,
+      Permissions.TRIP_INCIDENT_MANAGE,
+      Permissions.INCIDENT_COMPLETE_DETAILS,
+      Permissions.INCIDENT_INVESTIGATE,
+      Permissions.INCIDENT_CLOSE_INVESTIGATION,
+      Permissions.INCIDENT_TECHNICAL_CLEARANCE,
+      Permissions.INCIDENT_INSURANCE_UPDATE,
       Permissions.FUEL_MANAGE,
       Permissions.FUEL_VERIFY,
       Permissions.FUEL_VIEW,
@@ -259,6 +276,12 @@ export function isPermissionAvailableInWorkspace(
       Permissions.DRIVER_ARCHIVE,
       Permissions.DRIVER_UPLOAD_LICENCE,
       Permissions.DRIVER_REVIEW_LICENCE,
+      Permissions.TRIP_INCIDENT_MANAGE,
+      Permissions.INCIDENT_COMPLETE_DETAILS,
+      Permissions.INCIDENT_INVESTIGATE,
+      Permissions.INCIDENT_CLOSE_INVESTIGATION,
+      Permissions.INCIDENT_TECHNICAL_CLEARANCE,
+      Permissions.INCIDENT_INSURANCE_UPDATE,
       Permissions.USER_VIEW,
       Permissions.USER_MANAGE_STATUS,
       Permissions.USER_INVITE,
@@ -268,6 +291,7 @@ export function isPermissionAvailableInWorkspace(
       Permissions.REPORT_EXPORT,
       Permissions.FILE_VIEW,
       Permissions.FILE_UPLOAD,
+      Permissions.EMERGENCY_CONTACTS_MANAGE,
     ],
     [W.AUDIT]: [
       Permissions.REQUEST_VIEW,
@@ -294,6 +318,7 @@ export function isPermissionAvailableInWorkspace(
       Permissions.DEMO_MANAGE,
       Permissions.AUDIT_READ,
       Permissions.AUDIT_EXPORT,
+      Permissions.EMERGENCY_CONTACTS_MANAGE,
     ],
   };
   return policies[workspace]?.includes(permission) ?? false;
@@ -366,6 +391,8 @@ export const RoleDefinitions = {
       Permissions.FUEL_VERIFY,
       Permissions.TRIP_VIEW,
       Permissions.TRIP_AUTHORITY_OVERRIDE_NUMBER,
+      Permissions.TRIP_INCIDENT_MANAGE,
+      Permissions.EMERGENCY_CONTACTS_MANAGE,
       Permissions.INSPECTION_VIEW,
       Permissions.INSPECTION_PERFORM,
       Permissions.MAINTENANCE_VIEW,
@@ -423,6 +450,7 @@ export const RoleDefinitions = {
       Permissions.TRIP_CLOSE,
       Permissions.TRIP_MANAGE,
       Permissions.TRIP_VIEW,
+      Permissions.TRIP_INCIDENT_MANAGE,
       Permissions.STAFF_MANAGE,
       Permissions.STAFF_IMPORT,
       Permissions.STAFF_VIEW,
@@ -451,6 +479,7 @@ export const RoleDefinitions = {
       Permissions.DRIVER_REVIEW_LICENCE,
       Permissions.MAINTENANCE_VIEW,
       Permissions.MAINTENANCE_MANAGE,
+      Permissions.EMERGENCY_CONTACTS_MANAGE,
     ],
   },
   REQUESTER: {
@@ -523,6 +552,7 @@ export const RoleDefinitions = {
       Permissions.DRIVER_LOG_VIEW,
       Permissions.DRIVER_FUEL_CREATE,
       Permissions.TRIP_VIEW,
+      Permissions.TRIP_INCIDENT_REPORT,
       Permissions.INSPECTION_VIEW,
       Permissions.FILE_VIEW,
       Permissions.FILE_UPLOAD,
@@ -605,6 +635,18 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   inspections: {
     label: 'Inspections',
     permissions: [Permissions.INSPECTION_PERFORM, Permissions.INSPECTION_VIEW],
+  },
+  incidents: {
+    label: 'Incidents',
+    permissions: [
+      Permissions.TRIP_INCIDENT_MANAGE,
+      Permissions.TRIP_INCIDENT_REPORT,
+      Permissions.INCIDENT_COMPLETE_DETAILS,
+      Permissions.INCIDENT_INVESTIGATE,
+      Permissions.INCIDENT_CLOSE_INVESTIGATION,
+      Permissions.INCIDENT_TECHNICAL_CLEARANCE,
+      Permissions.INCIDENT_INSURANCE_UPDATE,
+    ],
   },
   trips: {
     label: 'Trip Management',

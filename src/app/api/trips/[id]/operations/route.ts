@@ -358,10 +358,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (action === 'incident') {
       const incidentType = String(body.incidentType || '');
       const description = String(body.description || '').trim();
-      if (
-        !incidentTypes.includes(incidentType as (typeof incidentTypes)[number]) ||
-        description.length < 10
-      ) {
+      // Accept any non-empty incident type (supports tenant-configurable categories)
+      if (incidentType.length < 3 || incidentType.length > 100 || description.length < 10) {
         return NextResponse.json(
           { error: 'Select an incident type and provide a useful description' },
           { status: 422 },
@@ -437,6 +435,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           clientSyncId,
           officialNumber,
           incidentType,
+          incidentCategoryCode: incidentType,
           severity,
           occurredAt,
           location: body.location ? String(body.location) : null,
@@ -470,6 +469,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           },
           actionTaken: body.actionTaken ? String(body.actionTaken) : null,
           attachmentKeys: Array.isArray(body.attachmentKeys) ? body.attachmentKeys.map(String) : [],
+          attachmentHashes:
+            body.attachmentHashes && typeof body.attachmentHashes === 'object'
+              ? (body.attachmentHashes as Record<string, string>)
+              : {},
           reportedByUserId: session.user.id,
           offlineCreatedAt: body.offlineCreatedAt ? new Date(String(body.offlineCreatedAt)) : null,
         })

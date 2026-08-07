@@ -110,6 +110,24 @@ function getClient(): S3Client | null {
 const BUCKET = env.R2_BUCKET_NAME || 'grn-fleet';
 
 // ---------------------------------------------------------------------------
+// Category → path mapping (shared with upload + dedup routes)
+// ---------------------------------------------------------------------------
+
+export const CATEGORY_PATHS = {
+  inspection: 'inspections',
+  document: 'documents',
+  receipt: 'receipts',
+  signature: 'signatures',
+  vehicle: 'vehicles',
+  import: 'imports',
+  avatar: 'avatars',
+  'trip-incident': 'trip-incidents',
+} as const;
+
+export type UploadCategory = keyof typeof CATEGORY_PATHS;
+
+
+// ---------------------------------------------------------------------------
 // Public helpers
 // ---------------------------------------------------------------------------
 

@@ -219,14 +219,23 @@ export default async function TripDetailPage({ params }: PageProps) {
         <div className="flex items-center gap-2">
           {canOperate && !isDriver && <TripActions
               tripId={trip.id}
+              allocationId={trip.allocationId!}
               status={trip.status}
               vehicleId={trip.vehicleId}
+              vehicle={trip.make && trip.model ? {
+                id: trip.vehicleId,
+                make: trip.make,
+                model: trip.model,
+                licenceNumber: trip.licenceNumber || '',
+                currentOdometer: trip.currentOdometer,
+              } : undefined}
               hasIssue={!!issueRecord}
               hasAcknowledge={!!trip.driverAcknowledgedAt}
               hasDepartureInspection={inspections.some((inspection) => inspection.type === 'departure' && inspection.overallPass)}
               canManage={permissionCodes.includes(Permissions.TRIP_MANAGE)}
               canDrive={permissionCodes.includes(Permissions.DRIVER_LOG_CREATE)}
               canInspect={permissionCodes.includes(Permissions.INSPECTION_PERFORM)}
+              canReplaceVehicle={permissionCodes.includes(Permissions.ALLOCATION_MANAGE)}
               currentOdometer={trip.currentOdometer ?? undefined}
             />}
           <Button variant="secondary" size="sm" asChild>

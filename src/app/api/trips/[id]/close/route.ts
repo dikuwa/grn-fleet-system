@@ -43,7 +43,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Find the trip — with tenant isolation
     const [trip] = await db
-      .select()
+      .select({
+        id: trips.id,
+        tenantId: trips.tenantId,
+        requestId: trips.requestId,
+        allocationId: trips.allocationId,
+        vehicleId: trips.vehicleId,
+        status: trips.status,
+      })
       .from(trips)
       .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId)))
       .limit(1);
@@ -65,6 +72,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         { status: 409 },
       );
     }
+
+    // Check if this trip had a vehicle replacement (to determine if per-vehicle km is needed)
+    const [allocation] = await db
+      .select({
+        replacedFromVehicleId: vehicleAllocations.replacedFromVehicleId,
+        replacementReason: vehicleAllocations.replacementReason,
+        replacementAt: vehicleAllocations.replacementAt,
+      })
+      .from(vehicleAllocations)
+      .where(eq(vehicleAllocations.id, trip.allocationId))
+      .limit(1);
+
+    const hadReplacement = allocation?.replacedFromVehicleId != null;
 
     const [authority] = await db
       .select()
@@ -157,22 +177,66 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const totalFuelLitres = fuel.reduce((sum, f) => sum + Number(f.litres), 0);
     const totalFuelCost = fuel.reduce((sum, f) => sum + Number(f.amount), 0);
 
+    // If the trip had a vehicle replacement, the client must provide per-vehicle
+    // odometer readings. Structure: { [vehicleId]: { start, end } }
+    let vehicleOdometerReadings: Record<string, { start: number; end: number }> = {};
+    let actualKilometres: number | null = null;
+    let kilometreVariance: number | null = null;
+
+    if (hadReplacement) {
+      const perVehicle = body.vehicleOdometerReadings;
+      if (!perVehicle || typeof perVehicle !== 'object') {
+        return NextResponse.json(
+          { error: 'This trip had a vehicle replacement. Per-vehicle odometer readings are required.' },
+          { status: 400 },
+        );
+      }
+      // Validate structure: each vehicle must have numeric start/end
+      for (const [vid, readings] of Object.entries(perVehicle)) {
+        const r = readings as Record<string, unknown> | null;
+        if (!r || typeof r.start !== 'number' || typeof r.end !== 'number') {
+          return NextResponse.json(
+            { error: `Invalid odometer readings for vehicle ${vid}: both start and end must be numbers` },
+            { status: 400 },
+          );
+        }
+        if (r.end < r.start) {
+          return NextResponse.json(
+            { error: `Odometer end (${r.end}) cannot be less than start (${r.start}) for vehicle ${vid}` },
+            { status: 400 },
+          );
+        }
+      }
+      vehicleOdometerReadings = perVehicle;
+      // Sum all per-vehicle distances for actualKilometres
+      actualKilometres = Object.values(vehicleOdometerReadings).reduce((sum, r) => sum + (r.end - r.start), 0);
+      // Variance against authorised kilometres
+      if (body.authorisedKm != null) {
+        kilometreVariance = actualKilometres - Number(body.authorisedKm);
+      }
+    } else {
+      // No replacement: fall back to the authority odometer diff or body values
+      actualKilometres =
+        authority.beginningOdometer !== null && authority.endingOdometer !== null
+          ? authority.endingOdometer - authority.beginningOdometer
+          : body.actualKm || null;
+      kilometreVariance =
+        body.authorisedKm &&
+        authority.beginningOdometer !== null &&
+        authority.endingOdometer !== null
+          ? authority.endingOdometer - authority.beginningOdometer - Number(body.authorisedKm)
+          : null;
+    }
+
     // Create or update the trip closure record
     const [closure] = await db
       .insert(tripClosures)
       .values({
         tripId: id,
         authorisedKilometres: body.authorisedKm || null,
-        actualKilometres:
-          authority.beginningOdometer !== null && authority.endingOdometer !== null
-            ? authority.endingOdometer - authority.beginningOdometer
-            : body.actualKm || null,
-        kilometreVariance:
-          body.authorisedKm &&
-          authority.beginningOdometer !== null &&
-          authority.endingOdometer !== null
-            ? authority.endingOdometer - authority.beginningOdometer - Number(body.authorisedKm)
-            : null,
+        actualKilometres,
+        kilometreVariance,
+        vehicleOdometerReadings,
         totalFuelLitres: totalFuelLitres ? String(totalFuelLitres) : null,
         totalFuelCost: totalFuelCost ? String(totalFuelCost) : null,
         reviewNotes: reviewNotes || null,

@@ -25,6 +25,7 @@ import { tenantSetupProgress } from '@/db/schema/invitations';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { offices, departments } from '@/db/schema/people';
 import { requireRequestAuth } from '@/lib/auth-helpers';
+import { seedDefaultIncidentCategories } from '@/lib/incidents/categories';
 import { eq, and } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,9 @@ export async function POST(request: NextRequest) {
           updatedAt: now,
         })
         .where(eq(tenantSetupProgress.tenantId, tenantId));
+
+      // Seed default incident categories for the tenant (fire-and-forget)
+      await seedDefaultIncidentCategories(tenantId, session.user.id).catch(() => {});
 
       return NextResponse.json({
         success: true,

@@ -111,9 +111,21 @@ async function resolveUserTenant(
 
     if (membership.length === 0) return null;
 
+    const tenantId = membership[0].tenantId;
+
+    // Evaluate the subscription lifecycle on session establishment so the
+    // entitlement gate below reads freshly-transitioned state (trial → active,
+    // grace → expired, etc.). Best-effort: never fail login because of it.
+    try {
+      const { evaluateSubscriptionLifecycle } = await import('@/lib/platform/subscriptions');
+      await evaluateSubscriptionLifecycle(tenantId);
+    } catch (err) {
+      console.warn('[session] Subscription lifecycle evaluation skipped:', err);
+    }
+
     // Entitlement gate: block suspended/archived/expired-trial tenants
     // at the session boundary (server-side, not just in the UI).
-    const entitlements = await getTenantEntitlements(membership[0].tenantId);
+    const entitlements = await getTenantEntitlements(tenantId);
     if (entitlements) {
       const gate = canTenantOperate(entitlements);
       if (!gate.ok) return null;

@@ -1141,6 +1141,19 @@ export const routeRegistry: readonly RouteDefinition[] = [
     order: 580,
     navigationVisible: true,
   },
+  {
+    id: 'platform-emergency-contacts',
+    path: '/dashboard/platform/emergency-contacts',
+    label: 'Emergency Contacts',
+    icon: 'PhoneCall',
+    section: 'Platform',
+    workspaces: [W.PLATFORM_ADMIN],
+    access: { [W.PLATFORM_ADMIN]: platformManage() },
+    tenantScoped: false,
+    platformOnly: true,
+    order: 590,
+    navigationVisible: true,
+  },
 ] as const;
 
 function normalizePath(pathname: string) {

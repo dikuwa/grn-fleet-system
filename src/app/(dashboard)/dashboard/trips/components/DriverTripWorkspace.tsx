@@ -11,6 +11,7 @@ import {
   FileText,
   MapPin,
   Navigation,
+  Phone,
   Play,
   RotateCcw,
   ShieldCheck,
@@ -33,6 +34,7 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { saveDraft } from '@/lib/offline-drafts';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 import { useToast } from '@/lib/use-toast';
+import { computeSha256 } from '@/lib/storage-dedup';
 
 type Action = 'accept' | 'start' | 'return' | 'progress' | 'incident' | null;
 
@@ -65,6 +67,13 @@ interface WorkspaceData {
   incidents: Array<{ id: string; incidentType: string; occurredAt: string; description: string; safeToContinue: boolean }>;
 }
 
+const groupLabels: Record<string, string> = {
+  vehicle: 'Vehicle and mechanical',
+  route_safety: 'Route and safety',
+  security: 'Security',
+  other: 'Other',
+};
+
 const confirmations = [
   ['vehicleConfirmed', 'The allocated vehicle is correct'],
   ['authorityConfirmed', 'The Trip Authority details are correct'],
@@ -82,6 +91,53 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
     queryKey: userProfileQueryKey,
     queryFn: ({ signal }) => fetchUserProfile(signal),
   });
+
+  // Fetch tenant-configurable incident categories
+  const { data: categoriesData } = useQuery({
+    queryKey: ['incident-categories'],
+    queryFn: async ({ signal }) => {
+      const res = await fetch('/api/incident-categories', { signal });
+      if (!res.ok) return { data: [] };
+      return res.json();
+    },
+  });
+
+  const categories: Array<{ code: string; name: string; group: string }> =
+    categoriesData?.data ?? [];
+
+  const categoryGroups = useMemo(() => {
+    const map = new Map<string, Array<{ code: string; name: string }>>();
+    for (const cat of categories) {
+      const list = map.get(cat.group) || [];
+      list.push({ code: cat.code, name: cat.name });
+      map.set(cat.group, list);
+    }
+    return map;
+  }, [categories]);
+
+  // Fetch cached emergency contacts for the incident form
+  const { data: emergencyContactsData } = useQuery({
+    queryKey: ['emergency-contacts'],
+    queryFn: async ({ signal }) => {
+      const res = await fetch('/api/emergency-contacts', { signal });
+      if (!res.ok) return { data: [] };
+      return res.json();
+    },
+  });
+
+  const emergencyContacts: Array<{ id: string; name: string; phone: string; role: string; region: string | null }> =
+    emergencyContactsData?.data ?? [];
+
+  const contactsByRole = useMemo(() => {
+    const map = new Map<string, Array<{ name: string; phone: string }>>();
+    for (const contact of emergencyContacts) {
+      const list = map.get(contact.role) || [];
+      list.push({ name: contact.name, phone: contact.phone });
+      map.set(contact.role, list);
+    }
+    return map;
+  }, [emergencyContacts]);
+
   const [data, setData] = useState<WorkspaceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -192,16 +248,41 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
 
       if (action === 'incident' && incidentFiles.length > 0) {
         const attachmentKeys: string[] = [];
+        const attachmentHashes: Record<string, string> = {};
         for (const file of incidentFiles) {
-          const uploadBody = new FormData();
-          uploadBody.append('file', file);
-          uploadBody.append('category', 'trip-incident');
-          const upload = await fetch('/api/upload', { method: 'POST', body: uploadBody });
-          const uploaded = await upload.json().catch(() => ({}));
-          if (!upload.ok || !uploaded.data?.key) throw new Error(uploaded.error || 'Incident attachment upload failed');
-          attachmentKeys.push(uploaded.data.key);
+          // Compute SHA-256 client-side so identical photo bytes already in
+          // storage are not uploaded a second time.
+          const sha256 = await computeSha256(file);
+
+          const dedupRes = await fetch('/api/storage/check-dup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sha256, category: 'trip-incident' }),
+          });
+          const dedup = dedupRes.ok
+            ? await dedupRes.json().catch(() => null)
+            : null;
+          const existingKey = dedup?.data?.keys?.[0];
+
+          let key: string;
+          if (existingKey) {
+            key = existingKey;
+          } else {
+            const uploadBody = new FormData();
+            uploadBody.append('file', file);
+            uploadBody.append('category', 'trip-incident');
+            uploadBody.append('sha256', sha256);
+            const upload = await fetch('/api/upload', { method: 'POST', body: uploadBody });
+            const uploaded = await upload.json().catch(() => ({}));
+            if (!upload.ok || !uploaded.data?.key) throw new Error(uploaded.error || 'Incident attachment upload failed');
+            key = uploaded.data.key;
+          }
+
+          attachmentKeys.push(key);
+          attachmentHashes[key] = sha256;
         }
         payload.attachmentKeys = attachmentKeys;
+        payload.attachmentHashes = attachmentHashes;
       }
 
       const response = await fetch(endpoint, {
@@ -338,10 +419,50 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
                   Stop the vehicle safely where possible. Do not continue driving. Contact emergency services and the Transport Office using the approved contact details.
                 </div>
               )}
+              {contactsByRole.size > 0 && (
+                <div className="rounded-lg border border-border bg-surface-hover p-3">
+                  <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">
+                    <Phone className="h-3.5 w-3.5" /> Emergency contacts
+                  </p>
+                  <div className="grid gap-1.5 sm:grid-cols-2">
+                    {Array.from(contactsByRole.entries()).map(([role, contacts]) => (
+                      <div key={role} className="text-xs">
+                        <p className="font-medium text-ink-700">
+                          {role === 'hospital' ? 'Hospital / Ambulance'
+                            : role === 'police' ? 'Police'
+                            : role === 'towing' ? 'Towing / Recovery'
+                            : role === 'fire' ? 'Fire / Rescue'
+                            : role === 'insurance' ? 'Insurance'
+                            : role === 'internal' ? 'Transport Office'
+                            : role}
+                        </p>
+                        {contacts.map((contact) => (
+                          <p key={contact.phone + contact.name} className="text-ink-500">
+                            <a href={`tel:${contact.phone.replace(/\s/g, '')}`} className="text-brand-700 underline-offset-2 hover:underline">
+                              {contact.phone}
+                            </a>{' '}
+                            · {contact.name}
+                          </p>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div><Label required>Event type</Label><StyledSelect value={String(form.incidentType)} onChange={(event) => patch('incidentType', event.target.value)}>
-                <optgroup label="Vehicle and mechanical"><option value="mechanical_defect">Mechanical defect</option><option value="electrical_defect">Electrical defect</option><option value="tyre_failure">Tyre failure</option><option value="breakdown">Breakdown</option><option value="physical_vehicle_damage">Physical vehicle damage</option><option value="warning_light">Warning light</option><option value="fuel_leak_issue">Fuel leak or fuel issue</option><option value="fire_smoke">Fire or smoke</option></optgroup>
-                <optgroup label="Accident and people"><option value="accident_collision">Accident or collision</option><option value="near_miss">Near miss</option><option value="passenger_injury">Passenger injury</option><option value="driver_injury">Driver injury</option><option value="third_party_injury">Third-party injury</option><option value="third_party_vehicle_damage">Third-party vehicle damage</option><option value="property_damage">Property damage</option></optgroup>
-                <optgroup label="Route and safety"><option value="unsafe_road_condition">Unsafe road condition</option><option value="route_obstruction">Route obstruction</option><option value="weather_hazard">Weather hazard</option><option value="security_incident">Security incident</option><option value="theft_attempted_theft">Theft or attempted theft</option><option value="traffic_offence">Traffic offence</option><option value="police_intervention">Police intervention</option><option value="other_safety_incident">Other safety incident</option></optgroup>
+                {categoryGroups.size > 0 ? (
+                  Array.from(categoryGroups.entries()).map(([group, cats]) => (
+                    <optgroup key={group} label={groupLabels[group] ?? group}>
+                      {cats.map((cat) => <option key={cat.code} value={cat.code}>{cat.name}</option>)}
+                    </optgroup>
+                  ))
+                ) : (
+                  <>
+                    <optgroup label="Vehicle and mechanical"><option value="mechanical_defect">Mechanical defect</option><option value="electrical_defect">Electrical defect</option><option value="tyre_failure">Tyre failure</option><option value="breakdown">Breakdown</option><option value="physical_vehicle_damage">Physical vehicle damage</option><option value="warning_light">Warning light</option><option value="fuel_leak_issue">Fuel leak or fuel issue</option><option value="fire_smoke">Fire or smoke</option></optgroup>
+                    <optgroup label="Accident and people"><option value="accident_collision">Accident or collision</option><option value="near_miss">Near miss</option><option value="passenger_injury">Passenger injury</option><option value="driver_injury">Driver injury</option><option value="third_party_injury">Third-party injury</option><option value="third_party_vehicle_damage">Third-party vehicle damage</option><option value="property_damage">Property damage</option></optgroup>
+                    <optgroup label="Route and safety"><option value="unsafe_road_condition">Unsafe road condition</option><option value="route_obstruction">Route obstruction</option><option value="weather_hazard">Weather hazard</option><option value="security_incident">Security incident</option><option value="theft_attempted_theft">Theft or attempted theft</option><option value="traffic_offence">Traffic offence</option><option value="police_intervention">Police intervention</option><option value="other_safety_incident">Other safety incident</option></optgroup>
+                  </>
+                )}
               </StyledSelect></div>
               <div><Label required>Severity</Label><StyledSelect value={String(form.severity)} onChange={(event) => patch('severity', event.target.value)}><option value="minor">Minor</option><option value="moderate">Moderate</option><option value="serious">Serious</option><option value="critical">Critical</option></StyledSelect></div>
               <div><Label required>Description</Label><Textarea value={String(form.description || '')} onChange={(event) => patch('description', event.target.value)} /></div>

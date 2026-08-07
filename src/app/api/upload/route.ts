@@ -3,10 +3,13 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import {
   uploadFile,
-  buildKey,
   isStorageConfigured,
+  listFiles,
+  CATEGORY_PATHS,
+  type UploadCategory,
 } from '@/lib/storage';
 import { UPLOAD_MAX_SIZE_BYTES, ALLOWED_IMAGE_TYPES, ALLOWED_DOCUMENT_TYPES } from '@/lib/constants';
+import { computeSha256FromBytes, buildDedupKey, findDuplicateKeys } from '@/lib/storage-dedup';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -14,20 +17,8 @@ import { UPLOAD_MAX_SIZE_BYTES, ALLOWED_IMAGE_TYPES, ALLOWED_DOCUMENT_TYPES } fr
 
 const ALLOWED_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_DOCUMENT_TYPES] as string[];
 
-type UploadCategory = 'inspection' | 'document' | 'receipt' | 'signature' | 'vehicle' | 'import' | 'avatar';
-
-const CATEGORY_PATHS: Record<UploadCategory, string> = {
-  inspection: 'inspections',
-  document: 'documents',
-  receipt: 'receipts',
-  signature: 'signatures',
-  vehicle: 'vehicles',
-  import: 'imports',
-  avatar: 'avatars',
-};
-
 // ---------------------------------------------------------------------------
-// POST — Upload a file
+// POST — Upload a file (with optional SHA-256 dedup)
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
@@ -53,6 +44,7 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null;
     const category = (formData.get('category') as UploadCategory) || 'document';
     const isPublic = formData.get('public') === 'true';
+    const clientSha256 = (formData.get('sha256') as string | null) || null;
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided. Use field name "file".' }, { status: 400 });
@@ -86,14 +78,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build the object key with tenant isolation
     const tenantPrefix = `tenant/${session.tenantId}`;
-    const key = buildKey(file.name, CATEGORY_PATHS[category], tenantPrefix);
+    const path = CATEGORY_PATHS[category];
 
-    // Read the file into a buffer
+    // Compute SHA-256 if not provided by client
     const buffer = Buffer.from(await file.arrayBuffer());
+    const sha256 = clientSha256 || (await computeSha256FromBytes(new Uint8Array(buffer)));
 
-    // Upload to R2
+    // Check for existing duplicate using hash prefix — skip re-upload if found
+    const existingKeys = await findDuplicateKeys(tenantPrefix, path, sha256);
+    if (existingKeys.length > 0) {
+      return NextResponse.json({
+        success: true,
+        data: {
+          key: existingKeys[0],
+          size: file.size,
+          category,
+          originalName: file.name,
+          deduplicated: true,
+        },
+      });
+    }
+
+    // No duplicate — build dedup-aware key and upload
+    const key = buildDedupKey(file.name, path, tenantPrefix, sha256);
+
     const result = await uploadFile(buffer, key, {
       contentType: file.type,
       tenantPrefix,
@@ -109,6 +118,8 @@ export async function POST(request: NextRequest) {
         publicUrl: result.publicUrl,
         category,
         originalName: file.name,
+        sha256,
+        deduplicated: false,
       },
     });
   } catch (error) {
@@ -141,8 +152,6 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category');
     const prefix = `tenant/${session.tenantId}/${category ? CATEGORY_PATHS[category as UploadCategory] + '/' : ''}`;
 
-    // Use dynamic import to avoid bundling S3 SDK in every request
-    const { listFiles } = await import('@/lib/storage');
     const files = await listFiles(prefix);
 
     return NextResponse.json({ success: true, data: files });
