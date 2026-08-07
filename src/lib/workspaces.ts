@@ -119,9 +119,12 @@ export function isWorkspaceId(value: unknown): value is WorkspaceId {
 }
 
 export function getEligibleWorkspaces(roleNames: readonly string[]): WorkspaceDefinition[] {
-  const isPlatformRole = roleNames.some((r) =>
-    [R.PLATFORM_ADMIN, R.PLATFORM_SUPPORT, R.PLATFORM_AUDITOR].includes(r),
-  );
+  const platformRoleNames: readonly string[] = [
+    R.PLATFORM_ADMIN,
+    R.PLATFORM_SUPPORT,
+    R.PLATFORM_AUDITOR,
+  ];
+  const isPlatformRole = roleNames.some((r) => platformRoleNames.includes(r));
   if (isPlatformRole) {
     return workspaceRegistry.filter((workspace) => workspace.id === WorkspaceIds.PLATFORM_ADMIN);
   }

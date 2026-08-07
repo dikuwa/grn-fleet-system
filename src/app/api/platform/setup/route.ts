@@ -43,9 +43,9 @@ interface SetupProgressData {
 // GET — Load progress
 // ---------------------------------------------------------------------------
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await requireRequestAuth();
+    const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
@@ -135,7 +135,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireRequestAuth();
+    const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
 

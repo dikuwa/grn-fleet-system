@@ -230,13 +230,12 @@ export default function PlatformSubscriptionsPage() {
       <PageHeader
         title="Subscription Management"
         description="Manage tenant subscriptions, billing periods, and payment status"
-        actions={
-          <Button onClick={() => router.push('/dashboard/platform/onboard')} size="sm">
-            <Plus className="h-4 w-4 mr-1" />
-            New Tenant
-          </Button>
-        }
-      />
+      >
+        <Button onClick={() => router.push('/dashboard/platform/onboard')} size="sm">
+          <Plus className="h-4 w-4 mr-1" />
+          New Tenant
+        </Button>
+      </PageHeader>
 
       {/* Stats Cards */}
       {stats && (

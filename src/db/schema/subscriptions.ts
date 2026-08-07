@@ -1,6 +1,6 @@
 import { pgTable, uuid, text, timestamp, boolean, integer, jsonb, pgEnum, uniqueIndex, foreignKey } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
-import { subscriptionPackages } from './packages';
+import { subscriptionPackages, packageAddons } from './packages';
 
 /**
  * Subscription status lifecycle

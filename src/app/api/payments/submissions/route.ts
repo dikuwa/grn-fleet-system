@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { getDb } from '@/db';
 import { paymentSubmissions, tenantSubscriptions } from '@/db/schema/subscriptions';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, count } from 'drizzle-orm';
 import { createPaymentSubmission } from '@/lib/platform/subscriptions';
 
 // ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     const whereClause = and(...conditions);
 
     const [totalResult] = await db
-      .select({ count: require('drizzle-orm').count() })
+      .select({ count: count() })
       .from(paymentSubmissions)
       .where(whereClause);
 
@@ -107,6 +107,8 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    const db = getDb();
 
     // Get the tenant's subscription
     const [subscription] = await db

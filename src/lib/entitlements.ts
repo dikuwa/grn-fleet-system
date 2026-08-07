@@ -68,7 +68,7 @@ export async function getTenantEntitlements(tenantId: string): Promise<TenantEnt
   const vehicleLimit = pkg?.maxVehicles ?? tenantRow.vehicleLimit;
   const userLimit = pkg?.maxUsers ?? tenantRow.userLimit;
   const storageLimit = pkg?.maxStorageGb ?? tenantRow.storageLimit;
-  const features = pkg?.features ?? [];
+  const features = Object.keys(pkg?.features ?? {});
   const packageName = pkg?.name ?? null;
   const subscriptionActive = subscription ? ['trialing', 'active', 'grace_period'].includes(subscription.status) : false;
 

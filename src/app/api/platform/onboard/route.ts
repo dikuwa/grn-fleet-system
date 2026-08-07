@@ -349,11 +349,7 @@ export async function POST(request: NextRequest) {
       action: 'CREATE',
       entityType: 'tenant',
       entityId: tenant.id,
-      metadata: {
-        lifecycleStatus: 'PENDING_INVITATION',
-        subscriptionPackage: subscription.packageCode,
-        invitationSent: emailSent,
-      },
+      summary: `Lifecycle: PENDING_INVITATION, package: ${subscription.packageCode}, email sent: ${emailSent}`,
     }).catch(() => {});
 
     return NextResponse.json(

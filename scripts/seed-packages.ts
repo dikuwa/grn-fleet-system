@@ -14,24 +14,73 @@
 import { getDb } from '../src/db';
 import { subscriptionPackages, packageEntitlements } from '../src/db/schema/packages';
 import { eq } from 'drizzle-orm';
+import { Permissions, type PermissionCode } from '../src/lib/permissions';
+
+// ---------------------------------------------------------------------------
+// Feature flags → real permission codes
+//
+// The package row carries feature flags (Record<string, boolean>) used by the
+// entitlement gate, while package_entitlements stores fine-grained permission
+// codes. Each feature flag maps to the permission codes it unlocks so the
+// seeded packages agree with the permissions the app actually checks.
+// ---------------------------------------------------------------------------
+
+const FEATURE_PERMISSIONS: Record<string, readonly PermissionCode[]> = {
+  vehicle_management: [
+    Permissions.VEHICLE_VIEW,
+    Permissions.VEHICLE_CREATE,
+    Permissions.VEHICLE_UPDATE,
+    Permissions.VEHICLE_MANAGE,
+  ],
+  trip_management: [Permissions.TRIP_VIEW, Permissions.TRIP_MANAGE, Permissions.TRIP_CLOSE],
+  fuel_tracking: [Permissions.FUEL_VIEW, Permissions.FUEL_MANAGE, Permissions.FUEL_VERIFY],
+  inspection_system: [Permissions.INSPECTION_VIEW, Permissions.INSPECTION_PERFORM],
+  driver_management: [Permissions.DRIVER_MANAGE, Permissions.DRIVER_ASSIGN, Permissions.DRIVER_VERIFY],
+  maintenance_tracking: [Permissions.MAINTENANCE_VIEW, Permissions.MAINTENANCE_MANAGE],
+  reporting: [Permissions.REPORT_VIEW],
+  programme_management: [Permissions.PROGRAMME_VIEW, Permissions.PROGRAMME_CREATE, Permissions.PROGRAMME_SUBMIT],
+  user_management: [Permissions.USER_VIEW, Permissions.USER_INVITE, Permissions.USER_MANAGE_STATUS],
+  advanced_analytics: [Permissions.REPORT_EXPORT],
+  export_reports: [Permissions.REPORT_EXPORT],
+  api_access: [],
+  priority_support: [],
+  custom_branding: [],
+  white_labeling: [],
+  dedicated_account_manager: [],
+};
 
 // ---------------------------------------------------------------------------
 // Package definitions
 // ---------------------------------------------------------------------------
 
-const PACKAGES = [
+type PackageDefinition = {
+  code: string;
+  name: string;
+  description: string;
+  tier: 'trial' | 'starter' | 'professional' | 'enterprise' | 'custom_institutional';
+  priceMonthlyCents: number | null;
+  priceQuarterlyCents: number | null;
+  priceAnnuallyCents: number | null;
+  trialDays: number;
+  maxVehicles: number | null;
+  maxUsers: number | null;
+  maxDrivers: number | null;
+  maxDepartments: number | null;
+  maxStorageGb: number | null;
+  features: readonly string[];
+  sortOrder: number;
+};
+
+const PACKAGES: PackageDefinition[] = [
   {
     code: 'TRIAL',
     name: 'Free Trial',
     description: '7-day trial with full access to all features',
-    tier: 'trial' as const,
-    status: 'active' as const,
-    monthlyPrice: 0,
-    quarterlyPrice: 0,
-    annualPrice: 0,
-    currency: 'NAD',
+    tier: 'trial',
+    priceMonthlyCents: 0,
+    priceQuarterlyCents: 0,
+    priceAnnuallyCents: 0,
     trialDays: 7,
-    gracePeriodDays: 0,
     maxVehicles: 50,
     maxUsers: 25,
     maxDrivers: 25,
@@ -47,25 +96,17 @@ const PACKAGES = [
       'reporting',
       'user_management',
     ],
-    entitlements: [
-      { code: 'vehicles', limit: 50, overageAllowed: false },
-      { code: 'users', limit: 25, overageAllowed: false },
-      { code: 'drivers', limit: 25, overageAllowed: false },
-      { code: 'storage', limit: 1, overageAllowed: false },
-    ],
+    sortOrder: 10,
   },
   {
     code: 'STARTER',
     name: 'Starter',
     description: 'Basic fleet management for small organisations',
-    tier: 'starter' as const,
-    status: 'active' as const,
-    monthlyPrice: 45000, // NAD 450.00
-    quarterlyPrice: 121500, // NAD 1,215.00 (5% discount)
-    annualPrice: 432000, // NAD 4,320.00 (20% discount)
-    currency: 'NAD',
+    tier: 'starter',
+    priceMonthlyCents: 45000, // NAD 450.00
+    priceQuarterlyCents: 121500, // NAD 1,215.00 (5% discount)
+    priceAnnuallyCents: 432000, // NAD 4,320.00 (20% discount)
     trialDays: 14,
-    gracePeriodDays: 7,
     maxVehicles: 50,
     maxUsers: 15,
     maxDrivers: 15,
@@ -80,25 +121,17 @@ const PACKAGES = [
       'reporting',
       'user_management',
     ],
-    entitlements: [
-      { code: 'vehicles', limit: 50, overageAllowed: false },
-      { code: 'users', limit: 15, overageAllowed: false },
-      { code: 'drivers', limit: 15, overageAllowed: false },
-      { code: 'storage', limit: 5, overageAllowed: false },
-    ],
+    sortOrder: 20,
   },
   {
     code: 'PROFESSIONAL',
     name: 'Professional',
     description: 'Standard package for regional councils and government agencies',
-    tier: 'professional' as const,
-    status: 'active' as const,
-    monthlyPrice: 90000, // NAD 900.00
-    quarterlyPrice: 243000, // NAD 2,430.00 (10% discount)
-    annualPrice: 864000, // NAD 8,640.00 (20% discount)
-    currency: 'NAD',
+    tier: 'professional',
+    priceMonthlyCents: 90000, // NAD 900.00
+    priceQuarterlyCents: 243000, // NAD 2,430.00 (10% discount)
+    priceAnnuallyCents: 864000, // NAD 8,640.00 (20% discount)
     trialDays: 30,
-    gracePeriodDays: 14,
     maxVehicles: 150,
     maxUsers: 50,
     maxDrivers: 50,
@@ -117,25 +150,17 @@ const PACKAGES = [
       'advanced_analytics',
       'export_reports',
     ],
-    entitlements: [
-      { code: 'vehicles', limit: 150, overageAllowed: false },
-      { code: 'users', limit: 50, overageAllowed: false },
-      { code: 'drivers', limit: 50, overageAllowed: false },
-      { code: 'storage', limit: 25, overageAllowed: false },
-    ],
+    sortOrder: 30,
   },
   {
     code: 'ENTERPRISE',
     name: 'Enterprise',
     description: 'Unlimited fleet management for large organisations',
-    tier: 'enterprise' as const,
-    status: 'active' as const,
-    monthlyPrice: 180000, // NAD 1,800.00
-    quarterlyPrice: 486000, // NAD 4,860.00 (10% discount)
-    annualPrice: 1728000, // NAD 17,280.00 (20% discount)
-    currency: 'NAD',
+    tier: 'enterprise',
+    priceMonthlyCents: 180000, // NAD 1,800.00
+    priceQuarterlyCents: 486000, // NAD 4,860.00 (10% discount)
+    priceAnnuallyCents: 1728000, // NAD 17,280.00 (20% discount)
     trialDays: 30,
-    gracePeriodDays: 21,
     maxVehicles: null, // unlimited
     maxUsers: null, // unlimited
     maxDrivers: null, // unlimited
@@ -157,25 +182,17 @@ const PACKAGES = [
       'priority_support',
       'custom_branding',
     ],
-    entitlements: [
-      { code: 'vehicles', limit: null, overageAllowed: true },
-      { code: 'users', limit: null, overageAllowed: true },
-      { code: 'drivers', limit: null, overageAllowed: true },
-      { code: 'storage', limit: 100, overageAllowed: false },
-    ],
+    sortOrder: 40,
   },
   {
     code: 'CUSTOM_INSTITUTIONAL',
     name: 'Custom Institutional',
     description: 'Bespoke package for large institutions with dedicated support and SLA',
-    tier: 'custom' as const,
-    status: 'active' as const,
-    monthlyPrice: 0, // custom pricing
-    quarterlyPrice: 0,
-    annualPrice: 0,
-    currency: 'NAD',
+    tier: 'custom_institutional',
+    priceMonthlyCents: 0, // custom pricing
+    priceQuarterlyCents: 0,
+    priceAnnuallyCents: 0,
     trialDays: 0,
-    gracePeriodDays: 30,
     maxVehicles: null,
     maxUsers: null,
     maxDrivers: null,
@@ -199,12 +216,7 @@ const PACKAGES = [
       'white_labeling',
       'dedicated_account_manager',
     ],
-    entitlements: [
-      { code: 'vehicles', limit: null, overageAllowed: true },
-      { code: 'users', limit: null, overageAllowed: true },
-      { code: 'drivers', limit: null, overageAllowed: true },
-      { code: 'storage', limit: null, overageAllowed: true },
-    ],
+    sortOrder: 50,
   },
 ];
 
@@ -238,30 +250,32 @@ async function main() {
         name: pkg.name,
         description: pkg.description,
         tier: pkg.tier,
-        status: pkg.status,
-        monthlyPrice: pkg.monthlyPrice,
-        quarterlyPrice: pkg.quarterlyPrice,
-        annualPrice: pkg.annualPrice,
-        currency: pkg.currency,
+        status: 'active',
+        priceMonthlyCents: pkg.priceMonthlyCents,
+        priceQuarterlyCents: pkg.priceQuarterlyCents,
+        priceAnnuallyCents: pkg.priceAnnuallyCents,
+        defaultBillingInterval: 'annually',
         trialDays: pkg.trialDays,
-        gracePeriodDays: pkg.gracePeriodDays,
         maxVehicles: pkg.maxVehicles,
         maxUsers: pkg.maxUsers,
         maxDrivers: pkg.maxDrivers,
         maxDepartments: pkg.maxDepartments,
         maxStorageGb: pkg.maxStorageGb,
-        features: pkg.features,
+        features: Object.fromEntries(pkg.features.map((f) => [f, true])),
+        sortOrder: pkg.sortOrder,
       })
       .returning();
 
-    // Insert entitlements
-    if (pkg.entitlements.length > 0) {
+    // Insert permission entitlements derived from the feature flags
+    const permissionCodes = [
+      ...new Set(pkg.features.flatMap((f) => FEATURE_PERMISSIONS[f] ?? [])),
+    ];
+    if (permissionCodes.length > 0) {
       await db.insert(packageEntitlements).values(
-        pkg.entitlements.map((ent) => ({
+        permissionCodes.map((permissionCode) => ({
           packageId: createdPkg.id,
-          code: ent.code,
-          limit: ent.limit,
-          overageAllowed: ent.overageAllowed,
+          permissionCode,
+          isIncluded: true,
         })),
       );
     }

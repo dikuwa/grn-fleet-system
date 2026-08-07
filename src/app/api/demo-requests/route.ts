@@ -126,7 +126,6 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || '';
-    const tenantId = searchParams.get('tenantId') || '';
     const page = parseInt(searchParams.get('page') || '1', 10);
     const limit = parseInt(searchParams.get('limit') || '25', 10);
     const offset = (page - 1) * limit;
@@ -134,8 +133,7 @@ export async function GET(request: NextRequest) {
     const db = getDb();
 
     const conditions: any[] = [];
-    if (status) conditions.push(eq(demoRequests.status, status));
-    if (tenantId) conditions.push(eq(demoRequests.tenantId, tenantId));
+    if (status) conditions.push(eq(demoRequests.status, status as any));
 
     // Get total count
     const [totalResult] = await db

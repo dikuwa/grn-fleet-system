@@ -6,11 +6,7 @@
  */
 
 import { getDb } from '@/db';
-import {
-  subscriptionPackages,
-  packageEntitlements,
-  type subscriptionPackages as subscriptionPackagesType,
-} from '@/db/schema/packages';
+import { subscriptionPackages, packageEntitlements } from '@/db/schema/packages';
 import { eq, asc, inArray } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
@@ -42,7 +38,7 @@ export type CreatePackageInput = {
 
 export type UpdatePackageInput = Partial<CreatePackageInput>;
 
-export type PackageWithEntitlements = Awaited<ReturnType<typeof subscriptionPackagesType.$inferSelect>> & {
+export type PackageWithEntitlements = typeof subscriptionPackages.$inferSelect & {
   entitlements: Array<{ permissionCode: string; isIncluded: boolean }>;
 };
 

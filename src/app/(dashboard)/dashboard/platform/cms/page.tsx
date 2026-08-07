@@ -146,13 +146,12 @@ export default function PlatformCMSPage() {
       <PageHeader
         title="Content Management"
         description="Manage public website pages, content blocks, and publishing"
-        actions={
-          <Button size="sm" onClick={() => toast({ title: 'Coming Soon', description: 'CMS editor is under development' })}>
-            <Plus className="h-4 w-4 mr-1" />
-            New Page
-          </Button>
-        }
-      />
+      >
+        <Button size="sm" onClick={() => toast({ title: 'Coming Soon', description: 'CMS editor is under development' })}>
+          <Plus className="h-4 w-4 mr-1" />
+          New Page
+        </Button>
+      </PageHeader>
 
       {/* Filters */}
       <Card>
