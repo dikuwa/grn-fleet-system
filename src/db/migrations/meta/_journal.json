@@ -232,6 +232,13 @@
       "when": 1786204800000,
       "tag": "0032_fuel_driver_attribution",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786233600000,
+      "tag": "0033_saas_platform_tables",
+      "breakpoints": true
     }
   ]
 }

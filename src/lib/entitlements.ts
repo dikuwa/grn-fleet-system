@@ -1,31 +1,35 @@
 import { getDb } from '@/db';
 import { tenants } from '@/db/schema/tenants';
+import { tenantSubscriptions } from '@/db/schema/subscriptions';
+import { subscriptionPackages } from '@/db/schema/packages';
 import { eq } from 'drizzle-orm';
 
 /**
  * Tenant lifecycle + entitlement layer.
  *
  * All subscription-aware checks live here so feature gates are not
- * scattered across pages. Billing is NOT implemented yet — the platform
- * ships with INTERNAL_DEFAULT / NOT_CONFIGURED and an unlimited ceiling
- * so nothing is artificially blocked, while the data model and access
- * points are ready for a future plan.
+ * scattered across pages. Supports both INTERNAL_DEFAULT (legacy unlimited)
+ * and real package-based entitlements.
  */
 
-export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL' | 'ARCHIVED';
-export type PlanCode = 'INTERNAL_DEFAULT';
-export type SubscriptionStatus = 'NOT_CONFIGURED';
+export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL' | 'ARCHIVED' | 'DRAFT' | 'PENDING_INVITATION' | 'INVITATION_SENT' | 'INVITATION_EXPIRED' | 'SETUP_IN_PROGRESS' | 'PENDING_PLATFORM_REVIEW' | 'READY_FOR_ACTIVATION' | 'RESTRICTED' | 'ONBOARDING_FAILED';
+export type PlanCode = string;
+export type SubscriptionStatusType = 'NOT_CONFIGURED' | 'PENDING_PAYMENT' | 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED' | 'EXPIRED' | 'SUSPENDED' | 'RESTRICTED';
 
 export interface TenantEntitlements {
   tenantId: string;
   name: string;
   status: TenantStatus;
   planCode: PlanCode;
-  subscriptionStatus: SubscriptionStatus;
+  subscriptionStatus: SubscriptionStatusType;
   trialEndsAt: Date | null;
   vehicleLimit: number | null; // null = unlimited
   userLimit: number | null;
   storageLimit: number | null; // GB
+  // Package features (from subscription)
+  features: string[];
+  packageName: string | null;
+  subscriptionActive: boolean;
 }
 
 const UNLIMITED = Number.MAX_SAFE_INTEGER;
@@ -35,38 +39,109 @@ const UNLIMITED = Number.MAX_SAFE_INTEGER;
  */
 export async function getTenantEntitlements(tenantId: string): Promise<TenantEntitlements | null> {
   const db = getDb();
-  const [row] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
-  if (!row) return null;
+
+  // Get tenant with subscription and package info
+  const [tenantRow] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+  if (!tenantRow) return null;
+
+  // Try to get active subscription with package details
+  const [subRow] = await db
+    .select({
+      subscription: tenantSubscriptions,
+      pkg: subscriptionPackages,
+    })
+    .from(tenantSubscriptions)
+    .innerJoin(subscriptionPackages, eq(tenantSubscriptions.packageId, subscriptionPackages.id))
+    .where(eq(tenantSubscriptions.tenantId, tenantId))
+    .limit(1);
+
+  const hasRealPackage = !!subRow?.subscription && !!subRow?.pkg;
+  const pkg = subRow?.pkg;
+  const subscription = subRow?.subscription;
+
+  // Determine entitlements - use package limits if available, fallback to tenant row
+  const vehicleLimit = pkg?.maxVehicles ?? tenantRow.vehicleLimit;
+  const userLimit = pkg?.maxUsers ?? tenantRow.userLimit;
+  const storageLimit = pkg?.maxStorageGb ?? tenantRow.storageLimit;
+  const features = pkg?.features ?? [];
+  const packageName = pkg?.name ?? null;
+  const subscriptionActive = subscription ? ['trialing', 'active', 'grace_period'].includes(subscription.status) : false;
+
   return {
-    tenantId: row.id,
-    name: row.name,
-    status: (row.status as TenantStatus) ?? 'ACTIVE',
-    planCode: (row.planCode as PlanCode) ?? 'INTERNAL_DEFAULT',
-    subscriptionStatus: (row.subscriptionStatus as SubscriptionStatus) ?? 'NOT_CONFIGURED',
-    trialEndsAt: row.trialEndsAt,
-    vehicleLimit: row.vehicleLimit,
-    userLimit: row.userLimit,
-    storageLimit: row.storageLimit,
+    tenantId: tenantRow.id,
+    name: tenantRow.name,
+    status: (tenantRow.status as TenantStatus) ?? 'ACTIVE',
+    planCode: (tenantRow.planCode as PlanCode) ?? (pkg?.code ?? 'INTERNAL_DEFAULT'),
+    subscriptionStatus: (tenantRow.subscriptionStatus as SubscriptionStatusType) ?? 'NOT_CONFIGURED',
+    trialEndsAt: tenantRow.trialEndsAt,
+    vehicleLimit,
+    userLimit,
+    storageLimit,
+    features,
+    packageName,
+    subscriptionActive,
   };
 }
 
 /**
  * Is the tenant allowed to log in and operate at all?
- * Suspended and archived tenants are blocked platform-wide.
+ * Suspended, archived, and onboarding/pending tenants are blocked platform-wide.
  */
 export function canTenantOperate(e: TenantEntitlements): {
   ok: boolean;
   reason?: string;
+  lifecycleBlock?: boolean;
 } {
-  if (e.status === 'SUSPENDED') {
-    return { ok: false, reason: 'This tenant is suspended. Contact the platform administrator.' };
+  // First check lifecycle status blocks
+  const blockedLifecycleStatuses: TenantStatus[] = [
+    'DRAFT',
+    'PENDING_INVITATION',
+    'INVITATION_SENT',
+    'INVITATION_EXPIRED',
+    'SETUP_IN_PROGRESS',
+    'PENDING_PLATFORM_REVIEW',
+    'ONBOARDING_FAILED',
+    'ARCHIVED',
+    'SUSPENDED',
+    'RESTRICTED',
+  ];
+
+  if (blockedLifecycleStatuses.includes(e.status)) {
+    const reasonMap: Record<string, string> = {
+      DRAFT: 'This tenant is still being configured. Please complete onboarding.',
+      PENDING_INVITATION: 'Awaiting invitation to be sent.',
+      INVITATION_SENT: 'Invitation sent. Awaiting acceptance.',
+      INVITATION_EXPIRED: 'The invitation has expired. Request a new one.',
+      SETUP_IN_PROGRESS: 'Tenant setup is in progress. Complete the setup wizard.',
+      PENDING_PLATFORM_REVIEW: 'This tenant is pending platform administrator review.',
+      ONBOARDING_FAILED: 'Onboarding failed. Contact support.',
+      ARCHIVED: 'This tenant is archived and no longer active.',
+      SUSPENDED: 'This tenant is suspended. Contact the platform administrator.',
+      RESTRICTED: 'This tenant is restricted due to billing issues. Contact the platform administrator.',
+    };
+    return {
+      ok: false,
+      reason: reasonMap[e.status] || 'This tenant cannot operate in its current state.',
+      lifecycleBlock: true,
+    };
   }
-  if (e.status === 'ARCHIVED') {
-    return { ok: false, reason: 'This tenant is archived and no longer active.' };
+
+  // Then check subscription status
+  if (e.subscriptionStatus === 'EXPIRED') {
+    return { ok: false, reason: 'Subscription has expired. Contact the platform administrator to renew.' };
   }
+  if (e.subscriptionStatus === 'CANCELLED') {
+    return { ok: false, reason: 'Subscription has been cancelled.' };
+  }
+  if (e.subscriptionStatus === 'PAST_DUE' || e.subscriptionStatus === 'RESTRICTED') {
+    return { ok: false, reason: 'Subscription is past due. Please make a payment to restore access.' };
+  }
+
+  // Legacy trial check
   if (e.status === 'TRIAL' && e.trialEndsAt && e.trialEndsAt.getTime() < Date.now()) {
     return { ok: false, reason: 'The trial period has ended. Contact the platform administrator.' };
   }
+
   return { ok: true };
 }
 
@@ -85,6 +160,14 @@ export function storageLimitBytes(e: TenantEntitlements): number {
   return e.storageLimit === null || e.storageLimit === undefined
     ? UNLIMITED
     : e.storageLimit * 1024 * 1024 * 1024;
+}
+
+/**
+ * Check if a specific feature is available for the tenant
+ */
+export function hasFeature(e: TenantEntitlements, feature: string): boolean {
+  if (!e.subscriptionActive) return false;
+  return e.features.includes(feature);
 }
 
 /**

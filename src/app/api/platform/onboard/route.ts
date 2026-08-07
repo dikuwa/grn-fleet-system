@@ -1,27 +1,32 @@
 /**
  * Platform Tenant Onboarding API
  *
- * POST /api/platform/onboard  — Create everything needed for a new tenant
+ * POST /api/platform/onboard — Create a new tenant through the 7-step
+ * Platform Administrator onboarding wizard.
  *
- * Single-request provisioning that creates:
- * - Tenant record + default branding
+ * Creates:
+ * - Tenant record (lifecycle DRAFT → PENDING_INVITATION) with primary contact
  * - Default roles with system permissions
- * - Offices
- * - Departments
- * - Initial admin user (if auth is configured)
+ * - Offices (optional)
+ * - Departments (optional)
+ * - Subscription record (package + billing interval)
+ * - Branding (optional)
+ * - A secure Tenant Administrator invitation (email delivered)
  *
- * Requires TENANT_MANAGE permission.
+ * Requires TENANT_MANAGE / PLATFORM_ADMIN permission.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { tenants, tenantBranding, tenantMemberships, roles, rolePermissions, roleAssignments } from '@/db/schema/tenants';
+import { tenants, tenantBranding, roles, rolePermissions } from '@/db/schema/tenants';
 import { offices, departments } from '@/db/schema/people';
-import { user, account } from '@/db/schema/better-auth';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions, RoleDefinitions } from '@/lib/permissions';
-import { eq, or, and } from 'drizzle-orm';
-import bcrypt from 'bcryptjs';
+import { eq, or } from 'drizzle-orm';
+import { createSubscription } from '@/lib/platform/subscriptions';
+import { createInvitation, invitationAcceptUrl } from '@/lib/platform/invitations';
+import { recordAuditEvent } from '@/lib/audit-event';
+import { sendInvitationEmail } from '@/lib/platform/email-templates';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +40,22 @@ interface OnboardingRequest {
     type?: string;
     timezone?: string;
     locale?: string;
+  };
+  primaryContact: {
+    name: string;
+    email: string;
+    phone?: string;
+    title?: string;
+  };
+  tenantAdmin: {
+    email: string;
+    name: string;
+  };
+  subscription: {
+    packageId: string;
+    billingInterval: 'monthly' | 'quarterly' | 'annually';
+    trialDays?: number;
+    gracePeriodDays?: number;
   };
   branding?: {
     contactEmail?: string;
@@ -54,11 +75,6 @@ interface OnboardingRequest {
     name: string;
     code: string;
   }>;
-  adminUser?: {
-    email: string;
-    password: string;
-    name: string;
-  };
   roles?: string[]; // Role names to create (from RoleDefinitions keys)
 }
 
@@ -72,12 +88,15 @@ export async function POST(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
+    const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body: OnboardingRequest = await request.json();
 
-    // Validate required fields
+    // -----------------------------------------------------------------------
+    // Validation
+    // -----------------------------------------------------------------------
+
     if (!body.organisation?.name?.trim()) {
       return NextResponse.json({ error: 'Organisation name is required' }, { status: 400 });
     }
@@ -87,12 +106,20 @@ export async function POST(request: NextRequest) {
     if (!body.organisation?.slug?.trim()) {
       return NextResponse.json({ error: 'Organisation slug is required' }, { status: 400 });
     }
-
-    if (body.adminUser && !body.adminUser.email?.trim()) {
-      return NextResponse.json({ error: 'Admin email is required when creating an admin user' }, { status: 400 });
+    if (!body.primaryContact?.email?.trim() || !body.primaryContact?.name?.trim()) {
+      return NextResponse.json(
+        { error: 'Primary contact name and email are required' },
+        { status: 400 },
+      );
     }
-    if (body.adminUser && !body.adminUser.password?.trim()) {
-      return NextResponse.json({ error: 'Admin password is required when creating an admin user' }, { status: 400 });
+    if (!body.tenantAdmin?.email?.trim() || !body.tenantAdmin?.name?.trim()) {
+      return NextResponse.json(
+        { error: 'Tenant Administrator name and email are required' },
+        { status: 400 },
+      );
+    }
+    if (!body.subscription?.packageId) {
+      return NextResponse.json({ error: 'A subscription package is required' }, { status: 400 });
     }
 
     const db = getDb();
@@ -118,7 +145,7 @@ export async function POST(request: NextRequest) {
     }
 
     // -----------------------------------------------------------------------
-    // Step 1: Create tenant
+    // Step 1: Create tenant (DRAFT lifecycle)
     // -----------------------------------------------------------------------
 
     const [tenant] = await db
@@ -129,35 +156,60 @@ export async function POST(request: NextRequest) {
         slug: org.slug.trim().toLowerCase(),
         type: org.type || 'regional_council',
         status: 'ACTIVE',
-        planCode: 'INTERNAL_DEFAULT',
-        subscriptionStatus: 'NOT_CONFIGURED',
+        lifecycleStatus: 'PENDING_INVITATION',
+        createdByUserId: session.user.id,
+        primaryContactName: body.primaryContact.name.trim(),
+        primaryContactEmail: body.primaryContact.email.trim().toLowerCase(),
+        primaryContactPhone: body.primaryContact.phone,
+        lifecycleChangedAt: new Date(),
         timezone: org.timezone || 'Africa/Windhoek',
         locale: org.locale || 'en-NA',
       })
       .returning();
 
     // -----------------------------------------------------------------------
-    // Step 2: Create branding
+    // Step 2: Create subscription
     // -----------------------------------------------------------------------
 
-    const brandingValues: Record<string, unknown> = {
-      tenantId: tenant.id,
-      primaryColor: body.branding?.primaryColor || '#1F4E8C',
-      accentColor: body.branding?.accentColor || '#0F766E',
-    };
-    if (body.branding?.contactEmail) brandingValues.contactEmail = body.branding.contactEmail;
-    if (body.branding?.contactPhone) brandingValues.contactPhone = body.branding.contactPhone;
-    if (body.branding?.address) brandingValues.address = body.branding.address;
-
-    await db.insert(tenantBranding).values(brandingValues as unknown as typeof tenantBranding.$inferInsert);
+    let subscription;
+    try {
+      subscription = await createSubscription({
+        tenantId: tenant.id,
+        packageId: body.subscription.packageId,
+        billingInterval: body.subscription.billingInterval,
+        trialDays: body.subscription.trialDays,
+        gracePeriodDays: body.subscription.gracePeriodDays,
+      });
+    } catch (subError) {
+      // Roll back tenant creation on subscription failure.
+      await db.delete(tenants).where(eq(tenants.id, tenant.id));
+      return NextResponse.json(
+        { error: 'Failed to create subscription: ' + String(subError) },
+        { status: 400 },
+      );
+    }
 
     // -----------------------------------------------------------------------
-    // Step 3: Create offices
+    // Step 3: Create branding (optional)
+    // -----------------------------------------------------------------------
+
+    if (body.branding && (body.branding.contactEmail || body.branding.address || body.branding.primaryColor)) {
+      await db.insert(tenantBranding).values({
+        tenantId: tenant.id,
+        primaryColor: body.branding.primaryColor || '#1F4E8C',
+        accentColor: body.branding.accentColor || '#0F766E',
+        contactEmail: body.branding.contactEmail || undefined,
+        contactPhone: body.branding.contactPhone || undefined,
+        address: body.branding.address || undefined,
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 4: Create offices
     // -----------------------------------------------------------------------
 
     const createdOffices: Array<{ id: string; code: string | null; name: string }> = [];
     if (body.offices && body.offices.length > 0) {
-      // First pass: create all offices without parent
       for (const office of body.offices) {
         const [created] = await db
           .insert(offices)
@@ -171,8 +223,7 @@ export async function POST(request: NextRequest) {
           .returning();
         createdOffices.push({ id: created.id, code: created.code, name: created.name });
       }
-
-      // Second pass: update parent references
+      // Second pass: resolve parent references.
       for (let i = 0; i < body.offices.length; i++) {
         const officeBody = body.offices[i];
         const createdOffice = createdOffices[i];
@@ -189,7 +240,7 @@ export async function POST(request: NextRequest) {
     }
 
     // -----------------------------------------------------------------------
-    // Step 4: Create departments
+    // Step 5: Create departments
     // -----------------------------------------------------------------------
 
     const createdDepts: Array<{ id: string; name: string }> = [];
@@ -208,7 +259,7 @@ export async function POST(request: NextRequest) {
     }
 
     // -----------------------------------------------------------------------
-    // Step 5: Create default roles with permissions
+    // Step 6: Create default roles with permissions
     // -----------------------------------------------------------------------
 
     const roleNames = body.roles || [
@@ -239,7 +290,6 @@ export async function POST(request: NextRequest) {
 
       createdRoles.push({ id: role.id, name: roleDef.name });
 
-      // Assign permissions
       if (roleDef.permissions.length > 0) {
         await db.insert(rolePermissions).values(
           roleDef.permissions.map((permCode: string) => ({
@@ -250,91 +300,73 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Assign TENANT_ADMIN role to the invitation.
+    const tenantAdminRole = createdRoles.find(
+      (r) => r.name === RoleDefinitions.TENANT_ADMIN.name,
+    );
+    const adminRoleIds = tenantAdminRole ? [tenantAdminRole.id] : [];
+
     // -----------------------------------------------------------------------
-    // Step 6: Create admin user (optional)
+    // Step 7: Create + send the Tenant Administrator invitation
     // -----------------------------------------------------------------------
 
-    let createdUser: { id: string; email: string } | null = null;
+    const { invitation, rawToken } = await createInvitation({
+      tenantId: tenant.id,
+      email: body.tenantAdmin.email.trim(),
+      name: body.tenantAdmin.name.trim(),
+      type: 'tenant_admin',
+      invitedByUserId: session.user.id,
+      roleIds: adminRoleIds,
+    });
 
-    if (body.adminUser) {
-      const passwordHash = await bcrypt.hash(body.adminUser.password, 10);
-      const userId = `user-onboard-${crypto.randomUUID().slice(0, 8)}`;
+    const acceptUrl = invitationAcceptUrl(rawToken);
 
-      await db.insert(user).values({
-        id: userId,
-        email: body.adminUser.email.trim().toLowerCase(),
-        emailVerified: true,
-        name: body.adminUser.name,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }).onConflictDoNothing();
-
-      await db.insert(account).values({
-        id: `acc-onboard-${crypto.randomUUID().slice(0, 8)}`,
-        accountId: body.adminUser.email.trim().toLowerCase(),
-        providerId: 'email',
-        userId,
-        password: passwordHash,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }).onConflictDoNothing();
-
-      // Create tenant membership
-      await db.insert(tenantMemberships).values({
-        tenantId: tenant.id,
-        userId,
-        status: 'active',
-      }).onConflictDoNothing();
-
-      // Assign TRANSPORT_ADMIN role to the admin user
-      const membership = await db
-        .select()
-        .from(tenantMemberships)
-        .where(
-          and(
-            eq(tenantMemberships.tenantId, tenant.id),
-            eq(tenantMemberships.userId, userId),
-          ),
-        )
-        .limit(1);
-
-      if (membership.length > 0) {
-        const adminRole = createdRoles.find((r) => r.name === RoleDefinitions.TRANSPORT_ADMIN.name);
-        if (adminRole) {
-          // Only assign, let the permissions engine check timing
-          const [existingAssignment] = await db
-            .select()
-            .from(roleAssignments)
-            .where(
-              and(
-                eq(roleAssignments.tenantMembershipId, membership[0].id),
-                eq(roleAssignments.roleId, adminRole.id),
-              ),
-            )
-            .limit(1);
-
-          if (!existingAssignment) {
-            await db.insert(roleAssignments).values({
-              tenantMembershipId: membership[0].id,
-              roleId: adminRole.id,
-            });
-          }
-        }
-      }
-
-      createdUser = { id: userId, email: body.adminUser.email.trim().toLowerCase() };
+    // Attempt to send the invitation email; failure does not fail the onboard.
+    let emailSent = false;
+    try {
+      await sendInvitationEmail({
+        to: invitation.email,
+        tenantName: tenant.name,
+        inviteeName: body.tenantAdmin.name.trim(),
+        invitedByName: session.user.name ?? 'Platform Administrator',
+        acceptUrl,
+        expiresAt: invitation.expiresAt,
+      });
+      emailSent = true;
+    } catch (emailError) {
+      console.error('[Onboard] Invitation email failed:', emailError);
     }
+
+    // -----------------------------------------------------------------------
+    // Step 8: Audit trail
+    // -----------------------------------------------------------------------
+
+    await recordAuditEvent({
+      tenantId: tenant.id,
+      actorUserId: session.user.id,
+      eventType: 'tenant_onboarded',
+      action: 'CREATE',
+      entityType: 'tenant',
+      entityId: tenant.id,
+      metadata: {
+        lifecycleStatus: 'PENDING_INVITATION',
+        subscriptionPackage: subscription.packageCode,
+        invitationSent: emailSent,
+      },
+    }).catch(() => {});
 
     return NextResponse.json(
       {
         success: true,
         data: {
           tenant,
-          branding: brandingValues,
+          subscription,
+          branding: body.branding,
           offices: createdOffices,
           departments: createdDepts,
           roles: createdRoles,
-          adminUser: createdUser,
+          invitation: { id: invitation.id, email: invitation.email, sent: emailSent },
+          acceptUrl,
         },
       },
       { status: 201 },
@@ -345,5 +377,25 @@ export async function POST(request: NextRequest) {
       { error: 'Failed to onboard tenant: ' + String(error) },
       { status: 500 },
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET — onboarding prerequisites (packages available for selection)
+// ---------------------------------------------------------------------------
+
+export async function GET() {
+  try {
+    const { listPackages } = await import('@/lib/platform/packages');
+    const packages = await listPackages();
+    return NextResponse.json({
+      success: true,
+      data: {
+        packages: packages.filter((p) => p.status === 'active'),
+      },
+    });
+  } catch (error) {
+    console.error('[Onboarding] GET failed:', error);
+    return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

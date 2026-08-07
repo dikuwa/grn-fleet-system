@@ -1,90 +1,82 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { StyledSelect } from '@/components/ui/styled-select';
-import {
-  Building2, ChevronLeft, ChevronRight, CheckCircle2, Loader2,
-  Plus, X, Shield, Users, Mail, Palette, MapPin, Hash,
-} from 'lucide-react';
+import { Shield, Mail, Building2, Palette, CheckCircle2, Loader2, ChevronLeft, ChevronRight, Clock, Info } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
+import { format } from 'date-fns';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface NewOffice {
-  name: string;
-  code: string;
-  type: string;
-  address: string;
-}
-
-interface NewDepartment {
-  name: string;
-  code: string;
-}
-
-interface OnboardForm {
-  // Step 1 — Organisation
+interface OnboardingForm {
+  // Step 1: Organisation
   orgName: string;
   orgCode: string;
   orgSlug: string;
   orgType: string;
   timezone: string;
   locale: string;
-  // Step 2 — Branding
-  contactEmail: string;
-  contactPhone: string;
-  address: string;
-  primaryColor: string;
-  accentColor: string;
-  // Step 3 — Offices
-  offices: NewOffice[];
-  // Step 4 — Departments
-  departments: NewDepartment[];
-  // Step 5 — Admin User (optional)
-  adminEmail: string;
-  adminPassword: string;
-  adminName: string;
-  // Step 6 — Roles
-  selectedRoles: string[];
+
+  // Step 2: Primary Contact
+  primaryContactName: string;
+  primaryContactEmail: string;
+  primaryContactPhone: string;
+  primaryContactTitle: string;
+
+  // Step 3: Tenant Admin (invitation recipient)
+  tenantAdminEmail: string;
+  tenantAdminName: string;
+
+  // Step 4: Subscription
+  subscriptionPackageId: string;
+  billingInterval: 'monthly' | 'quarterly' | 'annually';
+
+  // Step 5: Optional Branding
+  brandingContactEmail: string;
+  brandingContactPhone: string;
+  brandingAddress: string;
+  brandingPrimaryColor: string;
+  brandingAccentColor: string;
+
+  // Internal state
+  currentStep: number;
 }
 
-const DEFAULT_FORM: OnboardForm = {
+const DEFAULT_FORM: OnboardingForm = {
   orgName: '',
   orgCode: '',
   orgSlug: '',
   orgType: 'regional_council',
   timezone: 'Africa/Windhoek',
   locale: 'en-NA',
-  contactEmail: '',
-  contactPhone: '',
-  address: '',
-  primaryColor: '#1F4E8C',
-  accentColor: '#0F766E',
-  offices: [{ name: 'Head Office', code: 'HO', type: 'head_office', address: '' }],
-  departments: [],
-  adminEmail: '',
-  adminPassword: '',
-  adminName: '',
-  selectedRoles: [
-    'TRANSPORT_ADMIN',
-    'REQUESTER',
-    'SUPERVISOR',
-    'CONTROL_ADMIN_OFFICER',
-    'DEPUTY_DIRECTOR',
-    'DIRECTOR',
-    'CHIEF_REGIONAL_OFFICER',
-    'DRIVER',
-    'TENANT_AUDITOR',
-  ],
+
+  primaryContactName: '',
+  primaryContactEmail: '',
+  primaryContactPhone: '',
+  primaryContactTitle: '',
+
+  tenantAdminEmail: '',
+  tenantAdminName: '',
+
+  subscriptionPackageId: '',
+  billingInterval: 'monthly',
+
+  brandingContactEmail: '',
+  brandingContactPhone: '',
+  brandingAddress: '',
+  brandingPrimaryColor: '#1F4E8C',
+  brandingAccentColor: '#0F766E',
+
+  currentStep: 0,
 };
 
 const ORG_TYPES = [
@@ -93,26 +85,19 @@ const ORG_TYPES = [
   { value: 'agency', label: 'Government Agency' },
 ];
 
-const ALL_ROLES = [
-  { key: 'TRANSPORT_ADMIN', label: 'Transport Administrator' },
-  { key: 'REQUESTER', label: 'Requester / Programme Officer' },
-  { key: 'SUPERVISOR', label: 'Immediate Supervisor' },
-  { key: 'CONTROL_ADMIN_OFFICER', label: 'Control Admin Officer' },
-  { key: 'DEPUTY_DIRECTOR', label: 'Deputy Director' },
-  { key: 'DIRECTOR', label: 'Director' },
-  { key: 'CHIEF_REGIONAL_OFFICER', label: 'Chief Regional Officer' },
-  { key: 'DRIVER', label: 'Assigned Driver' },
-  { key: 'TENANT_AUDITOR', label: 'Tenant Auditor' },
+const BILLING_INTERVALS = [
+  { value: 'monthly', label: 'Monthly', suffix: 'per month' },
+  { value: 'quarterly', label: 'Quarterly', suffix: 'per 3 months' },
+  { value: 'annually', label: 'Annually', suffix: 'per year' },
 ];
 
 const STEPS = [
-  { label: 'Organisation', icon: Building2 },
-  { label: 'Branding', icon: Palette },
-  { label: 'Offices', icon: MapPin },
-  { label: 'Departments', icon: Hash },
-  { label: 'Admin User', icon: Shield },
-  { label: 'Roles', icon: Users },
-  { label: 'Review', icon: CheckCircle2 },
+  { label: 'Organisation', icon: Building2, description: 'Organisation details and identifiers' },
+  { label: 'Primary Contact', icon: Mail, description: 'Main contact person for the organisation' },
+  { label: 'Tenant Admin', icon: Shield, description: 'Primary administrator who will receive invitation' },
+  { label: 'Subscription', icon: Clock, description: 'Package and billing configuration' },
+  { label: 'Branding', icon: Palette, description: 'Optional organisation branding' },
+  { label: 'Review', icon: CheckCircle2, description: 'Review all configuration before creation' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -121,113 +106,118 @@ const STEPS = [
 
 export default function OnboardTenantPage() {
   const router = useRouter();
-  const [step, setStep] = useState(0);
-  const [form, setForm] = useState<OnboardForm>({ ...DEFAULT_FORM });
+  const [form, setForm] = useState<OnboardingForm>({ ...DEFAULT_FORM });
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Update simple field
-  const updateField = useCallback(<K extends keyof OnboardForm>(key: K, value: OnboardForm[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+  // Fetch available packages
+  const { data: packagesData, isLoading: packagesLoading } = useQuery({
+    queryKey: ['onboarding-packages'],
+    queryFn: async () => {
+      const res = await fetch('/api/platform/onboard');
+      if (!res.ok) throw new Error('Failed to fetch packages');
+      const json = await res.json();
+      return json.data.packages || [];
+    },
+  });
+
+  // Update form field
+  const updateField = useCallback(<K extends keyof OnboardingForm>(key: K, value: OnboardingForm[K]) => {
+    setForm(prev => ({ ...prev, [key]: value }));
     setError(null);
   }, []);
 
-  // Office management
-  const updateOffice = useCallback((index: number, field: keyof NewOffice, value: string) => {
-    setForm((prev) => {
-      const offices = [...prev.offices];
-      offices[index] = { ...offices[index], [field]: value };
-      return { ...prev, offices };
-    });
-  }, []);
+  // Navigation handlers
+  const goNext = useCallback(() => {
+    const current = form.currentStep;
+    const next = current + 1;
+    setForm(prev => ({ ...prev, currentStep: next }));
+  }, [form.currentStep]);
 
-  const addOffice = useCallback(() => {
-    setForm((prev) => ({
-      ...prev,
-      offices: [...prev.offices, { name: '', code: '', type: 'constituency_office', address: '' }],
-    }));
-  }, []);
+  const goPrev = useCallback(() => {
+    const current = form.currentStep;
+    if (current > 0) {
+      setForm(prev => ({ ...prev, currentStep: current - 1 }));
+    } else {
+      router.push('/dashboard/platform/tenants');
+    }
+  }, [form.currentStep, router]);
 
-  const removeOffice = useCallback((index: number) => {
-    setForm((prev) => ({
-      ...prev,
-      offices: prev.offices.filter((_, i) => i !== index),
-    }));
-  }, []);
+  // Auto-generate slug from name
+  useEffect(() => {
+    if (form.orgName && !form.orgSlug) {
+      const slug = form.orgName
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, '-')
+        .substring(0, 50);
+      updateField('orgSlug', slug);
+    }
+  }, [form.orgName, form.orgSlug, updateField]);
 
-  // Department management
-  const updateDept = useCallback((index: number, field: keyof NewDepartment, value: string) => {
-    setForm((prev) => {
-      const depts = [...prev.departments];
-      depts[index] = { ...depts[index], [field]: value };
-      return { ...prev, departments: depts };
-    });
-  }, []);
+  // Validate current step
+  const canProceed = useCallback((): boolean => {
+    const { currentStep } = form;
 
-  const addDept = useCallback(() => {
-    setForm((prev) => ({
-      ...prev,
-      departments: [...prev.departments, { name: '', code: '' }],
-    }));
-  }, []);
-
-  const removeDept = useCallback((index: number) => {
-    setForm((prev) => ({
-      ...prev,
-      departments: prev.departments.filter((_, i) => i !== index),
-    }));
-  }, []);
-
-  // Role toggling
-  const toggleRole = useCallback((key: string) => {
-    setForm((prev) => ({
-      ...prev,
-      selectedRoles: prev.selectedRoles.includes(key)
-        ? prev.selectedRoles.filter((r) => r !== key)
-        : [...prev.selectedRoles, key],
-    }));
-  }, []);
+    switch (currentStep) {
+      case 0: // Organisation
+        return !!(form.orgName.trim() && form.orgCode.trim() && form.orgSlug.trim());
+      case 1: // Primary Contact
+        return !!(form.primaryContactName.trim() && form.primaryContactEmail.trim());
+      case 2: // Tenant Admin
+        return !!(form.tenantAdminName.trim() && form.tenantAdminEmail.trim());
+      case 3: // Subscription
+        return !!(form.subscriptionPackageId.trim() && form.billingInterval);
+      case 4: // Branding
+        return true; // Optional
+      case 5: // Review
+        return true;
+      default:
+        return false;
+    }
+  }, [form]);
 
   // Mutation
   const onboardMutation = useMutation({
     mutationFn: async () => {
+      const selectedPackage = packagesData?.find(p => p.id === form.subscriptionPackageId);
+      if (!selectedPackage) throw new Error('Selected package not found');
+
       const res = await fetch('/api/platform/onboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           organisation: {
-            name: form.orgName,
-            code: form.orgCode,
-            slug: form.orgSlug,
+            name: form.orgName.trim(),
+            code: form.orgCode.trim().toUpperCase(),
+            slug: form.orgSlug.trim().toLowerCase(),
             type: form.orgType,
             timezone: form.timezone,
             locale: form.locale,
           },
-          branding: {
-            contactEmail: form.contactEmail || undefined,
-            contactPhone: form.contactPhone || undefined,
-            address: form.address || undefined,
-            primaryColor: form.primaryColor,
-            accentColor: form.accentColor,
+          primaryContact: {
+            name: form.primaryContactName.trim(),
+            email: form.primaryContactEmail.trim().toLowerCase(),
+            phone: form.primaryContactPhone.trim() || undefined,
+            title: form.primaryContactTitle.trim() || undefined,
           },
-          offices: form.offices.filter((o) => o.name.trim()).map((o) => ({
-            name: o.name.trim(),
-            code: o.code.trim(),
-            type: o.type,
-            address: o.address.trim() || undefined,
-          })),
-          departments: form.departments.filter((d) => d.name.trim()).map((d) => ({
-            name: d.name.trim(),
-            code: d.code.trim(),
-          })),
-          adminUser: form.adminEmail
-            ? {
-                email: form.adminEmail.trim(),
-                password: form.adminPassword,
-                name: form.adminName.trim() || 'System Administrator',
-              }
-            : undefined,
-          roles: form.selectedRoles,
+          tenantAdmin: {
+            email: form.tenantAdminEmail.trim().toLowerCase(),
+            name: form.tenantAdminName.trim(),
+          },
+          subscription: {
+            packageId: form.subscriptionPackageId,
+            billingInterval: form.billingInterval,
+            trialDays: selectedPackage.trialDays || 0,
+          },
+          branding: (form.brandingContactEmail || form.brandingContactPhone || form.brandingAddress ||
+            form.brandingPrimaryColor !== '#1F4E8C' || form.brandingAccentColor !== '#0F766E') ? {
+            contactEmail: form.brandingContactEmail.trim() || undefined,
+            contactPhone: form.brandingContactPhone.trim() || undefined,
+            address: form.brandingAddress.trim() || undefined,
+            primaryColor: form.brandingPrimaryColor,
+            accentColor: form.brandingAccentColor,
+          } : undefined,
         }),
       });
 
@@ -237,385 +227,438 @@ export default function OnboardTenantPage() {
     },
     onSuccess: () => {
       router.push('/dashboard/platform/tenants');
-      toast({ title: 'Tenant Created', description: 'Organisation has been onboarded successfully.', variant: 'success' });
+      toast({
+        title: 'Tenant Created Successfully',
+        description: `${form.orgName} has been onboarded and is awaiting invitation acceptance.`,
+        variant: 'success',
+      });
     },
     onError: (err: Error) => {
       setError(err.message);
-      toast({ title: 'Onboarding Failed', description: err.message, variant: 'error' });
+      toast({
+        title: 'Onboarding Failed',
+        description: err.message,
+        variant: 'error',
+      });
     },
   });
 
-  const canProceed = (): boolean => {
-    switch (step) {
-      case 0: return form.orgName.trim().length > 0 && form.orgCode.trim().length > 0 && form.orgSlug.trim().length > 0;
-      case 1: return true;
-      case 2: return form.offices.some((o) => o.name.trim());
-      case 3: return true;
-      case 4: return form.adminEmail === '' || (form.adminEmail.includes('@') && form.adminPassword.length >= 4);
-      case 5: return form.selectedRoles.length > 0;
-      case 6: return true;
-      default: return false;
-    }
-  };
-
-  // -------------------------------------------------------------------
-  // Render steps
-  // -------------------------------------------------------------------
-
+  // Render current step
   const renderStep = () => {
-    switch (step) {
+    switch (form.currentStep) {
       // --- Step 0: Organisation ---
       case 0:
         return (
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label required>Organisation Name</Label>
-              <Input
-                placeholder="e.g. Kavango East Regional Council"
-                value={form.orgName}
-                onChange={(e) => updateField('orgName', e.target.value)}
-                className="h-11"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-6">
+            <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label required>Code</Label>
+                <Label required>Organisation Name</Label>
                 <Input
-                  placeholder="e.g. KERC"
-                  value={form.orgCode}
-                  onChange={(e) => updateField('orgCode', e.target.value.toUpperCase())}
-                  className="h-11 font-mono"
-                />
-                <p className="text-xs text-ink-400">Unique identifier (auto-uppercased)</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label required>Slug</Label>
-                <Input
-                  placeholder="e.g. kavango-east"
-                  value={form.orgSlug}
-                  onChange={(e) => updateField('orgSlug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}
-                  className="h-11 font-mono"
-                />
-                <p className="text-xs text-ink-400">URL-friendly identifier</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Type</Label>
-                <StyledSelect
-                  value={form.orgType}
-                  onChange={(e) => updateField('orgType', e.target.value)}
-                >
-                  {ORG_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </StyledSelect>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Timezone</Label>
-                <StyledSelect
-                  value={form.timezone}
-                  onChange={(e) => updateField('timezone', e.target.value)}
-                >
-                  <option value="Africa/Windhoek">Africa/Windhoek (UTC+2)</option>
-                  <option value="Africa/Windhoek">Africa/Windhoek (CAT)</option>
-                </StyledSelect>
-              </div>
-            </div>
-          </div>
-        );
-
-      // --- Step 1: Branding ---
-      case 1:
-        return (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Contact Email</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-                  <Input
-                    type="email"
-                    placeholder="transport@council.gov.na"
-                    value={form.contactEmail}
-                    onChange={(e) => updateField('contactEmail', e.target.value)}
-                    className="pl-9 h-11"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Contact Phone</Label>
-                <Input
-                  placeholder="+264 61 123 456"
-                  value={form.contactPhone}
-                  onChange={(e) => updateField('contactPhone', e.target.value)}
+                  placeholder="e.g. Kavango East Regional Council"
+                  value={form.orgName}
+                  onChange={(e) => updateField('orgName', e.target.value)}
                   className="h-11"
                 />
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Address</Label>
-              <textarea
-                className="min-h-[60px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-600 resize-y"
-                placeholder="Physical address of the transport office"
-                value={form.address}
-                onChange={(e) => updateField('address', e.target.value)}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Primary Colour</Label>
-                <div className="flex items-center gap-2">
-                  <div
-                    className="h-10 w-10 rounded-[6px] border border-border shrink-0"
-                    style={{ backgroundColor: form.primaryColor }}
-                  />
-                  <Input
-                    type="text"
-                    value={form.primaryColor}
-                    onChange={(e) => updateField('primaryColor', e.target.value)}
-                    className="h-11 font-mono"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Accent Colour</Label>
-                <div className="flex items-center gap-2">
-                  <div
-                    className="h-10 w-10 rounded-[6px] border border-border shrink-0"
-                    style={{ backgroundColor: form.accentColor }}
-                  />
-                  <Input
-                    type="text"
-                    value={form.accentColor}
-                    onChange={(e) => updateField('accentColor', e.target.value)}
-                    className="h-11 font-mono"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        );
 
-      // --- Step 2: Offices ---
-      case 2:
-        return (
-          <div className="space-y-4">
-            <p className="text-sm text-ink-500">Add your organisation&apos;s offices and depots.</p>
-            {form.offices.map((office, i) => (
-              <div key={i} className="rounded-[8px] border border-border p-3 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-ink-500 uppercase">Office {i + 1}</span>
-                  {form.offices.length > 1 && (
-                    <button onClick={() => removeOffice(i)} className="text-ink-400 hover:text-status-error-text transition-colors">
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label required>Code</Label>
+                  <Input
+                    placeholder="e.g. KERC"
+                    value={form.orgCode}
+                    onChange={(e) => updateField('orgCode', e.target.value.toUpperCase())}
+                    className="h-11 font-mono"
+                  />
+                  <p className="text-xs text-ink-400">Unique 4-letter code (auto-uppercased)</p>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input placeholder="Office name" value={office.name} onChange={(e) => updateOffice(i, 'name', e.target.value)} className="h-10" />
-                  <Input placeholder="Code" value={office.code} onChange={(e) => updateOffice(i, 'code', e.target.value.toUpperCase())} className="h-10 font-mono" />
+
+                <div className="space-y-1.5">
+                  <Label required>Slug</Label>
+                  <Input
+                    placeholder="e.g. kavango-east"
+                    value={form.orgSlug}
+                    onChange={(e) => updateField('orgSlug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}
+                    className="h-11 font-mono"
+                  />
+                  <p className="text-xs text-ink-400">URL-friendly identifier (auto-generated from name)</p>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Type</Label>
                   <StyledSelect
-                    value={office.type}
-                    onChange={(e) => updateOffice(i, 'type', e.target.value)}
+                    value={form.orgType}
+                    onChange={(e) => updateField('orgType', e.target.value)}
                   >
-                    <option value="head_office">Head Office</option>
-                    <option value="constituency_office">Constituency Office</option>
-                    <option value="settlement_office">Settlement Office</option>
-                    <option value="depot">Depot / Workshop</option>
+                    {ORG_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
                   </StyledSelect>
-                  <Input placeholder="Address (optional)" value={office.address} onChange={(e) => updateOffice(i, 'address', e.target.value)} className="h-10" />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Timezone</Label>
+                  <StyledSelect
+                    value={form.timezone}
+                    onChange={(e) => updateField('timezone', e.target.value)}
+                  >
+                    <option value="Africa/Windhoek">Africa/Windhoek (UTC+2)</option>
+                  </StyledSelect>
                 </div>
               </div>
-            ))}
-            <Button variant="secondary" size="compact" onClick={addOffice} className="w-full">
-              <Plus className="h-4 w-4" /> Add Office
-            </Button>
+            </div>
           </div>
         );
 
-      // --- Step 3: Departments ---
-      case 3:
+      // --- Step 1: Primary Contact ---
+      case 1:
         return (
-          <div className="space-y-4">
-            <p className="text-sm text-ink-500">Add your organisation&apos;s departments. Optional — can be managed later.</p>
-            {form.departments.map((dept, i) => (
-              <div key={i} className="flex items-center gap-2">
+          <div className="space-y-6">
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label required>Full Name</Label>
                 <Input
-                  placeholder="Department name"
-                  value={dept.name}
-                  onChange={(e) => updateDept(i, 'name', e.target.value)}
-                  className="h-10 flex-1"
+                  placeholder="e.g. John Doe"
+                  value={form.primaryContactName}
+                  onChange={(e) => updateField('primaryContactName', e.target.value)}
+                  className="h-11"
                 />
-                <Input
-                  placeholder="Code"
-                  value={dept.code}
-                  onChange={(e) => updateDept(i, 'code', e.target.value.toUpperCase())}
-                  className="h-10 w-24 font-mono"
-                />
-                <button onClick={() => removeDept(i)} className="text-ink-400 hover:text-status-error-text transition-colors shrink-0">
-                  <X className="h-4 w-4" />
-                </button>
               </div>
-            ))}
-            <Button variant="secondary" size="compact" onClick={addDept} className="w-full">
-              <Plus className="h-4 w-4" /> Add Department
-            </Button>
-          </div>
-        );
 
-      // --- Step 4: Admin User (optional) ---
-      case 4:
-        return (
-          <div className="space-y-4">
-            <p className="text-sm text-ink-500">
-              Optionally create an initial administrator account. Leave blank to create users later.
-            </p>
-            <div className="space-y-1.5">
-              <Label>Admin Email</Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+              <div className="space-y-1.5">
+                <Label required>Email Address</Label>
                 <Input
                   type="email"
-                  placeholder="admin@council.gov.na"
-                  value={form.adminEmail}
-                  onChange={(e) => updateField('adminEmail', e.target.value)}
-                  className="pl-9 h-11"
+                  placeholder="john@council.gov.na"
+                  value={form.primaryContactEmail}
+                  onChange={(e) => updateField('primaryContactEmail', e.target.value)}
+                  className="h-11"
                 />
               </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Phone</Label>
+                  <Input
+                    placeholder="+264 61 123 456"
+                    value={form.primaryContactPhone}
+                    onChange={(e) => updateField('primaryContactPhone', e.target.value)}
+                    className="h-11"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Title</Label>
+                  <Input
+                    placeholder="e.g. Transport Director"
+                    value={form.primaryContactTitle}
+                    onChange={(e) => updateField('primaryContactTitle', e.target.value)}
+                    className="h-11"
+                  />
+                </div>
+              </div>
             </div>
-            {form.adminEmail && (
-              <>
-                <div className="space-y-1.5">
-                  <Label>Admin Name</Label>
-                  <Input
-                    placeholder="e.g. System Administrator"
-                    value={form.adminName}
-                    onChange={(e) => updateField('adminName', e.target.value)}
-                    className="h-11"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Password</Label>
-                  <Input
-                    type="password"
-                    placeholder="Minimum 4 characters"
-                    value={form.adminPassword}
-                    onChange={(e) => updateField('adminPassword', e.target.value)}
-                    className="h-11"
-                  />
-                </div>
-              </>
-            )}
           </div>
         );
 
-      // --- Step 5: Roles ---
+      // --- Step 2: Tenant Admin ---
+      case 2:
+        return (
+          <div className="space-y-6">
+            <div className="rounded-[8px] bg-brand-50 border border-brand-200 p-4 text-sm">
+              <div className="flex items-start gap-3">
+                <Info className="h-5 w-5 text-brand-600 mt-0.5" />
+                <div>
+                  <p className="font-medium text-brand-800">Who will receive the invitation</p>
+                  <p className="text-brand-700 mt-1">
+                    This user will become the Tenant Administrator and have full control over the organization&apos;s fleet management system.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label required>Full Name</Label>
+                <Input
+                  placeholder="e.g. Jane Smith"
+                  value={form.tenantAdminName}
+                  onChange={(e) => updateField('tenantAdminName', e.target.value)}
+                  className="h-11"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label required>Email Address</Label>
+                <Input
+                  type="email"
+                  placeholder="jane@council.gov.na"
+                  value={form.tenantAdminEmail}
+                  onChange={(e) => updateField('tenantAdminEmail', e.target.value)}
+                  className="h-11"
+                />
+                <p className="text-xs text-ink-400">This person will receive an invitation email to set up their account</p>
+              </div>
+            </div>
+          </div>
+        );
+
+      // --- Step 3: Subscription ---
+      case 3:
+        if (packagesLoading) {
+          return (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-brand-600" />
+            </div>
+          );
+        }
+
+        return (
+          <div className="space-y-6">
+            <div className="space-y-1.5">
+              <Label required>Subscription Package</Label>
+              <StyledSelect
+                value={form.subscriptionPackageId}
+                onChange={(e) => updateField('subscriptionPackageId', e.target.value)}
+              >
+                <option value="">Select a package...</option>
+                {packagesData?.map((pkg) => (
+                  <option key={pkg.id} value={pkg.id}>
+                    {pkg.name} - {pkg.code} ({pkg.trialDays > 0 ? `${pkg.trialDays}-day trial` : 'No trial'})
+                  </option>
+                ))}
+              </StyledSelect>
+            </div>
+
+            {form.subscriptionPackageId && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Package Details</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  {(() => {
+                    const pkg = packagesData?.find(p => p.id === form.subscriptionPackageId);
+                    if (!pkg) return null;
+                    return (
+                      <div className="space-y-1">
+                        <p><span className="text-ink-500">Code:</span> {pkg.code}</p>
+                        <p><span className="text-ink-500">Trial:</span> {pkg.trialDays > 0 ? `${pkg.trialDays} days` : 'None'}</p>
+                        <p><span className="text-ink-500">Features:</span> {pkg.features?.join(', ') || 'Standard features'}</p>
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="space-y-1.5">
+              <Label required>Billing Interval</Label>
+              <StyledSelect
+                value={form.billingInterval}
+                onChange={(e) => updateField('billingInterval', e.target.value as 'monthly' | 'quarterly' | 'annually')}
+              >
+                {BILLING_INTERVALS.map((interval) => (
+                  <option key={interval.value} value={interval.value}>
+                    {interval.label} - {interval.suffix}
+                  </option>
+                ))}
+              </StyledSelect>
+            </div>
+          </div>
+        );
+
+      // --- Step 4: Branding (Optional) ---
+      case 4:
+        return (
+          <div className="space-y-6">
+            <p className="text-sm text-ink-500">Optional branding elements to customize the tenant&apos;s workspace appearance.</p>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Contact Email</Label>
+                  <Input
+                    type="email"
+                    placeholder="contact@council.gov.na"
+                    value={form.brandingContactEmail}
+                    onChange={(e) => updateField('brandingContactEmail', e.target.value)}
+                    className="h-11"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Contact Phone</Label>
+                  <Input
+                    placeholder="+264 61 123 456"
+                    value={form.brandingContactPhone}
+                    onChange={(e) => updateField('brandingContactPhone', e.target.value)}
+                    className="h-11"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Address</Label>
+                <textarea
+                  className="min-h-[60px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-600 resize-y"
+                  placeholder="Physical address of the organisation headquarters"
+                  value={form.brandingAddress}
+                  onChange={(e) => updateField('brandingAddress', e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Primary Color</Label>
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="h-10 w-10 rounded-[6px] border border-border shrink-0"
+                      style={{ backgroundColor: form.brandingPrimaryColor }}
+                    />
+                    <Input
+                      type="text"
+                      value={form.brandingPrimaryColor}
+                      onChange={(e) => updateField('brandingPrimaryColor', e.target.value)}
+                      className="h-11 font-mono flex-1"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Accent Color</Label>
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="h-10 w-10 rounded-[6px] border border-border shrink-0"
+                      style={{ backgroundColor: form.brandingAccentColor }}
+                    />
+                    <Input
+                      type="text"
+                      value={form.brandingAccentColor}
+                      onChange={(e) => updateField('brandingAccentColor', e.target.value)}
+                      className="h-11 font-mono flex-1"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[8px] bg-muted border border-border p-3 text-xs text-ink-500">
+              <p className="font-medium mb-1">💡 Pro Tips:</p>
+              <ul className="space-y-1 ml-4 list-disc">
+                <li>Brand colors will be used throughout the tenant&apos;s dashboard and export documents</li>
+                <li>Keep colors in the brand guidelines palette for consistency</li>
+                <li>All branding fields are optional and can be updated later</li>
+              </ul>
+            </div>
+          </div>
+        );
+
+      // --- Step 5: Review ---
       case 5:
         return (
-          <div className="space-y-4">
-            <p className="text-sm text-ink-500">Select the default roles to create for this tenant.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {ALL_ROLES.map((role) => (
-                <button
-                  key={role.key}
-                  onClick={() => toggleRole(role.key)}
-                  className={`flex items-center gap-3 rounded-[8px] border p-3 text-left transition-all ${
-                    form.selectedRoles.includes(role.key)
-                      ? 'border-brand-300 bg-brand-50 text-brand-900 dark:text-brand-700'
-                      : 'border-border text-ink-700 hover:border-ink-300'
-                  }`}
-                >
-                  <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition-colors ${
-                    form.selectedRoles.includes(role.key)
-                      ? 'border-brand-600 bg-brand-600 text-white'
-                      : 'border-ink-300'
-                  }`}>
-                    {form.selectedRoles.includes(role.key) && (
-                      <CheckCircle2 className="h-4 w-4" />
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">{role.label}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        );
-
-      // --- Step 6: Review ---
-      case 6:
-        return (
-          <div className="space-y-4">
-            {/* Organisation card */}
-            <Card>
-              <CardHeader><CardTitle>Organisation</CardTitle></CardHeader>
-              <CardContent className="space-y-1 text-sm">
-                <p><span className="text-ink-500">Name:</span> {form.orgName}</p>
-                <p><span className="text-ink-500">Code:</span> {form.orgCode}</p>
-                <p><span className="text-ink-500">Slug:</span> {form.orgSlug}</p>
-                <p><span className="text-ink-500">Type:</span> {ORG_TYPES.find((t) => t.value === form.orgType)?.label}</p>
-              </CardContent>
-            </Card>
-
-            {form.contactEmail && (
-              <Card>
-                <CardHeader><CardTitle>Contact</CardTitle></CardHeader>
-                <CardContent className="space-y-1 text-sm">
-                  {form.contactEmail && <p><span className="text-ink-500">Email:</span> {form.contactEmail}</p>}
-                  {form.contactPhone && <p><span className="text-ink-500">Phone:</span> {form.contactPhone}</p>}
-                </CardContent>
-              </Card>
-            )}
-
-            <div className="grid grid-cols-2 gap-4">
-              <Card>
-                <CardHeader><CardTitle>Offices</CardTitle></CardHeader>
-                <CardContent>
-                  <p className="text-2xl font-semibold">{form.offices.filter((o) => o.name.trim()).length}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader><CardTitle>Departments</CardTitle></CardHeader>
-                <CardContent>
-                  <p className="text-2xl font-semibold">{form.departments.filter((d) => d.name.trim()).length}</p>
-                </CardContent>
-              </Card>
+          <div className="space-y-6">
+            <div className="text-center pb-4">
+              <CheckCircle2 className="h-12 w-12 text-brand-600 mx-auto mb-3" />
+              <h3 className="text-lg font-medium text-ink-900">Review Your Organisation Details</h3>
+              <p className="text-sm text-ink-500">Please review all information before creating the tenant</p>
             </div>
 
-            <Card>
-              <CardHeader><CardTitle>Roles ({form.selectedRoles.length})</CardTitle></CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-1.5">
-                  {form.selectedRoles.map((key) => (
-                    <Badge key={key} variant="info" size="sm">
-                      {ALL_ROLES.find((r) => r.key === key)?.label || key}
-                    </Badge>
-                  ))}
+            <div className="space-y-4">
+              {/* Organisation Summary */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Organisation</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <p><span className="text-ink-500">Name:</span> {form.orgName}</p>
+                  <p><span className="text-ink-500">Code:</span> {form.orgCode}</p>
+                  <p><span className="text-ink-500">Slug:</span> {form.orgSlug}</p>
+                  <p><span className="text-ink-500">Type:</span> {ORG_TYPES.find((t) => t.value === form.orgType)?.label}</p>
+                </CardContent>
+              </Card>
+
+              {/* Primary Contact Summary */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Primary Contact</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <p><span className="text-ink-500">Name:</span> {form.primaryContactName}</p>
+                  <p><span className="text-ink-500">Email:</span> {form.primaryContactEmail}</p>
+                  {(form.primaryContactPhone || form.primaryContactTitle) && (
+                    <div className="pt-1">
+                      {form.primaryContactPhone && <p><span className="text-ink-500">Phone:</span> {form.primaryContactPhone}</p>}
+                      {form.primaryContactTitle && <p><span className="text-ink-500">Title:</span> {form.primaryContactTitle}</p>}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Tenant Admin Summary */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Tenant Administrator</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <p><span className="text-ink-500">Name:</span> {form.tenantAdminName}</p>
+                  <p><span className="text-ink-500">Email:</span> {form.tenantAdminEmail}</p>
+                </CardContent>
+              </Card>
+
+              {/* Subscription Summary */}
+              {(() => {
+                const pkg = packagesData?.find(p => p.id === form.subscriptionPackageId);
+                if (!pkg) return null;
+                return (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm">Subscription</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      <p><span className="text-ink-500">Package:</span> {pkg.name} ({pkg.code})</p>
+                      <p><span className="text-ink-500">Trial:</span> {pkg.trialDays > 0 ? `${pkg.trialDays} days` : 'None'}</p>
+                      <p><span className="text-ink-500">Billing:</span> {form.billingInterval}</p>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+
+              {/* Branding Summary */}
+              {(form.brandingContactEmail || form.brandingContactPhone || form.brandingAddress) && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Branding</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    {form.brandingContactEmail && <p><span className="text-ink-500">Contact Email:</span> {form.brandingContactEmail}</p>}
+                    {form.brandingContactPhone && <p><span className="text-ink-500">Contact Phone:</span> {form.brandingContactPhone}</p>}
+                    {form.brandingAddress && <p><span className="text-ink-500">Address:</span> {form.brandingAddress}</p>}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            <div className="rounded-[8px] bg-amber-50 border border-amber-200 p-4 text-sm">
+              <div className="flex items-start gap-3">
+                <Info className="h-5 w-5 text-amber-600 mt-0.5" />
+                <div>
+                  <p className="font-medium text-amber-800">Important</p>
+                  <p className="text-amber-700 mt-1">
+                    A Tenant Administrator invitation will be sent to <strong>{form.tenantAdminEmail}</strong>.
+                    This user will need to accept the invitation to activate their account.
+                  </p>
                 </div>
-              </CardContent>
-            </Card>
-
-            {form.adminEmail && (
-              <Card>
-                <CardHeader><CardTitle>Admin User</CardTitle></CardHeader>
-                <CardContent className="space-y-1 text-sm">
-                  <p><span className="text-ink-500">Email:</span> {form.adminEmail}</p>
-                  {form.adminName && <p><span className="text-ink-500">Name:</span> {form.adminName}</p>}
-                </CardContent>
-              </Card>
-            )}
+              </div>
+            </div>
           </div>
         );
+
+      default:
+        return null;
     }
   };
-
-  // -------------------------------------------------------------------
-  // Main render
-  // -------------------------------------------------------------------
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
@@ -624,48 +667,58 @@ export default function OnboardTenantPage() {
         { label: 'Tenants', href: '/dashboard/platform/tenants' },
         { label: 'Onboard New Tenant' },
       ]} />
+
       <PageHeader
         title="Onboard New Tenant"
-        description="Set up a new organisation on the fleet management platform"
+        description="Create a new organisation on the fleet management platform through the 7-step onboarding wizard"
       />
 
-
-      {/* Step indicator */}
-      <div className="flex items-center gap-0 overflow-x-auto">
-        {STEPS.map((s, i) => (
-          <div key={i} className="flex items-center gap-0">
+      {/* Step Indicator */}
+      <div className="flex items-center gap-0 overflow-x-auto pb-2">
+        {STEPS.map((step, index) => (
+          <div key={index} className="flex items-center gap-0">
             <button
-              onClick={() => i < step && setStep(i)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors whitespace-nowrap ${
-                i === step
-                  ? 'bg-brand-600 text-white'
-                  : i < step
-                    ? 'bg-brand-100 text-brand-700 cursor-pointer hover:bg-brand-200'
+              onClick={() => index < form.currentStep && setForm(prev => ({ ...prev, currentStep: index }))}
+              className={`flex flex-col items-center gap-1 px-3 py-2 rounded-[8px] transition-all min-w-[80px] ${
+                index === form.currentStep
+                  ? 'bg-brand-600 text-white shadow-sm'
+                  : index < form.currentStep
+                    ? 'bg-brand-100 text-brand-700 hover:bg-brand-200 cursor-pointer'
                     : 'bg-muted text-ink-400'
               }`}
             >
-              <s.icon className="h-3.5 w-3.5" />
-              {s.label}
+              <step.icon className="h-4 w-4" />
+              <span className="text-xs font-medium whitespace-nowrap">{step.label}</span>
             </button>
-            {i < STEPS.length - 1 && (
-              <div className={`h-px w-4 ${
-                i < step ? 'bg-brand-400' : 'bg-muted'
-              }`} />
+            {index < STEPS.length - 1 && (
+              <div className={`h-px w-4 ${index < form.currentStep ? 'bg-brand-400' : 'bg-muted'}`} />
             )}
           </div>
         ))}
       </div>
 
-      {/* Step content */}
+      {/* Step Content */}
       <Card>
         <CardHeader>
-          <CardTitle>{STEPS[step].label}</CardTitle>
+          <div className="flex items-center gap-2">
+            {(() => {
+              const currentStep = STEPS[form.currentStep];
+              return (
+                <>
+                  <currentStep.icon className="h-5 w-5 text-brand-600" />
+                  <CardTitle>{currentStep.label}</CardTitle>
+                </>
+              );
+            })()}
+          </div>
+          <p className="text-sm text-ink-500 mt-1">{STEPS[form.currentStep]?.description}</p>
         </CardHeader>
-        <CardContent>
+
+        <CardContent className="space-y-4">
           {renderStep()}
 
           {error && (
-            <div className="mt-4 rounded-[8px] bg-status-error-bg p-3 text-sm text-status-error-text">
+            <div className="rounded-[8px] bg-status-error-bg p-3 text-sm text-status-error-text">
               {error}
             </div>
           )}
@@ -675,18 +728,19 @@ export default function OnboardTenantPage() {
             <Button
               variant="tertiary"
               size="default"
-              onClick={() => step > 0 ? setStep(step - 1) : router.push('/dashboard/platform/tenants')}
+              onClick={goPrev}
+              disabled={onboardMutation.isPending}
             >
               <ChevronLeft className="h-4 w-4" />
-              {step === 0 ? 'Cancel' : 'Back'}
+              {form.currentStep === 0 ? 'Cancel' : 'Back'}
             </Button>
 
-            {step < STEPS.length - 1 ? (
+            {form.currentStep < STEPS.length - 1 ? (
               <Button
                 variant="primary"
                 size="default"
-                onClick={() => setStep(step + 1)}
-                disabled={!canProceed()}
+                onClick={goNext}
+                disabled={!canProceed() || onboardMutation.isPending}
               >
                 Continue
                 <ChevronRight className="h-4 w-4" />
@@ -700,9 +754,13 @@ export default function OnboardTenantPage() {
                 disabled={!canProceed()}
               >
                 {onboardMutation.isPending ? (
-                  <><Loader2 className="h-4 w-4 animate-spin" /> Creating...</>
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Creating Tenant...
+                  </>
                 ) : (
-                  <><CheckCircle2 className="h-4 w-4" /> Create Tenant</>
+                  <>
+                    <CheckCircle2 className="h-4 w-4" /> Create Tenant & Send Invitation
+                  </>
                 )}
               </Button>
             )}
