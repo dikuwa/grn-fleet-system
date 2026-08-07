@@ -1,6 +1,4 @@
-import Link from 'next/link';
 import {
-  ArrowLeft,
   CheckCircle2,
   FileText,
   Truck,
@@ -10,13 +8,10 @@ import {
   BarChart3,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { APP_NAME } from '@/lib/constants';
-import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { HeroSection } from '@/components/cms/HeroSection';
 import { CtaSection } from '@/components/cms/CtaSection';
-import { FooterSection } from '@/components/cms/FooterSection';
-import { getPublishedContentBySlug, getPublicSiteSettings } from '@/lib/platform/cms-public';
-import type { PublicCmsContent, PublicSiteSettings } from '@/lib/platform/cms-public';
+import { getPublishedContentBySlug } from '@/lib/platform/cms-public';
+import type { PublicCmsContent } from '@/lib/platform/cms-public';
 
 // ---------------------------------------------------------------------------
 // Types & defaults
@@ -169,36 +164,17 @@ function extractModules(content: Record<string, unknown> | null | undefined): Se
 
 export default async function ServicesPage() {
   let cms: PublicCmsContent | null = null;
-  let siteSettings: PublicSiteSettings | null = null;
   try {
-    [cms, siteSettings] = await Promise.all([getPublishedContentBySlug('services'), getPublicSiteSettings()]);
+    cms = await getPublishedContentBySlug('services');
   } catch {
     // fall back to defaults
   }
 
-  const siteName = siteSettings?.siteName || APP_NAME;
   const modules = extractModules(cms?.content);
   const intro = (cms?.content?.intro as string) || 'End-to-end digital fleet management for any organisation — government, municipalities, mines, logistics and private fleets.';
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur-sm">
-        <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-white text-sm font-bold">G</div>
-            <span className="text-sm font-semibold text-ink-950">{siteName}</span>
-          </Link>
-          <div className="flex items-center gap-4">
-            <Link href="/about" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">About</Link>
-            <Link href="/contact" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">Contact</Link>
-            <Link href="/" className="flex items-center gap-1 text-sm text-ink-500 hover:text-ink-950 transition-colors">
-              <ArrowLeft className="h-4 w-4" /> Back to Home
-            </Link>
-            <PublicThemeToggle />
-          </div>
-        </div>
-      </header>
-
+    <>
       <HeroSection
         title={cms?.title || 'Platform Services'}
         subtitle={intro}
@@ -259,7 +235,6 @@ export default async function ServicesPage() {
         secondaryHref="/"
       />
 
-      <FooterSection siteName={siteName} />
-    </div>
+    </>
   );
 }

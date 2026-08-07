@@ -1,9 +1,6 @@
 'use client';
 
-import Link from 'next/link';
-import { APP_NAME } from '@/lib/constants';
-import { Mail, Phone, MapPin, ArrowLeft } from 'lucide-react';
-import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
+import { Mail, Phone, MapPin } from 'lucide-react';
 import { useState } from 'react';
 
 export default function ContactPage() {
@@ -53,25 +50,7 @@ export default function ContactPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur-sm">
-        <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-white text-sm font-bold">G</div>
-            <span className="text-sm font-semibold text-ink-950">{APP_NAME}</span>
-          </Link>
-          <div className="flex items-center gap-4">
-            <PublicThemeToggle />
-            <Link href="/about" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">About</Link>
-            <Link href="/services" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">Services</Link>
-            <Link href="/" className="flex items-center gap-1 text-sm text-ink-500 hover:text-ink-950 transition-colors">
-              <ArrowLeft className="h-4 w-4" /> Back to Home
-            </Link>
-          </div>
-        </div>
-      </header>
-
-      <section className="flex-1 bg-gradient-to-b from-canvas to-surface py-24">
+    <section className="bg-canvas py-20">
         <div className="mx-auto max-w-[700px] px-6">
           <div className="text-center">
             <h1 className="text-3xl font-[650] tracking-tight text-ink-950">Contact Us</h1>
@@ -239,14 +218,7 @@ export default function ContactPage() {
               </button>
             </form>
           </div>
-        </div>
-      </section>
-
-      <footer className="bg-brand-950 py-12">
-        <div className="mx-auto max-w-[1200px] px-6">
-          <p className="text-center text-sm text-white/60">&copy; {new Date().getFullYear()} {APP_NAME}. All rights reserved.</p>
-        </div>
-      </footer>
-    </div>
+      </div>
+    </section>
   );
 }

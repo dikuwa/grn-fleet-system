@@ -11,8 +11,6 @@ import {
   MapPin,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { APP_NAME } from '@/lib/constants';
-import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import {
   getPublishedContentBySlug,
   getPublicSiteSettings,
@@ -187,45 +185,10 @@ export default async function HomePage() {
   const features = extractFeatures(homepageContent?.content);
   const steps = extractSteps(homepageContent?.content);
 
-  const siteName = siteSettings?.siteName || APP_NAME;
   const tagline = siteSettings?.siteTagline;
 
   return (
-    <div className="flex min-h-screen flex-col">
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur-sm">
-        <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
-          <div className="flex items-center gap-2">
-            {siteSettings?.logoUrl ? (
-              <img
-                src={siteSettings.logoUrl}
-                alt={siteName}
-                className="h-8 w-8 rounded-lg object-contain"
-              />
-            ) : (
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-800 text-white text-sm font-bold">
-                G
-              </div>
-            )}
-            <span className="text-sm font-semibold text-ink-950">{siteName}</span>
-          </div>
-          <nav className="hidden items-center gap-6 md:flex">
-            <Link href="/about" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">About</Link>
-            <Link href="/services" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">Services</Link>
-            <Link href="#features" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">Features</Link>
-            <Link href="#how-it-works" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">How It Works</Link>
-            <Link href="#pilot" className="text-sm text-ink-500 hover:text-ink-950 transition-colors">Pilot</Link>
-            <PublicThemeToggle />
-            <Link
-              href="/login"
-              className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] transition-colors"
-            >
-              Login
-            </Link>
-          </nav>
-        </div>
-      </header>
-
+    <>
       {/* Hero */}
       <section className="relative overflow-hidden bg-gradient-to-b from-brand-950 to-brand-900">
         <div className="mx-auto max-w-[1200px] px-6 py-24 md:py-32">
@@ -353,22 +316,6 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-brand-950 py-12">
-        <div className="mx-auto max-w-[1200px] px-6">
-          <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
-            <p className="text-sm text-white/60">
-              &copy; {new Date().getFullYear()} {siteName}. All rights reserved.
-            </p>
-            <div className="flex gap-6">
-              <Link href="/about" className="text-sm text-white/60 hover:text-white transition-colors">About</Link>
-              <Link href="/services" className="text-sm text-white/60 hover:text-white transition-colors">Services</Link>
-              <Link href="/privacy" className="text-sm text-white/60 hover:text-white transition-colors">Privacy</Link>
-              <Link href="/contact" className="text-sm text-white/60 hover:text-white transition-colors">Contact</Link>
-            </div>
-          </div>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }
