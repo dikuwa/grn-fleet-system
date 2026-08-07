@@ -1,8 +1,8 @@
 // Service Worker for GRN Fleet Management System
 // Network-first for authenticated data, cache-first for static assets
 
-var CACHE_NAME = 'grn-fleet-v2';
-var STATIC_CACHE = 'grn-fleet-static-v2';
+var CACHE_NAME = 'grn-fleet-v3';
+var STATIC_CACHE = 'grn-fleet-static-v3';
 
 var STATIC_ASSETS = ['/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
