@@ -76,11 +76,25 @@ export function Hero({ title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION,
           <div className="mx-auto w-full max-w-[760px] px-1 sm:px-4 lg:mx-0 lg:px-0">
             <div className="relative isolate py-3 sm:py-6 lg:py-2">
               <div
-                className="relative mx-auto w-full transform-gpu transition-transform duration-500 ease-out motion-reduce:transition-none sm:w-[96%] md:[transform:perspective(1500px)_rotateY(-8deg)_rotateX(1.5deg)_rotateZ(-1deg)] lg:w-full lg:[transform:perspective(1600px)_rotateY(-10deg)_rotateX(2deg)_rotateZ(-1.25deg)]"
+                className="relative mx-auto w-full transform-gpu transition-transform duration-500 ease-out motion-reduce:transition-none sm:w-[96%] md:[transform:perspective(1500px)_rotateY(-11deg)_rotateX(1.8deg)_rotateZ(-1deg)] lg:w-full lg:[transform:perspective(1600px)_rotateY(-14deg)_rotateX(2.2deg)_rotateZ(-1.35deg)]"
               >
-                <div className="relative rounded-[26px] border border-white/[0.16] bg-[#171a20] p-[7px] shadow-[0_28px_70px_rgba(0,0,0,0.34)] sm:rounded-[32px] sm:p-[9px]">
-                  <div className="pointer-events-none absolute inset-y-[12%] -right-[6px] hidden w-[5px] rounded-r-full border border-l-0 border-white/10 bg-[#242831] opacity-75 md:block" />
-                  <div className="pointer-events-none absolute right-[30%] top-[5px] hidden h-[3px] w-[34%] rounded-full bg-white/[0.08] sm:block" />
+                <div className="relative rounded-[26px] border border-white/[0.22] bg-[#171a20] p-[7px] shadow-[0_30px_72px_rgba(0,0,0,0.36)] ring-1 ring-white/[0.035] sm:rounded-[32px] sm:p-[9px]">
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-[10%] -right-[7px] hidden w-[6px] rounded-r-full border border-l-0 border-white/[0.18] bg-[#2a2f38] opacity-90 shadow-[2px_0_10px_rgba(255,255,255,0.05)] md:block"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-[15%] -right-[7px] hidden w-px bg-white/[0.24] md:block"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-[14%] right-[13%] top-[3px] hidden h-px bg-white/[0.18] sm:block"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-[30%] top-[6px] hidden h-[2px] w-[34%] rounded-full bg-white/[0.11] sm:block"
+                  />
                   <div className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-surface/95 sm:rounded-[24px]">
                     <ProductDashboardPreview className="border-0 shadow-none ring-0" />
                   </div>
