@@ -1,32 +1,17 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Building2, ChevronRight, Clock, Plus, Search, Users } from 'lucide-react';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input, Label } from '@/components/ui/input';
+import { useQuery } from '@tanstack/react-query';
+import { Building2, ChevronLeft, ChevronRight, Clock, Plus, Search, Users } from 'lucide-react';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
-import { EmptyState } from '@/components/ui/empty-state';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { formatDate } from '@/lib/utils';
-import { useToast } from '@/lib/use-toast';
 
 interface TenantRow {
   id: string;
@@ -36,416 +21,118 @@ interface TenantRow {
   type: string;
   status: string;
   lifecycleStatus: string | null;
-  timezone: string;
   createdAt: string;
-  updatedAt: string;
   contactEmail: string | null;
-  contactPhone: string | null;
   memberCount: number;
 }
 
-const STATUS_FILTERS = ['', 'ACTIVE', 'SUSPENDED', 'TRIAL'] as const;
-const LIFECYCLE_FILTERS = [
-  '',
-  'PENDING_INVITATION',
-  'SETUP_IN_PROGRESS',
-  'PENDING_PLATFORM_REVIEW',
-  'READY_FOR_ACTIVATION',
-  'ACTIVE',
-  'ONBOARDING_FAILED',
-] as const;
+const statusOptions = [
+  { value: 'all', label: 'All account statuses' },
+  { value: 'ACTIVE', label: 'Active' },
+  { value: 'SUSPENDED', label: 'Suspended' },
+  { value: 'TRIAL', label: 'Trial' },
+  { value: 'ARCHIVED', label: 'Archived' },
+];
+
+const lifecycleOptions = [
+  { value: 'all', label: 'All lifecycle stages' },
+  { value: 'PENDING_INVITATION', label: 'Pending invitation' },
+  { value: 'INVITATION_SENT', label: 'Invitation sent' },
+  { value: 'SETUP_IN_PROGRESS', label: 'Setup in progress' },
+  { value: 'PENDING_PLATFORM_REVIEW', label: 'Pending platform review' },
+  { value: 'READY_FOR_ACTIVATION', label: 'Ready for activation' },
+  { value: 'ACTIVE', label: 'Active lifecycle' },
+  { value: 'SUSPENDED', label: 'Suspended lifecycle' },
+  { value: 'ARCHIVED', label: 'Archived lifecycle' },
+  { value: 'ONBOARDING_FAILED', label: 'Onboarding failed' },
+];
+
+function accountBadge(status: string) {
+  const value = status.toUpperCase();
+  if (value === 'ACTIVE') return <Badge variant="success" size="sm">Active</Badge>;
+  if (value === 'SUSPENDED') return <Badge variant="error" size="sm">Suspended</Badge>;
+  if (value === 'TRIAL') return <Badge variant="warning" size="sm">Trial</Badge>;
+  return <Badge variant="default" size="sm">{value.charAt(0) + value.slice(1).toLowerCase()}</Badge>;
+}
+
+function lifecycleBadge(status: string | null) {
+  if (!status) return <span className="text-xs text-ink-400">Not set</span>;
+  const variant = status === 'ACTIVE' ? 'success' : status === 'ONBOARDING_FAILED' ? 'error' : status === 'PENDING_PLATFORM_REVIEW' ? 'warning' : 'info';
+  return <Badge variant={variant} size="sm">{status.replace(/_/g, ' ').toLowerCase()}</Badge>;
+}
 
 export default function PlatformTenantsPage() {
-  const { toast } = useToast();
   const [page, setPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [lifecycleFilter, setLifecycleFilter] = useState('');
-  const [showCreate, setShowCreate] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    code: '',
-    slug: '',
-    type: 'regional_council',
-  });
-  const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [status, setStatus] = useState('all');
+  const [lifecycle, setLifecycle] = useState('all');
 
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['platform-tenants', searchQuery, statusFilter, lifecycleFilter, page],
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const query = useQuery({
+    queryKey: ['platform-tenants', debouncedSearch, status, lifecycle, page],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (searchQuery) params.set('q', searchQuery);
-      if (statusFilter) params.set('status', statusFilter);
-      if (lifecycleFilter) params.set('lifecycle', lifecycleFilter);
-      params.set('page', String(page));
-      params.set('limit', '25');
-
+      const params = new URLSearchParams({ page: String(page), limit: '25' });
+      if (debouncedSearch) params.set('q', debouncedSearch);
+      if (status !== 'all') params.set('status', status);
+      if (lifecycle !== 'all') params.set('lifecycle', lifecycle);
       const res = await fetch(`/api/platform/tenants?${params}`);
-      if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error || 'Failed to load tenants');
-      }
       const json = await res.json();
-      return json.data;
+      if (!res.ok) throw new Error(json.error || 'Failed to load tenants');
+      return json.data as { tenants: TenantRow[]; total: number; totalPages: number };
     },
+    staleTime: 10_000,
   });
 
-  const tenants: TenantRow[] = data?.tenants ?? [];
-  const total: number = data?.total ?? 0;
-  const totalPages: number = data?.totalPages ?? 1;
-
-  const handleCreate = async () => {
-    if (!formData.name.trim() || !formData.code.trim() || !formData.slug.trim()) return;
-
-    setIsCreating(true);
-    setCreateError(null);
-
-    try {
-      const res = await fetch('/api/platform/tenants', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
-
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to create tenant');
-
-      setShowCreate(false);
-      setFormData({ name: '', code: '', slug: '', type: 'regional_council' });
-      toast({
-        title: 'Tenant created',
-        description: `${formData.name.trim()} is ready for platform onboarding.`,
-        variant: 'success',
-      });
-      await refetch();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create tenant';
-      setCreateError(message);
-      toast({ title: 'Could not create tenant', description: message, variant: 'error' });
-    } finally {
-      setIsCreating(false);
-    }
-  };
+  const tenants = query.data?.tenants ?? [];
+  const total = query.data?.total ?? 0;
+  const totalPages = query.data?.totalPages ?? 1;
+  const filtered = Boolean(search || status !== 'all' || lifecycle !== 'all');
 
   const clearFilters = () => {
-    setSearchQuery('');
-    setStatusFilter('');
-    setLifecycleFilter('');
+    setSearch('');
+    setStatus('all');
+    setLifecycle('all');
     setPage(1);
   };
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Platform', href: '/dashboard/platform' },
-          { label: 'Tenant Management' },
-        ]}
-      />
-      <PageHeader
-        title="Tenant Management"
-        description={`${total} tenant${total !== 1 ? 's' : ''} on the platform`}
-      >
-        <Dialog
-          open={showCreate}
-          onOpenChange={(open) => {
-            if (isCreating) return;
-            setShowCreate(open);
-            if (!open) setCreateError(null);
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button variant="primary" size="sm">
-              <Plus className="h-4 w-4" aria-hidden="true" /> Add Tenant
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-h-[min(90dvh,44rem)] overflow-y-auto sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Create New Tenant</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label required>Organisation Name</Label>
-                <Input
-                  autoFocus
-                  placeholder="e.g. Kavango East Regional Council"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label required>Tenant Code</Label>
-                  <Input
-                    placeholder="e.g. KAV-EAST"
-                    value={formData.code}
-                    onChange={(e) =>
-                      setFormData({ ...formData, code: e.target.value.toUpperCase() })
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label required>URL Slug</Label>
-                  <Input
-                    placeholder="e.g. kavango-east"
-                    value={formData.slug}
-                    onChange={(e) =>
-                      setFormData({ ...formData, slug: e.target.value.toLowerCase() })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Tenant Type</Label>
-                <Select
-                  value={formData.type}
-                  onValueChange={(type) => setFormData((current) => ({ ...current, type }))}
-                >
-                  <SelectTrigger aria-label="Tenant type">
-                    <SelectValue placeholder="Select tenant type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="regional_council">Regional Council</SelectItem>
-                    <SelectItem value="ministry">Ministry / Department</SelectItem>
-                    <SelectItem value="agency">Government Agency</SelectItem>
-                    <SelectItem value="municipality">Municipality</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {createError && (
-                <p className="text-xs font-medium text-status-error-text" role="alert">
-                  {createError}
-                </p>
-              )}
-              <div className="mobile-action-bar flex flex-wrap justify-end gap-2 pt-1">
-                <Button variant="secondary" size="sm" onClick={() => setShowCreate(false)} disabled={isCreating}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleCreate}
-                  loading={isCreating}
-                  disabled={!formData.name.trim() || !formData.code.trim() || !formData.slug.trim()}
-                >
-                  Create Tenant
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+      <Breadcrumbs items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Tenant Management' }]} />
+      <PageHeader title="Tenant Management" description={`${total} tenant${total === 1 ? '' : 's'} on the platform`}>
+        <Button size="sm" asChild><Link href="/dashboard/platform/onboard"><Plus className="h-4 w-4" /> Onboard tenant</Link></Button>
       </PageHeader>
 
-      <section aria-label="Tenant filters" className="space-y-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative w-full lg:max-w-sm lg:flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" aria-hidden="true" />
-            <Input
-              type="search"
-              aria-label="Search tenants"
-              placeholder="Search by name, code, or slug..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setPage(1);
-              }}
-              className="pl-9"
-            />
-          </div>
-          <ClientFilterReset
-            isFiltered={Boolean(searchQuery || statusFilter || lifecycleFilter)}
-            onClear={clearFilters}
-          />
-        </div>
-
-        <div className="scrollbar-thin flex max-w-full gap-2 overflow-x-auto pb-1" aria-label="Tenant status filters">
-          {STATUS_FILTERS.map((status) => (
-            <button
-              key={status || 'all-status'}
-              type="button"
-              aria-pressed={statusFilter === status}
-              onClick={() => {
-                setStatusFilter(status);
-                setPage(1);
-              }}
-              className={`focus-ring min-h-9 shrink-0 rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors motion-reduce:transition-none ${
-                statusFilter === status
-                  ? 'border-brand-800 bg-brand-800 text-white'
-                  : 'border-border bg-surface text-ink-500 hover:bg-muted hover:text-ink-800'
-              }`}
-            >
-              {status ? status.charAt(0) + status.slice(1).toLowerCase() : 'All statuses'}
-            </button>
-          ))}
-        </div>
-
-        <div className="scrollbar-thin flex max-w-full gap-2 overflow-x-auto pb-1" aria-label="Tenant lifecycle filters">
-          {LIFECYCLE_FILTERS.map((lifecycle) => (
-            <button
-              key={lifecycle || 'all-lifecycle'}
-              type="button"
-              aria-pressed={lifecycleFilter === lifecycle}
-              onClick={() => {
-                setLifecycleFilter(lifecycle);
-                setPage(1);
-              }}
-              className={`focus-ring min-h-9 shrink-0 rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors motion-reduce:transition-none ${
-                lifecycleFilter === lifecycle
-                  ? 'border-brand-200 bg-brand-50 text-brand-800 dark:border-brand-800 dark:bg-brand-950/40 dark:text-brand-600'
-                  : 'border-border bg-surface text-ink-500 hover:bg-muted hover:text-ink-800'
-              }`}
-            >
-              {lifecycle ? lifecycle.replace(/_/g, ' ') : 'All lifecycle stages'}
-            </button>
-          ))}
-        </div>
+      <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_200px_240px_auto] md:items-center" aria-label="Tenant filters">
+        <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" /><Input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} className="pl-9" placeholder="Search tenant name, code or slug…" aria-label="Search tenants" /></div>
+        <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}><SelectTrigger aria-label="Account status"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>
+        <Select value={lifecycle} onValueChange={(value) => { setLifecycle(value); setPage(1); }}><SelectTrigger aria-label="Lifecycle status"><SelectValue /></SelectTrigger><SelectContent>{lifecycleOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>
+        <ClientFilterReset isFiltered={filtered} onClear={clearFilters} />
       </section>
 
-      {error && (
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-status-error-text" role="alert">
-              {error instanceof Error ? error.message : 'Failed to load tenants'}
-            </p>
-            <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {isLoading && (
-        <div className="space-y-3" aria-label="Loading tenants" role="status">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div
-              key={i}
-              className="flex animate-pulse items-center gap-3 rounded-[8px] border border-border p-4 motion-reduce:animate-none"
-            >
-              <div className="h-10 w-10 shrink-0 rounded-[8px] bg-muted" />
-              <div className="flex-1 space-y-2">
-                <div className="h-4 w-48 max-w-[70%] rounded bg-muted" />
-                <div className="h-3 w-32 max-w-[45%] rounded bg-muted" />
-              </div>
-              <div className="hidden h-3 w-20 rounded bg-muted sm:block" />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {!isLoading && !error && tenants.length === 0 && (
-        <EmptyState
-          icon={<Building2 className="h-6 w-6" />}
-          title="No tenants found"
-          description={
-            searchQuery || statusFilter || lifecycleFilter
-              ? 'Clear or adjust the filters to see other tenants.'
-              : 'Add your first tenant to get started.'
-          }
-          action={
-            searchQuery || statusFilter || lifecycleFilter
-              ? { label: 'Clear filters', onClick: clearFilters }
-              : undefined
-          }
-        />
-      )}
-
-      {!isLoading && tenants.length > 0 && (
-        <Card>
-          <CardContent className="p-0">
-            <div className="divide-y divide-border">
-              {tenants.map((tenant) => (
-                <Link
-                  key={tenant.id}
-                  href={`/dashboard/platform/tenants/${tenant.id}`}
-                  className="focus-ring group flex min-w-0 items-center justify-between gap-3 px-4 py-3.5 transition-colors hover:bg-muted/50 sm:px-5 motion-reduce:transition-none"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-600">
-                      <Building2 className="h-5 w-5" aria-hidden="true" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-medium text-ink-950">{tenant.name}</span>
-                        <Badge
-                          variant={
-                            tenant.status?.toUpperCase() === 'ACTIVE'
-                              ? 'success'
-                              : tenant.status?.toUpperCase() === 'SUSPENDED'
-                                ? 'error'
-                                : 'cancelled'
-                          }
-                          size="sm"
-                        >
-                          {tenant.status}
-                        </Badge>
-                        {tenant.lifecycleStatus && tenant.lifecycleStatus !== 'ACTIVE' && (
-                          <Badge
-                            variant={
-                              tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW'
-                                ? 'warning'
-                                : tenant.lifecycleStatus === 'ONBOARDING_FAILED'
-                                  ? 'error'
-                                  : 'default'
-                            }
-                            size="sm"
-                          >
-                            {tenant.lifecycleStatus.replace(/_/g, ' ')}
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="font-mono text-xs text-ink-400">{tenant.code}</span>
-                        <span className="flex items-center gap-1 text-xs text-ink-500">
-                          <Users className="h-3 w-3" aria-hidden="true" />
-                          {tenant.memberCount}
-                        </span>
-                        {tenant.contactEmail && (
-                          <span className="max-w-full truncate text-xs text-ink-500">{tenant.contactEmail}</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="hidden items-center gap-1 text-xs text-ink-500 md:flex">
-                      <Clock className="h-3 w-3" aria-hidden="true" />
-                      {formatDate(tenant.createdAt)}
-                    </span>
-                    <ChevronRight className="h-4 w-4 text-ink-400 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" aria-hidden="true" />
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {totalPages > 1 && (
-        <nav className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" aria-label="Tenant pagination">
-          <p className="text-xs text-ink-500">
-            Page {page} of {totalPages} · {total} total
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page <= 1}
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page >= totalPages}
-              onClick={() => setPage((current) => current + 1)}
-            >
-              Next
-            </Button>
+      {query.isLoading ? <div className="flex min-h-52 items-center justify-center text-sm text-ink-500">Loading tenants…</div>
+        : query.error ? <EmptyState icon={<Building2 className="h-6 w-6" />} title="Could not load tenants" description={query.error instanceof Error ? query.error.message : 'Tenant query failed'} action={{ label: 'Retry', onClick: () => query.refetch() }} />
+        : tenants.length === 0 ? <EmptyState icon={<Building2 className="h-6 w-6" />} title="No tenants found" description={filtered ? 'No tenant matches the active filters.' : 'Onboard the first organisation to create its isolated workspace.'} action={filtered ? { label: 'Clear filters', onClick: clearFilters } : { label: 'Onboard tenant', href: '/dashboard/platform/onboard' }} />
+        : (
+          <div className="overflow-hidden rounded-[10px] border border-border bg-surface">
+            {tenants.map((tenant) => (
+              <Link key={tenant.id} href={`/dashboard/platform/tenants/${tenant.id}`} className="focus-ring group grid gap-3 border-b border-border px-4 py-4 transition-colors last:border-b-0 hover:bg-muted/35 sm:px-5 lg:grid-cols-[minmax(0,1fr)_170px_230px_24px] lg:items-center motion-reduce:transition-none">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700"><Building2 className="h-4 w-4" /></div><div className="min-w-0"><p className="truncate text-sm font-semibold text-ink-950">{tenant.name}</p><div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500"><span className="font-mono">{tenant.code}</span><span className="capitalize">{tenant.type.replace(/_/g, ' ')}</span><span className="flex items-center gap-1"><Users className="h-3 w-3" />{tenant.memberCount}</span>{tenant.contactEmail && <span className="max-w-xs truncate">{tenant.contactEmail}</span>}</div></div></div>
+                </div>
+                <div className="lg:border-l lg:border-border lg:pl-4"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400">Account</p>{accountBadge(tenant.status)}</div>
+                <div className="lg:border-l lg:border-border lg:pl-4"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400">Onboarding / lifecycle</p><div className="flex flex-wrap items-center gap-2">{lifecycleBadge(tenant.lifecycleStatus)}<span className="flex items-center gap-1 text-[11px] text-ink-400"><Clock className="h-3 w-3" />{formatDate(tenant.createdAt)}</span></div></div>
+                <ChevronRight className="hidden h-4 w-4 text-ink-300 lg:block" />
+              </Link>
+            ))}
           </div>
-        </nav>
-      )}
+        )}
+
+      {totalPages > 1 && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"><p className="text-xs text-ink-500">Page {page} of {totalPages} · {total} tenants</p><div className="flex gap-2"><Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" /> Previous</Button><Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)}>Next <ChevronRight className="h-4 w-4" /></Button></div></div>}
     </div>
   );
 }
