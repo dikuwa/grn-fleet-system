@@ -2,8 +2,8 @@
  * Public site header — shared across every public route.
  *
  * The product story is intentionally consolidated under one Platform menu.
- * This prevents several top-level items from appearing active at the same time
- * and lets visitors jump straight to the relevant homepage section.
+ * Desktop visitors can reveal it immediately on hover while click/focus
+ * interactions remain available for keyboard and touch accessibility.
  */
 
 'use client';
@@ -42,11 +42,33 @@ export function PublicHeader({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [platformOpen, setPlatformOpen] = useState(false);
   const platformRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const platformActive = pathname === '/' || pathname === '/services';
+
+  const cancelScheduledClose = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const openPlatform = () => {
+    cancelScheduledClose();
+    setPlatformOpen(true);
+  };
+
+  const schedulePlatformClose = () => {
+    cancelScheduledClose();
+    closeTimerRef.current = setTimeout(() => setPlatformOpen(false), 110);
+  };
 
   useEffect(() => {
     setPlatformOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    return () => cancelScheduledClose();
+  }, []);
 
   useEffect(() => {
     if (!platformOpen) return;
@@ -85,7 +107,18 @@ export function PublicHeader({
           </Link>
 
           <nav aria-label="Main" className="hidden items-center gap-1 lg:flex">
-            <div ref={platformRef} className="relative">
+            <div
+              ref={platformRef}
+              className="relative"
+              onMouseEnter={openPlatform}
+              onMouseLeave={schedulePlatformClose}
+              onFocusCapture={openPlatform}
+              onBlurCapture={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  schedulePlatformClose();
+                }
+              }}
+            >
               <button
                 type="button"
                 onClick={() => setPlatformOpen((open) => !open)}
@@ -108,10 +141,10 @@ export function PublicHeader({
               <div
                 role="menu"
                 className={cn(
-                  'absolute left-0 top-[calc(100%+0.5rem)] w-64 origin-top-left rounded-[10px] border border-border bg-surface p-2 shadow-xl transition duration-150 motion-reduce:transition-none',
+                  'absolute left-0 top-[calc(100%+0.45rem)] w-64 origin-top-left rounded-[10px] border border-border bg-surface p-2 shadow-xl transition-[opacity,transform] duration-150 motion-reduce:transition-none',
                   platformOpen
                     ? 'visible translate-y-0 opacity-100'
-                    : 'invisible -translate-y-1 opacity-0 pointer-events-none',
+                    : 'pointer-events-none invisible -translate-y-1 opacity-0',
                 )}
               >
                 {PLATFORM_NAV_LINKS.map((link) => (
