@@ -1,8 +1,8 @@
 /**
  * Platform Data Reset API
  *
- * GET   /api/platform/reset — List tenant reset requests
- * POST  /api/platform/reset — Create a new reset request
+ * GET  /api/platform/reset — List tenant reset requests
+ * POST /api/platform/reset — Create a reset request
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,16 +13,11 @@ import { tenantResetRequests, resetRequestStatusEnum, resetScopeEnum } from '@/d
 import { tenants } from '@/db/schema';
 import { eq, and, desc, count, like, or } from 'drizzle-orm';
 
-// ---------------------------------------------------------------------------
-// GET — List reset requests
-// ---------------------------------------------------------------------------
-
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-
     const permCheck = await requirePermission(session, Permissions.RESET_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
@@ -30,39 +25,26 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status') || '';
     const scope = searchParams.get('scope') || '';
     const q = searchParams.get('q') || '';
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '25', 10);
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10) || 25));
     const offset = (page - 1) * limit;
-
     const db = getDb();
 
     const conditions: ReturnType<typeof and>[] = [];
     if (status) conditions.push(eq(tenantResetRequests.status, status as (typeof resetRequestStatusEnum)['enumValues'][number]));
     if (scope) conditions.push(eq(tenantResetRequests.scope, scope as (typeof resetScopeEnum)['enumValues'][number]));
-    if (q) {
-      conditions.push(
-        or(
-          like(tenants.name, `%${q}%`),
-          like(tenantResetRequests.reason, `%${q}%`),
-        )!,
-      );
-    }
-
+    if (q) conditions.push(or(like(tenants.name, `%${q}%`), like(tenants.code, `%${q}%`), like(tenantResetRequests.reason, `%${q}%`))!);
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    const [totalResult] = await db
-      .select({ count: count() })
-      .from(tenantResetRequests)
-      .leftJoin(tenants, eq(tenantResetRequests.tenantId, tenants.id))
-      .where(whereClause);
-
-    const total = totalResult?.count || 0;
+    const [totalResult] = await db.select({ count: count() }).from(tenantResetRequests).leftJoin(tenants, eq(tenantResetRequests.tenantId, tenants.id)).where(whereClause);
+    const total = Number(totalResult?.count ?? 0);
 
     const requests = await db
       .select({
         id: tenantResetRequests.id,
         tenantId: tenantResetRequests.tenantId,
         tenantName: tenants.name,
+        tenantCode: tenants.code,
         scope: tenantResetRequests.scope,
         reason: tenantResetRequests.reason,
         status: tenantResetRequests.status,
@@ -70,16 +52,20 @@ export async function GET(request: NextRequest) {
         backupRequired: tenantResetRequests.backupRequired,
         backupCreated: tenantResetRequests.backupCreated,
         backupLocation: tenantResetRequests.backupLocation,
+        backupSizeBytes: tenantResetRequests.backupSizeBytes,
+        backupRecordCount: tenantResetRequests.backupRecordCount,
         startedAt: tenantResetRequests.startedAt,
         completedAt: tenantResetRequests.completedAt,
         executionTimeMs: tenantResetRequests.executionTimeMs,
         reviewedByUserId: tenantResetRequests.reviewedByUserId,
         reviewedAt: tenantResetRequests.reviewedAt,
         reviewNotes: tenantResetRequests.reviewNotes,
+        validationResults: tenantResetRequests.validationResults,
         results: tenantResetRequests.results,
         failureReason: tenantResetRequests.failureReason,
         rollbackPossible: tenantResetRequests.rollbackPossible,
         rollbackPerformed: tenantResetRequests.rollbackPerformed,
+        metadata: tenantResetRequests.metadata,
         createdAt: tenantResetRequests.createdAt,
         updatedAt: tenantResetRequests.updatedAt,
       })
@@ -90,35 +76,8 @@ export async function GET(request: NextRequest) {
       .limit(limit)
       .offset(offset);
 
-    // Compute stats
-    const [allCount] = await db
-      .select({ count: count() })
-      .from(tenantResetRequests);
-
-    const [draftCount] = await db
-      .select({ count: count() })
-      .from(tenantResetRequests)
-      .where(eq(tenantResetRequests.status, 'draft'));
-
-    const [reviewCount] = await db
-      .select({ count: count() })
-      .from(tenantResetRequests)
-      .where(eq(tenantResetRequests.status, 'pending_review'));
-
-    const [approvedCount] = await db
-      .select({ count: count() })
-      .from(tenantResetRequests)
-      .where(eq(tenantResetRequests.status, 'approved'));
-
-    const [completedCount] = await db
-      .select({ count: count() })
-      .from(tenantResetRequests)
-      .where(eq(tenantResetRequests.status, 'completed'));
-
-    const [failedCount] = await db
-      .select({ count: count() })
-      .from(tenantResetRequests)
-      .where(eq(tenantResetRequests.status, 'failed'));
+    const statusCounts = await db.select({ status: tenantResetRequests.status, count: count() }).from(tenantResetRequests).groupBy(tenantResetRequests.status);
+    const byStatus = Object.fromEntries(statusCounts.map((row) => [row.status, Number(row.count)]));
 
     return NextResponse.json({
       success: true,
@@ -127,84 +86,57 @@ export async function GET(request: NextRequest) {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.max(1, Math.ceil(total / limit)),
         stats: {
-          total: allCount?.count || 0,
-          draft: draftCount?.count || 0,
-          pendingReview: reviewCount?.count || 0,
-          approved: approvedCount?.count || 0,
-          completed: completedCount?.count || 0,
-          failed: failedCount?.count || 0,
+          total,
+          draft: byStatus.draft ?? 0,
+          pendingReview: byStatus.pending_review ?? 0,
+          approved: byStatus.approved ?? 0,
+          completed: byStatus.completed ?? 0,
+          failed: byStatus.failed ?? 0,
         },
       },
     });
   } catch (error) {
     console.error('[Platform Reset] GET failed:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }
-
-// ---------------------------------------------------------------------------
-// POST — Create a new reset request
-// ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-
     const permCheck = await requirePermission(session, Permissions.RESET_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
-    const { tenantId, scope, reason, backupRequired = true } = body;
-
-    if (!tenantId || !scope || !reason) {
-      return NextResponse.json(
-        { error: 'tenantId, scope, and reason are required' },
-        { status: 400 },
-      );
-    }
+    const { tenantId, scope = 'operational', reason, backupRequired = true } = body;
+    if (!tenantId || !scope || !String(reason || '').trim()) return NextResponse.json({ error: 'tenantId, scope, and reason are required' }, { status: 400 });
 
     const validScopes = ['temporary_data', 'operational', 'fleet', 'user_access', 'full'];
-    if (!validScopes.includes(scope)) {
-      return NextResponse.json(
-        { error: `Invalid scope. Must be one of: ${validScopes.join(', ')}` },
-        { status: 400 },
-      );
-    }
+    if (!validScopes.includes(scope)) return NextResponse.json({ error: `Invalid scope. Must be one of: ${validScopes.join(', ')}` }, { status: 400 });
 
     const db = getDb();
+    const [tenant] = await db.select({ id: tenants.id, name: tenants.name, code: tenants.code }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+    if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
-    // Verify tenant exists
-    const [tenant] = await db
-      .select()
-      .from(tenants)
-      .where(eq(tenants.id, tenantId))
-      .limit(1);
+    const [created] = await db.insert(tenantResetRequests).values({
+      tenantId,
+      scope,
+      reason: String(reason).trim(),
+      requestedByUserId: session.user.id,
+      backupRequired: Boolean(backupRequired),
+      confirmationPhrase: `RESET ${tenant.code}`,
+      status: 'draft',
+      rollbackPossible: false,
+      metadata: { createdFrom: 'platform_admin', productionSafeFlow: scope === 'operational' },
+    }).returning();
 
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
-
-    // Create the reset request in draft status
-    const [created] = await db
-      .insert(tenantResetRequests)
-      .values({
-        tenantId,
-        scope,
-        reason,
-        requestedByUserId: session.user.id,
-        backupRequired,
-        confirmationPhrase: '',
-        status: 'draft',
-      })
-      .returning();
-
-    return NextResponse.json({ success: true, data: created }, { status: 201 });
+    return NextResponse.json({ success: true, data: { ...created, tenantName: tenant.name, tenantCode: tenant.code } }, { status: 201 });
   } catch (error) {
     console.error('[Platform Reset] POST failed:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }
