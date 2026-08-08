@@ -1,21 +1,51 @@
 /**
  * Platform Tenant Detail API
  *
- * GET   /api/platform/tenants/[id]  — Get tenant details (requires PLATFORM_ADMIN)
- * PATCH /api/platform/tenants/[id]  — Update tenant (requires TENANT_MANAGE)
+ * GET    /api/platform/tenants/[id] — tenant details + deletion assessment
+ * PATCH  /api/platform/tenants/[id] — controlled tenant/lifecycle update
+ * DELETE /api/platform/tenants/[id] — hard-delete only when no substantive records exist
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { count, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tenants, tenantBranding, tenantMemberships } from '@/db/schema/tenants';
+import { employees } from '@/db/schema/people';
+import { vehicles } from '@/db/schema/fleet';
+import { transportRequests } from '@/db/schema/requests';
+import { trips } from '@/db/schema/trips';
+import { programmes } from '@/db/schema/programmes';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, count } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 
-// ---------------------------------------------------------------------------
-// GET — Tenant detail with branding and stats
-// ---------------------------------------------------------------------------
+async function getDeletionAssessment(tenantId: string) {
+  const db = getDb();
+  const [members, staff, fleet, requests, tripRows, programmeRows] = await Promise.all([
+    db.select({ count: count() }).from(tenantMemberships).where(eq(tenantMemberships.tenantId, tenantId)),
+    db.select({ count: count() }).from(employees).where(eq(employees.tenantId, tenantId)),
+    db.select({ count: count() }).from(vehicles).where(eq(vehicles.tenantId, tenantId)),
+    db.select({ count: count() }).from(transportRequests).where(eq(transportRequests.tenantId, tenantId)),
+    db.select({ count: count() }).from(trips).where(eq(trips.tenantId, tenantId)),
+    db.select({ count: count() }).from(programmes).where(eq(programmes.tenantId, tenantId)),
+  ]);
+
+  const blockers = {
+    members: Number(members[0]?.count ?? 0),
+    staff: Number(staff[0]?.count ?? 0),
+    vehicles: Number(fleet[0]?.count ?? 0),
+    transportRequests: Number(requests[0]?.count ?? 0),
+    trips: Number(tripRows[0]?.count ?? 0),
+    programmes: Number(programmeRows[0]?.count ?? 0),
+  };
+  const substantiveRecordCount = Object.values(blockers).reduce((sum, value) => sum + value, 0);
+
+  return {
+    canDelete: substantiveRecordCount === 0,
+    substantiveRecordCount,
+    blockers,
+  };
+}
 
 export async function GET(
   request: NextRequest,
@@ -23,7 +53,6 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
@@ -32,53 +61,28 @@ export async function GET(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
+    const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
+    if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
-    const [tenant] = await db
-      .select()
-      .from(tenants)
-      .where(eq(tenants.id, id))
-      .limit(1);
-
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
-
-    // Get branding
-    const [branding] = await db
-      .select()
-      .from(tenantBranding)
-      .where(eq(tenantBranding.tenantId, id))
-      .limit(1);
-
-    // Count tenant members
-    const [memberCountResult] = await db
-      .select({ count: count() })
-      .from(tenantMemberships)
-      .where(eq(tenantMemberships.tenantId, id));
-    const memberCount = memberCountResult?.count || 0;
+    const [[branding], deletion] = await Promise.all([
+      db.select().from(tenantBranding).where(eq(tenantBranding.tenantId, id)).limit(1),
+      getDeletionAssessment(id),
+    ]);
 
     return NextResponse.json({
       success: true,
       data: {
         ...tenant,
         branding: branding || null,
-        stats: {
-          memberCount,
-        },
+        stats: { memberCount: deletion.blockers.members },
+        deletion,
       },
     });
   } catch (error) {
     console.error('[Platform Tenant Detail] GET failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to load tenant: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to load tenant: ' + String(error) }, { status: 500 });
   }
 }
-
-// ---------------------------------------------------------------------------
-// PATCH — Update tenant
-// ---------------------------------------------------------------------------
 
 export async function PATCH(
   request: NextRequest,
@@ -86,7 +90,6 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
@@ -96,46 +99,38 @@ export async function PATCH(
 
     const body = await request.json();
     const db = getDb();
+    const [existing] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
+    if (!existing) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
-    // Verify tenant exists
-    const [existing] = await db
-      .select()
-      .from(tenants)
-      .where(eq(tenants.id, id))
-      .limit(1);
-
-    if (!existing) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
-
-    // Controlled lifecycle transitions (only platform admin may drive these).
-    // Mirrors the lifecycle documented on the tenants schema:
-    //   PENDING_PLATFORM_REVIEW → READY_FOR_ACTIVATION | ACTIVE | ONBOARDING_FAILED
-    //   READY_FOR_ACTIVATION    → ACTIVE
-    //   ONBOARDING_FAILED       → DRAFT (allow re-onboarding)
     const LIFECYCLE_TRANSITIONS: Record<string, string[]> = {
-      PENDING_PLATFORM_REVIEW: ['READY_FOR_ACTIVATION', 'ACTIVE', 'ONBOARDING_FAILED'],
-      READY_FOR_ACTIVATION: ['ACTIVE'],
-      ONBOARDING_FAILED: ['DRAFT'],
+      DRAFT: ['PENDING_INVITATION', 'ARCHIVED'],
+      PENDING_INVITATION: ['INVITATION_SENT', 'ONBOARDING_FAILED', 'ARCHIVED'],
+      INVITATION_SENT: ['SETUP_IN_PROGRESS', 'INVITATION_EXPIRED', 'ONBOARDING_FAILED', 'ARCHIVED'],
+      INVITATION_EXPIRED: ['PENDING_INVITATION', 'ONBOARDING_FAILED', 'ARCHIVED'],
+      SETUP_IN_PROGRESS: ['PENDING_PLATFORM_REVIEW', 'ONBOARDING_FAILED', 'ARCHIVED'],
+      PENDING_PLATFORM_REVIEW: ['READY_FOR_ACTIVATION', 'ACTIVE', 'ONBOARDING_FAILED', 'ARCHIVED'],
+      READY_FOR_ACTIVATION: ['ACTIVE', 'ONBOARDING_FAILED', 'ARCHIVED'],
+      ACTIVE: ['SUSPENDED', 'RESTRICTED', 'ARCHIVED'],
+      SUSPENDED: ['ACTIVE', 'RESTRICTED', 'ARCHIVED'],
+      RESTRICTED: ['ACTIVE', 'SUSPENDED', 'ARCHIVED'],
+      ONBOARDING_FAILED: ['DRAFT', 'ARCHIVED'],
+      ARCHIVED: ['ACTIVE'],
     };
 
     const lifecycleTarget = body.lifecycleStatus;
-    if (lifecycleTarget !== undefined) {
-      const allowed = LIFECYCLE_TRANSITIONS[existing.lifecycleStatus];
-      if (!allowed || !allowed.includes(lifecycleTarget)) {
+    if (lifecycleTarget !== undefined && lifecycleTarget !== existing.lifecycleStatus) {
+      const allowed = LIFECYCLE_TRANSITIONS[existing.lifecycleStatus] ?? [];
+      if (!allowed.includes(lifecycleTarget)) {
         return NextResponse.json(
-          {
-            error: `Invalid lifecycle transition from ${existing.lifecycleStatus} to ${lifecycleTarget}.`,
-          },
+          { error: `Invalid lifecycle transition from ${existing.lifecycleStatus} to ${lifecycleTarget}.` },
           { status: 400 },
         );
       }
     }
 
-    // Update tenant fields
     const tenantUpdate: Record<string, unknown> = {};
-    if (body.name !== undefined) tenantUpdate.name = body.name;
-    if (body.status !== undefined) tenantUpdate.status = body.status;
+    if (body.name !== undefined) tenantUpdate.name = String(body.name).trim();
+    if (body.status !== undefined) tenantUpdate.status = String(body.status).toUpperCase();
     if (body.timezone !== undefined) tenantUpdate.timezone = body.timezone;
     if (body.locale !== undefined) tenantUpdate.locale = body.locale;
     if (body.type !== undefined) tenantUpdate.type = body.type;
@@ -148,14 +143,9 @@ export async function PATCH(
     tenantUpdate.updatedAt = new Date();
 
     if (Object.keys(tenantUpdate).length > 1) {
-      // More than just updatedAt
-      await db
-        .update(tenants)
-        .set(tenantUpdate)
-        .where(eq(tenants.id, id));
+      await db.update(tenants).set(tenantUpdate).where(eq(tenants.id, id));
     }
 
-    // Audit lifecycle transitions
     if (lifecycleTarget !== undefined && lifecycleTarget !== existing.lifecycleStatus) {
       await recordAuditEvent({
         tenantId: existing.id,
@@ -169,14 +159,10 @@ export async function PATCH(
       }).catch(() => {});
     }
 
-    // Update branding fields
     const brandingFields = [
-      'contactEmail', 'contactPhone', 'address',
-      'primaryColor', 'accentColor',
-      'logoUrl', 'logoDarkUrl',
-      'documentFooter', 'senderName', 'senderEmail',
+      'contactEmail', 'contactPhone', 'address', 'primaryColor', 'accentColor',
+      'logoUrl', 'logoDarkUrl', 'documentFooter', 'senderName', 'senderEmail',
     ];
-
     const brandingUpdate: Record<string, unknown> = {};
     for (const field of brandingFields) {
       if (body[field] !== undefined) brandingUpdate[field] = body[field];
@@ -188,33 +174,80 @@ export async function PATCH(
         .from(tenantBranding)
         .where(eq(tenantBranding.tenantId, id))
         .limit(1);
-
       if (existingBranding) {
         brandingUpdate.updatedAt = new Date();
-        await db
-          .update(tenantBranding)
-          .set(brandingUpdate)
-          .where(eq(tenantBranding.tenantId, id));
+        await db.update(tenantBranding).set(brandingUpdate).where(eq(tenantBranding.tenantId, id));
       } else {
-        await db
-          .insert(tenantBranding)
-          .values({ tenantId: id, ...brandingUpdate } as never);
+        await db.insert(tenantBranding).values({ tenantId: id, ...brandingUpdate } as never);
       }
     }
 
-    // Fetch the updated tenant
-    const [updated] = await db
-      .select()
-      .from(tenants)
-      .where(eq(tenants.id, id))
-      .limit(1);
-
+    const [updated] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     console.error('[Platform Tenant Detail] PATCH failed:', error);
+    return NextResponse.json({ error: 'Failed to update tenant: ' + String(error) }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
+    const db = getDb();
+    const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
+    if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+
+    const confirmation = request.nextUrl.searchParams.get('confirm') ?? '';
+    if (confirmation !== tenant.code) {
+      return NextResponse.json(
+        { error: `Type the tenant code ${tenant.code} to confirm permanent deletion.` },
+        { status: 400 },
+      );
+    }
+
+    const deletion = await getDeletionAssessment(id);
+    if (!deletion.canDelete) {
+      return NextResponse.json(
+        {
+          error: 'This tenant contains platform or operational records and cannot be permanently deleted.',
+          deletion,
+          alternatives: ['SUSPENDED', 'ARCHIVED'],
+        },
+        { status: 409 },
+      );
+    }
+
+    await recordAuditEvent({
+      tenantId: tenant.id,
+      actorUserId: session.user.id,
+      action: 'tenant.permanent_delete_requested',
+      entityType: 'tenant',
+      entityId: tenant.id,
+      summary: `Platform administrator permanently deleted empty tenant ${tenant.name} (${tenant.code}).`,
+      before: { name: tenant.name, code: tenant.code, slug: tenant.slug, status: tenant.status, lifecycleStatus: tenant.lifecycleStatus },
+    }).catch(() => {});
+
+    await db.delete(tenants).where(eq(tenants.id, id));
+
+    return NextResponse.json({
+      success: true,
+      data: { id: tenant.id, name: tenant.name, code: tenant.code, deleted: true },
+    });
+  } catch (error) {
+    console.error('[Platform Tenant Detail] DELETE failed:', error);
     return NextResponse.json(
-      { error: 'Failed to update tenant: ' + String(error) },
-      { status: 500 },
+      { error: 'Tenant could not be permanently deleted. It may still have protected dependent records.' },
+      { status: 409 },
     );
   }
 }

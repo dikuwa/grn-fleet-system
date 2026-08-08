@@ -17,6 +17,7 @@ export interface StyledSelectProps {
   value?: string | number;
   defaultValue?: string | number;
   onChange?: (event: React.ChangeEvent<HTMLSelectElement>) => void;
+  id?: string;
   name?: string;
   disabled?: boolean;
   required?: boolean;
@@ -96,6 +97,7 @@ const StyledSelect = React.forwardRef<HTMLButtonElement, StyledSelectProps>(
       value,
       defaultValue,
       onChange,
+      id,
       name,
       disabled,
       required,
@@ -132,6 +134,7 @@ const StyledSelect = React.forwardRef<HTMLButtonElement, StyledSelectProps>(
         >
           <SelectPrimitive.Trigger
             ref={ref}
+            id={id}
             aria-label={ariaLabel}
             className={cn(
               'border-border bg-surface text-ink-950 focus:ring-brand-600 disabled:bg-muted flex h-10 w-full items-center justify-between rounded-[8px] border px-3 text-sm outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50',
