@@ -1,10 +1,8 @@
-import { and, eq, gt, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { notifications } from '@/db/schema/notifications';
 import { roleAssignments, roles, tenantMemberships } from '@/db/schema/tenants';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
-
-const INTAKE_ROLE_NAMES = [SystemRoles.PLATFORM_ADMIN, SystemRoles.PLATFORM_SUPPORT] as const;
 
 interface PlatformIntakeNotificationInput {
   entityId: string;
@@ -17,10 +15,9 @@ interface PlatformIntakeNotificationInput {
 }
 
 /**
- * Notify active Platform Admin / Platform Support users about unauthenticated
- * public-site intake. Notifications are written against each recipient's own
- * platform membership tenant, keeping the existing notification tenant boundary
- * intact rather than inventing a global/null tenant notification.
+ * Notify active Platform Super Administrators about unauthenticated public-site
+ * intake. Each notification is written against the administrator's own platform
+ * membership tenant, preserving the existing notification tenant boundary.
  */
 export async function notifyPlatformIntake(input: PlatformIntakeNotificationInput) {
   const db = getDb();
@@ -37,7 +34,7 @@ export async function notifyPlatformIntake(input: PlatformIntakeNotificationInpu
     .where(
       and(
         eq(tenantMemberships.status, 'active'),
-        inArray(roles.name, [...INTAKE_ROLE_NAMES]),
+        eq(roles.name, SystemRoles.PLATFORM_ADMIN),
         or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
       ),
     );
