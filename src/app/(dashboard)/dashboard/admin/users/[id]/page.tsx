@@ -41,6 +41,18 @@ import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 import { getEmployeeStatusDisplay } from '@/lib/employee-status';
 
+interface RoleAssignment {
+  id: string;
+  roleId: string;
+  roleName: string;
+  startDate: string;
+  endDate: string | null;
+  isActive: boolean;
+  isActing: boolean;
+  delegatedByUserId: string | null;
+  reason: string | null;
+}
+
 interface UserDetail {
   id: string;
   email: string;
@@ -49,16 +61,7 @@ interface UserDetail {
   emailVerified: boolean;
   tenantStatus: string;
   joinedAt: string | null;
-  roleAssignments: Array<{
-    id: string;
-    roleId: string;
-    roleName: string;
-    startDate: string;
-    endDate: string | null;
-    isActing: boolean;
-    delegatedByUserId: string | null;
-    reason: string | null;
-  }>;
+  roleAssignments: RoleAssignment[];
   availableRoles: Array<{
     id: string;
     name: string;
@@ -120,13 +123,13 @@ const STATUS_CONFIG: Record<string, {
     label: 'Disabled',
     variant: 'cancelled',
     icon: <XCircle className="h-4 w-4" />,
-    description: 'The account has been disabled by an administrator.',
+    description: 'The account is disabled by the security/profile layer and cannot be changed from tenant membership status.',
   },
   locked: {
     label: 'Locked',
     variant: 'error',
     icon: <Lock className="h-4 w-4" />,
-    description: 'The account is locked by the security policy.',
+    description: 'The account is locked by the security policy and cannot be changed from tenant membership status.',
   },
   access_removed: {
     label: 'Removed',
@@ -136,7 +139,7 @@ const STATUS_CONFIG: Record<string, {
   },
 };
 
-const STATUS_OPTIONS = ['active', 'suspended', 'pending_activation', 'disabled', 'locked'] as const;
+const STATUS_OPTIONS = ['active', 'suspended', 'pending_activation'] as const;
 
 export default function AdminUserDetailPage({ params }: PageProps) {
   const { id } = use(params);
@@ -399,13 +402,16 @@ export default function AdminUserDetailPage({ params }: PageProps) {
 
   if (!userData) return null;
 
+  const activeRoleAssignments = userData.roleAssignments.filter((assignment) => assignment.isActive);
+  const permanentActiveRoles = activeRoleAssignments.filter((assignment) => !assignment.isActing);
   const rolesNotAssigned = userData.availableRoles.filter(
-    (role) => !userData.roleAssignments.some((assignment) => assignment.roleId === role.id),
+    (role) => !activeRoleAssignments.some((assignment) => assignment.roleId === role.id),
   );
   const statusConf = STATUS_CONFIG[userData.tenantStatus] || STATUS_CONFIG.active;
   const employeeDisplay = userData.linkedEmployee
     ? getEmployeeStatusDisplay(userData.linkedEmployee.employmentStatus)
     : null;
+  const membershipStatusEditable = STATUS_OPTIONS.includes(userData.tenantStatus as (typeof STATUS_OPTIONS)[number]);
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -443,7 +449,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
               <span className="flex min-w-0 items-start gap-1.5"><Mail className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0 break-all">{userData.email}</span></span>
               {userData.username && <span className="flex min-w-0 items-start gap-1.5"><User className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0 break-all">{userData.username}</span></span>}
               {userData.joinedAt && <span className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />Joined {formatDate(userData.joinedAt)}</span>}
-              <span className="flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" />{userData.roleAssignments.length} role{userData.roleAssignments.length === 1 ? '' : 's'}</span>
+              <span className="flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" />{activeRoleAssignments.length} active role{activeRoleAssignments.length === 1 ? '' : 's'}</span>
             </div>
           </div>
         </div>
@@ -500,27 +506,33 @@ export default function AdminUserDetailPage({ params }: PageProps) {
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <Label>Status</Label>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <StyledSelect value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)} disabled={userData.tenantStatus === 'access_removed'} aria-label="Account status">
-                  {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{STATUS_CONFIG[status].label}</option>)}
-                </StyledSelect>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void handleUpdateStatus(selectedStatus)}
-                  loading={isSaving}
-                  disabled={selectedStatus === userData.tenantStatus || userData.tenantStatus === 'access_removed'}
-                  className="w-full sm:w-auto"
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Apply Status
-                </Button>
-              </div>
+              {membershipStatusEditable ? (
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <StyledSelect value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)} aria-label="Account status">
+                    {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{STATUS_CONFIG[status].label}</option>)}
+                  </StyledSelect>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => void handleUpdateStatus(selectedStatus)}
+                    loading={isSaving}
+                    disabled={selectedStatus === userData.tenantStatus}
+                    className="w-full sm:w-auto"
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> Apply Status
+                  </Button>
+                </div>
+              ) : (
+                <div className="border-border bg-muted/30 rounded-[8px] border px-3 py-2.5 text-sm text-ink-600">
+                  {statusConf.label} is controlled by the account security/profile layer, not tenant membership status.
+                </div>
+              )}
               <p className="text-ink-500 text-xs leading-5">{statusConf.description}</p>
             </div>
 
             <div className="border-border flex flex-col gap-2 border-t pt-4 sm:flex-row sm:flex-wrap">
               <Button variant="secondary" size="sm" onClick={() => void handlePasswordReset()} loading={isSaving} className="w-full sm:w-auto"><KeyRound className="h-4 w-4" /> Reset Password</Button>
-              <Button variant="secondary" size="sm" onClick={() => setShowDelegate(true)} disabled={userData.roleAssignments.every((assignment) => assignment.isActing)} className="w-full sm:w-auto"><UserPlus className="h-4 w-4" /> Delegate Role</Button>
+              <Button variant="secondary" size="sm" onClick={() => setShowDelegate(true)} disabled={permanentActiveRoles.length === 0} className="w-full sm:w-auto"><UserPlus className="h-4 w-4" /> Delegate Role</Button>
             </div>
 
             <div className="border-border border-t pt-4">
@@ -529,13 +541,13 @@ export default function AdminUserDetailPage({ params }: PageProps) {
                   <Button variant="primary" size="sm" onClick={() => setShowRestoreConfirm(true)} className="w-full sm:w-auto"><RotateCcw className="h-4 w-4" /> Restore User Access</Button>
                   <p className="text-ink-500 mt-2 text-xs leading-5">Restoring login access does not change the Staff Directory record. Roles may need to be assigned again.</p>
                 </>
-              ) : userData.roleAssignments.length === 0 ? (
+              ) : activeRoleAssignments.length === 0 ? (
                 <>
                   <Button variant="destructive" size="sm" onClick={() => setShowRemoveConfirm(true)} className="w-full sm:w-auto"><Trash2 className="h-4 w-4" /> Remove User Access</Button>
-                  <p className="text-ink-500 mt-2 text-xs leading-5">Login access and pending invitations are removed. The linked employee record is preserved.</p>
+                  <p className="text-ink-500 mt-2 text-xs leading-5">Login access and pending invitations are removed. Historical and future role records are preserved with the staff record.</p>
                 </>
               ) : (
-                <p className="text-ink-500 flex items-start gap-2 text-xs leading-5"><AlertTriangle className="text-status-warning-text mt-0.5 h-3.5 w-3.5 shrink-0" />Remove active role assignments first. Historical role records do not block removal.</p>
+                <p className="text-ink-500 flex items-start gap-2 text-xs leading-5"><AlertTriangle className="text-status-warning-text mt-0.5 h-3.5 w-3.5 shrink-0" />Remove the {activeRoleAssignments.length} active role assignment{activeRoleAssignments.length === 1 ? '' : 's'} first. Historical and future-dated role records do not block removal.</p>
               )}
             </div>
           </CardContent>
@@ -548,27 +560,33 @@ export default function AdminUserDetailPage({ params }: PageProps) {
           {userData.roleAssignments.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <Shield className="text-ink-300 mb-2 h-8 w-8" />
-              <p className="text-ink-700 text-sm font-medium">No roles assigned</p>
+              <p className="text-ink-700 text-sm font-medium">No role history</p>
               <p className="text-ink-500 mt-1 text-xs">Assign a role to grant workspace responsibilities.</p>
             </div>
           ) : (
             <div className="border-border overflow-hidden rounded-[8px] border">
               {userData.roleAssignments.map((assignment) => (
-                <div key={assignment.id} className={`border-border flex flex-col gap-3 border-b p-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:p-4 ${assignment.isActing ? 'bg-status-pending-bg/40' : ''}`}>
+                <div key={assignment.id} className={`border-border flex flex-col gap-3 border-b p-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:p-4 ${assignment.isActing && assignment.isActive ? 'bg-status-pending-bg/40' : !assignment.isActive ? 'bg-muted/20' : ''}`}>
                   <div className="flex min-w-0 items-start gap-3">
-                    <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] ${assignment.isActing ? 'bg-status-pending-bg text-status-pending-text' : 'bg-brand-50 text-brand-700 dark:bg-brand-950/30 dark:text-brand-300'}`}>
+                    <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] ${assignment.isActing && assignment.isActive ? 'bg-status-pending-bg text-status-pending-text' : assignment.isActive ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/30 dark:text-brand-300' : 'bg-muted text-ink-400'}`}>
                       {assignment.isActing ? <UserPlus className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
                     </div>
                     <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2"><span className="text-ink-950 text-sm font-medium">{assignment.roleName}</span>{assignment.isActing && <Badge variant="pending" size="sm">Acting</Badge>}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-ink-950 text-sm font-medium">{assignment.roleName}</span>
+                        {assignment.isActing && <Badge variant="pending" size="sm">Acting</Badge>}
+                        <Badge variant={assignment.isActive ? 'success' : 'default'} size="sm">{assignment.isActive ? 'Active' : 'Historical / scheduled'}</Badge>
+                      </div>
                       <div className="text-ink-500 mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                        <span>Started {formatDate(assignment.startDate)}</span>
+                        <span>Starts {formatDate(assignment.startDate)}</span>
                         {assignment.endDate && <span>Ends {formatDate(assignment.endDate)}</span>}
                       </div>
                       {assignment.reason && <p className="text-ink-500 mt-1 break-words text-xs">{assignment.reason}</p>}
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm" className="text-status-error-text w-full sm:w-auto" onClick={() => void handleRemoveRole(assignment.id)} disabled={isSaving}><Trash2 className="h-4 w-4" /> Remove Role</Button>
+                  {assignment.isActive && (
+                    <Button variant="ghost" size="sm" className="text-status-error-text w-full sm:w-auto" onClick={() => void handleRemoveRole(assignment.id)} disabled={isSaving}><Trash2 className="h-4 w-4" /> End Role</Button>
+                  )}
                 </div>
               ))}
             </div>
@@ -607,7 +625,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
         open={showRemoveConfirm}
         onOpenChange={setShowRemoveConfirm}
         title="Remove user access?"
-        description={`Remove ${userData.name || userData.email} from User Management? Login access and pending invitations are removed, while the Staff Directory employee record is preserved.`}
+        description={`Remove ${userData.name || userData.email} from User Management? Login access and pending invitations are removed, while the Staff Directory employee record and role history are preserved.`}
         confirmLabel="Remove access"
         variant="destructive"
         onConfirm={handleRemoveFromOrganisation}
@@ -617,7 +635,7 @@ export default function AdminUserDetailPage({ params }: PageProps) {
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Delegate Role</DialogTitle>
-            <DialogDescription>Temporarily assign one of this user&apos;s permanent roles to another active or pending tenant user. The substantive role remains unchanged.</DialogDescription>
+            <DialogDescription>Temporarily assign one of this user&apos;s active permanent roles to another active or pending tenant user. The substantive role remains unchanged.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
@@ -640,8 +658,8 @@ export default function AdminUserDetailPage({ params }: PageProps) {
             <div className="space-y-1.5">
               <Label required>Role to Delegate</Label>
               <StyledSelect value={delegateRoleId} onChange={(event) => setDelegateRoleId(event.target.value)} aria-label="Role to delegate">
-                <option value="">Select a permanent role…</option>
-                {userData.roleAssignments.filter((assignment) => !assignment.isActing).map((assignment) => <option key={assignment.id} value={assignment.roleId}>{assignment.roleName}</option>)}
+                <option value="">Select an active permanent role…</option>
+                {permanentActiveRoles.map((assignment) => <option key={assignment.id} value={assignment.roleId}>{assignment.roleName}</option>)}
               </StyledSelect>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
