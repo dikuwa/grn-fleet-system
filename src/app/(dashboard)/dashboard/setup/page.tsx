@@ -12,7 +12,7 @@ import {
   Building2, Users, MapPin, CarFront, ShieldCheck, Fuel,
   ClipboardCheck, Bell, KeyRound, Palette, CheckCircle2,
   ChevronLeft, ChevronRight, Loader2, Save, Plus, X,
-  Trash2, Sparkles,
+  Sparkles,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
@@ -776,7 +776,7 @@ export default function SetupWizardPage() {
               <div className="mx-auto h-14 w-14 rounded-full bg-brand-50 flex items-center justify-center mb-3">
                 <Sparkles className="h-7 w-7 text-brand-600" />
               </div>
-              <h3 className="text-lg font-medium text-ink-900">You're almost done!</h3>
+              <h3 className="text-lg font-medium text-ink-900">You&apos;re almost done!</h3>
               <p className="text-sm text-ink-500">Review your configuration and complete setup.</p>
             </div>
 

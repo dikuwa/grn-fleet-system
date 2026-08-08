@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
 
-    const conditions: any[] = [];
+    const conditions: ReturnType<typeof and>[] = [];
     if (q) {
       conditions.push(
         or(

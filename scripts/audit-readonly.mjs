@@ -96,23 +96,6 @@ try {
   // ------------------------------------------------------------------
   // 2. PER-TENANT DATA COUNTS (representative)
   // ------------------------------------------------------------------
-  const tables = [
-    'tenant_memberships',
-    'user_profiles',
-    'employees',
-    'vehicles',
-    'driver_profiles',
-    'transport_requests',
-    'documents',
-    'roles',
-    'programmes',
-    'trips',
-    'audit_events',
-    'tenant_subscriptions',
-    'cms_content',
-    'cms_site_settings',
-  ];
-
   console.log('\nPER-TENANT DATA COUNTS:');
   for (const t of tenants) {
     const line = [`memberships=${await count('tenant_memberships', 'WHERE tenant_id = $1', [t.id])}`,

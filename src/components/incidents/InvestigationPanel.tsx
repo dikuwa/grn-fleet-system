@@ -55,7 +55,7 @@ interface Props {
 // Component
 // ---------------------------------------------------------------------------
 
-export function InvestigationPanel({ incidentId, tripId, data, onUpdate }: Props) {
+export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
   const { toast } = useToast();
   const [status, setStatus] = useState<InvestigationStatus>(data.investigationStatus);
   const [notes, setNotes] = useState(data.investigationNotes || '');

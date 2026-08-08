@@ -147,7 +147,7 @@ export async function createSubscription(input: CreateSubscriptionInput): Promis
   const trialDays = input.trialDays ?? pkg.trialDays ?? 0;
 
   let status: SubscriptionStatus = input.status ?? 'pending_payment';
-  let periodStart = now;
+  const periodStart = now;
   let periodEnd = nextPeriod(input.billingInterval, now);
   let trialEndsAt: Date | null = null;
 
@@ -160,7 +160,7 @@ export async function createSubscription(input: CreateSubscriptionInput): Promis
     status = 'active';
   }
 
-  const [subscription] = await db
+  await db
     .insert(tenantSubscriptions)
     .values({
       tenantId: input.tenantId,
@@ -253,7 +253,6 @@ export async function transitionSubscription(
 
 /** Evaluate and enforce subscription lifecycle (call periodically / on login). */
 export async function evaluateSubscriptionLifecycle(tenantId: string): Promise<SubscriptionStatus | null> {
-  const db = getDb();
   const subscription = await getTenantSubscription(tenantId);
   if (!subscription) return null;
 
@@ -435,7 +434,8 @@ export async function upsertBillingSettings(
   input: UpsertBillingSettingsInput,
 ): Promise<typeof billingSettings.$inferSelect> {
   const db = getDb();
-  const { tenantId: _excluded, ...rest } = input;
+  const { tenantId: _inputTenantId, ...rest } = input;
+  void _inputTenantId;
   const [settings] = await db
     .insert(billingSettings)
     .values({ tenantId, ...rest })

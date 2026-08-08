@@ -7,11 +7,9 @@ import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { Shield, Mail, Building2, Palette, CheckCircle2, Loader2, ChevronLeft, ChevronRight, Clock, Info } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
-import { format } from 'date-fns';
 import type { PackageWithEntitlements } from '@/lib/platform/packages';
 
 // ---------------------------------------------------------------------------
@@ -152,6 +150,7 @@ export default function OnboardTenantPage() {
         .replace(/[^a-z0-9\s]/g, '')
         .replace(/\s+/g, '-')
         .substring(0, 50);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       updateField('orgSlug', slug);
     }
   }, [form.orgName, form.orgSlug, updateField]);

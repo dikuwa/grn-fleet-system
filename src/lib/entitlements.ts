@@ -60,7 +60,6 @@ export async function getTenantEntitlements(tenantId: string): Promise<TenantEnt
     .where(eq(tenantSubscriptions.tenantId, tenantId))
     .limit(1);
 
-  const hasRealPackage = !!subRow?.subscription && !!subRow?.pkg;
   const pkg = subRow?.pkg;
   const subscription = subRow?.subscription;
 

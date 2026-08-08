@@ -11,13 +11,11 @@ import { Permissions } from '@/lib/permissions';
 import {
   listSubscriptions,
   createSubscription,
-  evaluateSubscriptionLifecycle,
 } from '@/lib/platform/subscriptions';
-import { listPackages } from '@/lib/platform/packages';
 import { getDb } from '@/db';
 import { tenants } from '@/db/schema/tenants';
 import { tenantSubscriptions } from '@/db/schema/subscriptions';
-import { eq, count, desc, and, or, like } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // GET — List all tenant subscriptions with summary stats
@@ -38,24 +36,6 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1', 10);
     const limit = parseInt(searchParams.get('limit') || '25', 10);
     const offset = (page - 1) * limit;
-
-    const db = getDb();
-
-    // Build filters
-    const conditions: ReturnType<typeof and>[] = [];
-    if (status) {
-      conditions.push(eq(tenantSubscriptions.status, status as any));
-    }
-
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-    // Get total count
-    const [totalResult] = await db
-      .select({ count: count() })
-      .from(tenantSubscriptions)
-      .where(whereClause);
-
-    const total = totalResult?.count || 0;
 
     // Fetch subscriptions with tenant and package info
     const subscriptions = await listSubscriptions();

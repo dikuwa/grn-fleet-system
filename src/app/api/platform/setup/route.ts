@@ -26,7 +26,7 @@ import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { offices, departments } from '@/db/schema/people';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { seedDefaultIncidentCategories } from '@/lib/incidents/categories';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // Types

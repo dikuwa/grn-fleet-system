@@ -81,8 +81,6 @@ export function FaqsSection({
     arr.sort((a, b) => a.sortOrder - b.sortOrder);
   }
 
-  const [openCategory, setOpenCategory] = useState<string | null>(null);
-
   const categoryLabels: Record<string, string> = {
     general: 'General',
     'getting-started': 'Getting Started',

@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Input, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
 import {
@@ -15,15 +15,12 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  AlertTriangle,
-  Play,
   FileText,
   Eye,
-  ChevronRight,
   Trash2,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
-import { useRouter } from 'next/navigation';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,7 +43,7 @@ interface ResetRequest {
   reviewedByUserId: string | null;
   reviewedAt: string | null;
   reviewNotes: string | null;
-  results: Record<string, any> | null;
+  results: Record<string, unknown> | null;
   failureReason: string | null;
   rollbackPossible: boolean;
   rollbackPerformed: boolean;
@@ -63,7 +60,7 @@ interface ResetStats {
   failed: number;
 }
 
-const STATUS_CONFIG: Record<string, { label: string; variant: string; icon: any }> = {
+const STATUS_CONFIG: Record<string, { label: string; variant: BadgeProps['variant']; icon: LucideIcon }> = {
   draft: { label: 'Draft', variant: 'default', icon: FileText },
   pending_review: { label: 'Pending Review', variant: 'warning', icon: Clock },
   approved: { label: 'Approved', variant: 'info', icon: CheckCircle },
@@ -86,9 +83,24 @@ const SCOPE_CONFIG: Record<string, { label: string; description: string }> = {
 // Component
 // ---------------------------------------------------------------------------
 
+interface ResetRequestStep {
+  stepName: string;
+  tableName: string;
+  recordsDeleted: number;
+  status: string;
+}
+
+interface DryRunResult {
+  dryRunSummary: {
+    requests: number;
+    trips: number;
+    documents: number;
+    total: number;
+  };
+}
+
 export default function PlatformResetPage() {
   const { toast } = useToast();
-  const router = useRouter();
 
   const [requests, setRequests] = useState<ResetRequest[]>([]);
   const [stats, setStats] = useState<ResetStats>({
@@ -110,11 +122,11 @@ export default function PlatformResetPage() {
 
   // Detail modal state
   const [selectedRequest, setSelectedRequest] = useState<ResetRequest | null>(null);
-  const [detailSteps, setDetailSteps] = useState<any[]>([]);
+  const [detailSteps, setDetailSteps] = useState<ResetRequestStep[]>([]);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [reviewNotes, setReviewNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
-  const [dryRunResult, setDryRunResult] = useState<any>(null);
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
 
   // -----------------------------------------------------------------------
   // Data fetching
@@ -145,6 +157,7 @@ export default function PlatformResetPage() {
   }, [searchQuery, statusFilter, scopeFilter, page]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchRequests();
   }, [fetchRequests]);
 
@@ -416,7 +429,7 @@ export default function PlatformResetPage() {
                             <h3 className="font-medium text-ink-900">
                               {req.tenantName || req.tenantId.slice(0, 8)}
                             </h3>
-                            <Badge variant={statusConfig.variant as any} size="sm">{statusConfig.label}</Badge>
+                            <Badge variant={statusConfig.variant} size="sm">{statusConfig.label}</Badge>
                             <Badge variant="default" size="sm">{scopeConfig.label}</Badge>
                           </div>
                           <p className="text-sm text-ink-600 mt-1 line-clamp-1">{req.reason}</p>
@@ -523,7 +536,7 @@ export default function PlatformResetPage() {
               {/* Status */}
               <div className="flex items-center gap-3">
                 <span className="text-sm text-ink-500">Status:</span>
-                <Badge variant={STATUS_CONFIG[selectedRequest.status]?.variant as any}>
+                <Badge variant={STATUS_CONFIG[selectedRequest.status]?.variant}>
                   {STATUS_CONFIG[selectedRequest.status]?.label}
                 </Badge>
               </div>

@@ -9,8 +9,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
-import { demoRequests } from '@/db/schema/demo-requests';
-import { eq, and, desc, count, or, like } from 'drizzle-orm';
+import { demoRequests, demoRequestStatusEnum } from '@/db/schema/demo-requests';
+import { eq, and, desc } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // GET — List demo requests with stats
@@ -37,18 +37,10 @@ export async function GET(request: NextRequest) {
     // Build filters
     const conditions: ReturnType<typeof and>[] = [];
     if (status) {
-      conditions.push(eq(demoRequests.status, status as any));
+      conditions.push(eq(demoRequests.status, status as (typeof demoRequestStatusEnum)['enumValues'][number]));
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-    // Get total count
-    const [totalResult] = await db
-      .select({ count: count() })
-      .from(demoRequests)
-      .where(whereClause);
-
-    const total = totalResult?.count || 0;
 
     // Fetch requests
     const requests = await db

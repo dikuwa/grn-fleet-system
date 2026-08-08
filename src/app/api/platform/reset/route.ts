@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
-import { tenantResetRequests } from '@/db/schema/reset-requests';
+import { tenantResetRequests, resetRequestStatusEnum, resetScopeEnum } from '@/db/schema/reset-requests';
 import { tenants } from '@/db/schema';
 import { eq, and, desc, count, like, or } from 'drizzle-orm';
 
@@ -36,9 +36,9 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
 
-    const conditions: any[] = [];
-    if (status) conditions.push(eq(tenantResetRequests.status, status as any));
-    if (scope) conditions.push(eq(tenantResetRequests.scope, scope as any));
+    const conditions: ReturnType<typeof and>[] = [];
+    if (status) conditions.push(eq(tenantResetRequests.status, status as (typeof resetRequestStatusEnum)['enumValues'][number]));
+    if (scope) conditions.push(eq(tenantResetRequests.scope, scope as (typeof resetScopeEnum)['enumValues'][number]));
     if (q) {
       conditions.push(
         or(

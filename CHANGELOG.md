@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-08 — Session 49: Type-safe platform cleanup, lint 0/0, public-site E2E regression
+
+### Fixed
+
+- **Lint 0 errors / 0 warnings** — removed the last unused-variable warning (`scripts/audit-readonly.mjs` dead `tables` array); the whole repo is now ESLint-clean.
+
+### Added
+
+- **Public website E2E regression** (`src/e2e/public-site.spec.ts`) — 6 tests: homepage hero + CTAs + product preview, all primary nav routes stay public (proxy-allowlist guard) with header/footer, `/request-demo` form completes end to end, `/faq` renders for anonymous visitors, mobile menu exposes the same nav, and `/dashboard` remains auth-gated. Verified 6/6 against a scratch local Postgres.
+- **`session-49-report.md`** — final report for this session.
+
+### Changed
+
+- **Type-safety hardening across platform APIs and pages** — replaced `as any` status casts with enum-typed values (`pgEnum['enumValues']`), typed filter-condition arrays (`ReturnType<typeof and>[]`), `BadgeProps['variant']`, `LucideIcon` and typed dialog/form state; `VehicleReplacementDialog` gained a `ReplacementCandidate` interface.
+- **Dead-code removal** — dropped redundant `total` count queries from the demo-requests, payments and subscriptions GET routes (responses already compute `total`/`totalPages`/`stats` from the filtered array — response shapes unchanged), the unused `incidentTypes` array in the trips operations route, and unused imports/variables across schema, lib, PDF and incident components.
+- **react-hooks v6 compliance** — targeted `eslint-disable-next-line react-hooks/set-state-in-effect` comments for intentional mount-time fetch effects (11 files).
+- `POST /api/platform/payments` no longer parses a payload it never uses (bulk actions remain 501).
+
+### Validation
+
+- TypeScript: 0 errors · ESLint: 0 errors / 0 warnings · Unit: 334/334 (29 files) · E2E public-site: 6/6 (scratch local Postgres, production Neon untouched) · Production build passes.
+
 ## 2026-08-04 — Session 39: Fuel On-Behalf Attribution, Transport Decision Workspace, Driver Roster Licence Alerts
 
 ### Added

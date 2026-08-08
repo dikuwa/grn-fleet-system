@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { getDb } from '@/db';
-import { paymentSubmissions, tenantSubscriptions } from '@/db/schema/subscriptions';
+import { paymentSubmissions, paymentSubmissionStatusEnum, tenantSubscriptions } from '@/db/schema/subscriptions';
 import { eq, desc, and, count } from 'drizzle-orm';
 import { createPaymentSubmission } from '@/lib/platform/subscriptions';
 
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 
     const conditions = [eq(paymentSubmissions.tenantId, tenantId)];
     if (status) {
-      conditions.push(eq(paymentSubmissions.status, status as any));
+      conditions.push(eq(paymentSubmissions.status, status as (typeof paymentSubmissionStatusEnum)['enumValues'][number]));
     }
     const whereClause = and(...conditions);
 

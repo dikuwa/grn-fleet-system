@@ -9,7 +9,6 @@ import {
   Shield,
   Save,
   Loader2,
-  CheckCircle2,
   AlertTriangle,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';

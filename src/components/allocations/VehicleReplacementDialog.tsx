@@ -24,6 +24,17 @@ interface VehicleOption {
   available: boolean;
 }
 
+interface ReplacementCandidate {
+  id: string;
+  make: string;
+  model: string;
+  licenceNumber: string;
+  vehicleRegisterNumber?: string | null;
+  currentOdometer?: number | null;
+  status: string;
+  available?: boolean;
+}
+
 export interface VehicleReplacementDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -62,7 +73,7 @@ export function VehicleReplacementDialog({
       const res = await fetch(`/api/allocations/${allocationId}/replacement-candidates`);
       if (!res.ok) throw new Error('Failed to load replacement candidates');
       const data = await res.json();
-      const options = (data.vehicles || []).map((v: any) => ({
+      const options = (data.vehicles || []).map((v: ReplacementCandidate) => ({
         id: v.id,
         label: `${v.make} ${v.model} (${v.licenceNumber})${v.vehicleRegisterNumber ? ` — ${v.vehicleRegisterNumber}` : ''}`,
         odometer: v.currentOdometer,
@@ -94,6 +105,7 @@ export function VehicleReplacementDialog({
   // Fetch vehicles when dialog opens
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchVehicles();
     }
   }, [open, fetchVehicles]);

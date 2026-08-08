@@ -11,7 +11,7 @@ import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { tenantResetRequests, resetRequestSteps } from '@/db/schema/reset-requests';
 import { tenants } from '@/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 // ---------------------------------------------------------------------------

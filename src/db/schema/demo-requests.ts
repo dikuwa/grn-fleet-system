@@ -8,7 +8,6 @@ import {
   jsonb,
   pgEnum,
   uniqueIndex,
-  index,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { subscriptionPackages } from './packages';

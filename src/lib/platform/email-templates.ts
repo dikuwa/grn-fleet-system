@@ -5,8 +5,7 @@
  * template tailored to platform onboarding invitations.
  */
 
-import { sendReactEmail, sendPlainEmail } from '@/lib/email';
-import { createElement } from 'react';
+import { sendPlainEmail } from '@/lib/email';
 
 // ---------------------------------------------------------------------------
 // Invitation email
@@ -108,7 +107,6 @@ export async function sendInvitationEmail(
       });
       return { success: true, id: result.data?.id };
     }
-    // eslint-disable-next-line no-empty
   } catch (err) {
     console.warn('[InvitationEmail] Resend send failed:', err);
   }

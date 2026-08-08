@@ -24,7 +24,6 @@ export {
 import {
   INVESTIGATION_STATUSES,
   type InvestigationStatus,
-  type TechnicalClearanceStatus,
 } from './mva-constants';
 
 // ---------------------------------------------------------------------------

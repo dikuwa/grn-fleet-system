@@ -102,18 +102,15 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
     },
   });
 
-  const categories: Array<{ code: string; name: string; group: string }> =
-    categoriesData?.data ?? [];
-
   const categoryGroups = useMemo(() => {
     const map = new Map<string, Array<{ code: string; name: string }>>();
-    for (const cat of categories) {
+    for (const cat of categoriesData?.data ?? []) {
       const list = map.get(cat.group) || [];
       list.push({ code: cat.code, name: cat.name });
       map.set(cat.group, list);
     }
     return map;
-  }, [categories]);
+  }, [categoriesData]);
 
   // Fetch cached emergency contacts for the incident form
   const { data: emergencyContactsData } = useQuery({
@@ -125,18 +122,15 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
     },
   });
 
-  const emergencyContacts: Array<{ id: string; name: string; phone: string; role: string; region: string | null }> =
-    emergencyContactsData?.data ?? [];
-
   const contactsByRole = useMemo(() => {
     const map = new Map<string, Array<{ name: string; phone: string }>>();
-    for (const contact of emergencyContacts) {
+    for (const contact of emergencyContactsData?.data ?? []) {
       const list = map.get(contact.role) || [];
       list.push({ name: contact.name, phone: contact.phone });
       map.set(contact.role, list);
     }
     return map;
-  }, [emergencyContacts]);
+  }, [emergencyContactsData]);
 
   const [data, setData] = useState<WorkspaceData | null>(null);
   const [loading, setLoading] = useState(true);

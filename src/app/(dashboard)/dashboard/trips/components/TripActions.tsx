@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Play, RotateCcw, CheckSquare, KeyRound, UserCheck, Repeat } from 'lucide-react';
 import Link from 'next/link';
 import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
-import { Permissions } from '@/lib/permissions';
 
 interface TripActionsProps {
   tripId: string;
@@ -54,12 +53,9 @@ export function TripActions({
   // odometer handover reading so the closure can split kilometres per vehicle.
   const midTrip = status !== 'pending' && status !== 'return_inspection' && status !== 'closure_review' && status !== 'closed';
 
-  const handleReplaceSuccess = useCallback(
-    (result: { replacementVehicleId: string; originalVehicleId: string; handoverOdometer: number | null }) => {
-      router.refresh();
-    },
-    [router],
-  );
+  const handleReplaceSuccess = useCallback(() => {
+    router.refresh();
+  }, [router]);
 
   const handleStartTrip = useCallback(async () => {
     setIsWorking(true);

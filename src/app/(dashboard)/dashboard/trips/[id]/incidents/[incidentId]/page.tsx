@@ -105,7 +105,10 @@ function IncidentDetailInner() {
     }
   }, [tripId, incidentId, toast]);
 
-  useEffect(() => { fetchIncident(); }, [fetchIncident]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchIncident();
+  }, [fetchIncident]);
 
   const generateReport = useCallback(async () => {
     setGeneratingReport(true);

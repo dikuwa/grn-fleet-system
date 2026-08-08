@@ -66,6 +66,7 @@ function AcceptInviteContent() {
   }, [token]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchInvitation();
   }, [fetchInvitation]);
 

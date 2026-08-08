@@ -8,12 +8,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { listPaymentSubmissions, approvePaymentSubmission, rejectPaymentSubmission } from '@/lib/platform/subscriptions';
+import { listPaymentSubmissions } from '@/lib/platform/subscriptions';
 import { getDb } from '@/db';
-import { paymentSubmissions, tenantSubscriptions } from '@/db/schema/subscriptions';
+import { paymentSubmissions, paymentSubmissionStatusEnum, tenantSubscriptions } from '@/db/schema/subscriptions';
 import { tenants } from '@/db/schema/tenants';
 import { subscriptionPackages } from '@/db/schema/packages';
-import { eq, desc, and, or, like, count } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // GET — List all payment submissions for review
@@ -40,18 +40,10 @@ export async function GET(request: NextRequest) {
     // Build query with joins
     const conditions: ReturnType<typeof and>[] = [];
     if (status) {
-      conditions.push(eq(paymentSubmissions.status, status as any));
+      conditions.push(eq(paymentSubmissions.status, status as (typeof paymentSubmissionStatusEnum)['enumValues'][number]));
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-    // Get total count
-    const [totalResult] = await db
-      .select({ count: count() })
-      .from(paymentSubmissions)
-      .where(whereClause);
-
-    const total = totalResult?.count || 0;
 
     // Fetch submissions with tenant and subscription info
     const rows = await db
@@ -131,10 +123,9 @@ export async function POST(request: NextRequest) {
     const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const body = await request.json();
-    const { action, submissionIds } = body;
+    // Payload intentionally unused - bulk approve/reject is not yet implemented.
+    await request.json();
 
-    // Placeholder for bulk approve/reject
     return NextResponse.json({ error: 'Bulk actions not yet implemented' }, { status: 501 });
   } catch (error) {
     console.error('[Platform Payments] POST failed:', error);
