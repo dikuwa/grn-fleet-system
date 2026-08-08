@@ -1,11 +1,9 @@
 /**
  * Delegation API
  *
- * POST   /api/admin/users/[id]/delegate    — Assign acting role to another user
- * DELETE /api/admin/users/[id]/delegate    — Remove an acting assignment
- *
- * Allows an administrator to temporarily delegate a role to another user
- * with optional start/end dates and a reason.
+ * POST   /api/admin/users/[id]/delegate — Assign one of the source user's
+ *         active permanent roles to another active tenant user temporarily.
+ * DELETE /api/admin/users/[id]/delegate — End an acting assignment.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -17,9 +15,14 @@ import { eq, and, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
-// ---------------------------------------------------------------------------
-// POST — Create acting assignment
-// ---------------------------------------------------------------------------
+function assignmentIsActive(
+  assignment: { startDate: Date | string | null; endDate: Date | string | null },
+  now = new Date(),
+) {
+  const startsAt = assignment.startDate ? new Date(assignment.startDate) : null;
+  const endsAt = assignment.endDate ? new Date(assignment.endDate) : null;
+  return (!startsAt || startsAt <= now) && (!endsAt || endsAt > now);
+}
 
 export async function POST(
   request: NextRequest,
@@ -27,7 +30,6 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
@@ -37,82 +39,131 @@ export async function POST(
 
     const body = await request.json();
     const { targetUserId, roleId, startDate, endDate, reason } = body;
-
     if (!targetUserId || !roleId) {
-      return NextResponse.json({ error: 'targetUserId and roleId are required' }, { status: 400 });
+      return NextResponse.json({ error: 'Target user and role are required' }, { status: 400 });
+    }
+    if (targetUserId === id) {
+      return NextResponse.json({ error: 'A role cannot be delegated back to the same user' }, { status: 422 });
+    }
+
+    const startsAt = startDate ? new Date(startDate) : new Date();
+    const endsAt = endDate ? new Date(endDate) : null;
+    if (Number.isNaN(startsAt.getTime()) || (endsAt && Number.isNaN(endsAt.getTime()))) {
+      return NextResponse.json({ error: 'Delegation dates are invalid' }, { status: 422 });
+    }
+    if (endsAt && endsAt <= startsAt) {
+      return NextResponse.json({ error: 'Delegation end date must be after its start date' }, { status: 422 });
     }
 
     const db = getDb();
-
-    // Verify the source user (id) belongs to this tenant
-    const [sourceMembership] = await db
-      .select()
-      .from(tenantMemberships)
-      .where(
-        and(eq(tenantMemberships.userId, id), eq(tenantMemberships.tenantId, session.tenantId)),
-      )
-      .limit(1);
+    const [[sourceMembership], [targetMembership], [role]] = await Promise.all([
+      db
+        .select()
+        .from(tenantMemberships)
+        .where(
+          and(
+            eq(tenantMemberships.userId, id),
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(tenantMemberships.status, 'active'),
+          ),
+        )
+        .limit(1),
+      db
+        .select()
+        .from(tenantMemberships)
+        .where(
+          and(
+            eq(tenantMemberships.userId, targetUserId),
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(tenantMemberships.status, 'active'),
+          ),
+        )
+        .limit(1),
+      db
+        .select()
+        .from(roles)
+        .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
+        .limit(1),
+    ]);
 
     if (!sourceMembership) {
-      return NextResponse.json({ error: 'Source user not found in your organisation' }, { status: 404 });
+      return NextResponse.json({ error: 'Source user is not an active member of this organisation' }, { status: 404 });
     }
-
-    // Verify the target user belongs to this tenant
-    const [targetMembership] = await db
-      .select()
-      .from(tenantMemberships)
-      .where(
-        and(eq(tenantMemberships.userId, targetUserId), eq(tenantMemberships.tenantId, session.tenantId)),
-      )
-      .limit(1);
-
     if (!targetMembership) {
-      return NextResponse.json({ error: 'Target user not found in your organisation' }, { status: 404 });
+      return NextResponse.json({ error: 'Delegation target must be an active tenant user' }, { status: 422 });
     }
-
-    // Verify the role exists in this tenant
-    const [role] = await db
-      .select()
-      .from(roles)
-      .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
-      .limit(1);
-
     if (!role) {
       return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
     }
 
-    // Create acting assignment
+    const now = new Date();
+    const sourceRoleHistory = await db
+      .select({
+        id: roleAssignments.id,
+        startDate: roleAssignments.startDate,
+        endDate: roleAssignments.endDate,
+        isActing: roleAssignments.isActing,
+      })
+      .from(roleAssignments)
+      .where(
+        and(
+          eq(roleAssignments.tenantMembershipId, sourceMembership.id),
+          eq(roleAssignments.roleId, roleId),
+        ),
+      );
+
+    const sourceHoldsPermanentRole = sourceRoleHistory.some(
+      (assignment) => !assignment.isActing && assignmentIsActive(assignment, now),
+    );
+    if (!sourceHoldsPermanentRole) {
+      return NextResponse.json(
+        { error: 'Only a currently active permanent role held by the source user can be delegated' },
+        { status: 409 },
+      );
+    }
+
+    const targetRoleHistory = await db
+      .select({
+        id: roleAssignments.id,
+        startDate: roleAssignments.startDate,
+        endDate: roleAssignments.endDate,
+      })
+      .from(roleAssignments)
+      .where(
+        and(
+          eq(roleAssignments.tenantMembershipId, targetMembership.id),
+          eq(roleAssignments.roleId, roleId),
+        ),
+      );
+    if (targetRoleHistory.some((assignment) => assignmentIsActive(assignment, now))) {
+      return NextResponse.json(
+        { error: 'The target user already holds this role through an active assignment' },
+        { status: 409 },
+      );
+    }
+
     const [assignment] = await db
       .insert(roleAssignments)
       .values({
         tenantMembershipId: targetMembership.id,
         roleId,
-        startDate: startDate ? new Date(startDate) : new Date(),
-        endDate: endDate ? new Date(endDate) : null,
+        startDate: startsAt,
+        endDate: endsAt,
         isActing: true,
         delegatedByUserId: id,
-        reason: reason || null,
+        reason: typeof reason === 'string' && reason.trim() ? reason.trim() : null,
       })
       .returning();
 
-    // Audit log
     try {
-      const [actorUser] = await db
-        .select({ name: user.name })
-        .from(user)
-        .where(eq(user.id, session.user.id))
-        .limit(1);
-
-      const [targetUser] = await db
-        .select({ name: user.name })
-        .from(user)
-        .where(eq(user.id, targetUserId))
-        .limit(1);
-
-      const [nextSeq] = await db
-        .select({ seq: sql<number>`COALESCE(MAX(tenant_sequence), 0) + 1` })
-        .from(auditEvents)
-        .where(eq(auditEvents.tenantId, session.tenantId));
+      const [[actorUser], [targetUser], [nextSeq]] = await Promise.all([
+        db.select({ name: user.name }).from(user).where(eq(user.id, session.user.id)).limit(1),
+        db.select({ name: user.name }).from(user).where(eq(user.id, targetUserId)).limit(1),
+        db
+          .select({ seq: sql<number>`COALESCE(MAX(tenant_sequence), 0) + 1` })
+          .from(auditEvents)
+          .where(eq(auditEvents.tenantId, session.tenantId)),
+      ]);
 
       await db.insert(auditEvents).values({
         tenantId: session.tenantId,
@@ -122,11 +173,11 @@ export async function POST(
         action: 'Acting role assigned',
         entityType: 'role_assignment',
         entityId: assignment.id,
-        summary: `${actorUser?.name || 'Unknown'} delegated role "${role.name}" to ${targetUser?.name || 'Unknown user'}${reason ? ` — ${reason}` : ''}`,
+        summary: `${actorUser?.name || 'Unknown'} delegated role "${role.name}" to ${targetUser?.name || 'Unknown user'}${reason ? ` — ${String(reason).trim()}` : ''}`,
         isActing: true,
       });
     } catch {
-      // Audit logging is best-effort
+      // Audit logging is best-effort; the role assignment remains the source record.
     }
 
     return NextResponse.json({ success: true, data: assignment });
@@ -139,10 +190,6 @@ export async function POST(
   }
 }
 
-// ---------------------------------------------------------------------------
-// DELETE — Remove an acting assignment
-// ---------------------------------------------------------------------------
-
 export async function DELETE(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -154,14 +201,11 @@ export async function DELETE(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const assignmentId = searchParams.get('assignmentId');
-
     if (!assignmentId) {
       return NextResponse.json({ error: 'assignmentId query param is required' }, { status: 400 });
     }
 
     const db = getDb();
-
-    // Verify the assignment exists and is an acting assignment
     const [assignment] = await db
       .select({
         id: roleAssignments.id,
@@ -169,19 +213,12 @@ export async function DELETE(request: NextRequest) {
         tenantMembershipId: roleAssignments.tenantMembershipId,
       })
       .from(roleAssignments)
-      .where(
-        and(
-          eq(roleAssignments.id, assignmentId),
-          eq(roleAssignments.isActing, true),
-        ),
-      )
+      .where(and(eq(roleAssignments.id, assignmentId), eq(roleAssignments.isActing, true)))
       .limit(1);
-
     if (!assignment) {
       return NextResponse.json({ error: 'Acting assignment not found' }, { status: 404 });
     }
 
-    // Verify this assignment is within the same tenant
     const [membership] = await db
       .select()
       .from(tenantMemberships)
@@ -192,14 +229,17 @@ export async function DELETE(request: NextRequest) {
         ),
       )
       .limit(1);
-
     if (!membership) {
       return NextResponse.json({ error: 'Assignment not found in your organisation' }, { status: 404 });
     }
 
-    await db.delete(roleAssignments).where(eq(roleAssignments.id, assignmentId));
+    // This legacy acting-assignment endpoint predates the dedicated delegation
+    // ledger. Ending rather than deleting preserves role history for audits.
+    await db
+      .update(roleAssignments)
+      .set({ endDate: new Date() })
+      .where(eq(roleAssignments.id, assignmentId));
 
-    // Audit log
     try {
       const [nextSeq] = await db
         .select({ seq: sql<number>`COALESCE(MAX(tenant_sequence), 0) + 1` })
@@ -211,19 +251,20 @@ export async function DELETE(request: NextRequest) {
         tenantSequence: nextSeq.seq,
         eventType: 'staff',
         actorUserId: session.user.id,
-        action: 'Acting assignment removed',
+        action: 'Acting assignment ended',
         entityType: 'role_assignment',
-        summary: 'Acting role assignment removed by administrator',
+        entityId: assignmentId,
+        summary: 'Acting role assignment ended by administrator; history preserved',
       });
     } catch {
-      // Best-effort
+      // Audit logging is best-effort.
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Delegation] DELETE failed:', error);
     return NextResponse.json(
-      { error: 'Failed to remove delegation: ' + String(error) },
+      { error: 'Failed to end delegation: ' + String(error) },
       { status: 500 },
     );
   }
