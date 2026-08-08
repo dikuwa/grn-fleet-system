@@ -1,31 +1,28 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { EmptyState } from '@/components/ui/empty-state';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Search,
-  Download,
-  Shield,
-  UserCheck,
-  FileText,
-  Truck,
-  CarFront,
-  Fuel,
-  Wrench,
-  Users,
   CheckCircle2,
+  Download,
   Eye,
+  FileText,
+  Fuel,
   Hash,
   History,
+  RefreshCw,
+  Shield,
+  Truck,
+  UserCheck,
+  Users,
   Wifi,
   WifiOff,
-  RefreshCw,
+  Wrench,
 } from 'lucide-react';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { EmptyState } from '@/components/ui/empty-state';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 
 type EventType =
@@ -41,22 +38,6 @@ type EventType =
   | 'vehicle'
   | 'auth';
 
-const eventTypes: { value: EventType; label: string; icon: React.ReactNode }[] = [
-  { value: 'all', label: 'All Events', icon: <History className="h-4 w-4" /> },
-  { value: 'request', label: 'Requests', icon: <FileText className="h-4 w-4" /> },
-  { value: 'approval', label: 'Approvals', icon: <CheckCircle2 className="h-4 w-4" /> },
-  { value: 'allocation', label: 'Allocations', icon: <Truck className="h-4 w-4" /> },
-  { value: 'trip', label: 'Trips', icon: <CarFront className="h-4 w-4" /> },
-  { value: 'fuel', label: 'Fuel', icon: <Fuel className="h-4 w-4" /> },
-  { value: 'maintenance', label: 'Maintenance', icon: <Wrench className="h-4 w-4" /> },
-  { value: 'inspection', label: 'Inspections', icon: <Eye className="h-4 w-4" /> },
-  { value: 'vehicle', label: 'Fleet', icon: <Truck className="h-4 w-4" /> },
-  { value: 'staff', label: 'Staff', icon: <Users className="h-4 w-4" /> },
-  { value: 'auth', label: 'Auth', icon: <Shield className="h-4 w-4" /> },
-];
-
-type Severity = 'all' | 'info' | 'warning' | 'critical';
-
 interface AuditEvent {
   id: string;
   timestamp: string;
@@ -64,7 +45,6 @@ interface AuditEvent {
   action: string;
   actor: string;
   entity: string;
-  severity: 'info' | 'warning' | 'critical';
   details: string;
   technical: {
     eventKey: string;
@@ -77,60 +57,30 @@ interface AuditEvent {
   };
 }
 
-const severityConfig: Record<Severity, { label: string; variant: 'info' | 'error' | 'pending' }> = {
-  all: { label: 'All', variant: 'info' },
-  info: { label: 'Info', variant: 'info' },
-  warning: { label: 'Warning', variant: 'pending' },
-  critical: { label: 'Critical', variant: 'error' },
-};
+const eventTypes: Array<{ value: EventType; label: string; icon: React.ReactNode }> = [
+  { value: 'all', label: 'All Events', icon: <History className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'request', label: 'Requests', icon: <FileText className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'approval', label: 'Approvals', icon: <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'allocation', label: 'Allocations', icon: <Truck className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'trip', label: 'Trips', icon: <Truck className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'fuel', label: 'Fuel', icon: <Fuel className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'maintenance', label: 'Maintenance', icon: <Wrench className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'inspection', label: 'Inspections', icon: <Eye className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'vehicle', label: 'Fleet', icon: <Truck className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'staff', label: 'Staff', icon: <Users className="h-4 w-4" aria-hidden="true" /> },
+  { value: 'auth', label: 'Auth', icon: <Shield className="h-4 w-4" aria-hidden="true" /> },
+];
 
-const eventIcons: Record<EventType, React.ReactNode> = {
-  all: <History className="h-4 w-4" />,
-  request: <FileText className="h-4 w-4" />,
-  approval: <CheckCircle2 className="h-4 w-4" />,
-  allocation: <Truck className="h-4 w-4" />,
-  trip: <CarFront className="h-4 w-4" />,
-  fuel: <Fuel className="h-4 w-4" />,
-  maintenance: <Wrench className="h-4 w-4" />,
-  inspection: <Eye className="h-4 w-4" />,
-  vehicle: <Truck className="h-4 w-4" />,
-  staff: <Users className="h-4 w-4" />,
-  auth: <Shield className="h-4 w-4" />,
-};
+const eventIcons: Record<EventType, React.ReactNode> = Object.fromEntries(
+  eventTypes.map((item) => [item.value, item.icon]),
+) as Record<EventType, React.ReactNode>;
 
-const eventBgColors: Record<EventType, string> = {
-  all: 'bg-muted',
-  request: 'bg-blue-50 dark:bg-blue-950/50',
-  approval: 'bg-green-50 dark:bg-green-950/50',
-  allocation: 'bg-purple-50 dark:bg-purple-950/50',
-  trip: 'bg-cyan-50 dark:bg-cyan-950/50',
-  fuel: 'bg-amber-50 dark:bg-amber-950/50',
-  maintenance: 'bg-orange-50 dark:bg-orange-950/50',
-  inspection: 'bg-teal-50 dark:bg-teal-950/50',
-  vehicle: 'bg-indigo-50 dark:bg-indigo-950/50',
-  staff: 'bg-rose-50 dark:bg-rose-950/50',
-  auth: 'bg-muted',
-};
-
-const eventIconColors: Record<EventType, string> = {
-  all: 'text-ink-500',
-  request: 'text-blue-700 dark:text-blue-300',
-  approval: 'text-green-700 dark:text-green-300',
-  allocation: 'text-purple-700 dark:text-purple-300',
-  trip: 'text-cyan-700 dark:text-cyan-300',
-  fuel: 'text-amber-700 dark:text-amber-300',
-  maintenance: 'text-orange-700 dark:text-orange-300',
-  inspection: 'text-teal-700 dark:text-teal-300',
-  vehicle: 'text-indigo-700 dark:text-indigo-300',
-  staff: 'text-rose-700 dark:text-rose-300',
-  auth: 'text-ink-700',
-};
+const LIMIT = 50;
 
 export default function AuditLogPage() {
   const [selectedType, setSelectedType] = useState<EventType>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [showHashChain, setShowHashChain] = useState(false);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [connectionError, setConnectionError] = useState(false);
@@ -138,67 +88,69 @@ export default function AuditLogPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
-  const LIMIT = 50;
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // Debounce search — wait 300ms after last keystroke before fetching
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setDebouncedSearch(value);
-    }, 300);
+    searchTimer.current = setTimeout(() => setDebouncedSearch(value.trim()), 300);
   };
 
-  const fetchEvents = async (opts: { append?: boolean; eventType?: string; search?: string }) => {
-    const { append = false, eventType, search } = opts;
-    const params = new URLSearchParams();
-    params.set('limit', String(LIMIT));
+  const fetchEvents = async ({
+    append = false,
+    eventType,
+    search,
+  }: {
+    append?: boolean;
+    eventType?: string;
+    search?: string;
+  }) => {
+    const params = new URLSearchParams({ limit: String(LIMIT) });
     if (append) params.set('offset', String(offset));
     if (eventType && eventType !== 'all') params.set('eventType', eventType);
     if (search) params.set('search', search);
 
-    const res = await fetch(`/api/audit?${params}`);
-    if (!res.ok) throw new Error('Unable to load audit events');
-    const json = await res.json();
+    const response = await fetch(`/api/audit?${params}`);
+    if (!response.ok) throw new Error('Unable to load audit events');
+    const json = await response.json();
     if (!json?.success) throw new Error('Unable to load audit events');
 
-    const apiEvents = (json.data?.events || []).map((e: Record<string, unknown>) => ({
-      id: e.id,
-      timestamp: new Date(String(e.createdAt)).toLocaleString('en-NA', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-      eventType: String(e.eventType || 'request').split('_')[0] as EventType,
-      action: String(e.displayTitle || 'Event recorded'),
-      actor: String(e.actorName || 'GovFleet'),
-      entity: String(e.entityType || 'Record').replaceAll('_', ' '),
-      severity: 'info' as const,
-      details: String(e.displayDescription || 'Event recorded.'),
-      technical: {
-        eventKey: String(e.eventType || ''),
-        actorId: String(e.actorUserId || ''),
-        targetId: e.entityId ? String(e.entityId) : undefined,
-        sourceChannel: e.sourceChannel ? String(e.sourceChannel) : undefined,
-        correlationId: e.correlationId ? String(e.correlationId) : undefined,
-        before: e.before,
-        after: e.after,
-      },
-    }));
+    const apiEvents: AuditEvent[] = (json.data?.events || []).map((event: Record<string, unknown>) => {
+      const rawType = String(event.eventType || 'request').split('_')[0] as EventType;
+      const eventTypeValue = eventIcons[rawType] ? rawType : 'all';
+      return {
+        id: String(event.id),
+        timestamp: new Date(String(event.createdAt)).toLocaleString('en-NA', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        eventType: eventTypeValue,
+        action: String(event.displayTitle || 'Event recorded'),
+        actor: String(event.actorName || 'GovFleet'),
+        entity: String(event.entityType || 'Record').replaceAll('_', ' '),
+        details: String(event.displayDescription || 'Event recorded.'),
+        technical: {
+          eventKey: String(event.eventType || ''),
+          actorId: String(event.actorUserId || ''),
+          targetId: event.entityId ? String(event.entityId) : undefined,
+          sourceChannel: event.sourceChannel ? String(event.sourceChannel) : undefined,
+          correlationId: event.correlationId ? String(event.correlationId) : undefined,
+          before: event.before,
+          after: event.after,
+        },
+      };
+    });
 
-    if (append) {
-      setEvents((prev) => [...prev, ...apiEvents]);
-    } else {
-      setEvents(apiEvents);
-    }
+    if (append) setEvents((previous) => [...previous, ...apiEvents]);
+    else setEvents(apiEvents);
     setConnectionError(false);
-    setTotal(json.data?.total || 0);
-    setOffset((prev) => (append ? prev + apiEvents.length : apiEvents.length));
+    setTotal(Number(json.data?.total || 0));
+    setOffset((previous) => (append ? previous + apiEvents.length : apiEvents.length));
   };
 
-  // Fetch on mount and when event type / debounced search changes
   useEffect(() => {
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -218,8 +170,23 @@ export default function AuditLogPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchEvents is deliberately not memoised; refetch is driven by selectedType/debouncedSearch
+    // fetchEvents intentionally follows the active server-side filters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedType, debouncedSearch]);
+
+  useEffect(
+    () => () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    },
+    [],
+  );
+
+  const exportHref = useMemo(() => {
+    const params = new URLSearchParams({ export: 'csv' });
+    if (selectedType !== 'all') params.set('eventType', selectedType);
+    if (debouncedSearch) params.set('search', debouncedSearch);
+    return `/api/audit?${params}`;
+  }, [debouncedSearch, selectedType]);
 
   const handleLoadMore = async () => {
     setLoadingMore(true);
@@ -249,100 +216,65 @@ export default function AuditLogPage() {
     }
   };
 
-  // Client-side filtering is no longer needed — API does it
-  const filteredEvents = events;
-
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Audit Log' }]} />
-      <PageHeader
-        title="Audit Log"
-        description="Immutable event trail with cryptographic hash-chain verification"
-      >
-        <div className="flex items-center gap-2">
-          <div
-            className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-              connectionError
-                ? 'bg-status-error-bg text-status-error-text'
-                : 'bg-status-success-bg text-status-success-text'
-            }`}
-          >
-            {connectionError ? <WifiOff className="h-3 w-3" /> : <Wifi className="h-3 w-3" />}
-            {connectionError ? 'Connection error' : 'Live Data'}
-          </div>
-          <Button
-            variant={showHashChain ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setShowHashChain(!showHashChain)}
-          >
-            <Hash className="h-4 w-4" />
-            Hash Chain
+      <PageHeader title="Audit Log" description="Tenant-scoped event history with stored hash-chain metadata">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium ${connectionError ? 'bg-status-error-bg text-status-error-text' : 'bg-status-success-bg text-status-success-text'}`}>
+            {connectionError ? <WifiOff className="h-3 w-3" aria-hidden="true" /> : <Wifi className="h-3 w-3" aria-hidden="true" />}
+            {connectionError ? 'Connection error' : 'Connected'}
+          </span>
+          <Button variant={showHashChain ? 'primary' : 'secondary'} size="sm" onClick={() => setShowHashChain((visible) => !visible)}>
+            <Hash className="h-4 w-4" aria-hidden="true" /> Hash Metadata
           </Button>
-          <Button variant="secondary" size="sm">
-            <Download className="h-4 w-4" />
-            Export
+          <Button variant="secondary" size="sm" asChild>
+            <a href={exportHref}><Download className="h-4 w-4" aria-hidden="true" /> Export CSV</a>
           </Button>
         </div>
       </PageHeader>
 
-      {/* Hash Chain Status */}
       {showHashChain && (
-        <Card className="border-brand-200 bg-brand-50/50">
-          <CardContent className="pt-4">
-            <div className="flex items-start gap-3">
-              <div className="bg-brand-100 text-brand-700 flex h-10 w-10 items-center justify-center rounded-lg">
-                <Shield className="h-5 w-5" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-brand-900 dark:text-brand-700 text-sm font-semibold">
-                  Hash-chain metadata
-                </h3>
-                <p className="text-brand-700 mt-1 text-xs">
-                  Audit records include the stored previous and event hashes needed for independent
-                  integrity verification.
-                </p>
-                <div className="mt-3 flex items-center gap-4 text-xs">
-                  <span className="flex items-center gap-1.5 text-green-700">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Metadata recorded
-                  </span>
-                  <span className="text-brand-600">Total events: {total}</span>
-                </div>
-              </div>
+        <div className="border-brand-200 bg-brand-50/40 dark:border-brand-800/50 dark:bg-brand-950/20 rounded-[10px] border p-4">
+          <div className="flex items-start gap-3">
+            <Shield className="text-brand-700 h-5 w-5 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="text-ink-950 text-sm font-semibold">Hash-chain metadata is recorded with audit events</p>
+              <p className="text-ink-500 mt-1 text-xs">Technical details expose event and correlation identifiers required for audit review. This panel reports stored metadata; it does not claim that the browser independently re-verifies the full chain.</p>
+              <p className="text-ink-500 mt-2 text-xs tabular-nums">Matching events: {total}</p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
-      {/* Filters */}
       <Card>
         <CardContent className="pt-4">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-wrap gap-1.5">
-              {eventTypes.map((et) => (
-                <button
-                  key={et.value}
-                  onClick={() => setSelectedType(et.value)}
-                  className={`inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                    selectedType === et.value
-                      ? 'bg-brand-800 text-white'
-                      : 'text-ink-500 hover:text-ink-700 hover:bg-muted'
-                  }`}
-                >
-                  {et.icon}
-                  {et.label}
-                </button>
-              ))}
+          <div className="space-y-4">
+            <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Audit event types">
+              {eventTypes.map((item) => {
+                const selected = selectedType === item.value;
+                return (
+                  <button
+                    key={item.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => setSelectedType(item.value)}
+                    className={`focus-ring inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-[7px] px-3 text-xs font-medium transition-colors motion-reduce:transition-none ${selected ? 'bg-brand-700 text-white' : 'text-ink-600 hover:bg-muted hover:text-ink-900'}`}
+                  >
+                    {item.icon}{item.label}
+                  </button>
+                );
+              })}
             </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative min-w-[220px] flex-1">
-                <Search className="text-ink-500 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
                 <Input
-                  placeholder="Search events by action, actor, entity, or details..."
+                  type="search"
                   value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  className="pl-9"
+                  onChange={(event) => handleSearchChange(event.target.value)}
+                  placeholder="Search action, actor ID or audit summary…"
+                  aria-label="Search audit events"
                 />
               </div>
               <ClientFilterReset
@@ -359,126 +291,61 @@ export default function AuditLogPage() {
         </CardContent>
       </Card>
 
-      {/* Event Timeline */}
-      {filteredEvents.length === 0 ? (
+      {isLoading ? (
+        <div className="text-ink-500 flex items-center justify-center gap-2 py-16 text-sm" role="status">
+          <RefreshCw className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading audit events…
+        </div>
+      ) : events.length === 0 ? (
         <EmptyState
           title="No events found"
-          description={
-            selectedType !== 'all' || searchQuery
-              ? 'No matching records found. Clear filters to view all records.'
-              : 'No audit events have been recorded yet.'
-          }
+          description={selectedType !== 'all' || searchQuery ? 'No matching records found. Clear filters to view all records.' : 'No audit events have been recorded yet.'}
           icon={<History className="h-6 w-6" />}
         />
       ) : (
-        <div className="space-y-2">
-          {filteredEvents.map((event, i) => {
-            const sevLabel = event.severity as Severity;
-            return (
-              <Card key={event.id} hover>
-                <CardContent className="pt-4">
-                  <div className="flex items-start gap-3">
-                    <div className="flex flex-col items-center">
-                      <div
-                        className={`flex h-8 w-8 items-center justify-center rounded-full ${eventBgColors[event.eventType]} ${eventIconColors[event.eventType]}`}
-                      >
-                        {eventIcons[event.eventType]}
-                      </div>
-                      {i < filteredEvents.length - 1 && (
-                        <div className="bg-border mt-1 h-full w-px" />
-                      )}
-                    </div>
-
-                    <div className="min-w-0 flex-1 pb-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-ink-950 text-sm font-medium">{event.action}</p>
-                        <div className="flex items-center gap-2">
-                          <span className="text-ink-500 text-xs">{event.timestamp}</span>
-                          <Badge
-                            variant={
-                              sevLabel === 'critical'
-                                ? 'error'
-                                : sevLabel === 'warning'
-                                  ? 'pending'
-                                  : 'info'
-                            }
-                            size="sm"
-                          >
-                            {severityConfig[sevLabel].label}
-                          </Badge>
-                        </div>
-                      </div>
-
-                      <p className="text-ink-500 mt-1 text-xs">{event.details}</p>
-
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-                        <span className="text-ink-500 flex items-center gap-1">
-                          <UserCheck className="h-3 w-3" />
-                          {event.actor}
-                        </span>
-                        <span className="text-ink-500 flex items-center gap-1">
-                          <FileText className="h-3 w-3" />
-                          {event.entity}
-                        </span>
-                        {showHashChain && (
-                          <span className="text-ink-400 flex items-center gap-1 font-mono text-[10px]">
-                            <Hash className="h-3 w-3" />
-                            {`evt_${event.id.slice(0, 8)}...`}
-                          </span>
-                        )}
-                      </div>
-                      <details className="border-border bg-muted/40 mt-3 rounded-md border px-3 py-2">
-                        <summary className="focus-ring text-ink-600 cursor-pointer text-xs font-medium">
-                          Technical details
-                        </summary>
-                        <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                          {Object.entries(event.technical)
-                            .filter(([, value]) => value !== undefined && value !== null)
-                            .map(([key, value]) => (
-                              <div key={key} className="min-w-0">
-                                <dt className="text-ink-500 font-medium capitalize">
-                                  {key.replace(/([a-z])([A-Z])/g, '$1 $2')}
-                                </dt>
-                                <dd className="text-ink-700 mt-0.5 font-mono text-[11px] break-words">
-                                  {typeof value === 'object'
-                                    ? `${Object.keys(value as Record<string, unknown>).length} changed field(s)`
-                                    : String(value)}
-                                </dd>
-                              </div>
-                            ))}
-                        </dl>
-                      </details>
-                    </div>
+        <>
+          <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
+            {events.map((event) => (
+              <article key={event.id} className="border-border border-b p-4 last:border-b-0 sm:p-5">
+                <div className="flex items-start gap-3">
+                  <div className="bg-brand-50 text-brand-700 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]" aria-hidden="true">
+                    {eventIcons[event.eventType] || eventIcons.all}
                   </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-
-          <div className="flex items-center justify-center pt-2">
-            <div className="text-ink-400 mr-3 text-xs">
-              Showing {events.length} of {total} events
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleLoadMore}
-              loading={loadingMore}
-              disabled={events.length >= total || loadingMore}
-            >
-              Load More Events
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleRefresh}
-              loading={isLoading}
-              className="ml-2"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                      <div className="min-w-0"><h2 className="text-ink-950 text-sm font-semibold">{event.action}</h2><p className="text-ink-500 mt-1 text-sm">{event.details}</p></div>
+                      <time className="text-ink-400 shrink-0 text-xs tabular-nums">{event.timestamp}</time>
+                    </div>
+                    <div className="text-ink-500 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      <span className="flex items-center gap-1"><UserCheck className="h-3 w-3" aria-hidden="true" />{event.actor}</span>
+                      <span className="flex items-center gap-1 capitalize"><FileText className="h-3 w-3" aria-hidden="true" />{event.entity}</span>
+                    </div>
+                    <details className="border-border bg-muted/30 mt-3 rounded-[7px] border px-3 py-2">
+                      <summary className="focus-ring text-ink-600 cursor-pointer rounded text-xs font-medium">Technical details</summary>
+                      <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                        {Object.entries(event.technical)
+                          .filter(([, value]) => value !== undefined && value !== null)
+                          .map(([key, value]) => (
+                            <div key={key} className="min-w-0">
+                              <dt className="text-ink-500 font-medium capitalize">{key.replace(/([a-z])([A-Z])/g, '$1 $2')}</dt>
+                              <dd className="text-ink-700 mt-0.5 break-words font-mono text-[11px]">{typeof value === 'object' ? `${Object.keys(value as Record<string, unknown>).length} changed field(s)` : String(value)}</dd>
+                            </div>
+                          ))}
+                      </dl>
+                    </details>
+                  </div>
+                </div>
+              </article>
+            ))}
           </div>
-        </div>
+
+          <div className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-ink-500 text-xs tabular-nums">Showing {events.length} of {total} events</p>
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" onClick={() => void handleRefresh()} loading={isLoading}><RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Refresh</Button>
+              <Button variant="secondary" size="sm" onClick={() => void handleLoadMore()} loading={loadingMore} disabled={events.length >= total || loadingMore}>Load More</Button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
