@@ -12,11 +12,20 @@ import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { account } from '@/db/schema/better-auth';
 import { userProfiles } from '@/db/schema/auth';
-import { eq, and, like, desc, count, or, inArray, ne } from 'drizzle-orm';
+import { eq, and, like, desc, count, or, inArray, ne, type SQL } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import bcrypt from 'bcryptjs';
 import { employees, departments, offices } from '@/db/schema/people';
+
+function assignmentIsActive(
+  assignment: { startDate: Date | string | null; endDate: Date | string | null },
+  now = new Date(),
+) {
+  const startsAt = assignment.startDate ? new Date(assignment.startDate) : null;
+  const endsAt = assignment.endDate ? new Date(assignment.endDate) : null;
+  return (!startsAt || startsAt <= now) && (!endsAt || endsAt > now);
+}
 
 // ---------------------------------------------------------------------------
 // GET — List users
@@ -28,138 +37,103 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // Require platform-level or tenant-level user management
     const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { searchParams } = new URL(request.url);
-    const q = searchParams.get('q') || '';
+    const q = (searchParams.get('q') || '').trim();
     const status = searchParams.get('status') || '';
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '25', 10);
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10) || 25));
     const offset = (page - 1) * limit;
-
     const db = getDb();
 
-    // Get all users in this tenant via memberships. Accounts whose access was
-    // removed (status `access_removed`) are hidden from the default view and
-    // only surfaced through the explicit `status=removed` filter so admins can
-    // restore them.
-    const conditions = [eq(tenantMemberships.tenantId, session.tenantId)];
+    // Search, status filtering, counting and pagination must be applied to the
+    // same joined dataset. Applying text search only after membership pagination
+    // misses valid matches in larger tenants and produces an incorrect total.
+    const conditions: SQL[] = [eq(tenantMemberships.tenantId, session.tenantId)];
+    if (status === 'active') conditions.push(eq(tenantMemberships.status, 'active'));
+    else if (status === 'suspended') conditions.push(eq(tenantMemberships.status, 'suspended'));
+    else if (status === 'removed') conditions.push(eq(tenantMemberships.status, 'access_removed'));
+    else if (status === 'pending') conditions.push(eq(tenantMemberships.status, 'pending_activation'));
+    else conditions.push(ne(tenantMemberships.status, 'access_removed'));
 
-    if (status === 'active') {
-      conditions.push(eq(tenantMemberships.status, 'active'));
-    } else if (status === 'suspended') {
-      conditions.push(eq(tenantMemberships.status, 'suspended'));
-    } else if (status === 'removed') {
-      conditions.push(eq(tenantMemberships.status, 'access_removed'));
-    } else if (status === 'pending') {
-      conditions.push(eq(tenantMemberships.status, 'pending_activation'));
-    } else {
-      conditions.push(ne(tenantMemberships.status, 'access_removed'));
-    }
-
-    // Count total matching users
-    const [totalResult] = await db
-      .select({ count: count() })
-      .from(tenantMemberships)
-      .where(and(...conditions));
-
-    const total = totalResult?.count || 0;
-
-    // Fetch users with their membership info
-    const memberships = await db
-      .select({
-        userId: tenantMemberships.userId,
-        membershipId: tenantMemberships.id,
-        status: tenantMemberships.status,
-        joinedAt: tenantMemberships.joinedAt,
-      })
-      .from(tenantMemberships)
-      .where(and(...conditions))
-      .orderBy(desc(tenantMemberships.joinedAt))
-      .limit(limit)
-      .offset(offset);
-
-    if (memberships.length === 0) {
-      return NextResponse.json({
-        success: true,
-        data: { users: [], total, page, limit, totalPages: Math.ceil(total / limit) },
-      });
-    }
-
-    // Fetch user details
-    const userConditions = [inArray(user.id, memberships.map((m) => m.userId))];
     if (q) {
-      userConditions.push(
+      conditions.push(
         or(
           like(user.email, `%${q}%`),
           like(user.name, `%${q}%`),
+          like(user.username, `%${q}%`),
         )!,
       );
     }
+    const where = and(...conditions);
 
-    const users = await db
-      .select({
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        emailVerified: user.emailVerified,
-        createdAt: user.createdAt,
-      })
-      .from(user)
-      .where(and(...userConditions.map((c) => c!)))
-      .limit(limit);
+    const [[totalResult], userRows] = await Promise.all([
+      db
+        .select({ count: count() })
+        .from(tenantMemberships)
+        .innerJoin(user, eq(tenantMemberships.userId, user.id))
+        .where(where),
+      db
+        .select({
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          name: user.name,
+          emailVerified: user.emailVerified,
+          createdAt: user.createdAt,
+          membershipId: tenantMemberships.id,
+          tenantStatus: tenantMemberships.status,
+          joinedAt: tenantMemberships.joinedAt,
+        })
+        .from(tenantMemberships)
+        .innerJoin(user, eq(tenantMemberships.userId, user.id))
+        .where(where)
+        .orderBy(desc(tenantMemberships.joinedAt))
+        .limit(limit)
+        .offset(offset),
+    ]);
 
-    // Fetch role assignments for each user
-    const userIds = users.map((u) => u.id);
-    const allAssignments = await db
-      .select({
-        id: roleAssignments.id,
-        userId: tenantMemberships.userId,
-        roleId: roleAssignments.roleId,
-        roleName: roles.name,
-        endDate: roleAssignments.endDate,
-        isActing: roleAssignments.isActing,
-      })
-      .from(roleAssignments)
-      .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
-      .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
-      .where(
-        and(
-          inArray(tenantMemberships.userId, userIds)!,
-          eq(tenantMemberships.tenantId, session.tenantId)!,
-        ),
-      );
+    const total = Number(totalResult?.count || 0);
+    const userIds = userRows.map((row) => row.id);
 
-    // Map roles to users
+    const allAssignments = userIds.length
+      ? await db
+          .select({
+            id: roleAssignments.id,
+            userId: tenantMemberships.userId,
+            roleId: roleAssignments.roleId,
+            roleName: roles.name,
+            startDate: roleAssignments.startDate,
+            endDate: roleAssignments.endDate,
+            isActing: roleAssignments.isActing,
+          })
+          .from(roleAssignments)
+          .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+          .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
+          .where(
+            and(
+              inArray(tenantMemberships.userId, userIds),
+              eq(tenantMemberships.tenantId, session.tenantId),
+            ),
+          )
+      : [];
+
+    const now = new Date();
     const rolesByUser: Record<string, Array<{ id: string; roleName: string; isActing: boolean }>> = {};
     for (const assignment of allAssignments) {
-      if (!rolesByUser[assignment.userId]) rolesByUser[assignment.userId] = [];
-      if (!assignment.endDate || new Date(assignment.endDate) > new Date()) {
-        rolesByUser[assignment.userId].push({
-          id: assignment.id,
-          roleName: assignment.roleName,
-          isActing: assignment.isActing,
-        });
-      }
+      if (!assignmentIsActive(assignment, now)) continue;
+      (rolesByUser[assignment.userId] ??= []).push({
+        id: assignment.id,
+        roleName: assignment.roleName,
+        isActing: assignment.isActing,
+      });
     }
 
-    // Merge membership status into users
-    const membershipMap = new Map(memberships.map((m) => [m.userId, m]));
-    const enrichedUsers = users.map((u) => {
-      const membership = membershipMap.get(u.id);
-      return {
-        ...u,
-        tenantStatus: membership?.status || 'unknown',
-        joinedAt: membership?.joinedAt || null,
-        roles: rolesByUser[u.id] || [],
-      };
-    });
-
-    // All employees in this tenant (used for the linked-staff summary on each
-    // user row) regardless of employment status — an account may stay linked to
-    // an inactive or archived employee.
+    // All employees remain tenant-scoped. The account list needs linked staff
+    // details for every status, while the invite picker only exposes active
+    // employees without a user account.
     const employeeRows = await db
       .select({
         id: employees.id,
@@ -177,15 +151,25 @@ export async function GET(request: NextRequest) {
       .leftJoin(offices, eq(employees.officeId, offices.id))
       .where(eq(employees.tenantId, session.tenantId));
 
-    const employeeByUser = new Map(employeeRows.filter((employee) => employee.userId).map((employee) => [employee.userId, employee]));
-    const usersWithEmployees = enrichedUsers.map((tenantUser) => ({
-      ...tenantUser,
-      employee: employeeByUser.get(tenantUser.id) || null,
+    const employeeByUser = new Map(
+      employeeRows
+        .filter((employee): employee is typeof employee & { userId: string } => Boolean(employee.userId))
+        .map((employee) => [employee.userId, employee]),
+    );
+
+    const users = userRows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      username: row.username,
+      name: row.name,
+      emailVerified: row.emailVerified,
+      createdAt: row.createdAt,
+      tenantStatus: row.tenantStatus,
+      joinedAt: row.joinedAt,
+      roles: rolesByUser[row.id] || [],
+      employee: employeeByUser.get(row.id) || null,
     }));
 
-    // The invite picker only offers staff who are currently ACTIVE and do not
-    // already have a login account (creating an account requires an active
-    // employee record — enforced server-side in POST too).
     const availableEmployees = employeeRows.filter(
       (employee) => !employee.userId && employee.employmentStatus === 'active',
     );
@@ -193,12 +177,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        users: usersWithEmployees,
+        users,
         availableEmployees,
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     });
   } catch (error) {
@@ -245,7 +229,6 @@ export async function POST(request: NextRequest) {
     if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     if (employee.userId) return NextResponse.json({ error: 'Employee already has an account' }, { status: 409 });
 
-    // Check for duplicate email
     const [existingUser] = await db
       .select()
       .from(user)
@@ -258,17 +241,20 @@ export async function POST(request: NextRequest) {
 
     const userId = crypto.randomUUID?.() || `user-${Date.now()}`;
     const now = new Date();
-
-    // Derive username if not provided. Email is guaranteed unique (checked
-    // above), so its local part is a collision-safe base — deriving from the
-    // display name instead would 500 on `user_username_key` whenever two
-    // accounts share a name (e.g. after a soft-remove keeps the user row).
     const username = (inputUsername || email.split('@')[0] || name)
       .toLowerCase()
       .replace(/\s+/g, '.')
       .replace(/[^a-z0-9._-]/g, '');
 
-    // Create the user
+    const [existingUsername] = await db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.username, username))
+      .limit(1);
+    if (existingUsername) {
+      return NextResponse.json({ error: `Username "${username}" is already in use` }, { status: 409 });
+    }
+
     await db.insert(user).values({
       id: userId,
       email: email.trim().toLowerCase(),
@@ -279,7 +265,6 @@ export async function POST(request: NextRequest) {
       updatedAt: now,
     });
 
-    // Create account with password hash
     const passwordHash = await bcrypt.hash(password, 10);
     await db.insert(account).values({
       id: crypto.randomUUID?.() || `acct-${Date.now()}`,
@@ -291,7 +276,6 @@ export async function POST(request: NextRequest) {
       updatedAt: now,
     });
 
-    // Add to tenant
     const [membership] = await db
       .insert(tenantMemberships)
       .values({
@@ -302,7 +286,6 @@ export async function POST(request: NextRequest) {
       })
       .returning();
 
-    // Assign role if specified
     if (roleId) {
       const [role] = await db
         .select()
@@ -319,7 +302,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create user profile record
     const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
     await db.insert(userProfiles).values({
       id: userId,
