@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { demoRequests } from '@/db/schema/demo-requests';
-import { eq, and, count } from 'drizzle-orm';
+import { eq, and, count, type SQL } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -23,6 +23,11 @@ export async function POST(request: NextRequest) {
       name,
       email,
       phone,
+      // Public request-demo form field names
+      organisation,
+      organisationType,
+      fleetSize,
+      // Legacy / platform field names
       company,
       jobTitle,
       role,
@@ -41,10 +46,20 @@ export async function POST(request: NextRequest) {
       sourceDetails,
     } = body;
 
+    // Accept the public form's field names and map them onto the schema.
+    const org = (organisation ?? company ?? '').trim();
+    const orgType = (organisationType ?? industry ?? '').trim();
+    const fleetCount =
+      typeof fleetSize === 'string' && fleetSize.includes('–')
+        ? Number.parseInt(fleetSize.split('–')[1].replace('+', ''), 10)
+        : Number.parseInt(String(fleetSize ?? ''), 10) || null;
+    const roleValue = (role ?? 'other').trim() || 'other';
+    const jobTitleValue = (jobTitle ?? 'Prospective Customer').trim() || 'Prospective Customer';
+
     // Validate required fields
-    if (!name || !email || !company || !jobTitle || !role) {
+    if (!name || !email || !org) {
       return NextResponse.json(
-        { error: 'Missing required fields: name, email, company, jobTitle, role' },
+        { error: 'Missing required fields: name, email, organisation' },
         { status: 400 },
       );
     }
@@ -83,12 +98,12 @@ export async function POST(request: NextRequest) {
         name: name.trim(),
         email: email.trim().toLowerCase(),
         phone: phone || null,
-        company: company.trim(),
-        jobTitle: jobTitle.trim(),
-        role,
-        industry: industry || null,
+        company: org,
+        jobTitle: jobTitleValue,
+        role: roleValue,
+        industry: orgType || null,
         userCount: userCount || null,
-        vehicleCount: vehicleCount || null,
+        vehicleCount: vehicleCount ?? fleetCount,
         monthlyCost: monthlyCost || null,
         technicalRequirements: technicalRequirements || null,
         integrationNeeds: integrationNeeds || null,
@@ -134,8 +149,8 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
 
-    const conditions: any[] = [];
-    if (status) conditions.push(eq(demoRequests.status, status as any));
+    const conditions: SQL<unknown>[] = [];
+    if (status) conditions.push(eq(demoRequests.status, status as never));
 
     // Get total count
     const [totalResult] = await db

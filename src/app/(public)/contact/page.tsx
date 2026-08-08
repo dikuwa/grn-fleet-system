@@ -1,224 +1,113 @@
-'use client';
+/**
+ * Contact — conversion-support page.
+ *
+ * Server component loads contact details from CMS site settings (never
+ * hardcoded). The enquiry form is a client component that persists to
+ * /api/public/enquiries (cms_enquiries) for Platform Admin review.
+ * Demo requests are a first-class flow at /request-demo, not a buried
+ * checkbox here.
+ */
 
-import { Mail, Phone, MapPin } from 'lucide-react';
-import { useState } from 'react';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { Mail, Phone, MapPin, ArrowRight } from 'lucide-react';
+import { getPublicSiteSettings } from '@/lib/platform/cms-public';
+import type { PublicSiteSettings } from '@/lib/platform/cms-public';
+import { PageHero } from '@/components/public/page-hero';
+import { SectionContainer } from '@/components/public/section';
+import { ContactForm } from './contact-form';
 
-export default function ContactPage() {
-  const [submitted, setSubmitted] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isDemoRequest, setIsDemoRequest] = useState(false);
+export const metadata: Metadata = {
+  title: 'Contact | GovFleet Namibia',
+  description:
+    'Contact the GovFleet team for support, demonstrations or enquiries about digital fleet management.',
+};
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    setSubmitError(null);
+export default async function ContactPage() {
+  let settings: PublicSiteSettings | null = null;
+  try {
+    settings = await getPublicSiteSettings();
+  } catch {
+    // fall back to defaults
+  }
 
-    const form = new FormData(e.currentTarget);
-
-    if (isDemoRequest) {
-      // POST to the demo-requests API for platform admin visibility.
-      const payload = {
-        name: form.get('name'),
-        email: form.get('email'),
-        phone: form.get('phone') || null,
-        company: form.get('company'),
-        jobTitle: form.get('jobTitle'),
-        role: form.get('role'),
-        notes: form.get('message') || null,
-        source: 'contact_page',
-      };
-
-      try {
-        const res = await fetch('/api/demo-requests', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Submission failed');
-        setSubmitted(true);
-      } catch (err) {
-        setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
-      }
-    } else {
-      // Generic contact message — static success for now.
-      setSubmitted(true);
-    }
-
-    setIsSubmitting(false);
-  };
+  const contactEmail = settings?.contactEmail || 'support@govfleet.gov.na';
+  const contactPhone = settings?.contactPhone || '+264 61 200 7000';
+  const address = settings?.address || 'Windhoek, Namibia';
+  const siteName = settings?.siteName || 'GovFleet Namibia';
 
   return (
-    <section className="bg-canvas py-20">
-        <div className="mx-auto max-w-[700px] px-6">
-          <div className="text-center">
-            <h1 className="text-3xl font-[650] tracking-tight text-ink-950">Contact Us</h1>
-            <p className="mt-4 text-ink-500">
-              Get in touch with the GovFleet team for support, demonstrations, or enquiries.
-            </p>
-          </div>
+    <>
+      <PageHero
+        eyebrow="Contact"
+        title="Talk to the GovFleet Team"
+        description="Get in touch for support, demonstrations or enquiries about fleet operations."
+      />
 
-          <div className="mt-12 grid gap-6 sm:grid-cols-3">
-            <div className="rounded-[10px] border border-border bg-surface p-6 text-center">
-              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
-                <Mail className="h-5 w-5" />
+      <section className="bg-canvas py-16 md:py-20">
+        <SectionContainer>
+          <div className="grid gap-10 lg:grid-cols-5">
+            {/* Contact details + demo CTA */}
+            <div className="lg:col-span-2">
+              <div className="grid gap-4 sm:grid-cols-1">
+                <a
+                  href={`mailto:${contactEmail}`}
+                  className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-200"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                    <Mail className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span>
+                    <span className="block text-sm font-semibold text-ink-950">Email</span>
+                    <span className="mt-1 block text-sm text-ink-500">{contactEmail}</span>
+                  </span>
+                </a>
+                <a
+                  href={`tel:${contactPhone.replace(/\s/g, '')}`}
+                  className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-200"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                    <Phone className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span>
+                    <span className="block text-sm font-semibold text-ink-950">Phone</span>
+                    <span className="mt-1 block text-sm text-ink-500">{contactPhone}</span>
+                  </span>
+                </a>
+                <div className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                    <MapPin className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span>
+                    <span className="block text-sm font-semibold text-ink-950">Office</span>
+                    <span className="mt-1 block text-sm text-ink-500">{address}</span>
+                  </span>
+                </div>
               </div>
-              <h3 className="mt-3 text-sm font-semibold text-ink-950">Email</h3>
-              <p className="mt-1 text-sm text-ink-500">support@govfleet.gov.na</p>
-            </div>
-            <div className="rounded-[10px] border border-border bg-surface p-6 text-center">
-              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
-                <Phone className="h-5 w-5" />
-              </div>
-              <h3 className="mt-3 text-sm font-semibold text-ink-950">Phone</h3>
-              <p className="mt-1 text-sm text-ink-500">+264 61 200 7000</p>
-            </div>
-            <div className="rounded-[10px] border border-border bg-surface p-6 text-center">
-              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
-                <MapPin className="h-5 w-5" />
-              </div>
-              <h3 className="mt-3 text-sm font-semibold text-ink-950">Office</h3>
-              <p className="mt-1 text-sm text-ink-500">Windhoek, Namibia</p>
-            </div>
-          </div>
 
-          <div className="mt-12 rounded-[10px] border border-border bg-surface p-8">
-            <h2 className="text-base font-semibold text-ink-950">Send a Message</h2>
-            <div className="mt-4 flex items-center gap-3">
-              <label className="inline-flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isDemoRequest}
-                  onChange={(e) => setIsDemoRequest(e.target.checked)}
-                  className="h-4 w-4 rounded border-border text-brand-600 focus:ring-brand-500"
-                />
-                <span className="text-sm text-ink-700">Request a product demonstration</span>
-              </label>
+              <div className="mt-6 rounded-[10px] border border-brand-200 bg-brand-50 p-6 dark:border-brand-800 dark:bg-brand-900/30">
+                <h2 className="text-base font-semibold text-ink-950">Prefer a live walkthrough?</h2>
+                <p className="mt-2 text-sm leading-relaxed text-ink-600">
+                  Request a demonstration of {siteName} and our team will tailor the session to
+                  your organisation&apos;s fleet operations.
+                </p>
+                <Link
+                  href="/request-demo"
+                  className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[8px] bg-brand-800 px-5 text-sm font-semibold text-white transition-colors hover:bg-brand-700 dark:hover:bg-brand-600"
+                >
+                  Request a Demo
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Link>
+              </div>
             </div>
-            <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="block text-xs font-medium text-ink-500 mb-1">Name</label>
-                  <input
-                    type="text"
-                    name="name"
-                    required
-                    className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                    placeholder="Your name"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-500 mb-1">Email</label>
-                  <input
-                    type="email"
-                    name="email"
-                    required
-                    className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                    placeholder="your@email.com"
-                  />
-                </div>
-              </div>
-              {isDemoRequest && (
-                <>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="block text-xs font-medium text-ink-500 mb-1">Organisation / Company</label>
-                      <input
-                        type="text"
-                        name="company"
-                        required
-                        className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                        placeholder="Your organisation"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-ink-500 mb-1">Job Title</label>
-                      <input
-                        type="text"
-                        name="jobTitle"
-                        required
-                        className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                        placeholder="Your role"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Role / Interest</label>
-                    <select
-                      name="role"
-                      required
-                      className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                    >
-                      <option value="">Select your role</option>
-                      <option value="fleet_manager">Fleet / Transport Manager</option>
-                      <option value="operations">Operations / Logistics</option>
-                      <option value="executive">Executive / Decision Maker</option>
-                      <option value="it">IT / Digital Transformation</option>
-                      <option value="procurement">Procurement / Finance</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-ink-500 mb-1">Phone (optional)</label>
-                    <input
-                      type="tel"
-                      name="phone"
-                      className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                      placeholder="+264 61 123 4567"
-                    />
-                  </div>
-                </>
-              )}
-              {!isDemoRequest && (
-                <div>
-                  <label className="block text-xs font-medium text-ink-500 mb-1">Subject</label>
-                  <input
-                    type="text"
-                    name="subject"
-                    className="h-10 w-full rounded-[8px] border border-border bg-canvas px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                    placeholder="How can we help?"
-                  />
-                </div>
-              )}
-              <div>
-                <label className="block text-xs font-medium text-ink-500 mb-1">
-                  {isDemoRequest ? 'Tell us about your fleet needs' : 'Message'}
-                </label>
-                <textarea
-                  name="message"
-                  rows={5}
-                  required
-                  className="w-full rounded-[8px] border border-border bg-canvas px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none"
-                  placeholder={
-                    isDemoRequest
-                      ? 'Describe your current fleet challenges, vehicle count, user count, and what you\'d like to see in a demo...'
-                      : 'Your message...'
-                  }
-                />
-              </div>
-              {submitError && (
-                <p role="alert" className="rounded-[8px] bg-status-error-bg px-3 py-2 text-sm text-status-error-text">
-                  {submitError}
-                </p>
-              )}
-              {submitted && !submitError && (
-                <p role="status" className="rounded-[8px] bg-status-success-bg px-3 py-2 text-sm text-status-success-text">
-                  {isDemoRequest
-                    ? 'Thank you! Our team will review your demo request and contact you within 1 business day.'
-                    : 'Thank you for your message. We will get back to you shortly.'}
-                </p>
-              )}
-              <button
-                type="submit"
-                disabled={isSubmitting || submitted}
-                className="inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-800 px-5 text-sm font-medium text-white hover:bg-brand-700 dark:hover:bg-[#347ac3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isSubmitting ? 'Submitting...' : isDemoRequest ? 'Request Demo' : 'Send Message'}
-              </button>
-            </form>
+
+            {/* Enquiry form */}
+            <div className="lg:col-span-3">
+              <ContactForm />
+            </div>
           </div>
-      </div>
-    </section>
+        </SectionContainer>
+      </section>
+    </>
   );
 }

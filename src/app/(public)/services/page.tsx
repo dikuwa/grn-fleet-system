@@ -1,17 +1,26 @@
-import {
-  CheckCircle2,
-  FileText,
-  Truck,
-  ClipboardCheck,
-  Fuel,
-  Wrench,
-  BarChart3,
-} from 'lucide-react';
+/**
+ * Services / Platform — detailed capability page.
+ *
+ * CMS-driven module list rendered as a responsive capability grid (no long
+ * alternating layout / excessive whitespace). Uses the flat PageHero and the
+ * shared FinalCta for the conversion path.
+ */
+
+import type { Metadata } from 'next';
+import { CheckCircle2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { HeroSection } from '@/components/cms/HeroSection';
-import { CtaSection } from '@/components/cms/CtaSection';
+import { FileText, Truck, ClipboardCheck, Fuel, Wrench, BarChart3, ShieldCheck, Smartphone } from 'lucide-react';
 import { getPublishedContentBySlug } from '@/lib/platform/cms-public';
 import type { PublicCmsContent } from '@/lib/platform/cms-public';
+import { PageHero } from '@/components/public/page-hero';
+import { SectionContainer, SectionHeading } from '@/components/public/section';
+import { FinalCta } from '@/components/public/sections/faq-final-cta';
+
+export const metadata: Metadata = {
+  title: 'Platform Services | GovFleet Namibia',
+  description:
+    'End-to-end digital fleet management: transport requests, approvals, allocation, inspections, fuel, compliance, analytics and driver self-service.',
+};
 
 // ---------------------------------------------------------------------------
 // Types & defaults
@@ -22,7 +31,6 @@ interface ServiceModule {
   description: string;
   icon: string;
   features: string[];
-  outcomes: string[];
 }
 
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -32,116 +40,85 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Fuel,
   Wrench,
   BarChart3,
+  ShieldCheck,
+  Smartphone,
 };
-const resolveIcon = (name?: string | null) => (name && name in ICON_MAP ? ICON_MAP[name] : FileText);
+const resolveIcon = (name?: string | null): LucideIcon =>
+  (name && name in ICON_MAP ? ICON_MAP[name] : FileText);
 
 const DEFAULT_MODULES: ServiceModule[] = [
   {
     title: 'Transport Requests & Approvals',
-    description: 'A guided multi-step workflow for submitting, reviewing, and approving transport requests. Supports regional and national trip scopes with configurable approval chains.',
+    description:
+      'A guided multi-step workflow for submitting, reviewing and approving transport requests, with configurable approval chains and separation of duty.',
     icon: 'FileText',
     features: [
       'Programme activity selection with route calculation',
       'Passenger manifest and driver requirement entry',
-      'Supervisor approval with separation of duty',
+      'Supervisor approval — no self-approval',
       'Transport review and vehicle allocation',
       'Emergency override with post-trip review flagging',
-    ],
-    outcomes: [
-      'Paperless request submission reduces turnaround time',
-      'Clear audit trail for every approval decision',
-      'Separation of duty prevents self-approval',
-      'Emergency path available for urgent operations',
     ],
   },
   {
     title: 'Vehicle Allocation & Trip Management',
-    description: 'End-to-end vehicle assignment, pre-trip inspection, trip authorisation, and driver acknowledgment with real-time status tracking.',
+    description:
+      'Vehicle assignment, pre-trip inspection, trip authority and driver acknowledgment with real-time status tracking.',
     icon: 'Truck',
     features: [
       'Vehicle recommender with defect and availability checks',
       'Pre-trip and return inspection checklists',
       'Driver logsheet and daily log recording',
-      'Active trip tracking with real-time duration updates',
-      'Trip closure workflow with kilometre variance calculation',
-    ],
-    outcomes: [
-      'Right-sized vehicle allocation reduces fuel waste',
-      'Real-time trip visibility improves coordination',
-      'Automated variance detection flags discrepancies',
-      'Structured closure ensures complete trip records',
+      'Active trip tracking with duration updates',
+      'Trip closure with kilometre variance calculation',
     ],
   },
   {
     title: 'Inspections & Defect Management',
-    description: 'Standardised pre-trip and return inspection checklists with automatic defect creation for failed items. Defect resolution tracking and vehicle compliance monitoring.',
+    description:
+      'Standardised inspection checklists with automatic defect creation for failed items and resolution tracking.',
     icon: 'ClipboardCheck',
     features: [
-      'Pre-trip inspection checklist tied to vehicle release',
-      'Return inspection with defect auto-creation on failure',
-      'Critical items create blocking defects automatically',
-      'Inline defect resolution with notes and status tracking',
-      'Defect history per vehicle for trend analysis',
-    ],
-    outcomes: [
-      'Failed inspections prevent unsafe vehicles from being used',
-      'Defect trends identify recurring maintenance needs',
-      'Digital records replace paper inspection forms',
-      'Accountability for vehicle condition at handover',
+      'Pre-trip inspection tied to vehicle release',
+      'Critical items create blocking defects',
+      'Inline defect resolution with notes',
+      'Per-vehicle defect history for trends',
     ],
   },
   {
     title: 'Fuel Management & Expenses',
-    description: 'Fuel transaction recording with odometer validation, receipt OCR, fuel consumption reports, and trip expense tracking.',
+    description:
+      'Fuel transaction recording with odometer validation, receipt capture and consumption reporting.',
     icon: 'Fuel',
     features: [
-      'Fuel transaction entry with odometer and receipt capture',
-      'OCR-based receipt processing for expense extraction',
-      'Fuel consumption variance between pump and allocated',
-      'Trip-linked expense recording and reimbursement tracking',
-      'Fuel usage reports by vehicle, period, and driver',
-    ],
-    outcomes: [
-      'Fuel consumption monitoring reduces unauthorised usage',
-      'Odometer-based validation prevents discrepancies',
-      'OCR eliminates manual data entry from receipts',
-      'Per-trip expense visibility supports budgeting',
+      'Fuel transactions with odometer validation',
+      'Receipt capture per transaction',
+      'Consumption reports by vehicle and period',
+      'Trip-linked expense tracking',
     ],
   },
   {
     title: 'Fleet Compliance & Maintenance',
-    description: 'Vehicle compliance tracking, licence and insurance expiry alerts, predictive maintenance, and maintenance event scheduling.',
+    description:
+      'Licence, insurance and roadworthy tracking with expiry alerts and maintenance scheduling.',
     icon: 'Wrench',
     features: [
-      'Vehicle compliance with licence, insurance, and roadworthy tracking',
-      'Expiry alerts dashboard with 30/14/7-day warnings',
-      'Predictive maintenance using odometer and usage patterns',
-      'Maintenance event creation, scheduling, and cost recording',
-      'Vehicle lifecycle management from acquisition to write-off',
-    ],
-    outcomes: [
-      'Proactive compliance reduces legal and safety risks',
-      'Predictive alerts prevent unexpected breakdowns',
-      'Maintenance costs tracked per vehicle over lifetime',
-      'Centralised compliance documents for audit readiness',
+      '30/14/7-day expiry alerts',
+      'Maintenance event scheduling and cost recording',
+      'Predictive maintenance using odometer patterns',
+      'Vehicle lifecycle from acquisition to write-off',
     ],
   },
   {
     title: 'Reports, Analytics & Mobile Access',
-    description: 'Comprehensive reporting suite and mobile-optimised driver self-service portal for field operations.',
+    description:
+      'Fleet utilisation, fuel, trip and approval-turnaround reporting, plus a mobile driver portal that works offline.',
     icon: 'BarChart3',
     features: [
-      'Fleet utilisation, fuel consumption, and kilometre variance reports',
-      'Approval turnaround and trip completion analytics',
-      'Exportable reports for audit and management review',
-      'Driver self-service portal for trip and log access',
-      'Offline-capable mobile interface for remote field operations',
-    ],
-    outcomes: [
-      'Data-driven decisions improve fleet efficiency',
-      'Self-service reduces administrative burden on transport office',
-      'Mobile access enables field staff to participate digitally',
-      'Audit-ready reports support compliance requirements',
+      'Utilisation, fuel and kilometre variance reports',
+      'Approval turnaround analytics',
+      'Exportable audit-ready reports',
+      'Offline-capable driver self-service',
     ],
   },
 ];
@@ -157,7 +134,6 @@ function extractModules(content: Record<string, unknown> | null | undefined): Se
       description: String(mod.description ?? ''),
       icon: String(mod.icon ?? 'FileText'),
       features: Array.isArray(mod.features) ? mod.features.map(String) : [],
-      outcomes: Array.isArray(mod.outcomes) ? mod.outcomes.map(String) : [],
     };
   });
 }
@@ -171,70 +147,56 @@ export default async function ServicesPage() {
   }
 
   const modules = extractModules(cms?.content);
-  const intro = (cms?.content?.intro as string) || 'End-to-end digital fleet management for any organisation — government, municipalities, mines, logistics and private fleets.';
+  const intro =
+    (cms?.content?.intro as string) ||
+    'End-to-end digital fleet management for any organisation — government, municipalities, mines, logistics and private fleets.';
 
   return (
     <>
-      <HeroSection
-        title={cms?.title || 'Platform Services'}
-        subtitle={intro}
-        showSecondaryCta={false}
+      <PageHero
+        eyebrow="Platform"
+        title="Platform Services"
+        description={intro}
       />
 
-      {/* Service Modules */}
-      <section className="bg-surface py-20">
-        <div className="mx-auto max-w-[1000px] px-6">
-          <div className="space-y-16">
-            {modules.map((module, i) => {
+      <section id="solutions" className="border-b border-border bg-surface py-20 md:py-24">
+        <SectionContainer>
+          <SectionHeading
+            title="Complete Fleet Operations"
+            subtitle="Every capability a fleet operation needs — from request to close."
+          />
+          <div className="mt-14 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {modules.map((module) => {
               const Icon = resolveIcon(module.icon);
               return (
-                <div key={module.title} className="grid items-start gap-8 md:grid-cols-2">
-                  <div className={i % 2 === 1 ? 'md:order-2' : ''}>
-                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
-                      <Icon className="h-6 w-6" />
-                    </div>
-                    <h2 className="mt-4 text-xl font-[650] text-ink-950">{module.title}</h2>
-                    <p className="mt-2 text-sm leading-relaxed text-ink-500">{module.description}</p>
-                    {module.features.length > 0 && (
-                      <ul className="mt-4 space-y-2">
-                        {module.features.map((f) => (
-                          <li key={f} className="flex items-start gap-2 text-sm text-ink-600">
-                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-status-success-text" />
-                            {f}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div className={i % 2 === 1 ? 'md:order-1' : ''}>
-                    <div className="rounded-[10px] border border-border bg-surface p-6">
-                      <h3 className="text-sm font-semibold text-ink-950">Key Outcomes</h3>
-                      <ul className="mt-3 space-y-2">
-                        {module.outcomes.map((o) => (
-                          <li key={o} className="flex items-start gap-2 text-xs text-ink-500">
-                            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-600" />
-                            {o}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                </div>
+                <article
+                  key={module.title}
+                  className="flex flex-col rounded-[10px] border border-border bg-surface p-6 transition-all hover:border-brand-200 hover:shadow-sm"
+                >
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <h2 className="mt-4 text-base font-semibold text-ink-950">{module.title}</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-500">{module.description}</p>
+                  <ul className="mt-4 space-y-2">
+                    {module.features.map((f) => (
+                      <li key={f} className="flex items-start gap-2 text-xs text-ink-600">
+                        <CheckCircle2
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-success-text"
+                          aria-hidden="true"
+                        />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                </article>
               );
             })}
           </div>
-        </div>
+        </SectionContainer>
       </section>
 
-      <CtaSection
-        heading="Ready to Get Started?"
-        description="Contact the GovFleet team to discuss how the platform can support your organisation's fleet operations."
-        buttonLabel="Contact Us"
-        buttonHref="/contact"
-        secondaryLabel="Back to Home"
-        secondaryHref="/"
-      />
-
+      <FinalCta />
     </>
   );
 }
