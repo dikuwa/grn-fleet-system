@@ -6,21 +6,21 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
+  Activity,
   Building2,
   CarFront,
-  Gauge,
-  Users,
+  Database,
   FileText,
   Fuel,
-  Loader2,
-  Database,
+  Gauge,
   Globe,
+  Loader2,
+  Package,
+  RefreshCcw,
   TrendingUp,
-  Activity,
-  RefreshCcw
+  Users,
 } from 'lucide-react';
 import Link from 'next/link';
-
 
 interface AnalyticsData {
   summary: {
@@ -83,11 +83,11 @@ export default function PlatformDashboardPage() {
     { icon: Globe, label: 'Total Tenants', value: summary.totalTenants, sub: `${summary.activeTenants} active`, color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' },
     { icon: CarFront, label: 'Total Vehicles', value: summary.totalVehicles, sub: 'across all tenants', color: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300' },
     { icon: Gauge, label: 'Active Trips', value: summary.activeTrips, sub: `${Math.round(summary.activeTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300', highlight: summary.activeTrips > 0 },
-    { icon: Users, label: 'Total Employees', value: summary.totalEmployees, sub: `${Math.round(summary.totalEmployees / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-purple-50 text-purple-700' },
-    { icon: FileText, label: 'Transport Requests', value: summary.totalRequests, sub: `${Math.round(summary.totalRequests / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-indigo-50 text-indigo-700' },
-    { icon: TrendingUp, label: 'Total Trips', value: summary.totalTrips, sub: `${Math.round(summary.totalTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-teal-50 text-teal-700' },
-    { icon: Fuel, label: 'Fuel Volume', value: `${Math.round(summary.totalFuelLitres).toLocaleString()} L`, sub: `N$${Math.round(summary.totalFuelCost).toLocaleString()} total cost`, color: 'bg-orange-50 text-orange-700' },
-    { icon: Activity, label: 'Fuel Cost', value: `N$${Math.round(summary.totalFuelCost).toLocaleString()}`, sub: `Avg N$${summary.totalFuelLitres > 0 ? (summary.totalFuelCost / summary.totalFuelLitres).toFixed(2) : '0.00'}/L`, color: 'bg-rose-50 text-rose-700' },
+    { icon: Users, label: 'Total Employees', value: summary.totalEmployees, sub: `${Math.round(summary.totalEmployees / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300' },
+    { icon: FileText, label: 'Transport Requests', value: summary.totalRequests, sub: `${Math.round(summary.totalRequests / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300' },
+    { icon: TrendingUp, label: 'Total Trips', value: summary.totalTrips, sub: `${Math.round(summary.totalTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300' },
+    { icon: Fuel, label: 'Fuel Volume', value: `${Math.round(summary.totalFuelLitres).toLocaleString()} L`, sub: `N$${Math.round(summary.totalFuelCost).toLocaleString()} total cost`, color: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' },
+    { icon: Activity, label: 'Fuel Cost', value: `N$${Math.round(summary.totalFuelCost).toLocaleString()}`, sub: `Avg N$${summary.totalFuelLitres > 0 ? (summary.totalFuelCost / summary.totalFuelLitres).toFixed(2) : '0.00'}/L`, color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
   ];
 
   return (
@@ -101,23 +101,25 @@ export default function PlatformDashboardPage() {
         description={`Cross-tenant analytics for ${summary.activeTenants} of ${summary.totalTenants} active tenants`}
       >
         <Button variant="secondary" size="sm" asChild>
+          <Link href="/dashboard/platform/packages">
+            <Package className="h-4 w-4" /> Subscription Packages
+          </Link>
+        </Button>
+        <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/platform/tenants">
             <Building2 className="h-4 w-4" /> Manage Tenants
           </Link>
         </Button>
       </PageHeader>
 
-      {/* Summary Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {statCards.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="pt-4">
               <div className="flex items-start justify-between">
-                <div>
-                  <p className={`flex h-10 w-10 items-center justify-center rounded-lg ${stat.color}`}>
-                    <stat.icon className="h-5 w-5" />
-                  </p>
-                </div>
+                <p className={`flex h-10 w-10 items-center justify-center rounded-lg ${stat.color}`}>
+                  <stat.icon className="h-5 w-5" />
+                </p>
                 {stat.highlight && (
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400">
                     <span className="h-2 w-2 animate-pulse rounded-full bg-white dark:bg-ink-300" />
@@ -132,23 +134,22 @@ export default function PlatformDashboardPage() {
         ))}
       </div>
 
-      {/* Per-Tenant Breakdown */}
       <div className="grid gap-6 sm:grid-cols-2">
         <Card>
           <CardContent className="pt-4">
-            <h3 className="text-sm font-[650] text-ink-950 mb-3 flex items-center gap-2">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-[650] text-ink-950">
               <CarFront className="h-4 w-4 text-brand-700" /> Vehicles per Tenant
             </h3>
             {tenantBreakdown.vehicles.length === 0 ? (
               <p className="text-xs text-ink-500">No vehicles registered</p>
             ) : (
               <div className="space-y-2">
-                {tenantBreakdown.vehicles.map((t) => (
-                  <div key={t.tenantId} className="flex items-center justify-between">
-                    <span className="text-sm text-ink-700 truncate flex-1">{t.tenantName}</span>
+                {tenantBreakdown.vehicles.map((tenant) => (
+                  <div key={tenant.tenantId} className="flex items-center justify-between">
+                    <span className="flex-1 truncate text-sm text-ink-700">{tenant.tenantName}</span>
                     <div className="flex items-center gap-2">
-                      <div className="h-2 rounded-full bg-brand-200" style={{ width: `${Math.min((t.vehicleCount / Math.max(...tenantBreakdown.vehicles.map((x) => x.vehicleCount), 1)) * 100, 100)}px` }} />
-                      <span className="text-sm font-medium tabular-nums text-ink-950 w-8 text-right">{t.vehicleCount}</span>
+                      <div className="h-2 rounded-full bg-brand-200" style={{ width: `${Math.min((tenant.vehicleCount / Math.max(...tenantBreakdown.vehicles.map((item) => item.vehicleCount), 1)) * 100, 100)}px` }} />
+                      <span className="w-8 text-right text-sm font-medium tabular-nums text-ink-950">{tenant.vehicleCount}</span>
                     </div>
                   </div>
                 ))}
@@ -159,24 +160,21 @@ export default function PlatformDashboardPage() {
 
         <Card>
           <CardContent className="pt-4">
-            <h3 className="text-sm font-[650] text-ink-950 mb-3 flex items-center gap-2">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-[650] text-ink-950">
               <Gauge className="h-4 w-4 text-amber-600 dark:text-amber-400" /> Active Trips per Tenant
             </h3>
             {tenantBreakdown.activeTrips.length === 0 ? (
               <p className="text-xs text-ink-500">No active trips</p>
             ) : (
               <div className="space-y-2">
-                {tenantBreakdown.activeTrips.map((t) => (
-                  <div key={t.tenantId} className="flex items-center justify-between">
-                    <Link
-                      href={`/dashboard/platform/tenants/${t.tenantId}`}
-                      className="text-sm text-ink-700 hover:text-brand-700 truncate flex-1 transition-colors"
-                    >
-                      {t.tenantName}
+                {tenantBreakdown.activeTrips.map((tenant) => (
+                  <div key={tenant.tenantId} className="flex items-center justify-between">
+                    <Link href={`/dashboard/platform/tenants/${tenant.tenantId}`} className="flex-1 truncate text-sm text-ink-700 transition-colors hover:text-brand-700">
+                      {tenant.tenantName}
                     </Link>
                     <div className="flex items-center gap-2">
-                      <div className="h-2 rounded-full bg-amber-200" style={{ width: `${Math.min((t.activeTripCount / Math.max(...tenantBreakdown.activeTrips.map((x) => x.activeTripCount), 1)) * 100, 100)}px` }} />
-                      <span className="text-sm font-medium tabular-nums text-ink-950 w-8 text-right">{t.activeTripCount}</span>
+                      <div className="h-2 rounded-full bg-amber-200" style={{ width: `${Math.min((tenant.activeTripCount / Math.max(...tenantBreakdown.activeTrips.map((item) => item.activeTripCount), 1)) * 100, 100)}px` }} />
+                      <span className="w-8 text-right text-sm font-medium tabular-nums text-ink-950">{tenant.activeTripCount}</span>
                     </div>
                   </div>
                 ))}
@@ -186,13 +184,15 @@ export default function PlatformDashboardPage() {
         </Card>
       </div>
 
-      {/* Quick Actions */}
       <Card>
         <CardContent className="pt-4">
-          <h3 className="text-sm font-[650] text-ink-950 mb-3">Quick Actions</h3>
+          <h3 className="mb-3 text-sm font-[650] text-ink-950">Quick Actions</h3>
           <div className="flex flex-wrap gap-3">
             <Button variant="secondary" size="sm" asChild>
               <Link href="/dashboard/platform/tenants"><Building2 className="h-4 w-4" /> All Tenants</Link>
+            </Button>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/dashboard/platform/packages"><Package className="h-4 w-4" /> Subscription Packages</Link>
             </Button>
             <Button variant="secondary" size="sm" asChild>
               <Link href="/dashboard/share-links"><Globe className="h-4 w-4" /> Share Links</Link>
