@@ -10,9 +10,10 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
     return (
       <input
         type={type}
+        aria-invalid={error || props['aria-invalid'] || undefined}
         className={cn(
-          'flex h-10 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-muted',
-          error && 'border-status-error-text focus:ring-status-error-text',
+          'flex h-10 w-full rounded-[var(--radius-input)] border border-border bg-surface px-3 py-2 text-sm text-ink-950 shadow-none outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-ink-500 hover:border-ink-300 focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25 disabled:cursor-not-allowed disabled:bg-muted disabled:text-ink-500 disabled:opacity-70 motion-reduce:transition-none',
+          error && 'border-status-error-text focus:border-status-error-text focus:ring-status-error-text/20',
           className,
         )}
         ref={ref}
@@ -34,9 +35,10 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, error, ...props }, ref) => {
     return (
       <textarea
+        aria-invalid={error || props['aria-invalid'] || undefined}
         className={cn(
-          'flex min-h-[80px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-muted',
-          error && 'border-status-error-text focus:ring-status-error-text',
+          'flex min-h-[88px] w-full resize-y rounded-[var(--radius-input)] border border-border bg-surface px-3 py-2 text-sm text-ink-950 shadow-none outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-ink-500 hover:border-ink-300 focus:border-brand-600 focus:ring-2 focus:ring-brand-600/25 disabled:cursor-not-allowed disabled:bg-muted disabled:text-ink-500 disabled:opacity-70 motion-reduce:transition-none',
+          error && 'border-status-error-text focus:border-status-error-text focus:ring-status-error-text/20',
           className,
         )}
         ref={ref}
@@ -58,14 +60,15 @@ const Label = React.forwardRef<HTMLLabelElement, LabelProps>(
     return (
       <label
         ref={ref}
-        className={cn(
-          'block text-sm font-medium text-ink-700',
-          className,
-        )}
+        className={cn('block text-sm font-medium text-ink-700', className)}
         {...props}
       >
         {children}
-        {required && <span className="ml-0.5 text-status-error-text">*</span>}
+        {required && (
+          <span className="ml-0.5 text-status-error-text" aria-hidden="true">
+            *
+          </span>
+        )}
       </label>
     );
   },
@@ -78,6 +81,7 @@ interface FieldWrapperProps {
   label?: string;
   required?: boolean;
   error?: string;
+  description?: string;
   children: React.ReactNode;
   className?: string;
 }
@@ -86,17 +90,19 @@ export function FieldWrapper({
   label,
   required,
   error,
+  description,
   children,
   className,
 }: FieldWrapperProps) {
   return (
     <div className={cn('space-y-1.5', className)}>
-      {label && (
-        <Label required={required}>{label}</Label>
-      )}
+      {label && <Label required={required}>{label}</Label>}
+      {description && <p className="text-xs leading-relaxed text-ink-500">{description}</p>}
       {children}
       {error && (
-        <p className="text-xs text-status-error-text">{error}</p>
+        <p className="text-xs font-medium text-status-error-text" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );
@@ -120,7 +126,11 @@ export function FormError({ message, errors }: FormErrorProps) {
   if (allErrors.length === 0) return null;
 
   return (
-    <div className="rounded-[8px] border border-status-error-bg bg-status-error-bg p-3">
+    <div
+      className="rounded-[var(--radius-input)] border border-status-error-text/20 bg-status-error-bg p-3"
+      role="alert"
+      aria-live="polite"
+    >
       <ul className="list-inside list-disc space-y-1">
         {allErrors.map((err, i) => (
           <li key={i} className="text-xs text-status-error-text">

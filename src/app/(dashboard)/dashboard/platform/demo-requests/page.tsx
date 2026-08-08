@@ -1,31 +1,33 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  MonitorPlay,
-  Search,
-  RefreshCw,
-  Loader2,
-  Building2,
-  Phone,
-  Mail,
-  Calendar,
-  CheckCircle,
-  Clock,
-  Users,
-  Car,
   ArrowRight,
+  Building2,
+  Calendar,
+  Car,
+  CheckCircle,
+  Mail,
+  MonitorPlay,
+  Phone,
+  RefreshCw,
+  Search,
+  Users,
 } from 'lucide-react';
+import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useToast } from '@/lib/use-toast';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface DemoRequest {
   id: string;
@@ -46,7 +48,9 @@ interface DemoRequest {
   contactMethod: string;
 }
 
-const STATUS_CONFIG: Record<string, { label: string; variant: string }> = {
+type BadgeVariant = NonNullable<BadgeProps['variant']>;
+
+const STATUS_CONFIG: Record<string, { label: string; variant: BadgeVariant }> = {
   new: { label: 'New', variant: 'info' },
   qualified: { label: 'Qualified', variant: 'warning' },
   scheduled: { label: 'Scheduled', variant: 'success' },
@@ -56,7 +60,7 @@ const STATUS_CONFIG: Record<string, { label: string; variant: string }> = {
 };
 
 const STATUS_OPTIONS = [
-  { value: '', label: 'All Statuses' },
+  { value: 'all', label: 'All Statuses' },
   { value: 'new', label: 'New' },
   { value: 'qualified', label: 'Qualified' },
   { value: 'scheduled', label: 'Scheduled' },
@@ -65,75 +69,86 @@ const STATUS_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+const STAT_ITEMS = [
+  ['total', 'Total'],
+  ['new', 'New'],
+  ['qualified', 'Qualified'],
+  ['scheduled', 'Scheduled'],
+  ['completed', 'Completed'],
+  ['converted', 'Converted'],
+] as const;
 
 export default function PlatformDemoRequestsPage() {
   const { toast } = useToast();
-
   const [requests, setRequests] = useState<DemoRequest[]>([]);
   const [stats, setStats] = useState<Record<string, number> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<DemoRequest | null>(null);
 
-  // -----------------------------------------------------------------------
-  // Data fetching
-  // -----------------------------------------------------------------------
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
-      if (searchQuery) params.set('q', searchQuery);
-      if (statusFilter) params.set('status', statusFilter);
+      if (debouncedSearch) params.set('q', debouncedSearch);
+      if (statusFilter !== 'all') params.set('status', statusFilter);
 
       const res = await fetch(`/api/platform/demo-requests?${params}`);
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to fetch');
-      setRequests(json.data.requests);
-      setStats(json.data.stats);
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch demo requests');
+      setRequests(json.data.requests ?? []);
+      setStats(json.data.stats ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load');
+      setError(err instanceof Error ? err.message : 'Failed to load demo requests');
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, statusFilter]);
+  }, [debouncedSearch, statusFilter]);
 
   useEffect(() => {
     fetchRequests();
   }, [fetchRequests]);
 
-  // -----------------------------------------------------------------------
-  // Handlers
-  // -----------------------------------------------------------------------
-
-  const updateStatus = useCallback(async (id: string, status: string) => {
-    try {
-      const res = await fetch('/api/platform/demo-requests', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to update');
-      toast({ title: 'Request Updated', description: `Marked as ${status}`, variant: 'success' });
-      fetchRequests();
-    } catch (err) {
-      toast({
-        title: 'Update Failed',
-        description: err instanceof Error ? err.message : 'Could not update request',
-        variant: 'error',
-      });
-    }
-  }, [toast, fetchRequests]);
-
-  // -----------------------------------------------------------------------
-  // Render helpers
-  // -----------------------------------------------------------------------
+  const updateStatus = useCallback(
+    async (id: string, status: string) => {
+      setUpdatingId(id);
+      try {
+        const res = await fetch('/api/platform/demo-requests', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, status }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to update request');
+        toast({
+          title: 'Request updated',
+          description: `Demo request marked as ${status}.`,
+          variant: 'success',
+        });
+        await fetchRequests();
+      } catch (err) {
+        toast({
+          title: 'Update failed',
+          description: err instanceof Error ? err.message : 'Could not update request',
+          variant: 'error',
+        });
+        throw err;
+      } finally {
+        setUpdatingId(null);
+      }
+    },
+    [toast, fetchRequests],
+  );
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '—';
@@ -144,184 +159,178 @@ export default function PlatformDemoRequestsPage() {
     });
   };
 
-  const formatCount = (count: number | null) => {
-    if (count === null || count === 0) return '—';
-    return count;
-  };
-
-  // -----------------------------------------------------------------------
-  // Render
-  // -----------------------------------------------------------------------
-
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Platform', href: '/dashboard/platform' },
-        { label: 'Demo Requests' },
-      ]} />
+      <Breadcrumbs
+        items={[
+          { label: 'Platform', href: '/dashboard/platform' },
+          { label: 'Demo Requests' },
+        ]}
+      />
 
       <PageHeader
         title="Demo Requests"
-        description="Qualify and manage platform demo requests"
+        description="Qualify and manage organisations evaluating the platform."
       />
 
-      {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <StatCard label="Total" value={stats.total ?? 0} color="text-ink-600" />
-          <StatCard label="New" value={stats.new ?? 0} color="text-status-info-text" />
-          <StatCard label="Qualified" value={stats.qualified ?? 0} color="text-status-warning-text" />
-          <StatCard label="Scheduled" value={stats.scheduled ?? 0} color="text-status-success-text" />
-          <StatCard label="Completed" value={stats.completed ?? 0} color="text-ink-500" />
-          <StatCard label="Converted" value={stats.converted ?? 0} color="text-status-success-text" />
-        </div>
+        <section aria-label="Demo request summary" className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+            {STAT_ITEMS.map(([key, label], index) => (
+              <div
+                key={key}
+                className={`px-4 py-4 ${index % 2 ? 'border-l border-border' : ''} ${index >= 2 ? 'border-t border-border sm:border-t-0' : ''} ${index >= 3 ? 'sm:border-t sm:border-border lg:border-t-0' : ''} ${index > 0 ? 'lg:border-l lg:border-border' : ''}`}
+              >
+                <p className="text-xs font-medium text-ink-500">{label}</p>
+                <p className="mt-1 text-2xl font-[650] tabular-nums text-ink-950">{stats[key] ?? 0}</p>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="py-4">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-              <input
-                type="text"
-                placeholder="Search by name, email, or company..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 h-10 text-sm border border-border rounded-[8px] bg-surface focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
-              />
-            </div>
-            <StyledSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-44">
-              {STATUS_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </StyledSelect>
-            <Button variant="secondary" size="compact" onClick={fetchRequests}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <section aria-label="Demo request filters" className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative w-full sm:max-w-md sm:flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" aria-hidden="true" />
+          <Input
+            type="search"
+            aria-label="Search demo requests"
+            placeholder="Search name, email, or organisation..."
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-full sm:w-48" aria-label="Filter demo requests by status">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="secondary" size="icon" onClick={fetchRequests} loading={loading} aria-label="Refresh demo requests">
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </section>
 
-      {/* Requests List */}
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
-          <span className="ml-2 text-sm text-ink-500">Loading demo requests...</span>
+        <div className="flex min-h-48 items-center justify-center" role="status">
+          <span className="text-sm text-ink-500">Loading demo requests…</span>
         </div>
       ) : error ? (
-        <div className="text-center py-16">
-          <p className="text-sm text-status-error-text">{error}</p>
-          <Button variant="secondary" size="compact" onClick={fetchRequests} className="mt-3">Retry</Button>
-        </div>
+        <EmptyState
+          icon={<MonitorPlay className="h-6 w-6" />}
+          title="Could not load demo requests"
+          description={error}
+          action={{ label: 'Retry', onClick: fetchRequests }}
+        />
       ) : requests.length === 0 ? (
-        <Card>
-          <CardContent className="py-16 text-center">
-            <MonitorPlay className="h-12 w-12 text-ink-300 mx-auto mb-3" />
-            <p className="text-sm text-ink-500">No demo requests found</p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<MonitorPlay className="h-6 w-6" />}
+          title="No demo requests found"
+          description={debouncedSearch || statusFilter !== 'all' ? 'Adjust the current filters to see other requests.' : 'New demo requests will appear here when prospects submit the public form.'}
+        />
       ) : (
-        <div className="space-y-3">
-          {requests.map((req) => {
-            const config = STATUS_CONFIG[req.status] || { label: req.status, variant: 'default' };
+        <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
+          {requests.map((request) => {
+            const config = STATUS_CONFIG[request.status] ?? { label: request.status, variant: 'default' as BadgeVariant };
+            const isUpdating = updatingId === request.id;
             return (
-              <Card key={req.id}>
-                <CardContent className="py-4">
-                  <div className="flex flex-col lg:flex-row lg:items-center gap-4">
-                    {/* Main info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Building2 className="h-4 w-4 text-ink-400" />
-                        <h3 className="font-semibold text-ink-900 truncate">{req.company}</h3>
-                        <Badge variant={config.variant as any} size="sm">{config.label}</Badge>
-                      </div>
-                      <p className="text-sm text-ink-600">
-                        {req.name} · {req.jobTitle}
-                      </p>
-                      <div className="flex flex-wrap gap-4 mt-2 text-xs text-ink-500">
-                        <span className="flex items-center gap-1">
-                          <Mail className="h-3.5 w-3.5" /> {req.email}
-                        </span>
-                        {req.phone && (
-                          <span className="flex items-center gap-1">
-                            <Phone className="h-3.5 w-3.5" /> {req.phone}
-                          </span>
-                        )}
-                        {req.userCount && (
-                          <span className="flex items-center gap-1">
-                            <Users className="h-3.5 w-3.5" /> {req.userCount} users
-                          </span>
-                        )}
-                        {req.vehicleCount && (
-                          <span className="flex items-center gap-1">
-                            <Car className="h-3.5 w-3.5" /> {req.vehicleCount} vehicles
-                          </span>
-                        )}
-                      </div>
-                      {(req.preferredDate || req.notes) && (
-                        <div className="mt-2 text-xs text-ink-400 space-y-1">
-                          {req.preferredDate && (
-                            <p className="flex items-center gap-1">
-                              <Calendar className="h-3.5 w-3.5" />
-                              Preferred: {formatDate(req.preferredDate)}
-                              {req.preferredTime ? ` (${req.preferredTime})` : ''}
-                            </p>
-                          )}
-                          {req.notes && <p className="line-clamp-2">{req.notes}</p>}
-                        </div>
-                      )}
+              <article key={request.id} className="border-b border-border p-4 last:border-b-0 sm:p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Building2 className="h-4 w-4 shrink-0 text-ink-400" aria-hidden="true" />
+                      <h2 className="min-w-0 truncate text-sm font-semibold text-ink-950">{request.company}</h2>
+                      <Badge variant={config.variant} size="sm">{config.label}</Badge>
                     </div>
+                    <p className="mt-1 text-sm text-ink-600">{request.name} · {request.jobTitle}</p>
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-ink-500">
+                      <a href={`mailto:${request.email}`} className="flex min-w-0 items-center gap-1.5 hover:text-brand-700">
+                        <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <span className="truncate">{request.email}</span>
+                      </a>
+                      {request.phone && (
+                        <a href={`tel:${request.phone}`} className="flex items-center gap-1.5 hover:text-brand-700">
+                          <Phone className="h-3.5 w-3.5" aria-hidden="true" /> {request.phone}
+                        </a>
+                      )}
+                      {request.userCount ? (
+                        <span className="flex items-center gap-1.5"><Users className="h-3.5 w-3.5" aria-hidden="true" /> {request.userCount} users</span>
+                      ) : null}
+                      {request.vehicleCount ? (
+                        <span className="flex items-center gap-1.5"><Car className="h-3.5 w-3.5" aria-hidden="true" /> {request.vehicleCount} vehicles</span>
+                      ) : null}
+                    </div>
+                    {(request.preferredDate || request.notes) && (
+                      <div className="mt-3 space-y-1 text-xs text-ink-500">
+                        {request.preferredDate && (
+                          <p className="flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
+                            Preferred: {formatDate(request.preferredDate)}{request.preferredTime ? ` (${request.preferredTime})` : ''}
+                          </p>
+                        )}
+                        {request.notes && <p className="max-w-3xl leading-relaxed">{request.notes}</p>}
+                      </div>
+                    )}
+                  </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-2 lg:flex-col lg:items-end">
-                      {req.status === 'new' && (
-                        <Button variant="secondary" size="compact" onClick={() => updateStatus(req.id, 'qualified')}>
-                          <CheckCircle className="h-4 w-4 mr-1" /> Qualify
+                  <div className="flex shrink-0 flex-col gap-2 lg:items-end">
+                    <div className="mobile-action-bar flex flex-wrap gap-2 lg:justify-end">
+                      {request.status === 'new' && (
+                        <Button variant="secondary" size="sm" onClick={() => updateStatus(request.id, 'qualified')} loading={isUpdating}>
+                          <CheckCircle className="h-4 w-4" aria-hidden="true" /> Qualify
                         </Button>
                       )}
-                      {req.status === 'qualified' && (
-                        <Button variant="primary" size="compact" onClick={() => updateStatus(req.id, 'scheduled')}>
-                          <Calendar className="h-4 w-4 mr-1" /> Schedule
+                      {request.status === 'qualified' && (
+                        <Button size="sm" onClick={() => updateStatus(request.id, 'scheduled')} loading={isUpdating}>
+                          <Calendar className="h-4 w-4" aria-hidden="true" /> Schedule
                         </Button>
                       )}
-                      {req.status === 'scheduled' && (
-                        <Button variant="primary" size="compact" onClick={() => updateStatus(req.id, 'completed')}>
-                          <CheckCircle className="h-4 w-4 mr-1" /> Mark Completed
+                      {request.status === 'scheduled' && (
+                        <Button size="sm" onClick={() => updateStatus(request.id, 'completed')} loading={isUpdating}>
+                          <CheckCircle className="h-4 w-4" aria-hidden="true" /> Complete
                         </Button>
                       )}
-                      {req.status === 'completed' && (
-                        <Button variant="primary" size="compact" onClick={() => updateStatus(req.id, 'converted')}>
-                          <ArrowRight className="h-4 w-4 mr-1" /> Mark Converted
+                      {request.status === 'completed' && (
+                        <Button size="sm" onClick={() => updateStatus(request.id, 'converted')} loading={isUpdating}>
+                          <ArrowRight className="h-4 w-4" aria-hidden="true" /> Convert
                         </Button>
                       )}
-                      {!['completed', 'converted', 'cancelled'].includes(req.status) && (
-                        <Button variant="ghost" size="compact" onClick={() => updateStatus(req.id, 'cancelled')}>
+                      {!['completed', 'converted', 'cancelled'].includes(request.status) && (
+                        <Button variant="ghost" size="sm" onClick={() => setCancelTarget(request)} disabled={isUpdating}>
                           Cancel
                         </Button>
                       )}
-                      <span className="text-xs text-ink-400">{formatDate(req.createdAt)}</span>
                     </div>
+                    <span className="text-xs text-ink-400">Received {formatDate(request.createdAt)}</span>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </article>
             );
           })}
         </div>
       )}
-    </div>
-  );
-}
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="rounded-[8px] border border-border bg-surface p-4">
-      <p className="text-xs font-medium text-ink-500">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${color}`}>{value}</p>
+      <ConfirmDialog
+        open={Boolean(cancelTarget)}
+        onOpenChange={(open) => {
+          if (!open) setCancelTarget(null);
+        }}
+        title="Cancel demo request?"
+        description={cancelTarget ? `Mark the demo request from ${cancelTarget.company} as cancelled?` : 'Mark this demo request as cancelled?'}
+        confirmLabel="Cancel Request"
+        variant="destructive"
+        onConfirm={async () => {
+          if (!cancelTarget) return;
+          const target = cancelTarget;
+          await updateStatus(target.id, 'cancelled');
+          setCancelTarget(null);
+        }}
+      />
     </div>
   );
 }

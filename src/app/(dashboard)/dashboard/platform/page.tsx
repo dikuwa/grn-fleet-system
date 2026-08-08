@@ -1,10 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { EmptyState } from '@/components/ui/empty-state';
+import Link from 'next/link';
 import {
   Activity,
   Building2,
@@ -19,8 +16,13 @@ import {
   RefreshCcw,
   TrendingUp,
   Users,
+  type LucideIcon,
 } from 'lucide-react';
-import Link from 'next/link';
+import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
+import { cn } from '@/lib/utils';
 
 interface AnalyticsData {
   summary: {
@@ -40,8 +42,24 @@ interface AnalyticsData {
   };
 }
 
+interface StatItem {
+  icon: LucideIcon;
+  label: string;
+  value: number | string;
+  sub: string;
+  tone?: 'brand' | 'success' | 'warning' | 'info' | 'error';
+}
+
+const toneClasses: Record<NonNullable<StatItem['tone']>, string> = {
+  brand: 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-600',
+  success: 'bg-status-success-bg text-status-success-text',
+  warning: 'bg-status-warning-bg text-status-warning-text',
+  info: 'bg-status-info-bg text-status-info-text',
+  error: 'bg-status-error-bg text-status-error-text',
+};
+
 export default function PlatformDashboardPage() {
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['platform-analytics'],
     queryFn: async () => {
       const res = await fetch('/api/platform/analytics');
@@ -56,8 +74,8 @@ export default function PlatformDashboardPage() {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Platform' }]} />
         <PageHeader title="Platform Dashboard" description="Cross-tenant analytics and management" />
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
+        <div className="flex min-h-48 items-center justify-center" role="status" aria-label="Loading platform analytics">
+          <Loader2 className="h-6 w-6 animate-spin text-ink-400 motion-reduce:animate-none" aria-hidden="true" />
         </div>
       </div>
     );
@@ -78,81 +96,144 @@ export default function PlatformDashboardPage() {
   }
 
   const { summary, tenantBreakdown } = data;
+  const averagePerTenant = (value: number) => Math.round(value / Math.max(summary.totalTenants, 1));
 
-  const statCards = [
-    { icon: Globe, label: 'Total Tenants', value: summary.totalTenants, sub: `${summary.activeTenants} active`, color: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' },
-    { icon: CarFront, label: 'Total Vehicles', value: summary.totalVehicles, sub: 'across all tenants', color: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300' },
-    { icon: Gauge, label: 'Active Trips', value: summary.activeTrips, sub: `${Math.round(summary.activeTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300', highlight: summary.activeTrips > 0 },
-    { icon: Users, label: 'Total Employees', value: summary.totalEmployees, sub: `${Math.round(summary.totalEmployees / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300' },
-    { icon: FileText, label: 'Transport Requests', value: summary.totalRequests, sub: `${Math.round(summary.totalRequests / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300' },
-    { icon: TrendingUp, label: 'Total Trips', value: summary.totalTrips, sub: `${Math.round(summary.totalTrips / Math.max(summary.totalTenants, 1))} avg/tenant`, color: 'bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300' },
-    { icon: Fuel, label: 'Fuel Volume', value: `${Math.round(summary.totalFuelLitres).toLocaleString()} L`, sub: `N$${Math.round(summary.totalFuelCost).toLocaleString()} total cost`, color: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' },
-    { icon: Activity, label: 'Fuel Cost', value: `N$${Math.round(summary.totalFuelCost).toLocaleString()}`, sub: `Avg N$${summary.totalFuelLitres > 0 ? (summary.totalFuelCost / summary.totalFuelLitres).toFixed(2) : '0.00'}/L`, color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
+  const stats: StatItem[] = [
+    {
+      icon: Globe,
+      label: 'Tenants',
+      value: summary.totalTenants,
+      sub: `${summary.activeTenants} active`,
+      tone: 'brand',
+    },
+    {
+      icon: CarFront,
+      label: 'Vehicles',
+      value: summary.totalVehicles,
+      sub: 'Across all tenants',
+      tone: 'info',
+    },
+    {
+      icon: Gauge,
+      label: 'Active Trips',
+      value: summary.activeTrips,
+      sub: `${averagePerTenant(summary.activeTrips)} avg/tenant`,
+      tone: summary.activeTrips > 0 ? 'warning' : 'brand',
+    },
+    {
+      icon: Users,
+      label: 'Employees',
+      value: summary.totalEmployees,
+      sub: `${averagePerTenant(summary.totalEmployees)} avg/tenant`,
+      tone: 'brand',
+    },
+    {
+      icon: FileText,
+      label: 'Transport Requests',
+      value: summary.totalRequests,
+      sub: `${averagePerTenant(summary.totalRequests)} avg/tenant`,
+      tone: 'info',
+    },
+    {
+      icon: TrendingUp,
+      label: 'Trips',
+      value: summary.totalTrips,
+      sub: `${averagePerTenant(summary.totalTrips)} avg/tenant`,
+      tone: 'success',
+    },
+    {
+      icon: Fuel,
+      label: 'Fuel Volume',
+      value: `${Math.round(summary.totalFuelLitres).toLocaleString()} L`,
+      sub: `N$${Math.round(summary.totalFuelCost).toLocaleString()} total cost`,
+      tone: 'warning',
+    },
+    {
+      icon: Activity,
+      label: 'Fuel Cost',
+      value: `N$${Math.round(summary.totalFuelCost).toLocaleString()}`,
+      sub: `Avg N$${summary.totalFuelLitres > 0 ? (summary.totalFuelCost / summary.totalFuelLitres).toFixed(2) : '0.00'}/L`,
+      tone: 'brand',
+    },
   ];
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Platform' },
-      ]} />
+      <Breadcrumbs
+        items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Platform' },
+        ]}
+      />
       <PageHeader
         title="Platform Dashboard"
         description={`Cross-tenant analytics for ${summary.activeTenants} of ${summary.totalTenants} active tenants`}
       >
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/platform/packages">
-            <Package className="h-4 w-4" /> Subscription Packages
+            <Package className="h-4 w-4" aria-hidden="true" /> Subscription Packages
           </Link>
         </Button>
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/platform/tenants">
-            <Building2 className="h-4 w-4" /> Manage Tenants
+            <Building2 className="h-4 w-4" aria-hidden="true" /> Manage Tenants
           </Link>
         </Button>
       </PageHeader>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {statCards.map((stat) => (
-          <Card key={stat.label}>
-            <CardContent className="pt-4">
-              <div className="flex items-start justify-between">
-                <p className={`flex h-10 w-10 items-center justify-center rounded-lg ${stat.color}`}>
-                  <stat.icon className="h-5 w-5" />
-                </p>
-                {stat.highlight && (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400">
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-white dark:bg-ink-300" />
-                  </span>
+      <section aria-label="Platform summary" className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8">
+          {stats.map((stat, index) => {
+            const Icon = stat.icon;
+            return (
+              <div
+                key={stat.label}
+                className={cn(
+                  'min-w-0 px-4 py-4 sm:px-4 sm:py-5',
+                  index % 2 !== 0 && 'border-l border-border',
+                  index >= 2 && 'border-t border-border sm:border-t-0',
+                  index >= 4 && 'sm:border-t sm:border-border xl:border-t-0',
+                  index > 0 && 'xl:border-l xl:border-border',
                 )}
+              >
+                <div className={cn('flex h-8 w-8 items-center justify-center rounded-[8px]', toneClasses[stat.tone ?? 'brand'])}>
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                </div>
+                <p className="mt-3 truncate text-xl font-[650] tabular-nums text-ink-950 sm:text-2xl" title={String(stat.value)}>
+                  {stat.value}
+                </p>
+                <p className="mt-0.5 truncate text-xs font-medium text-ink-700">{stat.label}</p>
+                <p className="mt-0.5 truncate text-[11px] text-ink-400" title={stat.sub}>{stat.sub}</p>
               </div>
-              <p className="mt-3 text-2xl font-[650] tabular-nums text-ink-950">{stat.value}</p>
-              <p className="text-xs text-ink-500">{stat.label}</p>
-              <p className="text-[11px] text-ink-400">{stat.sub}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+            );
+          })}
+        </div>
+      </section>
 
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2">
         <Card>
           <CardContent className="pt-4">
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-[650] text-ink-950">
-              <CarFront className="h-4 w-4 text-brand-700" /> Vehicles per Tenant
-            </h3>
+            <h2 className="mb-4 flex items-center gap-2 text-sm font-[650] text-ink-950">
+              <CarFront className="h-4 w-4 text-brand-700" aria-hidden="true" /> Vehicles per Tenant
+            </h2>
             {tenantBreakdown.vehicles.length === 0 ? (
               <p className="text-xs text-ink-500">No vehicles registered</p>
             ) : (
-              <div className="space-y-2">
-                {tenantBreakdown.vehicles.map((tenant) => (
-                  <div key={tenant.tenantId} className="flex items-center justify-between">
-                    <span className="flex-1 truncate text-sm text-ink-700">{tenant.tenantName}</span>
-                    <div className="flex items-center gap-2">
-                      <div className="h-2 rounded-full bg-brand-200" style={{ width: `${Math.min((tenant.vehicleCount / Math.max(...tenantBreakdown.vehicles.map((item) => item.vehicleCount), 1)) * 100, 100)}px` }} />
-                      <span className="w-8 text-right text-sm font-medium tabular-nums text-ink-950">{tenant.vehicleCount}</span>
+              <div className="space-y-3">
+                {tenantBreakdown.vehicles.map((tenant) => {
+                  const max = Math.max(...tenantBreakdown.vehicles.map((item) => item.vehicleCount), 1);
+                  return (
+                    <div key={tenant.tenantId} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(84px,34%)] items-center gap-3">
+                      <span className="truncate text-sm text-ink-700">{tenant.tenantName}</span>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-brand-600" style={{ width: `${Math.min((tenant.vehicleCount / max) * 100, 100)}%` }} />
+                        </div>
+                        <span className="w-8 text-right text-sm font-medium tabular-nums text-ink-950">{tenant.vehicleCount}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -160,49 +241,57 @@ export default function PlatformDashboardPage() {
 
         <Card>
           <CardContent className="pt-4">
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-[650] text-ink-950">
-              <Gauge className="h-4 w-4 text-amber-600 dark:text-amber-400" /> Active Trips per Tenant
-            </h3>
+            <h2 className="mb-4 flex items-center gap-2 text-sm font-[650] text-ink-950">
+              <Gauge className="h-4 w-4 text-status-warning-text" aria-hidden="true" /> Active Trips per Tenant
+            </h2>
             {tenantBreakdown.activeTrips.length === 0 ? (
               <p className="text-xs text-ink-500">No active trips</p>
             ) : (
-              <div className="space-y-2">
-                {tenantBreakdown.activeTrips.map((tenant) => (
-                  <div key={tenant.tenantId} className="flex items-center justify-between">
-                    <Link href={`/dashboard/platform/tenants/${tenant.tenantId}`} className="flex-1 truncate text-sm text-ink-700 transition-colors hover:text-brand-700">
-                      {tenant.tenantName}
-                    </Link>
-                    <div className="flex items-center gap-2">
-                      <div className="h-2 rounded-full bg-amber-200" style={{ width: `${Math.min((tenant.activeTripCount / Math.max(...tenantBreakdown.activeTrips.map((item) => item.activeTripCount), 1)) * 100, 100)}px` }} />
-                      <span className="w-8 text-right text-sm font-medium tabular-nums text-ink-950">{tenant.activeTripCount}</span>
+              <div className="space-y-3">
+                {tenantBreakdown.activeTrips.map((tenant) => {
+                  const max = Math.max(...tenantBreakdown.activeTrips.map((item) => item.activeTripCount), 1);
+                  return (
+                    <div key={tenant.tenantId} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(84px,34%)] items-center gap-3">
+                      <Link href={`/dashboard/platform/tenants/${tenant.tenantId}`} className="truncate text-sm text-ink-700 transition-colors hover:text-brand-700 motion-reduce:transition-none">
+                        {tenant.tenantName}
+                      </Link>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-status-warning-text" style={{ width: `${Math.min((tenant.activeTripCount / max) * 100, 100)}%` }} />
+                        </div>
+                        <span className="w-8 text-right text-sm font-medium tabular-nums text-ink-950">{tenant.activeTripCount}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      <Card>
-        <CardContent className="pt-4">
-          <h3 className="mb-3 text-sm font-[650] text-ink-950">Quick Actions</h3>
-          <div className="flex flex-wrap gap-3">
+      <section className="border-t border-border pt-5" aria-labelledby="platform-quick-actions">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 id="platform-quick-actions" className="text-sm font-[650] text-ink-950">Quick Actions</h2>
+            <p className="mt-0.5 text-xs text-ink-500">Open the platform areas used most often.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
             <Button variant="secondary" size="sm" asChild>
-              <Link href="/dashboard/platform/tenants"><Building2 className="h-4 w-4" /> All Tenants</Link>
+              <Link href="/dashboard/platform/tenants"><Building2 className="h-4 w-4" aria-hidden="true" /> All Tenants</Link>
             </Button>
             <Button variant="secondary" size="sm" asChild>
-              <Link href="/dashboard/platform/packages"><Package className="h-4 w-4" /> Subscription Packages</Link>
+              <Link href="/dashboard/platform/packages"><Package className="h-4 w-4" aria-hidden="true" /> Packages</Link>
             </Button>
             <Button variant="secondary" size="sm" asChild>
-              <Link href="/dashboard/share-links"><Globe className="h-4 w-4" /> Share Links</Link>
+              <Link href="/dashboard/share-links"><Globe className="h-4 w-4" aria-hidden="true" /> Share Links</Link>
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => refetch()}>
-              <RefreshCcw className="h-4 w-4" /> Refresh Analytics
+            <Button variant="secondary" size="sm" onClick={() => refetch()} loading={isFetching}>
+              <RefreshCcw className="h-4 w-4" aria-hidden="true" /> Refresh
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }

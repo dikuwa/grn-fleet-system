@@ -8,8 +8,9 @@ function Card({ className, hover, children, ...props }: CardProps) {
   return (
     <div
       className={cn(
-        'border-border bg-surface rounded-[10px] border',
-        hover && 'hover:border-brand-100 transition-all hover:shadow-sm',
+        'rounded-[var(--radius-card)] border border-border bg-surface',
+        hover &&
+          'transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-brand-200 hover:shadow-sm motion-reduce:transform-none motion-reduce:transition-none dark:hover:border-brand-900',
         className,
       )}
       {...props}
@@ -32,11 +33,11 @@ function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement
 }
 
 function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h3 className={cn('text-ink-950 text-sm font-semibold', className)} {...props} />;
+  return <h3 className={cn('text-sm font-semibold text-ink-950', className)} {...props} />;
 }
 
 function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn('text-ink-500 text-sm', className)} {...props} />;
+  return <p className={cn('text-sm leading-relaxed text-ink-500', className)} {...props} />;
 }
 
 function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
@@ -47,7 +48,7 @@ function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement
   return (
     <div
       className={cn(
-        'border-border flex min-w-0 flex-wrap items-center gap-3 border-t px-4 py-3 sm:justify-between sm:px-5',
+        'flex min-w-0 flex-wrap items-center gap-3 border-t border-border px-4 py-3 sm:justify-between sm:px-5',
         className,
       )}
       {...props}
@@ -57,9 +58,6 @@ function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter };
 
-/**
- * StatCard for KPI dashboard cards
- */
 interface StatCardProps {
   title: string;
   value: string | number;
@@ -73,11 +71,13 @@ export function StatCard({ title, value, description, icon, trend, className }: 
   return (
     <Card className={className}>
       <CardContent>
-        <div className="flex items-start justify-between pt-4">
-          <div className="space-y-1">
-            <p className="text-ink-500 text-xs font-medium tracking-wider uppercase">{title}</p>
-            <p className="text-ink-950 text-2xl font-[650] tabular-nums">{value}</p>
-            {description && <p className="text-ink-500 text-xs">{description}</p>}
+        <div className="flex items-start justify-between gap-3 pt-4">
+          <div className="min-w-0 space-y-1">
+            <p className="truncate text-xs font-medium text-ink-500">{title}</p>
+            <p className="truncate text-2xl font-[650] tabular-nums text-ink-950" title={String(value)}>
+              {value}
+            </p>
+            {description && <p className="text-xs leading-relaxed text-ink-500">{description}</p>}
             {trend && (
               <p
                 className={cn(
@@ -90,7 +90,7 @@ export function StatCard({ title, value, description, icon, trend, className }: 
             )}
           </div>
           {icon && (
-            <div className="bg-brand-50 text-brand-700 flex h-10 w-10 items-center justify-center rounded-lg">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-600">
               {icon}
             </div>
           )}
