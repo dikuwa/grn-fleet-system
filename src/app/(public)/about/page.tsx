@@ -127,7 +127,7 @@ export default async function AboutPage() {
               return (
                 <div
                   key={v.title}
-                  className="w-full rounded-[10px] border border-border bg-surface p-6 sm:w-[calc(50%-0.625rem)] lg:w-[calc(33.333%-0.9rem)]"
+                  className="w-full rounded-[10px] border border-border bg-surface p-6 sm:basis-[48%] lg:basis-[31%]"
                 >
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
                     <Icon className="h-5 w-5" aria-hidden="true" />
