@@ -6,6 +6,8 @@
  */
 
 import type { Metadata } from 'next';
+import Link from 'next/link';
+import { ArrowRight, CalendarCheck2, LayoutDashboard, Workflow } from 'lucide-react';
 import { getPublishedFaqs } from '@/lib/platform/cms-public';
 import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
 import { JsonLd } from '@/components/public/json-ld';
@@ -120,6 +122,27 @@ const CATEGORY_LABELS: Record<string, string> = {
   'deployment-support': 'Deployment & Support',
 };
 
+const NEXT_STEPS = [
+  {
+    href: '/#platform',
+    title: 'Explore the platform',
+    description: 'Review the core fleet capabilities and product previews.',
+    icon: LayoutDashboard,
+  },
+  {
+    href: '/#how-it-works',
+    title: 'See how the workflow works',
+    description: 'Follow the operational journey from request through closure.',
+    icon: Workflow,
+  },
+  {
+    href: '/request-demo',
+    title: 'Request a demonstration',
+    description: 'Arrange a walkthrough around your organisation’s fleet needs.',
+    icon: CalendarCheck2,
+  },
+];
+
 export default async function FaqPage() {
   const published = await getPublishedFaqs().catch(() => []);
 
@@ -174,9 +197,49 @@ export default async function FaqPage() {
         title="Frequently Asked Questions"
         description="Practical answers for organisations evaluating GovFleet Namibia."
       />
-      <section className="bg-canvas py-14 md:py-20">
+
+      <section className="border-b border-border bg-canvas py-14 md:py-20">
         <SectionContainer>
           <FaqTabs groups={groups} />
+        </SectionContainer>
+      </section>
+
+      <section className="bg-surface py-14 md:py-18">
+        <SectionContainer>
+          <div className="mx-auto max-w-6xl">
+            <div className="max-w-2xl">
+              <h2 className="text-2xl font-[650] tracking-tight text-ink-950">Choose your next step</h2>
+              <p className="mt-3 text-sm leading-relaxed text-ink-500">
+                Continue exploring the product, review the workflow, or arrange a demonstration with the platform team.
+              </p>
+            </div>
+
+            <div className="mt-8 grid border-y border-border md:grid-cols-3">
+              {NEXT_STEPS.map((item, index) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`group flex min-h-40 flex-col justify-between py-6 transition-colors hover:bg-muted/50 motion-reduce:transition-none md:px-6 ${
+                      index > 0 ? 'border-t border-border md:border-l md:border-t-0' : ''
+                    }`}
+                  >
+                    <span className="flex h-9 w-9 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                      <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+                    </span>
+                    <span className="mt-6">
+                      <span className="flex items-center gap-2 text-sm font-semibold text-ink-950">
+                        {item.title}
+                        <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" aria-hidden="true" />
+                      </span>
+                      <span className="mt-2 block text-sm leading-relaxed text-ink-500">{item.description}</span>
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
         </SectionContainer>
       </section>
     </>
