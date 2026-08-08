@@ -1,39 +1,44 @@
 'use client';
 
-import { useState, use } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input, FieldWrapper } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { EmptyState } from '@/components/ui/empty-state';
-import { StyledSelect } from '@/components/ui/styled-select';
+import Link from 'next/link';
 import {
-  Building2,
-  Loader2,
-  ChevronLeft,
-  Save,
-  Database,
-  Globe,
-  Clock,
-  Users,
-  Palette,
-  Mail,
-  Phone,
-  MapPin,
-  Image as ImageIcon,
+  Activity,
   AlertTriangle,
+  Archive,
+  Building2,
+  CheckCircle2,
+  ChevronLeft,
+  Clock,
+  Database,
+  Globe2,
+  Palette,
+  Save,
   ShieldAlert,
   ShieldCheck,
-  CheckCircle2,
-  XCircle,
-  Activity
+  Trash2,
+  Users,
 } from 'lucide-react';
-import { useToast } from '@/lib/use-toast';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { EmptyState } from '@/components/ui/empty-state';
+import { FieldWrapper, Input, Label, Textarea } from '@/components/ui/input';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { TenantActivityLog } from './TenantActivityLog';
-import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
+import { useToast } from '@/lib/use-toast';
 
 interface TenantDetail {
   id: string;
@@ -43,54 +48,65 @@ interface TenantDetail {
   type: string;
   status: string;
   lifecycleStatus: string;
+  lifecycleReason: string | null;
   timezone: string;
   locale: string;
   metadata: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
   branding: {
-    id: string;
-    primaryColor: string;
-    accentColor: string;
-    logoUrl: string | null;
-    logoDarkUrl: string | null;
     contactEmail: string | null;
     contactPhone: string | null;
     address: string | null;
+    primaryColor: string | null;
+    accentColor: string | null;
     documentFooter: string | null;
     senderName: string | null;
-    senderEmail: string | null;
   } | null;
-  stats: {
-    memberCount: number;
+  stats: { memberCount: number };
+  deletion: {
+    canDelete: boolean;
+    substantiveRecordCount: number;
+    blockers: Record<string, number>;
   };
 }
 
-interface PageProps {
-  params: Promise<{ id: string }>;
+type TabId = 'general' | 'branding' | 'activity';
+
+const tabs: Array<{ id: TabId; label: string; icon: typeof Building2 }> = [
+  { id: 'general', label: 'General', icon: Building2 },
+  { id: 'branding', label: 'Branding & Contact', icon: Palette },
+  { id: 'activity', label: 'Activity Log', icon: Activity },
+];
+
+function statusBadge(status: string) {
+  const normalised = status.toUpperCase();
+  const variant = normalised === 'ACTIVE' ? 'success' : normalised === 'SUSPENDED' ? 'error' : 'default';
+  return <Badge variant={variant} size="sm">{normalised.charAt(0) + normalised.slice(1).toLowerCase()}</Badge>;
 }
 
-export default function PlatformTenantDetailPage({ params }: PageProps) {
+function lifecycleBadge(status: string) {
+  const variant = status === 'ACTIVE' ? 'success' : status === 'ONBOARDING_FAILED' ? 'error' : status === 'PENDING_PLATFORM_REVIEW' ? 'warning' : 'info';
+  return <Badge variant={variant} size="sm">{status.replace(/_/g, ' ').toLowerCase()}</Badge>;
+}
+
+export default function PlatformTenantDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'general' | 'branding' | 'activity'>('general');
-  const [isSaving, setIsSaving] = useState(false);
-
-  // Suspend/activate confirmation
-  const [showSuspendDialog, setShowSuspendDialog] = useState(false);
-  const [isToggling, setIsToggling] = useState(false);
-
-  // Platform review / lifecycle approval
-  const [isApproving, setIsApproving] = useState(false);
-  const [showReviewDialog, setShowReviewDialog] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>('general');
+  const [saving, setSaving] = useState(false);
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [lifecycleReason, setLifecycleReason] = useState('');
+  const [isApproving, setIsApproving] = useState(false);
 
-  // Editable fields
   const [editName, setEditName] = useState('');
-  const [editStatus, setEditStatus] = useState('');
-  const [editTimezone, setEditTimezone] = useState('');
-
-  // Branding fields
+  const [editStatus, setEditStatus] = useState('ACTIVE');
+  const [editTimezone, setEditTimezone] = useState('Africa/Windhoek');
   const [editContactEmail, setEditContactEmail] = useState('');
   const [editContactPhone, setEditContactPhone] = useState('');
   const [editAddress, setEditAddress] = useState('');
@@ -99,32 +115,40 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
   const [editDocumentFooter, setEditDocumentFooter] = useState('');
   const [editSenderName, setEditSenderName] = useState('');
 
-  const { data: tenant, isLoading, error, refetch } = useQuery({
+  const tenantQuery = useQuery<TenantDetail>({
     queryKey: ['platform-tenant', id],
     queryFn: async () => {
       const res = await fetch(`/api/platform/tenants/${id}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to load tenant');
-      const data = json.data as TenantDetail;
-      // Populate edit fields on load
-      setEditName(data.name);
-      setEditStatus(data.status);
-      setEditTimezone(data.timezone);
-      setEditContactEmail(data.branding?.contactEmail || '');
-      setEditContactPhone(data.branding?.contactPhone || '');
-      setEditAddress(data.branding?.address || '');
-      setEditPrimaryColor(data.branding?.primaryColor || '#1F4E8C');
-      setEditAccentColor(data.branding?.accentColor || '#0F766E');
-      setEditDocumentFooter(data.branding?.documentFooter || '');
-      setEditSenderName(data.branding?.senderName || '');
-      return data;
+      return json.data as TenantDetail;
     },
   });
 
+  const tenant = tenantQuery.data;
+
+  useEffect(() => {
+    if (!tenant) return;
+    setEditName(tenant.name);
+    setEditStatus(tenant.status.toUpperCase());
+    setEditTimezone(tenant.timezone);
+    setEditContactEmail(tenant.branding?.contactEmail ?? '');
+    setEditContactPhone(tenant.branding?.contactPhone ?? '');
+    setEditAddress(tenant.branding?.address ?? '');
+    setEditPrimaryColor(tenant.branding?.primaryColor ?? '#1F4E8C');
+    setEditAccentColor(tenant.branding?.accentColor ?? '#0F766E');
+    setEditDocumentFooter(tenant.branding?.documentFooter ?? '');
+    setEditSenderName(tenant.branding?.senderName ?? '');
+  }, [tenant]);
+
+  const deletionBlockers = useMemo(() => {
+    if (!tenant) return [];
+    return Object.entries(tenant.deletion.blockers).filter(([, value]) => value > 0);
+  }, [tenant]);
+
   const handleSave = async () => {
     if (!tenant) return;
-    setIsSaving(true);
-
+    setSaving(true);
     try {
       const res = await fetch(`/api/platform/tenants/${id}`, {
         method: 'PATCH',
@@ -142,20 +166,17 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
           senderName: editSenderName,
         }),
       });
-
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to update');
-
-      refetch();
-      toast({ title: 'Tenant updated', description: 'Settings saved successfully', variant: 'success' });
-    } catch (err) {
-      toast({ title: 'Update failed', description: err instanceof Error ? err.message : 'Failed to update', variant: 'error' });
+      if (!res.ok) throw new Error(json.error || 'Failed to update tenant');
+      toast({ title: 'Tenant updated', description: 'Changes have been saved.', variant: 'success' });
+      await tenantQuery.refetch();
+    } catch (error) {
+      toast({ title: 'Update failed', description: error instanceof Error ? error.message : 'Failed to update tenant', variant: 'error' });
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   };
 
-  // Advance the tenant lifecycle (approve for review, activate, etc.)
   const handleLifecycleChange = async (target: string) => {
     if (!tenant) return;
     setIsApproving(true);
@@ -163,497 +184,215 @@ export default function PlatformTenantDetailPage({ params }: PageProps) {
       const res = await fetch(`/api/platform/tenants/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lifecycleStatus: target,
-          lifecycleReason: lifecycleReason || undefined,
-        }),
+        body: JSON.stringify({ lifecycleStatus: target, lifecycleReason: lifecycleReason.trim() || undefined }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update lifecycle');
-      toast({
-        title: `Tenant ${target.replace(/_/g, ' ').toLowerCase()}`,
-        description: `Lifecycle updated to ${target.replace(/_/g, ' ').toLowerCase()}`,
-        variant: 'success',
-      });
+      toast({ title: 'Lifecycle updated', description: `Tenant moved to ${target.replace(/_/g, ' ').toLowerCase()}.`, variant: 'success' });
       setLifecycleReason('');
-      refetch();
-    } catch (err) {
-      toast({
-        title: 'Lifecycle update failed',
-        description: err instanceof Error ? err.message : 'Failed to update lifecycle',
-        variant: 'error',
-      });
+      setReviewDialogOpen(false);
+      await tenantQuery.refetch();
+    } catch (error) {
+      toast({ title: 'Lifecycle update failed', description: error instanceof Error ? error.message : 'Could not update lifecycle', variant: 'error' });
     } finally {
       setIsApproving(false);
-      setShowReviewDialog(false);
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
-      </div>
-    );
+  const toggleSuspension = async () => {
+    if (!tenant) return;
+    const nextStatus = tenant.status.toUpperCase() === 'SUSPENDED' ? 'ACTIVE' : 'SUSPENDED';
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/platform/tenants/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Status update failed');
+      toast({ title: nextStatus === 'ACTIVE' ? 'Tenant activated' : 'Tenant suspended', variant: 'success' });
+      setStatusDialogOpen(false);
+      await tenantQuery.refetch();
+    } catch (error) {
+      toast({ title: 'Status update failed', description: error instanceof Error ? error.message : 'Could not update tenant status', variant: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const permanentlyDelete = async () => {
+    if (!tenant || deleteConfirmation !== tenant.code) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/platform/tenants/${id}?confirm=${encodeURIComponent(tenant.code)}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Tenant deletion failed');
+      toast({ title: 'Tenant permanently deleted', description: `${tenant.name} contained no protected operational records.`, variant: 'success' });
+      router.replace('/dashboard/platform/tenants');
+      router.refresh();
+    } catch (error) {
+      toast({ title: 'Tenant was not deleted', description: error instanceof Error ? error.message : 'Protected records prevent deletion.', variant: 'error' });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  if (tenantQuery.isLoading) {
+    return <div className="flex min-h-48 items-center justify-center text-sm text-ink-500" role="status">Loading tenant…</div>;
   }
 
-  if (error || !tenant) {
+  if (tenantQuery.error || !tenant) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Tenant Management', href: '/dashboard/platform/tenants' },
-          { label: 'Tenant' },
-        ]} />
-        <EmptyState
-          icon={<Database className="h-6 w-6" />}
-          title={error instanceof Error ? error.message : 'Tenant not found'}
-        />
-        <Link href="/dashboard/platform/tenants">
-          <Button variant="secondary" size="sm">
-            <ChevronLeft className="h-4 w-4" /> Back to Tenants
-          </Button>
-        </Link>
+        <Breadcrumbs items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Tenants', href: '/dashboard/platform/tenants' }, { label: 'Tenant' }]} />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Tenant unavailable" description={tenantQuery.error instanceof Error ? tenantQuery.error.message : 'Tenant not found.'} />
+        <Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/tenants"><ChevronLeft className="h-4 w-4" /> Back to tenants</Link></Button>
       </div>
     );
   }
-
-  const tabs = [
-    { value: 'general' as const, label: 'General', icon: <Building2 className="h-4 w-4" /> },
-    { value: 'branding' as const, label: 'Branding & Contact', icon: <Palette className="h-4 w-4" /> },
-    { value: 'activity' as const, label: 'Activity Log', icon: <Activity className="h-4 w-4" /> },
-  ];
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Tenant Management', href: '/dashboard/platform/tenants' },
-        { label: tenant.name },
-      ]} />
-      <PageHeader
-        title={tenant.name}
-        description={`Code: ${tenant.code} · Slug: ${tenant.slug}`}
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-ink-500">
-            <Clock className="inline h-3 w-3 mr-1" />
-            Created {formatDate(tenant.createdAt)}
-          </span>
-          <div className="flex items-center gap-2">
-            {tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW' && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setShowReviewDialog(true)}
-              >
-                <CheckCircle2 className="h-4 w-4" /> Review Setup
-              </Button>
-            )}
-            {tenant.lifecycleStatus === 'READY_FOR_ACTIVATION' && (
-              <Button
-                variant="primary"
-                size="sm"
-                loading={isApproving}
-                onClick={() => handleLifecycleChange('ACTIVE')}
-              >
-                <ShieldCheck className="h-4 w-4" /> Activate
-              </Button>
-            )}
-            <Button
-              variant={editStatus === 'suspended' ? 'primary' : 'destructive'}
-              size="sm"
-              onClick={() => setShowSuspendDialog(true)}
-            >
-              {editStatus === 'suspended' ? (
-                <><ShieldCheck className="h-4 w-4" /> Activate</>
-              ) : (
-                <><ShieldAlert className="h-4 w-4" /> Suspend</>
-              )}
-            </Button>
-            <Button variant="primary" size="sm" onClick={handleSave} loading={isSaving}>
-              <Save className="h-4 w-4" /> Save Changes
-            </Button>
-          </div>
+      <Breadcrumbs items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Tenants', href: '/dashboard/platform/tenants' }, { label: tenant.name }]} />
+      <PageHeader title={tenant.name} description={`${tenant.code} · ${tenant.slug}`}>
+        <div className="flex flex-wrap gap-2">
+          {tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW' && <Button size="sm" onClick={() => setReviewDialogOpen(true)}><CheckCircle2 className="h-4 w-4" /> Review setup</Button>}
+          {tenant.lifecycleStatus === 'READY_FOR_ACTIVATION' && <Button size="sm" onClick={() => void handleLifecycleChange('ACTIVE')} loading={isApproving}><ShieldCheck className="h-4 w-4" /> Activate</Button>}
+          <Button variant="secondary" size="sm" onClick={() => setStatusDialogOpen(true)}>
+            {tenant.status.toUpperCase() === 'SUSPENDED' ? <ShieldCheck className="h-4 w-4" /> : <ShieldAlert className="h-4 w-4" />}
+            {tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate' : 'Suspend'}
+          </Button>
+          <Button size="sm" onClick={() => void handleSave()} loading={saving}><Save className="h-4 w-4" /> Save changes</Button>
         </div>
       </PageHeader>
 
-      {/* Stats bar */}
-      <div className="grid gap-4 sm:grid-cols-4">
-        <Card>
-          <CardContent className="pt-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-              <Users className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-semibold text-ink-950">{tenant.stats.memberCount}</p>
-              <p className="text-xs text-ink-500">Members</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300">
-              <Globe className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-ink-950 capitalize">{tenant.type.replace(/_/g, ' ')}</p>
-              <p className="text-xs text-ink-500">Type</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-              <Globe className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-ink-950">{tenant.timezone}</p>
-              <p className="text-xs text-ink-500">Timezone</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-50 text-purple-700">
-              <Badge variant={
-                tenant.status === 'active' ? 'success' :
-                tenant.status === 'suspended' ? 'error' : 'cancelled'
-              }>{tenant.status}</Badge>
-            </div>
-            <div>
-              <p className="text-xs text-ink-500">Status</p>
-              <p className="text-[11px] text-ink-400 mt-0.5">
-                Lifecycle: {tenant.lifecycleStatus?.replace(/_/g, ' ').toLowerCase()}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      <section className="overflow-hidden rounded-[10px] border border-border bg-border" aria-label="Tenant summary">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4">
+          <div className="bg-surface px-4 py-4">
+            <div className="flex items-center gap-2"><Users className="h-4 w-4 text-brand-700" /><span className="text-xs text-ink-500">Members</span></div>
+            <p className="mt-2 text-2xl font-semibold tabular-nums text-ink-950">{tenant.stats.memberCount}</p>
+          </div>
+          <div className="border-t border-border bg-surface px-4 py-4 sm:border-l sm:border-t-0">
+            <div className="flex items-center gap-2"><Globe2 className="h-4 w-4 text-brand-700" /><span className="text-xs text-ink-500">Organisation type</span></div>
+            <p className="mt-2 text-sm font-semibold capitalize text-ink-950">{tenant.type.replace(/_/g, ' ')}</p>
+          </div>
+          <div className="border-t border-border bg-surface px-4 py-4 lg:border-l lg:border-t-0">
+            <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-brand-700" /><span className="text-xs text-ink-500">Created</span></div>
+            <p className="mt-2 text-sm font-semibold text-ink-950">{formatDate(tenant.createdAt)}</p>
+          </div>
+          <div className="border-t border-border bg-surface px-4 py-4 sm:border-l lg:border-t-0">
+            <p className="text-xs text-ink-500">Account & onboarding</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">{statusBadge(tenant.status)}{lifecycleBadge(tenant.lifecycleStatus)}</div>
+          </div>
+        </div>
+      </section>
+
+      <div className="scrollbar-thin flex gap-1 overflow-x-auto border-b border-border" role="tablist" aria-label="Tenant sections">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.id;
+          return (
+            <button key={tab.id} type="button" role="tab" aria-selected={active} onClick={() => setActiveTab(tab.id)} className={`focus-ring inline-flex min-h-10 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors ${active ? 'border-brand-700 text-brand-700' : 'border-transparent text-ink-500 hover:text-ink-800'}`}>
+              <Icon className="h-4 w-4" />{tab.label}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Tab bar */}
-      <div className="flex flex-wrap gap-1.5">
-        {tabs.map((tab) => (
-          <button
-            key={tab.value}
-            onClick={() => setActiveTab(tab.value)}
-            className={`inline-flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm font-medium transition-colors ${
-              activeTab === tab.value
-                ? 'bg-brand-800 text-white'
-                : 'bg-muted text-ink-700 hover:bg-border'
-            }`}
-          >
-            {tab.icon}
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* General Settings */}
       {activeTab === 'general' && (
+        <div className="space-y-5">
+          <Card>
+            <CardHeader><CardTitle>General configuration</CardTitle></CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <FieldWrapper label="Organisation name" required><Input value={editName} onChange={(event) => setEditName(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Tenant code"><Input value={tenant.code} disabled /></FieldWrapper>
+              <FieldWrapper label="Account status">
+                <StyledSelect value={editStatus} onChange={(event) => setEditStatus(event.target.value)}>
+                  <option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="TRIAL">Trial</option><option value="ARCHIVED">Archived</option>
+                </StyledSelect>
+              </FieldWrapper>
+              <FieldWrapper label="Timezone"><StyledSelect value={editTimezone} onChange={(event) => setEditTimezone(event.target.value)}><option value="Africa/Windhoek">Africa/Windhoek (UTC+2)</option></StyledSelect></FieldWrapper>
+              <FieldWrapper label="Type"><Input value={tenant.type.replace(/_/g, ' ')} disabled className="capitalize" /></FieldWrapper>
+              <FieldWrapper label="URL slug"><Input value={tenant.slug} disabled /></FieldWrapper>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Tenant lifecycle</CardTitle></CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap items-center gap-2">{lifecycleBadge(tenant.lifecycleStatus)}{tenant.lifecycleReason && <span className="text-xs text-ink-500">{tenant.lifecycleReason}</span>}</div>
+              <p className="mt-3 max-w-3xl text-sm leading-relaxed text-ink-500">Lifecycle status tracks onboarding, activation, restriction and archival. Account suspension can be used without deleting historical operational records.</p>
+            </CardContent>
+          </Card>
+
+          <Card className={tenant.deletion.canDelete ? 'border-status-warning-text/30' : ''}>
+            <CardHeader><CardTitle>Retention & removal</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              {tenant.deletion.canDelete ? (
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-ink-950">This tenant has no protected operational records.</p>
+                    <p className="mt-1 text-xs leading-relaxed text-ink-500">It can be permanently removed. Configuration records belonging only to this tenant will be removed with it.</p>
+                  </div>
+                  <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}><Trash2 className="h-4 w-4" /> Delete empty tenant</Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-start gap-3"><Archive className="mt-0.5 h-5 w-5 text-ink-400" /><div><p className="text-sm font-semibold text-ink-950">Permanent deletion is blocked.</p><p className="mt-1 text-xs text-ink-500">The tenant owns records that must be retained. Suspend or archive it instead.</p></div></div>
+                  <div className="flex flex-wrap gap-2">{deletionBlockers.map(([label, value]) => <Badge key={label} variant="default" size="sm">{label.replace(/([A-Z])/g, ' $1')}: {value}</Badge>)}</div>
+                  {tenant.lifecycleStatus !== 'ARCHIVED' && <Button variant="secondary" size="sm" onClick={() => void handleLifecycleChange('ARCHIVED')} loading={isApproving}><Archive className="h-4 w-4" /> Archive tenant</Button>}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === 'branding' && (
         <Card>
-          <CardHeader>
-            <CardTitle>General Configuration</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Tenant branding & contact</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <FieldWrapper label="Organisation Name" required>
-                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
-              </FieldWrapper>
-              <FieldWrapper label="Tenant Code">
-                <Input value={tenant.code} disabled className="opacity-60" />
-              </FieldWrapper>
-              <FieldWrapper label="Status">
-                <StyledSelect
-                  value={editStatus}
-                  onChange={(e) => setEditStatus(e.target.value)}
-                >
-                  <option value="active">Active</option>
-                  <option value="suspended">Suspended</option>
-                  <option value="inactive">Inactive</option>
-                </StyledSelect>
-              </FieldWrapper>
-              <FieldWrapper label="Timezone">
-                <StyledSelect
-                  value={editTimezone}
-                  onChange={(e) => setEditTimezone(e.target.value)}
-                >
-                  <option value="Africa/Windhoek">Africa/Windhoek (CAT, UTC+2)</option>
-                  <option value="Africa/Windhoek">Africa/Windhoek</option>
-                </StyledSelect>
-              </FieldWrapper>
-              <FieldWrapper label="Type">
-                <StyledSelect
-                  value={tenant.type}
-                  disabled
-                >
-                  <option value="regional_council">Regional Council</option>
-                  <option value="ministry">Ministry / Department</option>
-                  <option value="agency">Government Agency</option>
-                  <option value="municipality">Municipality</option>
-                </StyledSelect>
-              </FieldWrapper>
-              <FieldWrapper label="URL Slug">
-                <Input value={tenant.slug} disabled className="opacity-60" />
-              </FieldWrapper>
+              <FieldWrapper label="Contact email"><Input type="email" value={editContactEmail} onChange={(event) => setEditContactEmail(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Contact phone"><Input value={editContactPhone} onChange={(event) => setEditContactPhone(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Primary colour"><Input value={editPrimaryColor} onChange={(event) => setEditPrimaryColor(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Accent colour"><Input value={editAccentColor} onChange={(event) => setEditAccentColor(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Sender name"><Input value={editSenderName} onChange={(event) => setEditSenderName(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Physical address"><Input value={editAddress} onChange={(event) => setEditAddress(event.target.value)} /></FieldWrapper>
             </div>
+            <div className="space-y-1.5"><Label htmlFor="tenant-document-footer">Document footer</Label><Textarea id="tenant-document-footer" rows={3} value={editDocumentFooter} onChange={(event) => setEditDocumentFooter(event.target.value)} /></div>
           </CardContent>
         </Card>
       )}
 
-      {/* Suspend/Activate Confirmation Dialog */}
-      {showSuspendDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowSuspendDialog(false)}>
-          <div className="mx-4 w-full max-w-md rounded-[12px] border border-border bg-surface p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start gap-4">
-              <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${
-                editStatus === 'suspended' ? 'bg-green-50 dark:bg-green-950/40' : 'bg-red-50 dark:bg-red-950/40'
-              }`}>
-                {editStatus === 'suspended' ? (
-                  <ShieldCheck className="h-6 w-6 text-green-600 dark:text-green-400" />
-                ) : (
-                  <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
-                )}
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-ink-950">
-                  {editStatus === 'suspended' ? 'Activate Tenant' : 'Suspend Tenant'}
-                </h3>
-                <p className="mt-1 text-sm text-ink-500">
-                  {editStatus === 'suspended'
-                    ? `Reactivate ${tenant?.name}? Users will regain access to the system.`
-                    : `Are you sure you want to suspend ${tenant?.name}? All users associated with this tenant will lose access until it is reactivated.`}
-                </p>
-                {editStatus !== 'suspended' && (
-                  <div className="mt-3 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
-                    <strong>Warning:</strong> This will immediately block all user sessions for this tenant.
-                  </div>
-                )}
-                <div className="mt-4 flex justify-end gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => setShowSuspendDialog(false)}>Cancel</Button>
-                  <Button
-                    variant={editStatus === 'suspended' ? 'primary' : 'destructive'}
-                    size="sm"
-                    loading={isToggling}
-                    onClick={async () => {
-                      setIsToggling(true);
-                      try {
-                        const newStatus = editStatus === 'suspended' ? 'active' : 'suspended';
-                        const res = await fetch(`/api/platform/tenants/${id}`, {
-                          method: 'PATCH',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ status: newStatus }),
-                        });
-                        if (!res.ok) throw new Error('Failed to update status');
-                        setEditStatus(newStatus);
-                        toast({ title: `Tenant ${newStatus === 'active' ? 'activated' : 'suspended'}`, description: `Status changed to ${newStatus}`, variant: 'success' });
-                        refetch();
-                      } catch (err) {
-                        toast({ title: 'Status update failed', description: err instanceof Error ? err.message : 'Failed to update status', variant: 'error' });
-                      } finally {
-                        setIsToggling(false);
-                        setShowSuspendDialog(false);
-                      }
-                    }}
-                  >
-                    {editStatus === 'suspended' ? 'Activate Now' : 'Suspend Now'}
-                  </Button>
-                </div>
-              </div>
-            </div>
+      {activeTab === 'activity' && <TenantActivityLog tenantId={tenant.id} />}
+
+      <Dialog open={statusDialogOpen} onOpenChange={setStatusDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>{tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate tenant?' : 'Suspend tenant?'}</DialogTitle><DialogDescription>{tenant.status.toUpperCase() === 'SUSPENDED' ? 'Users can regain access according to their existing roles and subscription.' : 'Suspension preserves all tenant data while blocking normal operation.'}</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="secondary" onClick={() => setStatusDialogOpen(false)}>Cancel</Button><Button variant={tenant.status.toUpperCase() === 'SUSPENDED' ? 'primary' : 'destructive'} onClick={() => void toggleSuspension()} loading={saving}>{tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate tenant' : 'Suspend tenant'}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader><DialogTitle>Review tenant setup</DialogTitle><DialogDescription>Record a review note and decide whether this tenant is ready for activation.</DialogDescription></DialogHeader>
+          <div className="space-y-1.5"><Label htmlFor="lifecycle-review-note">Review note</Label><Textarea id="lifecycle-review-note" rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} /></div>
+          <DialogFooter className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void handleLifecycleChange('ONBOARDING_FAILED')} loading={isApproving}>Return / fail setup</Button><Button onClick={() => void handleLifecycleChange('READY_FOR_ACTIVATION')} loading={isApproving}>Ready for activation</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={(open) => { setDeleteDialogOpen(open); if (!open) setDeleteConfirmation(''); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Permanently delete {tenant.name}?</DialogTitle><DialogDescription>This action is available only because the dependency check found no members, staff, vehicles, requests, trips or programmes. It cannot be undone.</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 rounded-[8px] border border-status-warning-text/30 bg-status-warning-bg/30 p-3 text-xs text-ink-700"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-status-warning-text" />Tenant-only configuration and setup records will also be removed.</div>
+            <div className="space-y-1.5"><Label htmlFor="delete-tenant-confirm">Type {tenant.code} to confirm</Label><Input id="delete-tenant-confirm" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value.toUpperCase())} autoComplete="off" /></div>
           </div>
-        </div>
-      )}
-
-      {/* Review / Approval Dialog */}
-      {showReviewDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setShowReviewDialog(false)} />
-          <div className="relative z-10 w-full max-w-lg rounded-xl bg-white p-6 shadow-xl dark:bg-ink-900">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-ink-900 dark:text-ink-100">Review Tenant Setup</h3>
-              <button onClick={() => setShowReviewDialog(false)} className="text-ink-400 hover:text-ink-600">
-                <XCircle className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="text-sm text-ink-600 dark:text-ink-400 mb-4">
-              {tenant?.name} has completed the setup wizard. Choose an action below.
-            </p>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-ink-700 dark:text-ink-300 mb-1">
-                Reason (optional)
-              </label>
-              <textarea
-                className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm dark:border-ink-700 dark:bg-ink-800"
-                rows={3}
-                placeholder="Add a note about this decision…"
-                value={lifecycleReason}
-                onChange={(e) => setLifecycleReason(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2 mb-4">
-              <button
-                onClick={() => handleLifecycleChange('READY_FOR_ACTIVATION')}
-                disabled={isApproving}
-                className="flex items-center gap-2 w-full rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-left text-sm font-medium text-green-800 hover:bg-green-100 disabled:opacity-50 dark:border-green-800/40 dark:bg-green-950/30 dark:text-green-300"
-              >
-                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-                Approve for Activation — move to READY_FOR_ACTIVATION
-              </button>
-              <button
-                onClick={() => handleLifecycleChange('ACTIVE')}
-                disabled={isApproving}
-                className="flex items-center gap-2 w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-medium text-blue-800 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-800/40 dark:bg-blue-950/30 dark:text-blue-300"
-              >
-                <ShieldCheck className="h-4 w-4 flex-shrink-0" />
-                Activate Now — move directly to ACTIVE
-              </button>
-              <button
-                onClick={() => handleLifecycleChange('ONBOARDING_FAILED')}
-                disabled={isApproving}
-                className="flex items-center gap-2 w-full rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50 dark:border-red-800/40 dark:bg-red-950/30 dark:text-red-300"
-              >
-                <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-                Reject — move to ONBOARDING_FAILED (tenant must re-onboard)
-              </button>
-            </div>
-            <div className="flex justify-end">
-              <Button variant="secondary" size="sm" onClick={() => setShowReviewDialog(false)}>Cancel</Button>
-            </div>
-            {isApproving && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-ink-900/80 rounded-xl">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Activity Log */}
-      {activeTab === 'activity' && (
-        <TenantActivityLog tenantId={id} />
-      )}
-
-      {/* Branding & Contact */}
-      {activeTab === 'branding' && (
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Contact Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <FieldWrapper label="Contact Email">
-                  <div className="flex items-center gap-2">
-                    <Mail className="h-4 w-4 text-ink-400" />
-                    <Input
-                      type="email"
-                      value={editContactEmail}
-                      onChange={(e) => setEditContactEmail(e.target.value)}
-                      placeholder="fleet@organisation.gov.na"
-                    />
-                  </div>
-                </FieldWrapper>
-                <FieldWrapper label="Contact Phone">
-                  <div className="flex items-center gap-2">
-                    <Phone className="h-4 w-4 text-ink-400" />
-                    <Input
-                      value={editContactPhone}
-                      onChange={(e) => setEditContactPhone(e.target.value)}
-                      placeholder="+264 61 123 4567"
-                    />
-                  </div>
-                </FieldWrapper>
-                <FieldWrapper label="Physical Address" className="sm:col-span-2">
-                  <div className="flex items-start gap-2">
-                    <MapPin className="h-4 w-4 text-ink-400 mt-3" />
-                    <Input
-                      value={editAddress}
-                      onChange={(e) => setEditAddress(e.target.value)}
-                      placeholder="Private Bag XXXX, City, Region"
-                    />
-                  </div>
-                </FieldWrapper>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Branding & Styling</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <FieldWrapper label="Primary Colour">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-10 w-10 rounded-[8px] border border-border shrink-0"
-                      style={{ backgroundColor: editPrimaryColor }}
-                    />
-                    <Input
-                      value={editPrimaryColor}
-                      onChange={(e) => setEditPrimaryColor(e.target.value)}
-                      placeholder="#1F4E8C"
-                    />
-                  </div>
-                </FieldWrapper>
-                <FieldWrapper label="Accent Colour">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-10 w-10 rounded-[8px] border border-border shrink-0"
-                      style={{ backgroundColor: editAccentColor }}
-                    />
-                    <Input
-                      value={editAccentColor}
-                      onChange={(e) => setEditAccentColor(e.target.value)}
-                      placeholder="#0F766E"
-                    />
-                  </div>
-                </FieldWrapper>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <FieldWrapper label="Logo URL (Light)">
-                  <div className="flex items-center gap-2">
-                    <ImageIcon className="h-4 w-4 text-ink-400" />
-                    <Input value={tenant.branding?.logoUrl || ''} disabled className="opacity-60" placeholder="Upload via file storage" />
-                  </div>
-                </FieldWrapper>
-                <FieldWrapper label="Logo URL (Dark)">
-                  <div className="flex items-center gap-2">
-                    <ImageIcon className="h-4 w-4 text-ink-400" />
-                    <Input value={tenant.branding?.logoDarkUrl || ''} disabled className="opacity-60" placeholder="Upload via file storage" />
-                  </div>
-                </FieldWrapper>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Document & Email Settings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <FieldWrapper label="Sender Name" className="sm:col-span-2">
-                  <Input
-                    value={editSenderName}
-                    onChange={(e) => setEditSenderName(e.target.value)}
-                    placeholder="Organisation Name"
-                  />
-                </FieldWrapper>
-                <FieldWrapper label="Document Footer" className="sm:col-span-2">
-                  <Input
-                    value={editDocumentFooter}
-                    onChange={(e) => setEditDocumentFooter(e.target.value)}
-                    placeholder="Organisation Name — Fleet Management Division"
-                  />
-                </FieldWrapper>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+          <DialogFooter><Button variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button variant="destructive" disabled={deleteConfirmation !== tenant.code} loading={deleting} onClick={() => void permanentlyDelete()}><Trash2 className="h-4 w-4" /> Delete permanently</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
