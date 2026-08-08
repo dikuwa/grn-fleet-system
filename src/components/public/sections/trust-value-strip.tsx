@@ -1,36 +1,66 @@
 /**
  * Trust strip + value proposition strip.
  *
- * Organisation types use Lucide icons rather than fake customer logos. This
- * gives the strip enough visual presence while keeping the claims honest and
- * theme-aware.
+ * Organisation types use approved local generated imagery rather than remote
+ * image providers. The tiny WebP assets are embedded as data URIs so this
+ * marketing strip cannot fail because a third-party image endpoint changes or
+ * blocks a request.
  */
 
 import {
-  Building2,
-  Factory,
+  Eye,
   FileCheck2,
-  Landmark,
   ScrollText,
   ShieldCheck,
-  Ship,
-  Store,
-  Truck,
   Users,
-  Eye,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { SectionContainer } from '@/components/public/section';
+import { SECTOR_IMAGE_DATA } from '@/components/public/sector-image-data';
 
-const ORGANISATIONS: { label: string; icon: LucideIcon }[] = [
-  { label: 'Government Ministries', icon: Landmark },
-  { label: 'Regional Councils', icon: Building2 },
-  { label: 'Municipalities', icon: Store },
-  { label: 'Public Enterprises', icon: Building2 },
-  { label: 'Mining & Industry', icon: Factory },
-  { label: 'Logistics Providers', icon: Truck },
-  { label: 'Private Organisations', icon: Ship },
-];
+const ORGANISATIONS = [
+  {
+    key: 'government-ministries',
+    label: 'Government Ministries',
+    alt: 'Namibian public-sector civic building',
+    position: '50% 48%',
+  },
+  {
+    key: 'regional-councils',
+    label: 'Regional Councils',
+    alt: 'Contemporary regional administration building',
+    position: '50% 50%',
+  },
+  {
+    key: 'municipalities',
+    label: 'Municipalities',
+    alt: 'Modern civic building in a municipal setting',
+    position: '50% 52%',
+  },
+  {
+    key: 'public-enterprises',
+    label: 'Public Enterprises',
+    alt: 'Modern institutional office building',
+    position: '50% 50%',
+  },
+  {
+    key: 'mining-industry',
+    label: 'Mining & Industry',
+    alt: 'Heavy mining equipment operating in a quarry',
+    position: '50% 54%',
+  },
+  {
+    key: 'logistics-providers',
+    label: 'Logistics Providers',
+    alt: 'Commercial freight truck travelling on a highway',
+    position: '50% 55%',
+  },
+  {
+    key: 'private-organisations',
+    label: 'Private Organisations',
+    alt: 'Modern private-sector office building',
+    position: '50% 48%',
+  },
+] as const;
 
 const VALUES = [
   {
@@ -66,7 +96,7 @@ export interface TrustValueStripProps {
 
 export function TrustValueStrip({ orgs }: TrustValueStripProps) {
   const items = orgs?.length
-    ? orgs.map((label) => ({ label, icon: Building2 as LucideIcon }))
+    ? orgs.map((label, index) => ({ ...ORGANISATIONS[index % ORGANISATIONS.length], label }))
     : ORGANISATIONS;
 
   return (
@@ -76,36 +106,59 @@ export function TrustValueStrip({ orgs }: TrustValueStripProps) {
           <p className="text-center text-sm font-medium text-ink-500">
             Built for organisations that move people, services and resources
           </p>
-          <ul className="mt-7 grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-7">
-            {items.map((org) => {
-              const Icon = org.icon;
-              return (
-                <li key={org.label} className="flex min-w-0 flex-col items-center text-center">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-[9px] border border-border bg-canvas text-brand-700 dark:text-brand-300">
-                    <Icon className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                  <span className="mt-2 text-xs font-medium leading-snug text-ink-700 sm:text-sm">
+
+          <ul className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-7">
+            {items.map((org) => (
+              <li
+                key={org.label}
+                className="group min-w-0 overflow-hidden rounded-[10px] border border-border bg-canvas transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-brand-300 motion-reduce:transform-none motion-reduce:transition-none dark:hover:border-brand-800"
+              >
+                <div className="relative aspect-[8/5] overflow-hidden bg-muted">
+                  {/* The source is an approved local data URI, so no network dependency exists. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={SECTOR_IMAGE_DATA[org.key]}
+                    alt={org.alt}
+                    width={160}
+                    height={100}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-full w-full object-cover opacity-90 transition-[transform,opacity] duration-300 group-hover:scale-[1.02] group-hover:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
+                    style={{ objectPosition: org.position }}
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10"
+                  />
+                </div>
+                <div className="flex min-h-14 items-center px-3 py-3">
+                  <span className="text-xs font-semibold leading-snug text-ink-800 sm:text-sm">
                     {org.label}
                   </span>
-                </li>
-              );
-            })}
+                </div>
+              </li>
+            ))}
           </ul>
         </SectionContainer>
       </section>
 
       <section className="border-b border-border bg-canvas">
         <SectionContainer className="py-12">
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
-            {VALUES.map((v) => (
-              <div key={v.title} className="flex flex-col gap-2.5">
-                <v.icon className="h-5 w-5 text-brand-700 dark:text-brand-400" aria-hidden="true" />
-                <div>
-                  <h3 className="text-sm font-semibold text-ink-950">{v.title}</h3>
-                  <p className="mt-1 text-xs leading-relaxed text-ink-500">{v.text}</p>
+          <div className="rounded-[12px] border border-border bg-surface px-5 py-6 sm:px-6">
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-5 lg:gap-0">
+              {VALUES.map((v, index) => (
+                <div
+                  key={v.title}
+                  className={`flex gap-3 lg:px-5 ${index > 0 ? 'lg:border-l lg:border-border' : ''}`}
+                >
+                  <v.icon className="mt-0.5 h-5 w-5 shrink-0 text-brand-700 dark:text-brand-400" aria-hidden="true" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-ink-950">{v.title}</h3>
+                    <p className="mt-1 text-xs leading-relaxed text-ink-500">{v.text}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </SectionContainer>
       </section>

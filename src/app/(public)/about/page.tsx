@@ -4,7 +4,18 @@
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowRight, Eye, Gauge, Globe, ScrollText, Shield, Workflow } from 'lucide-react';
+import {
+  ArrowRight,
+  Eye,
+  Gauge,
+  GitBranch,
+  Globe,
+  Route,
+  ScrollText,
+  Shield,
+  ShieldCheck,
+  Workflow,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getPublishedContentBySlug, getPublicSiteSettings } from '@/lib/platform/cms-public';
 import type { PublicCmsContent, PublicSiteSettings } from '@/lib/platform/cms-public';
@@ -61,11 +72,27 @@ const DEFAULT_MISSION =
 const DEFAULT_PILOT =
   'The Kavango East Regional Council is serving as the pilot tenant for this platform. The pilot validates the digital workflow across all stages of fleet operations, and the platform is built for any organisation that manages vehicles or transport workflows.';
 
-const PRODUCT_FACTS = [
-  { value: '6', label: 'Core Operational Stages' },
-  { value: 'Multi-level', label: 'Approval Workflows' },
-  { value: 'Role-based', label: 'Access & Separation of Duty' },
-  { value: 'End-to-end', label: 'Digital Audit Trail' },
+const PRODUCT_FACTS: { title: string; detail: string; icon: LucideIcon }[] = [
+  {
+    title: '6 operational stages',
+    detail: 'A connected lifecycle from request through trip closure.',
+    icon: Route,
+  },
+  {
+    title: 'Multi-level approvals',
+    detail: 'Structured review, decision and release points throughout the workflow.',
+    icon: GitBranch,
+  },
+  {
+    title: 'Role-based access',
+    detail: 'Clear separation of duties based on each user’s responsibility.',
+    icon: ShieldCheck,
+  },
+  {
+    title: 'End-to-end audit trail',
+    detail: 'Traceable actions, records and outcomes across the complete process.',
+    icon: ScrollText,
+  },
 ];
 
 function extractValues(content: Record<string, unknown> | null | undefined): Value[] {
@@ -147,13 +174,31 @@ export default async function AboutPage() {
             title="What the Platform Provides"
             subtitle="Capabilities you can verify against the live platform."
           />
-          <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {PRODUCT_FACTS.map((fact) => (
-              <div key={fact.label} className="rounded-[10px] border border-border bg-surface p-6 text-center">
-                <p className="text-2xl font-[650] tracking-tight text-brand-800 dark:text-brand-300">{fact.value}</p>
-                <p className="mt-1.5 text-xs font-medium uppercase tracking-wider text-ink-500">{fact.label}</p>
-              </div>
-            ))}
+
+          <div className="mt-12 border-y border-border">
+            <dl className="grid sm:grid-cols-2 lg:grid-cols-4">
+              {PRODUCT_FACTS.map((fact, index) => {
+                const Icon = fact.icon;
+                return (
+                  <div
+                    key={fact.title}
+                    className={`py-7 sm:px-6 lg:px-7 ${
+                      index % 2 === 1 ? 'sm:border-l sm:border-border' : ''
+                    } ${index > 1 ? 'border-t border-border lg:border-t-0' : ''} ${
+                      index > 0 ? 'lg:border-l lg:border-border' : ''
+                    }`}
+                  >
+                    <dt className="flex items-center gap-3 text-base font-semibold text-ink-950">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                        <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+                      </span>
+                      {fact.title}
+                    </dt>
+                    <dd className="mt-3 text-sm leading-relaxed text-ink-500">{fact.detail}</dd>
+                  </div>
+                );
+              })}
+            </dl>
           </div>
         </SectionContainer>
       </section>

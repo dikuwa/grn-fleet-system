@@ -1,14 +1,15 @@
 /**
  * Hero — the first impression.
  *
- * Two primary actions only: Request Demo and See How It Works. The product
- * preview sits inside a restrained device frame so the UI reads as a real
- * application without the frame becoming a visual distraction.
+ * Content intentionally remains unchanged. The product preview is rendered in
+ * a quiet, responsive perspective device shell so it feels like a real
+ * application without letting the hardware frame dominate the message.
  */
 
 import Link from 'next/link';
 import { ArrowRight, CheckCircle2 } from 'lucide-react';
 import { SectionContainer } from '@/components/public/section';
+import { TechnicalBackdrop } from '@/components/public/technical-backdrop';
 import { ProductDashboardPreview } from '@/components/public/previews';
 import { REQUEST_DEMO_HREF } from '@/components/public/nav';
 
@@ -34,9 +35,10 @@ export function Hero({ title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION,
   const points = proofPoints?.length ? proofPoints : DEFAULT_PROOF_POINTS;
 
   return (
-    <section className="border-b border-border bg-brand-950">
-      <SectionContainer className="py-14 sm:py-16 md:py-24">
-        <div className="grid items-center gap-12 lg:grid-cols-[0.92fr_1.08fr] lg:gap-14 xl:gap-20">
+    <section className="relative overflow-hidden border-b border-border bg-brand-950">
+      <TechnicalBackdrop className="opacity-[0.038]" />
+      <SectionContainer className="relative py-14 sm:py-16 md:py-24">
+        <div className="grid items-center gap-12 lg:grid-cols-[0.92fr_1.08fr] lg:gap-12 xl:gap-16">
           <div>
             <h1 className="text-4xl font-[650] leading-[1.08] tracking-tight text-white md:text-5xl">
               {title}
@@ -57,30 +59,52 @@ export function Hero({ title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION,
             <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <Link
                 href={REQUEST_DEMO_HREF}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-[8px] bg-white px-6 text-sm font-semibold text-brand-950 transition-colors hover:bg-brand-50"
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-[8px] bg-white px-6 text-sm font-semibold text-brand-950 transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-brand-50 motion-reduce:transform-none motion-reduce:transition-none"
               >
                 Request a Demo
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </Link>
               <Link
                 href="#how-it-works"
-                className="inline-flex h-12 items-center justify-center rounded-[8px] border border-white/25 bg-white/5 px-6 text-sm font-medium text-white transition-colors hover:bg-white/15"
+                className="inline-flex h-12 items-center justify-center rounded-[8px] border border-white/25 bg-white/5 px-6 text-sm font-medium text-white transition-[background-color,border-color] duration-200 hover:border-white/35 hover:bg-white/10 motion-reduce:transition-none"
               >
                 See How It Works
               </Link>
             </div>
           </div>
 
-          <div className="mx-auto w-full max-w-[720px] lg:mx-0">
-            <div className="rounded-[28px] border border-white/10 bg-black/20 p-2 shadow-2xl shadow-black/25">
-              <div className="mb-2 flex h-5 items-center gap-1.5 px-3" aria-hidden="true">
-                <span className="h-1.5 w-1.5 rounded-full bg-white/20" />
-                <span className="h-1.5 w-1.5 rounded-full bg-white/15" />
-                <span className="h-1.5 w-1.5 rounded-full bg-white/10" />
+          <div className="mx-auto w-full max-w-[760px] px-1 sm:px-4 lg:mx-0 lg:px-0">
+            <div className="relative isolate py-3 sm:py-6 lg:py-2">
+              <div
+                className="relative mx-auto w-full transform-gpu transition-transform duration-500 ease-out motion-reduce:transition-none sm:w-[96%] md:[transform:perspective(1500px)_rotateY(-11deg)_rotateX(1.8deg)_rotateZ(-1deg)] lg:w-full lg:[transform:perspective(1600px)_rotateY(-14deg)_rotateX(2.2deg)_rotateZ(-1.35deg)]"
+              >
+                <div className="relative rounded-[26px] border border-white/[0.22] bg-[#171a20] p-[7px] shadow-[0_30px_72px_rgba(0,0,0,0.36)] ring-1 ring-white/[0.035] sm:rounded-[32px] sm:p-[9px]">
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-[10%] -right-[7px] hidden w-[6px] rounded-r-full border border-l-0 border-white/[0.18] bg-[#2a2f38] opacity-90 shadow-[2px_0_10px_rgba(255,255,255,0.05)] md:block"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-[15%] -right-[7px] hidden w-px bg-white/[0.24] md:block"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-[14%] right-[13%] top-[3px] hidden h-px bg-white/[0.18] sm:block"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-[30%] top-[6px] hidden h-[2px] w-[34%] rounded-full bg-white/[0.11] sm:block"
+                  />
+                  <div className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-surface/95 sm:rounded-[24px]">
+                    <ProductDashboardPreview className="border-0 shadow-none ring-0" />
+                  </div>
+                </div>
               </div>
-              <div className="overflow-hidden rounded-[20px] border border-white/5 bg-surface/95 opacity-[0.96]">
-                <ProductDashboardPreview className="border-0 shadow-none ring-0" />
-              </div>
+
+              <div
+                aria-hidden="true"
+                className="mx-auto mt-3 h-px w-[72%] bg-white/[0.08] opacity-70 md:w-[58%]"
+              />
             </div>
           </div>
         </div>
