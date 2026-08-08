@@ -1,29 +1,28 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { statusConfig } from '@/lib/request-status';
 import { fetchWithRetry } from '@/lib/fetch-with-retry';
 import {
-  Gauge,
-  ClipboardCheck,
-  ClipboardList,
-  ChevronRight,
+  AlertTriangle,
+  ArrowRight,
+  Car,
   Clock,
+  Fuel,
+  Gauge,
+  Loader2,
   MapPin,
+  PenSquare,
+  RefreshCw,
+  UserRound,
   Wifi,
   WifiOff,
-  AlertTriangle,
-  PenSquare,
-  Loader2,
-  RefreshCw,
-  Car
 } from 'lucide-react';
-import Link from 'next/link';
 
 interface AssignedTrip {
   id: string;
@@ -44,10 +43,11 @@ export default function DriverMobileDashboardPage() {
   const [trips, setTrips] = useState<AssignedTrip[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
+  const [isOnline, setIsOnline] = useState(
+    () => typeof navigator === 'undefined' || navigator.onLine,
+  );
   const fetchedRef = useRef(false);
 
-  // Monitor online/offline status
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -78,240 +78,141 @@ export default function DriverMobileDashboardPage() {
   useEffect(() => {
     if (fetchedRef.current) return;
     fetchedRef.current = true;
-    fetchTrips();
+    void fetchTrips();
   }, [fetchTrips]);
 
-  const activeTrips = trips.filter((t) =>
-    ['pending', 'in_progress', 'issued'].includes(t.status),
-  );
-  const completedTrips = trips.filter((t) =>
-    ['closed', 'completed', 'returned'].includes(t.status),
-  );
+  const activeTrips = trips.filter((trip) => ['pending', 'in_progress', 'issued'].includes(trip.status));
+  const completedTrips = trips.filter((trip) => ['closed', 'completed', 'returned'].includes(trip.status));
+  const variantFor = (status: string) => statusConfig(status).variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency';
 
-  const statusVariant = (status: string): 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency' => {
-    return statusConfig(status).variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency';
-  };
-
-  const statusLabel = (status: string): string => {
-    return statusConfig(status).label;
-  };
+  const quickActions = [
+    { href: '/dashboard/trips', label: 'My Trips', description: 'Assigned journeys', icon: Gauge },
+    { href: '/dashboard/logs', label: 'Daily Log', description: 'Odometer and trip log', icon: PenSquare },
+    { href: '/dashboard/fuel/new', label: 'Fuel Entry', description: 'Record a fuel stop', icon: Fuel },
+    { href: '/dashboard/driver-self-service', label: 'Self-Service', description: 'Licence and driver reports', icon: UserRound },
+  ];
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      {/* Offline Banner */}
+    <div className="space-y-5 md:space-y-6">
       {!isOnline && (
-        <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
-          <WifiOff className="h-4 w-4 shrink-0" />
-          <span>You are offline. Inspection data will be saved locally and synced when connectivity returns.</span>
+        <div className="bg-status-warning-bg text-status-warning-text border-status-warning-text/20 flex items-start gap-2 rounded-[8px] border px-4 py-3 text-sm">
+          <WifiOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>You are offline. Supported drafts remain available and will sync when connectivity returns.</span>
         </div>
       )}
 
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Driver Console' },
-      ]} />
-
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Driver Console' }]} />
       <PageHeader
         title="Driver Console"
-        description={isOnline ? 'Your assigned trips and inspections' : 'Working offline — changes will sync later'}
+        description={isOnline ? 'Assigned trips and driver actions' : 'Working offline — supported changes will sync later'}
       >
         <div className="flex items-center gap-2">
-          <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-            isOnline ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-          }`}>
-            {isOnline ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+          <span className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium ${isOnline ? 'bg-status-success-bg text-status-success-text' : 'bg-status-warning-bg text-status-warning-text'}`}>
+            {isOnline ? <Wifi className="h-3.5 w-3.5" aria-hidden="true" /> : <WifiOff className="h-3.5 w-3.5" aria-hidden="true" />}
             {isOnline ? 'Online' : 'Offline'}
-          </div>
-          <Button variant="secondary" size="sm" onClick={fetchTrips} loading={loading}>
-            <RefreshCw className="h-4 w-4" />
+          </span>
+          <Button variant="secondary" size="sm" onClick={() => void fetchTrips()} loading={loading} aria-label="Refresh assigned trips">
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
       </PageHeader>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Link
-          href="/dashboard/trips"
-          className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center hover:border-brand-200 hover:shadow-sm transition-all"
-        >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-purple-50 text-purple-700">
-            <Gauge className="h-6 w-6" />
-          </div>
-          <span className="text-xs font-medium text-ink-700">My Trips</span>
-        </Link>
-        <Link
-          href="/dashboard/logs"
-          className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center hover:border-brand-200 hover:shadow-sm transition-all"
-        >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-            <PenSquare className="h-6 w-6" />
-          </div>
-          <span className="text-xs font-medium text-ink-700">Daily Log</span>
-        </Link>
-        <Link
-          href="/dashboard/fuel/new"
-          className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center hover:border-brand-200 hover:shadow-sm transition-all"
-        >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300">
-            <ClipboardList className="h-6 w-6" />
-          </div>
-          <span className="text-xs font-medium text-ink-700">Fuel Entry</span>
-        </Link>
-        <Link
-          href="/dashboard/inspections"
-          className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center hover:border-brand-200 hover:shadow-sm transition-all"
-        >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-            <ClipboardCheck className="h-6 w-6" />
-          </div>
-          <span className="text-xs font-medium text-ink-700">Inspection History</span>
-        </Link>
-      </div>
+      <section aria-labelledby="driver-actions-heading">
+        <h2 id="driver-actions-heading" className="text-ink-950 mb-3 text-sm font-semibold">Driver actions</h2>
+        <div className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border lg:grid-cols-4">
+          {quickActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <Link
+                key={action.href}
+                href={action.href}
+                className="focus-ring bg-surface hover:bg-muted/50 group min-w-0 p-4 transition-colors motion-reduce:transition-none"
+              >
+                <Icon className="text-brand-700 h-5 w-5" aria-hidden="true" />
+                <p className="text-ink-900 mt-3 text-sm font-medium">{action.label}</p>
+                <p className="text-ink-500 mt-0.5 text-xs">{action.description}</p>
+              </Link>
+            );
+          })}
+        </div>
+      </section>
 
-      {/* Active Trips */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Active Trips ({activeTrips.length})</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
-            </div>
-          ) : activeTrips.length === 0 ? (
-            <div className="px-5 pb-4">
-              <EmptyState
-                icon={<Gauge className="h-6 w-6" />}
-                title="No active trips"
-                description="You have no trips assigned at the moment."
-              />
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {activeTrips.map((trip) => (
-                <Link
-                  key={trip.id}
-                  href={`/dashboard/trips/${trip.id}`}
-                  className="flex items-center justify-between px-4 py-3 hover:bg-canvas/50 transition-colors md:px-5"
-                >
+      <section aria-labelledby="active-trips-heading" className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="active-trips-heading" className="text-ink-950 text-sm font-semibold">Active Trips ({activeTrips.length})</h2>
+          <Link href="/dashboard/trips" className="text-brand-700 focus-ring rounded text-xs font-medium hover:underline">View all</Link>
+        </div>
+
+        {loading ? (
+          <div className="text-ink-500 flex items-center justify-center gap-2 py-10 text-sm">
+            <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading trips…
+          </div>
+        ) : activeTrips.length === 0 ? (
+          <EmptyState icon={<Gauge className="h-6 w-6" />} title="No active trips" description="You have no trips assigned at the moment." />
+        ) : (
+          <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
+            {activeTrips.map((trip) => (
+              <article key={trip.id} className="border-border border-b p-4 last:border-b-0 sm:p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-ink-950 truncate">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link href={`/dashboard/trips/${trip.id}`} className="text-ink-950 focus-ring truncate rounded text-sm font-semibold hover:text-brand-700">
                         {trip.reference || trip.id.slice(0, 8)}
-                      </p>
-                      <Badge variant={statusVariant(trip.status)} size="sm">
-                        {statusLabel(trip.status)}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
-                      <span className="flex items-center gap-1">
-                        <Car className="h-3 w-3" />
-                        {trip.vehicleLicence || 'Vehicle assigned'}
-                      </span>
-                      {trip.startAt && (
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {new Date(trip.startAt).toLocaleDateString('en-NA', { weekday: 'short', day: '2-digit', month: 'short' })}
-                        </span>
-                      )}
-                      {trip.routeKm != null && trip.routeKm > 0 && (
-                        <span className="flex items-center gap-1">
-                          <MapPin className="h-3 w-3" />
-                          {Math.round(trip.routeKm).toLocaleString()} km
-                        </span>
-                      )}
-                    </div>
-                    {trip.purpose && (
-                      <p className="mt-0.5 text-xs text-ink-400 truncate">{trip.purpose}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-2">
-                    <div className="flex items-center gap-1.5">
-                      {trip.status === 'pending' && (
-                        <Link
-                          href={`/dashboard/trips/${trip.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="flex h-7 items-center rounded-full bg-brand-50 px-2.5 text-[11px] font-medium text-brand-700 hover:bg-brand-100 transition-colors"
-                        >
-                          View Trip
-                        </Link>
-                      )}
-                      {trip.status === 'in_progress' && (
-                        <Link
-                          href={`/dashboard/trips/${trip.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="flex h-7 items-center rounded-full bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition-colors dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50"
-                        >
-                          Trip Status
-                        </Link>
-                      )}
-                      <Link
-                        href={`/dashboard/fuel/new`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex h-7 items-center rounded-full bg-blue-50 px-2.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition-colors dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-900/50"
-                      >
-                        Fuel
                       </Link>
-                      <Link
-                        href={`/dashboard/inspections?vehicleId=${trip.vehicleId || ''}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex h-7 items-center rounded-full bg-gray-50 px-2.5 text-[11px] font-medium text-gray-700 hover:bg-gray-100 transition-colors dark:bg-white/10 dark:text-ink-300 dark:hover:bg-white/15"
-                      >
-                        Inspections
-                      </Link>
+                      <Badge variant={variantFor(trip.status)} size="sm">{statusConfig(trip.status).label}</Badge>
                     </div>
-                    <ChevronRight className="h-4 w-4 text-ink-300" />
+                    <div className="text-ink-500 mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      <span className="flex items-center gap-1"><Car className="h-3 w-3" aria-hidden="true" />{trip.vehicleLicence || 'Vehicle assigned'}</span>
+                      {trip.startAt && <span className="flex items-center gap-1"><Clock className="h-3 w-3" aria-hidden="true" />{new Date(trip.startAt).toLocaleDateString('en-NA', { weekday: 'short', day: '2-digit', month: 'short' })}</span>}
+                      {trip.routeKm != null && trip.routeKm > 0 && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" aria-hidden="true" />{Math.round(trip.routeKm).toLocaleString()} km</span>}
+                    </div>
+                    {trip.purpose && <p className="text-ink-400 mt-1 line-clamp-2 text-xs">{trip.purpose}</p>}
                   </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
-      {/* Recent Trips */}
+                  <div className="flex flex-wrap gap-2 sm:justify-end">
+                    <Button variant="secondary" size="sm" asChild>
+                      <Link href={`/dashboard/trips/${trip.id}`}>Trip Details</Link>
+                    </Button>
+                    <Button variant="secondary" size="sm" asChild>
+                      <Link href="/dashboard/fuel/new"><Fuel className="h-4 w-4" aria-hidden="true" />Fuel</Link>
+                    </Button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
       {completedTrips.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Trips ({completedTrips.length})</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y divide-border">
-              {completedTrips.slice(0, 5).map((trip) => (
-                <Link
-                  key={trip.id}
-                  href={`/dashboard/trips/${trip.id}`}
-                  className="flex items-center justify-between px-4 py-3 hover:bg-canvas/50 transition-colors md:px-5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-ink-950 truncate">
-                        {trip.reference || trip.id.slice(0, 8)}
-                      </p>
-                      <Badge variant={statusVariant(trip.status)} size="sm">
-                        {statusLabel(trip.status)}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 text-xs text-ink-500">
-                      {trip.vehicleLicence && <span>{trip.vehicleLicence}</span>}
-                    </div>
+        <section aria-labelledby="recent-trips-heading" className="border-border border-t pt-5">
+          <h2 id="recent-trips-heading" className="text-ink-950 mb-2 text-sm font-semibold">Recent Trips</h2>
+          <div className="divide-border divide-y">
+            {completedTrips.slice(0, 5).map((trip) => (
+              <Link
+                key={trip.id}
+                href={`/dashboard/trips/${trip.id}`}
+                className="focus-ring group flex min-h-12 items-center justify-between gap-3 rounded py-3"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-ink-900 truncate text-sm font-medium">{trip.reference || trip.id.slice(0, 8)}</span>
+                    <Badge variant={variantFor(trip.status)} size="sm">{statusConfig(trip.status).label}</Badge>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-ink-300 shrink-0 ml-2" />
-                </Link>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                  {trip.vehicleLicence && <p className="text-ink-500 mt-0.5 text-xs">{trip.vehicleLicence}</p>}
+                </div>
+                <ArrowRight className="text-ink-400 group-hover:text-brand-700 h-4 w-4 shrink-0" aria-hidden="true" />
+              </Link>
+            ))}
+          </div>
+        </section>
       )}
 
-      {/* Error State */}
       {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-status-error-bg bg-status-error-bg px-4 py-3 text-sm text-status-error-text">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>{error}</span>
-          <Button variant="secondary" size="sm" onClick={fetchTrips} className="ml-auto">
-            Retry
-          </Button>
+        <div className="bg-status-error-bg text-status-error-text flex items-start gap-2 rounded-[8px] px-4 py-3 text-sm" role="alert">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">{error}</span>
+          <Button variant="secondary" size="sm" onClick={() => void fetchTrips()}>Retry</Button>
         </div>
       )}
     </div>
