@@ -11,10 +11,7 @@ import { demoRequests } from '@/db/schema/demo-requests';
 import { eq, and, count, type SQL } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-
-// ---------------------------------------------------------------------------
-// POST — Submit a demo request
-// ---------------------------------------------------------------------------
+import { notifyPlatformIntake } from '@/lib/platform/public-intake-notifications';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,11 +20,9 @@ export async function POST(request: NextRequest) {
       name,
       email,
       phone,
-      // Public request-demo form field names
       organisation,
       organisationType,
       fleetSize,
-      // Legacy / platform field names
       company,
       jobTitle,
       role,
@@ -46,7 +41,6 @@ export async function POST(request: NextRequest) {
       sourceDetails,
     } = body;
 
-    // Accept the public form's field names and map them onto the schema.
     const org = (organisation ?? company ?? '').trim();
     const orgType = (organisationType ?? industry ?? '').trim();
     const fleetCount =
@@ -56,7 +50,6 @@ export async function POST(request: NextRequest) {
     const roleValue = (role ?? 'other').trim() || 'other';
     const jobTitleValue = (jobTitle ?? 'Prospective Customer').trim() || 'Prospective Customer';
 
-    // Validate required fields
     if (!name || !email || !org) {
       return NextResponse.json(
         { error: 'Missing required fields: name, email, organisation' },
@@ -64,24 +57,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
     }
 
     const db = getDb();
+    const normalisedEmail = email.trim().toLowerCase();
 
-    // Check for an existing request from the same email that is still active
     const [existing] = await db
       .select()
       .from(demoRequests)
-      .where(
-        and(
-          eq(demoRequests.email, email.toLowerCase()),
-          // Only block if the prior request hasn't been completed/cancelled
-        ),
-      )
+      .where(and(eq(demoRequests.email, normalisedEmail)))
       .limit(1);
 
     if (existing && ['new', 'qualified', 'scheduled'].includes(existing.status)) {
@@ -91,12 +78,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create the demo request
     const [demoRequest] = await db
       .insert(demoRequests)
       .values({
         name: name.trim(),
-        email: email.trim().toLowerCase(),
+        email: normalisedEmail,
         phone: phone || null,
         company: org,
         jobTitle: jobTitleValue,
@@ -113,24 +99,29 @@ export async function POST(request: NextRequest) {
         contactMethod: contactMethod || 'email',
         notes: notes || null,
         status: 'new',
-        source: source || null,
+        source: source || 'website',
         sourceDetails: sourceDetails || null,
       })
       .returning();
 
-    return NextResponse.json({
-      success: true,
-      data: demoRequest,
-    }, { status: 201 });
+    await notifyPlatformIntake({
+      entityId: demoRequest.id,
+      entityType: 'demo_request',
+      eventType: 'public_demo_request_submitted',
+      title: 'New demo request',
+      body: `${demoRequest.company} submitted a demo request through the public website.`,
+      actionUrl: `/dashboard/platform/demo-requests?request=${demoRequest.id}`,
+      priority: 'high',
+    }).catch((notificationError) => {
+      console.error('[Demo Requests] Platform notification failed:', notificationError);
+    });
+
+    return NextResponse.json({ success: true, data: demoRequest }, { status: 201 });
   } catch (error) {
     console.error('[Demo Requests] POST failed:', error);
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
-
-// ---------------------------------------------------------------------------
-// GET — List demo requests (Platform Admin only - future feature)
-// ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
   try {
@@ -148,18 +139,15 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * limit;
 
     const db = getDb();
-
     const conditions: SQL<unknown>[] = [];
     if (status) conditions.push(eq(demoRequests.status, status as never));
 
-    // Get total count
     const [totalResult] = await db
       .select({ count: count() })
       .from(demoRequests)
       .where(and(...conditions));
 
     const total = totalResult?.count || 0;
-
     const requests = await db
       .select()
       .from(demoRequests)
@@ -170,13 +158,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: {
-        requests,
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
+      data: { requests, total, page, limit, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
     console.error('[Demo Requests] GET failed:', error);
