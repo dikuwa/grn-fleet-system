@@ -2,7 +2,7 @@
  * FAQ / Resources — practical questions grouped into responsive tabs.
  *
  * CMS entries remain authoritative and editable by Platform Admin. Curated
- * fallback questions fill obvious gaps until the CMS contains a fuller set.
+ * fallback questions are only used while the CMS library is still sparse.
  */
 
 import type { Metadata } from 'next';
@@ -34,8 +34,8 @@ const CURATED_FAQS: CuratedFaq[] = [
   },
   {
     id: 'curated-who',
-    category: 'getting-started',
-    question: 'Who can use GovFleet Namibia?',
+    category: 'general',
+    question: 'Who can use the platform?',
     answer: 'The platform is designed for organisations that manage vehicles or transport workflows, including government ministries, regional councils, municipalities, public enterprises, mining and industrial operations, logistics providers and private organisations.',
   },
   {
@@ -121,12 +121,14 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 export default async function FaqPage() {
-  let published = await getPublishedFaqs().catch(() => []);
+  const published = await getPublishedFaqs().catch(() => []);
 
   const seenQuestions = new Set(published.map((faq) => faq.question.trim().toLowerCase()));
-  const curatedToAdd = CURATED_FAQS.filter(
-    (faq) => !seenQuestions.has(faq.question.trim().toLowerCase()),
-  );
+  const curatedToAdd = published.length >= 10
+    ? []
+    : CURATED_FAQS.filter(
+        (faq) => !seenQuestions.has(faq.question.trim().toLowerCase()),
+      );
 
   const displayFaqs: CuratedFaq[] = [
     ...published.map((faq) => ({
