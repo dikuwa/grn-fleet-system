@@ -153,8 +153,8 @@ export async function PATCH(
     if (tenantStatus !== undefined) {
       const statusPermission = await requirePermission(session, Permissions.USER_MANAGE_STATUS);
       if (statusPermission instanceof NextResponse) return statusPermission;
-      if (!['active', 'suspended', 'pending'].includes(String(tenantStatus))) {
-        return NextResponse.json({ error: 'Unsupported account status' }, { status: 422 });
+      if (!['active', 'suspended', 'pending_activation'].includes(String(tenantStatus))) {
+        return NextResponse.json({ error: 'Unsupported tenant membership status' }, { status: 422 });
       }
     }
 
@@ -181,12 +181,12 @@ export async function PATCH(
         );
       }
       if (tenantStatus !== 'active' && id === session.user.id) {
-        return NextResponse.json({ error: 'You cannot suspend your own active account.' }, { status: 409 });
+        return NextResponse.json({ error: 'You cannot suspend or deactivate your own active membership.' }, { status: 409 });
       }
       if (tenantStatus !== 'active') {
         const admins = await activeTenantAdministrators(session.tenantId);
         if (admins.length === 1 && admins[0] === id) {
-          return NextResponse.json({ error: 'The final active Tenant Administrator cannot be suspended.' }, { status: 409 });
+          return NextResponse.json({ error: 'The final active Tenant Administrator cannot be suspended or moved to pending activation.' }, { status: 409 });
         }
       }
       await db.update(tenantMemberships).set({ status: tenantStatus }).where(eq(tenantMemberships.id, membership.id));
@@ -285,8 +285,6 @@ export async function PATCH(
         }
       }
 
-      // Soft-close only. Future assignments are cancelled by ending them now;
-      // active assignments end now; historical assignments remain untouched.
       if (!assignment.endDate || new Date(assignment.endDate) > now) {
         await db.update(roleAssignments).set({ endDate: now }).where(eq(roleAssignments.id, assignment.id));
       }
@@ -357,8 +355,6 @@ export async function DELETE(
       );
     }
 
-    // A future Tenant Administrator assignment is not an active admin and does
-    // not block removal; only active administrators participate in this guard.
     const admins = await activeTenantAdministrators(session.tenantId);
     if (admins.length === 1 && admins[0] === id) {
       return NextResponse.json({ error: 'The final active Tenant Administrator cannot be removed.' }, { status: 409 });
