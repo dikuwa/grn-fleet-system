@@ -6,9 +6,9 @@
  *      corrections, OCR output and signed image URLs.
  *
  * POST /api/drivers/licences/[id]/review — perform a review action
- *      (verify / request_upload / reject) with a reason. Approval uses the
- *      existing PATCH /api/drivers/[id]/licences verify path via the page,
- *      which preserves corrections + audit + notifications consistently.
+ *      (request_upload / reject) with a reason. Approval uses the existing
+ *      PATCH /api/drivers/[id]/licences verify path via the page, which
+ *      preserves corrections + audit + notifications consistently.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -23,7 +23,7 @@ import {
   offices,
 } from '@/db/schema/people';
 import { and, desc, eq } from 'drizzle-orm';
-import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { hasPermission, requireAnyPermission, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getSignedFileUrl } from '@/lib/storage';
 import { recordAuditEvent } from '@/lib/audit-event';
@@ -46,8 +46,14 @@ export async function GET(
     const permCheck = await requireAnyPermission(auth.session, [
       Permissions.LICENCE_VERIFY,
       Permissions.DRIVER_MANAGE,
+      Permissions.DRIVER_REVIEW_LICENCE,
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
+
+    // Tenant administrators may inspect the tenant-wide licence register, but
+    // only the transport licence-review responsibility may make a review
+    // decision. This flag drives the page into a true read-only state.
+    const canReview = await hasPermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
 
     const db = getDb();
     const [licence] = await db
@@ -84,7 +90,6 @@ export async function GET(
 
     const profileId = licence.profileId;
 
-    // Signed URLs for the source documents (best-effort).
     const [frontUrl, backUrl, pdfUrl] = await Promise.all([
       licence.licence.frontImageKey
         ? getSignedFileUrl(licence.licence.frontImageKey, 3600).catch(() => null)
@@ -134,8 +139,6 @@ export async function GET(
         .orderBy(desc(driverLicences.version)),
     ]);
 
-    // Current verified licence is the previous version of this review target
-    // when this one is still awaiting review.
     const currentVerified = previous[0] ?? null;
     const currentVerifiedUrl = currentVerified?.frontImageKey
       ? await getSignedFileUrl(currentVerified.frontImageKey, 3600).catch(() => null)
@@ -147,7 +150,6 @@ export async function GET(
       qualityWarnings?: string[];
     };
 
-    // Warnings compared against the current verified licence.
     const warnings: string[] = [];
     if (rawOcr.qualityWarnings?.length) warnings.push(...rawOcr.qualityWarnings);
     if (currentVerified) {
@@ -174,6 +176,7 @@ export async function GET(
     return NextResponse.json({
       success: true,
       data: {
+        canReview,
         licence: {
           ...licence.licence,
           ocrText: rawOcr.text ?? null,
@@ -217,10 +220,6 @@ export async function GET(
   }
 }
 
-/**
- * POST — request changes / reject with a reason; verify is handled by the
- * existing PATCH verify action (keeps corrections + audit in one place).
- */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -229,10 +228,10 @@ export async function POST(
     const { id } = await params;
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
-    const permCheck = await requireAnyPermission(auth.session, [
-      Permissions.LICENCE_VERIFY,
-      Permissions.DRIVER_MANAGE,
-    ]);
+
+    // Review decisions are an operational Transport Administration function.
+    // Tenant Administrators retain read-only licence oversight through GET.
+    const permCheck = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = (await request.json()) as {
