@@ -1,35 +1,44 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { StyledSelect } from '@/components/ui/styled-select';
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
-  CreditCard,
-  Plus,
-  Search,
-  Filter,
-  RefreshCw,
-  Clock,
-  CheckCircle,
   AlertTriangle,
-  XCircle,
-  Pause,
-  Loader2,
-  Eye,
   ArrowRightLeft,
-  Calendar,
   Building2,
+  Calendar,
+  CheckCircle,
+  Clock,
+  CreditCard,
   Package,
+  Pause,
+  Plus,
+  RefreshCw,
+  Search,
+  XCircle,
+  type LucideIcon,
 } from 'lucide-react';
+import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Input, Label, Textarea } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useToast } from '@/lib/use-toast';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface Subscription {
   id: string;
@@ -63,11 +72,9 @@ interface SubscriptionStats {
   expired: number;
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+type BadgeVariant = NonNullable<BadgeProps['variant']>;
 
-const STATUS_CONFIG: Record<string, { label: string; variant: string; icon: any }> = {
+const STATUS_CONFIG: Record<string, { label: string; variant: BadgeVariant; icon: LucideIcon }> = {
   active: { label: 'Active', variant: 'success', icon: CheckCircle },
   trialing: { label: 'Trialing', variant: 'info', icon: Clock },
   pending_payment: { label: 'Pending Payment', variant: 'warning', icon: CreditCard },
@@ -80,7 +87,7 @@ const STATUS_CONFIG: Record<string, { label: string; variant: string; icon: any 
 };
 
 const STATUS_OPTIONS = [
-  { value: '', label: 'All Statuses' },
+  { value: 'all', label: 'All Statuses' },
   { value: 'active', label: 'Active' },
   { value: 'trialing', label: 'Trialing' },
   { value: 'pending_payment', label: 'Pending Payment' },
@@ -104,104 +111,102 @@ const TRANSITION_OPTIONS: Record<string, string[]> = {
   expired: ['active'],
 };
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+const SUMMARY_ITEMS: Array<{ key: keyof SubscriptionStats; label: string }> = [
+  { key: 'total', label: 'Total' },
+  { key: 'active', label: 'Active' },
+  { key: 'trialing', label: 'Trialing' },
+  { key: 'pastDue', label: 'Past Due' },
+  { key: 'cancelled', label: 'Cancelled' },
+  { key: 'expired', label: 'Expired' },
+];
 
 export default function PlatformSubscriptionsPage() {
-  const router = useRouter();
   const { toast } = useToast();
-
-  // Data state
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [stats, setStats] = useState<SubscriptionStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Filter state
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-
-  // Modal state
   const [transitionModal, setTransitionModal] = useState<{
     open: boolean;
     subscription: Subscription | null;
   }>({ open: false, subscription: null });
   const [transitioning, setTransitioning] = useState(false);
 
-  // -----------------------------------------------------------------------
-  // Data fetching
-  // -----------------------------------------------------------------------
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   const fetchSubscriptions = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
-      if (searchQuery) params.set('q', searchQuery);
-      if (statusFilter) params.set('status', statusFilter);
+      if (debouncedSearch) params.set('q', debouncedSearch);
+      if (statusFilter !== 'all') params.set('status', statusFilter);
       params.set('page', String(page));
       params.set('limit', '25');
 
       const res = await fetch(`/api/platform/subscriptions?${params}`);
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to fetch');
-      setSubscriptions(json.data.subscriptions);
-      setStats(json.data.stats);
-      setTotalPages(json.data.totalPages);
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch subscriptions');
+      setSubscriptions(json.data.subscriptions ?? []);
+      setStats(json.data.stats ?? null);
+      setTotalPages(json.data.totalPages ?? 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load');
+      setError(err instanceof Error ? err.message : 'Failed to load subscriptions');
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, statusFilter, page]);
+  }, [debouncedSearch, statusFilter, page]);
 
   useEffect(() => {
     fetchSubscriptions();
   }, [fetchSubscriptions]);
 
-  // -----------------------------------------------------------------------
-  // Handlers
-  // -----------------------------------------------------------------------
+  const handleTransition = useCallback(
+    async (newStatus: string, reason: string) => {
+      if (!transitionModal.subscription) return;
+      setTransitioning(true);
+      try {
+        const res = await fetch(`/api/platform/subscriptions/${transitionModal.subscription.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus, reason }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to transition subscription');
+        toast({
+          title: 'Subscription updated',
+          description: `Subscription transitioned to ${STATUS_CONFIG[newStatus]?.label ?? newStatus}.`,
+          variant: 'success',
+        });
+        setTransitionModal({ open: false, subscription: null });
+        await fetchSubscriptions();
+      } catch (err) {
+        toast({
+          title: 'Transition failed',
+          description: err instanceof Error ? err.message : 'Could not update status',
+          variant: 'error',
+        });
+      } finally {
+        setTransitioning(false);
+      }
+    },
+    [transitionModal.subscription, toast, fetchSubscriptions],
+  );
 
-  const handleTransition = useCallback(async (newStatus: string, reason: string) => {
-    if (!transitionModal.subscription) return;
-    setTransitioning(true);
-    try {
-      const res = await fetch(`/api/platform/subscriptions/${transitionModal.subscription.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus, reason }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to transition');
-      toast({
-        title: 'Status Updated',
-        description: `Subscription transitioned to ${newStatus}`,
-        variant: 'success',
-      });
-      setTransitionModal({ open: false, subscription: null });
-      fetchSubscriptions();
-    } catch (err) {
-      toast({
-        title: 'Transition Failed',
-        description: err instanceof Error ? err.message : 'Could not update status',
-        variant: 'error',
-      });
-    } finally {
-      setTransitioning(false);
-    }
-  }, [transitionModal.subscription, toast, fetchSubscriptions]);
-
-  // -----------------------------------------------------------------------
-  // Render helpers
-  // -----------------------------------------------------------------------
-
-  const formatCurrency = (cents: number, currency: string = 'NAD') => {
-    return `${currency} ${(cents / 100).toFixed(2)}`;
-  };
+  const formatCurrency = (cents: number, currency = 'NAD') =>
+    new Intl.NumberFormat('en-NA', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(cents / 100);
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '—';
@@ -212,236 +217,183 @@ export default function PlatformSubscriptionsPage() {
     });
   };
 
-  const formatInterval = (interval: string) => {
-    return interval.charAt(0).toUpperCase() + interval.slice(1);
-  };
-
-  // -----------------------------------------------------------------------
-  // Render
-  // -----------------------------------------------------------------------
-
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Platform', href: '/dashboard/platform' },
-        { label: 'Subscriptions' },
-      ]} />
+      <Breadcrumbs
+        items={[
+          { label: 'Platform', href: '/dashboard/platform' },
+          { label: 'Subscriptions' },
+        ]}
+      />
 
       <PageHeader
         title="Subscription Management"
-        description="Manage tenant subscriptions, billing periods, and payment status"
+        description="Manage tenant subscription states, billing periods, and payment readiness."
       >
-        <Button onClick={() => router.push('/dashboard/platform/onboard')} size="sm">
-          <Plus className="h-4 w-4 mr-1" />
-          New Tenant
+        <Button asChild size="sm">
+          <Link href="/dashboard/platform/onboard">
+            <Plus className="h-4 w-4" aria-hidden="true" /> New Tenant
+          </Link>
         </Button>
       </PageHeader>
 
-      {/* Stats Cards */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <StatCard
-            label="Total"
-            value={stats.total}
-            icon={CreditCard}
-            color="text-ink-600"
+        <section aria-label="Subscription summary" className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+            {SUMMARY_ITEMS.map(({ key, label }, index) => (
+              <div
+                key={key}
+                className={`px-4 py-4 ${index % 2 ? 'border-l border-border' : ''} ${index >= 2 ? 'border-t border-border sm:border-t-0' : ''} ${index >= 3 ? 'sm:border-t sm:border-border lg:border-t-0' : ''} ${index > 0 ? 'lg:border-l lg:border-border' : ''}`}
+              >
+                <p className="text-xs font-medium text-ink-500">{label}</p>
+                <p className="mt-1 text-2xl font-[650] tabular-nums text-ink-950">{stats[key]}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section aria-label="Subscription filters" className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative w-full sm:max-w-md sm:flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" aria-hidden="true" />
+          <Input
+            type="search"
+            aria-label="Search subscriptions"
+            placeholder="Search tenant or package..."
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setPage(1);
+            }}
+            className="pl-9"
           />
-          <StatCard
-            label="Active"
-            value={stats.active}
-            icon={CheckCircle}
-            color="text-status-success-text"
-          />
-          <StatCard
-            label="Trialing"
-            value={stats.trialing}
-            icon={Clock}
-            color="text-status-info-text"
-          />
-          <StatCard
-            label="Past Due"
-            value={stats.pastDue}
-            icon={AlertTriangle}
-            color="text-status-warning-text"
-          />
-          <StatCard
-            label="Cancelled"
-            value={stats.cancelled}
-            icon={XCircle}
-            color="text-status-error-text"
-          />
-          <StatCard
-            label="Expired"
-            value={stats.expired}
-            icon={XCircle}
-            color="text-status-error-text"
-          />
+        </div>
+        <Select
+          value={statusFilter}
+          onValueChange={(value) => {
+            setStatusFilter(value);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-52" aria-label="Filter subscriptions by status">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="secondary" size="icon" onClick={fetchSubscriptions} loading={loading} aria-label="Refresh subscriptions">
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </section>
+
+      {loading ? (
+        <div className="flex min-h-48 items-center justify-center" role="status">
+          <span className="text-sm text-ink-500">Loading subscriptions…</span>
+        </div>
+      ) : error ? (
+        <EmptyState
+          icon={<CreditCard className="h-6 w-6" />}
+          title="Could not load subscriptions"
+          description={error}
+          action={{ label: 'Retry', onClick: fetchSubscriptions }}
+        />
+      ) : subscriptions.length === 0 ? (
+        <EmptyState
+          icon={<CreditCard className="h-6 w-6" />}
+          title="No subscriptions found"
+          description={debouncedSearch || statusFilter !== 'all' ? 'Adjust the current filters to see other subscriptions.' : 'Tenant subscriptions will appear here after onboarding.'}
+        />
+      ) : (
+        <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
+          <div className="hidden grid-cols-[1.2fr_1fr_0.75fr_0.8fr_0.9fr_1.15fr_auto] gap-4 border-b border-border bg-muted/40 px-5 py-3 text-xs font-medium text-ink-500 xl:grid">
+            <span>Tenant</span>
+            <span>Package</span>
+            <span>Status</span>
+            <span>Billing</span>
+            <span>Price</span>
+            <span>Period / Payment</span>
+            <span className="text-right">Actions</span>
+          </div>
+          {subscriptions.map((subscription) => {
+            const statusConfig = STATUS_CONFIG[subscription.status] ?? {
+              label: subscription.status,
+              variant: 'default' as BadgeVariant,
+              icon: CreditCard,
+            };
+            const availableTransitions = TRANSITION_OPTIONS[subscription.status] ?? [];
+            return (
+              <article
+                key={subscription.id}
+                className="grid gap-4 border-b border-border px-4 py-5 last:border-b-0 sm:px-5 xl:grid-cols-[1.2fr_1fr_0.75fr_0.8fr_0.9fr_1.15fr_auto] xl:items-center"
+              >
+                <div className="min-w-0">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400 xl:hidden">Tenant</p>
+                  <div className="mt-0.5 flex items-center gap-2">
+                    <Building2 className="h-4 w-4 shrink-0 text-ink-400" aria-hidden="true" />
+                    <span className="truncate text-sm font-medium text-ink-950">{subscription.tenantName}</span>
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400 xl:hidden">Package</p>
+                  <div className="mt-0.5 flex items-center gap-1.5">
+                    <Package className="h-3.5 w-3.5 shrink-0 text-ink-400" aria-hidden="true" />
+                    <span className="truncate text-sm text-ink-700">{subscription.packageName}</span>
+                  </div>
+                </div>
+                <div>
+                  <Badge variant={statusConfig.variant} size="sm">{statusConfig.label}</Badge>
+                </div>
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400 xl:hidden">Billing</p>
+                  <p className="text-sm capitalize text-ink-700">{subscription.billingInterval}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400 xl:hidden">Price</p>
+                  <p className="text-sm font-semibold text-ink-950">{formatCurrency(subscription.priceCents, subscription.currency)}</p>
+                </div>
+                <div className="space-y-1 text-xs text-ink-500">
+                  <p>{formatDate(subscription.currentPeriodStart)} — {formatDate(subscription.currentPeriodEnd)}</p>
+                  {subscription.nextPaymentDueAt && (
+                    <p className="flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
+                      Next: {formatDate(subscription.nextPaymentDueAt)}
+                    </p>
+                  )}
+                </div>
+                <div className="flex xl:justify-end">
+                  {availableTransitions.length > 0 && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setTransitionModal({ open: true, subscription })}
+                    >
+                      <ArrowRightLeft className="h-4 w-4" aria-hidden="true" /> Change Status
+                    </Button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="py-4">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-              <input
-                type="text"
-                placeholder="Search by tenant or package..."
-                value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
-                className="w-full pl-9 pr-3 py-2 h-10 text-sm border border-border rounded-[8px] bg-surface focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
-              />
-            </div>
-            <StyledSelect
-              value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-              className="w-48"
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </StyledSelect>
-            <Button variant="secondary" size="compact" onClick={fetchSubscriptions}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
+      {totalPages > 1 && (
+        <nav className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between" aria-label="Subscription pagination">
+          <p className="text-xs text-ink-500">Page {page} of {totalPages}</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Previous</Button>
+            <Button variant="secondary" size="sm" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages}>Next</Button>
           </div>
-        </CardContent>
-      </Card>
+        </nav>
+      )}
 
-      {/* Subscriptions Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">
-            Subscriptions ({subscriptions.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
-              <span className="ml-2 text-sm text-ink-500">Loading subscriptions...</span>
-            </div>
-          ) : error ? (
-            <div className="text-center py-12">
-              <p className="text-sm text-status-error-text">{error}</p>
-              <Button variant="secondary" size="compact" onClick={fetchSubscriptions} className="mt-3">
-                Retry
-              </Button>
-            </div>
-          ) : subscriptions.length === 0 ? (
-            <div className="text-center py-12">
-              <CreditCard className="h-12 w-12 text-ink-300 mx-auto mb-3" />
-              <p className="text-sm text-ink-500">No subscriptions found</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-3 px-3 font-medium text-ink-500">Tenant</th>
-                    <th className="text-left py-3 px-3 font-medium text-ink-500">Package</th>
-                    <th className="text-left py-3 px-3 font-medium text-ink-500">Status</th>
-                    <th className="text-left py-3 px-3 font-medium text-ink-500">Billing</th>
-                    <th className="text-left py-3 px-3 font-medium text-ink-500">Price</th>
-                    <th className="text-left py-3 px-3 font-medium text-ink-500">Period</th>
-                    <th className="text-left py-3 px-3 font-medium text-ink-500">Next Payment</th>
-                    <th className="text-right py-3 px-3 font-medium text-ink-500">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {subscriptions.map((sub) => {
-                    const statusConfig = STATUS_CONFIG[sub.status] || { label: sub.status, variant: 'default', icon: CreditCard };
-                    const availableTransitions = TRANSITION_OPTIONS[sub.status] || [];
-                    return (
-                      <tr key={sub.id} className="hover:bg-surface-hover transition-colors">
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-2">
-                            <Building2 className="h-4 w-4 text-ink-400" />
-                            <span className="font-medium text-ink-900">{sub.tenantName}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-1.5">
-                            <Package className="h-3.5 w-3.5 text-ink-400" />
-                            <span>{sub.packageName}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <Badge variant={statusConfig.variant as any} size="sm">
-                            {statusConfig.label}
-                          </Badge>
-                        </td>
-                        <td className="py-3 px-3">{formatInterval(sub.billingInterval)}</td>
-                        <td className="py-3 px-3 font-medium">{formatCurrency(sub.priceCents, sub.currency)}</td>
-                        <td className="py-3 px-3 text-xs text-ink-500">
-                          {formatDate(sub.currentPeriodStart)} — {formatDate(sub.currentPeriodEnd)}
-                        </td>
-                        <td className="py-3 px-3">
-                          {sub.nextPaymentDueAt ? (
-                            <div className="flex items-center gap-1">
-                              <Calendar className="h-3.5 w-3.5 text-ink-400" />
-                              <span className="text-xs">{formatDate(sub.nextPaymentDueAt)}</span>
-                            </div>
-                          ) : '—'}
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          {availableTransitions.length > 0 && (
-                            <Button
-                              variant="ghost"
-                              size="compact"
-                              onClick={() => setTransitionModal({ open: true, subscription: sub })}
-                            >
-                              <ArrowRightLeft className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-              <p className="text-xs text-ink-500">
-                Page {page} of {totalPages}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Transition Modal */}
-      <TransitionModal
+      <TransitionDialog
         open={transitionModal.open}
         subscription={transitionModal.subscription}
-        availableStatuses={
-          transitionModal.subscription
-            ? TRANSITION_OPTIONS[transitionModal.subscription.status] || []
-            : []
-        }
+        availableStatuses={transitionModal.subscription ? TRANSITION_OPTIONS[transitionModal.subscription.status] ?? [] : []}
         transitioning={transitioning}
         onTransition={handleTransition}
         onClose={() => setTransitionModal({ open: false, subscription: null })}
@@ -450,33 +402,7 @@ export default function PlatformSubscriptionsPage() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  color,
-}: {
-  label: string;
-  value: number;
-  icon: any;
-  color: string;
-}) {
-  return (
-    <div className="rounded-[8px] border border-border bg-surface p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <Icon className={`h-4 w-4 ${color}`} />
-        <span className="text-xs font-medium text-ink-500">{label}</span>
-      </div>
-      <p className="text-2xl font-bold text-ink-900">{value}</p>
-    </div>
-  );
-}
-
-function TransitionModal({
+function TransitionDialog({
   open,
   subscription,
   availableStatuses,
@@ -488,74 +414,74 @@ function TransitionModal({
   subscription: Subscription | null;
   availableStatuses: string[];
   transitioning: boolean;
-  onTransition: (status: string, reason: string) => void;
+  onTransition: (status: string, reason: string) => void | Promise<void>;
   onClose: () => void;
 }) {
-  const [selectedStatus, setSelectedStatus] = useState(availableStatuses[0] || '');
+  const [selectedStatus, setSelectedStatus] = useState('');
   const [reason, setReason] = useState('');
 
-  if (!open || !subscription) return null;
+  useEffect(() => {
+    if (open) {
+      setSelectedStatus(availableStatuses[0] ?? '');
+      setReason('');
+    }
+  }, [open, subscription?.id, availableStatuses]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-surface rounded-[12px] border border-border shadow-xl w-full max-w-md p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-ink-900">Transition Subscription</h3>
-          <button onClick={onClose} className="text-ink-400 hover:text-ink-600">
-            <XCircle className="h-5 w-5" />
-          </button>
+    <Dialog open={open} onOpenChange={(nextOpen) => !transitioning && !nextOpen && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Change subscription status</DialogTitle>
+          <DialogDescription>
+            Apply an allowed lifecycle transition and keep the reason with the subscription history.
+          </DialogDescription>
+        </DialogHeader>
+
+        {subscription && (
+          <div className="rounded-[8px] border border-border bg-muted/40 p-3">
+            <p className="text-sm font-medium text-ink-950">{subscription.tenantName}</p>
+            <p className="mt-1 text-xs text-ink-500">
+              {subscription.packageName} · {STATUS_CONFIG[subscription.status]?.label ?? subscription.status}
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <Label>New Status</Label>
+          <Select value={selectedStatus} onValueChange={setSelectedStatus} disabled={transitioning}>
+            <SelectTrigger aria-label="New subscription status">
+              <SelectValue placeholder="Select status" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableStatuses.map((status) => (
+                <SelectItem key={status} value={status}>{STATUS_CONFIG[status]?.label ?? status}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        <div className="rounded-[8px] border border-border p-3 bg-surface-hover">
-          <p className="text-sm font-medium text-ink-900">{subscription.tenantName}</p>
-          <p className="text-xs text-ink-500 mt-1">
-            {subscription.packageName} · {STATUS_CONFIG[subscription.status]?.label || subscription.status}
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-ink-700">New Status</label>
-          <StyledSelect
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-          >
-            {availableStatuses.map((status) => (
-              <option key={status} value={status}>
-                {STATUS_CONFIG[status]?.label || status}
-              </option>
-            ))}
-          </StyledSelect>
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-ink-700">Reason (optional)</label>
-          <textarea
+        <div className="space-y-1.5">
+          <Label>Reason <span className="font-normal text-ink-400">(optional)</span></Label>
+          <Textarea
             value={reason}
-            onChange={(e) => setReason(e.target.value)}
+            onChange={(event) => setReason(event.target.value)}
             placeholder="Reason for this transition..."
-            className="w-full h-20 px-3 py-2 text-sm border border-border rounded-[8px] bg-surface focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 resize-none"
+            disabled={transitioning}
+            className="min-h-24"
           />
         </div>
 
-        <div className="flex gap-3 justify-end">
-          <Button variant="secondary" size="compact" onClick={onClose}>
-            Cancel
-          </Button>
+        <DialogFooter className="mobile-action-bar">
+          <Button variant="secondary" onClick={onClose} disabled={transitioning}>Cancel</Button>
           <Button
-            variant="primary"
-            size="compact"
-            onClick={() => onTransition(selectedStatus, reason)}
-            disabled={transitioning || !selectedStatus}
+            onClick={() => onTransition(selectedStatus, reason.trim())}
+            loading={transitioning}
+            disabled={!selectedStatus}
           >
-            {transitioning ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ArrowRightLeft className="h-4 w-4 mr-1" />
-            )}
-            Transition
+            <ArrowRightLeft className="h-4 w-4" aria-hidden="true" /> Transition
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
