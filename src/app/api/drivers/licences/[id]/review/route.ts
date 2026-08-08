@@ -23,14 +23,27 @@ import {
   offices,
 } from '@/db/schema/people';
 import { and, desc, eq } from 'drizzle-orm';
-import { hasPermission, requireAnyPermission, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  getSessionWorkspace,
+  hasPermission,
+  requireAnyPermission,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { WorkspaceIds } from '@/lib/workspaces';
 import { getSignedFileUrl } from '@/lib/storage';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { licenceCoversClass } from '@/lib/licence-classes';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function canReviewLicence(session: Parameters<typeof getSessionWorkspace>[0]) {
+  const workspace = await getSessionWorkspace(session);
+  if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) return false;
+  return hasPermission(session, Permissions.DRIVER_REVIEW_LICENCE);
+}
 
 export async function GET(
   request: NextRequest,
@@ -50,10 +63,9 @@ export async function GET(
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    // Tenant administrators may inspect the tenant-wide licence register, but
-    // only the transport licence-review responsibility may make a review
-    // decision. This flag drives the page into a true read-only state.
-    const canReview = await hasPermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
+    // Tenant Administration has tenant-wide oversight, while review decisions
+    // are performed only from the Transport Administration workspace.
+    const canReview = await canReviewLicence(auth.session);
 
     const db = getDb();
     const [licence] = await db
@@ -89,7 +101,6 @@ export async function GET(
     }
 
     const profileId = licence.profileId;
-
     const [frontUrl, backUrl, pdfUrl] = await Promise.all([
       licence.licence.frontImageKey
         ? getSignedFileUrl(licence.licence.frontImageKey, 3600).catch(() => null)
@@ -202,11 +213,7 @@ export async function GET(
             }
           : null,
         previousVersions: allVersions,
-        files: {
-          frontUrl,
-          backUrl,
-          pdfUrl,
-        },
+        files: { frontUrl, backUrl, pdfUrl },
         warnings,
         licenceCoversVehicleClass: (requiredClass?: string | null) =>
           requiredClass
@@ -229,8 +236,13 @@ export async function POST(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
 
-    // Review decisions are an operational Transport Administration function.
-    // Tenant Administrators retain read-only licence oversight through GET.
+    const workspace = await getSessionWorkspace(auth.session);
+    if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
+      return NextResponse.json(
+        { error: 'Licence review decisions are available only in the Transport Administration workspace.' },
+        { status: 403 },
+      );
+    }
     const permCheck = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
     if (permCheck instanceof NextResponse) return permCheck;
 
