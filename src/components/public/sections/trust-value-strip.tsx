@@ -1,22 +1,35 @@
 /**
  * Trust strip + value proposition strip.
  *
- * Immediately below the hero: who the platform is built for (organisation
- * types, not fake customer logos) and a compact set of restrained trust
- * signals.
+ * Organisation types use Lucide icons rather than fake customer logos. This
+ * gives the strip enough visual presence while keeping the claims honest and
+ * theme-aware.
  */
 
-import { ShieldCheck, Users, Eye, FileCheck2, ScrollText } from 'lucide-react';
+import {
+  Building2,
+  Factory,
+  FileCheck2,
+  Landmark,
+  ScrollText,
+  ShieldCheck,
+  Ship,
+  Store,
+  Truck,
+  Users,
+  Eye,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { SectionContainer } from '@/components/public/section';
 
-const ORGANISATIONS = [
-  'Government Ministries',
-  'Regional Councils',
-  'Municipalities',
-  'Public Enterprises',
-  'Mining & Industry',
-  'Logistics Providers',
-  'Private Organisations',
+const ORGANISATIONS: { label: string; icon: LucideIcon }[] = [
+  { label: 'Government Ministries', icon: Landmark },
+  { label: 'Regional Councils', icon: Building2 },
+  { label: 'Municipalities', icon: Store },
+  { label: 'Public Enterprises', icon: Building2 },
+  { label: 'Mining & Industry', icon: Factory },
+  { label: 'Logistics Providers', icon: Truck },
+  { label: 'Private Organisations', icon: Ship },
 ];
 
 const VALUES = [
@@ -52,30 +65,35 @@ export interface TrustValueStripProps {
 }
 
 export function TrustValueStrip({ orgs }: TrustValueStripProps) {
-  const items = orgs?.length ? orgs : ORGANISATIONS;
+  const items = orgs?.length
+    ? orgs.map((label) => ({ label, icon: Building2 as LucideIcon }))
+    : ORGANISATIONS;
 
   return (
     <>
-      {/* Trust / organisation types */}
       <section className="border-b border-border bg-surface">
-        <SectionContainer className="py-10">
+        <SectionContainer className="py-10 md:py-12">
           <p className="text-center text-sm font-medium text-ink-500">
             Built for organisations that move people, services and resources
           </p>
-          <ul className="mt-5 flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
-            {items.map((org) => (
-              <li
-                key={org}
-                className="text-sm font-medium text-ink-800 dark:text-ink-600"
-              >
-                {org}
-              </li>
-            ))}
+          <ul className="mt-7 grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-7">
+            {items.map((org) => {
+              const Icon = org.icon;
+              return (
+                <li key={org.label} className="flex min-w-0 flex-col items-center text-center">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-[9px] border border-border bg-canvas text-brand-700 dark:text-brand-300">
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span className="mt-2 text-xs font-medium leading-snug text-ink-700 sm:text-sm">
+                    {org.label}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </SectionContainer>
       </section>
 
-      {/* Value strip */}
       <section className="border-b border-border bg-canvas">
         <SectionContainer className="py-12">
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
