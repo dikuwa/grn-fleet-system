@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { and, eq, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import {
+  ArrowRight,
   Bell,
   Building2,
   ClipboardCheck,
@@ -35,7 +36,6 @@ import { getWorkspaceNavigation } from '@/lib/dashboard-access';
 import { activeApprovalVisibleTo } from '@/lib/approval-queue';
 import type { PermissionCode } from '@/lib/permissions';
 import { PageHeader } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { WorkspaceIds, type WorkspaceId } from '@/lib/workspaces';
 
@@ -60,10 +60,7 @@ async function getWorkspaceMetrics(
       {
         label: 'Active tenants',
         value: await countRows(
-          db
-            .select({ count })
-            .from(tenants)
-            .where(sql`lower(${tenants.status}) = 'active'`),
+          db.select({ count }).from(tenants).where(sql`lower(${tenants.status}) = 'active'`),
         ),
         href: '/dashboard/platform/tenants',
         icon: <Building2 className="h-5 w-5" />,
@@ -90,12 +87,7 @@ async function getWorkspaceMetrics(
           db
             .select({ count })
             .from(tenantMemberships)
-            .where(
-              and(
-                eq(tenantMemberships.tenantId, tenantId),
-                eq(tenantMemberships.status, 'suspended'),
-              ),
-            ),
+            .where(and(eq(tenantMemberships.tenantId, tenantId), eq(tenantMemberships.status, 'suspended'))),
         ),
         href: '/dashboard/admin/users',
         icon: <Shield className="h-5 w-5" />,
@@ -106,10 +98,7 @@ async function getWorkspaceMetrics(
           db
             .select({ count })
             .from(roleAssignments)
-            .innerJoin(
-              tenantMemberships,
-              eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
-            )
+            .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
             .where(
               and(
                 eq(tenantMemberships.tenantId, tenantId),
@@ -128,12 +117,7 @@ async function getWorkspaceMetrics(
             .select({ count })
             .from(notificationDeliveries)
             .innerJoin(notifications, eq(notificationDeliveries.notificationId, notifications.id))
-            .where(
-              and(
-                eq(notifications.tenantId, tenantId),
-                eq(notificationDeliveries.status, 'failed'),
-              ),
-            ),
+            .where(and(eq(notifications.tenantId, tenantId), eq(notificationDeliveries.status, 'failed'))),
         ),
         href: '/dashboard/notifications/deliveries',
         icon: <Bell className="h-5 w-5" />,
@@ -215,9 +199,7 @@ async function getWorkspaceMetrics(
   }
 
   if (workspace === WorkspaceIds.DRIVER) {
-    const driverBase = (
-      condition: SQL<boolean> | undefined,
-    ) =>
+    const driverBase = (condition: SQL<boolean> | undefined) =>
       db
         .select({ count })
         .from(trips)
@@ -239,9 +221,7 @@ async function getWorkspaceMetrics(
       },
       {
         label: 'Trips due for return',
-        value: await countRows(
-          driverBase(sql<boolean>`${trips.status} in ('return_due','in_progress')`),
-        ),
+        value: await countRows(driverBase(sql<boolean>`${trips.status} in ('return_due','in_progress')`)),
         href: '/dashboard/trips?status=return_due',
         icon: <FileText className="h-5 w-5" />,
       },
@@ -276,12 +256,7 @@ async function getWorkspaceMetrics(
           db
             .select({ count })
             .from(vehicleInspections)
-            .where(
-              and(
-                eq(vehicleInspections.tenantId, tenantId),
-                eq(vehicleInspections.inspectorUserId, userId),
-              ),
-            ),
+            .where(and(eq(vehicleInspections.tenantId, tenantId), eq(vehicleInspections.inspectorUserId, userId))),
         ),
         href: '/dashboard/inspections',
         icon: <ClipboardCheck className="h-5 w-5" />,
@@ -324,9 +299,7 @@ async function getWorkspaceMetrics(
           db
             .select({ count })
             .from(transportRequests)
-            .where(
-              and(eq(transportRequests.tenantId, tenantId), ne(transportRequests.status, 'closed')),
-            ),
+            .where(and(eq(transportRequests.tenantId, tenantId), ne(transportRequests.status, 'closed'))),
         ),
         href: '/dashboard/requests',
         icon: <FileText className="h-5 w-5" />,
@@ -334,10 +307,7 @@ async function getWorkspaceMetrics(
       {
         label: 'Active trips',
         value: await countRows(
-          db
-            .select({ count })
-            .from(trips)
-            .where(and(eq(trips.tenantId, tenantId), ne(trips.status, 'closed'))),
+          db.select({ count }).from(trips).where(and(eq(trips.tenantId, tenantId), ne(trips.status, 'closed'))),
         ),
         href: '/dashboard/trips',
         icon: <Truck className="h-5 w-5" />,
@@ -374,7 +344,6 @@ async function getWorkspaceMetrics(
     ];
   }
 
-  // Approval workspace only counts work currently assigned to this person.
   return [
     {
       label: 'Assigned approvals',
@@ -404,11 +373,7 @@ async function getWorkspaceMetrics(
   ];
 }
 
-async function getUnreadNotificationCount(
-  tenantId: string,
-  userId: string,
-  workspace: WorkspaceId,
-) {
+async function getUnreadNotificationCount(tenantId: string, userId: string, workspace: WorkspaceId) {
   const db = getDb();
   return countRows(
     db
@@ -461,62 +426,66 @@ export default async function DashboardPage() {
     .slice(0, 9)
     .map((route) => [route.href, route.label] as const);
 
+  const dashboardMetrics: Metric[] = [
+    {
+      label: 'Unread notifications',
+      value: unreadActivity,
+      href: '/dashboard/notifications',
+      icon: <Bell className="h-5 w-5" />,
+    },
+    ...metrics,
+  ];
+
   return (
     <div className="space-y-6">
-      <PageHeader title={workspaceLabel} description="Your current responsibility workspace" />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="pt-5">
-            <Bell className="text-brand-700 h-5 w-5" />
-            <p className="text-ink-950 mt-3 text-2xl font-semibold tabular-nums">
-              {unreadActivity}
-            </p>
-            <p className="text-ink-500 text-xs">Unread relevant notifications</p>
-            <Link
-              className="text-brand-700 mt-3 inline-block text-xs font-medium"
-              href="/dashboard/notifications"
-            >
-              View notifications
-            </Link>
-          </CardContent>
-        </Card>
-        {metrics.map((metric) => (
-          <Card key={metric.label}>
-            <CardContent className="pt-5">
-              <span className="text-brand-700">{metric.icon}</span>
-              <p className="text-ink-950 mt-3 text-2xl font-semibold tabular-nums">
-                {metric.value}
-              </p>
-              <p className="text-ink-500 text-xs">{metric.label}</p>
+      <PageHeader
+        title={workspaceLabel}
+        description="Current activity, attention items and shortcuts for this responsibility workspace."
+      />
+
+      <section aria-labelledby="workspace-overview-heading">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 id="workspace-overview-heading" className="text-ink-950 text-sm font-semibold">Workspace overview</h2>
+          <p className="text-ink-500 hidden text-xs sm:block">Only data visible to your active workspace is counted.</p>
+        </div>
+        <div className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border lg:grid-cols-4">
+          {dashboardMetrics.map((metric) => (
+            <div key={metric.label} className="bg-surface min-w-0 p-4 sm:p-5">
+              <div className="text-brand-700">{metric.icon}</div>
+              <p className="text-ink-950 mt-4 text-2xl font-semibold tabular-nums">{metric.value}</p>
+              <p className="text-ink-500 mt-1 text-xs">{metric.label}</p>
               {metric.href && (
                 <Link
-                  className="text-brand-700 mt-3 inline-block text-xs font-medium"
+                  className="text-brand-700 focus-ring mt-3 inline-flex items-center gap-1 rounded text-xs font-medium hover:underline"
                   href={metric.href}
                 >
-                  Open workspace
+                  Open <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </Link>
               )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      {links.length > 0 && (
-        <Card>
-          <CardContent className="pt-5">
-            <h2 className="text-ink-950 text-sm font-semibold">Workspace shortcuts</h2>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {links.map(([href, label]) => (
-                <Link
-                  key={href}
-                  href={href}
-                  className="border-border text-ink-700 hover:border-brand-200 hover:bg-brand-50/40 rounded-[8px] border px-4 py-3 text-sm transition-colors"
-                >
-                  {label}
-                </Link>
-              ))}
             </div>
-          </CardContent>
-        </Card>
+          ))}
+        </div>
+      </section>
+
+      {links.length > 0 && (
+        <section className="border-border border-t pt-5" aria-labelledby="workspace-shortcuts-heading">
+          <div className="mb-3">
+            <h2 id="workspace-shortcuts-heading" className="text-ink-950 text-sm font-semibold">Workspace shortcuts</h2>
+            <p className="text-ink-500 mt-1 text-xs">Frequently used routes available to the active role.</p>
+          </div>
+          <div className="grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
+            {links.map(([href, label]) => (
+              <Link
+                key={href}
+                href={href}
+                className="border-border text-ink-700 hover:text-brand-700 focus-ring group flex min-h-12 items-center justify-between gap-3 border-b py-3 text-sm transition-colors motion-reduce:transition-none"
+              >
+                <span>{label}</span>
+                <ArrowRight className="text-ink-400 group-hover:text-brand-700 h-4 w-4 shrink-0 transition-colors motion-reduce:transition-none" aria-hidden="true" />
+              </Link>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );
