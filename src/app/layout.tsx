@@ -86,7 +86,16 @@ export default function RootLayout({
   `;
 
   return (
-    <html lang="en" className={cn(onest.variable, allura.variable, ibmPlexMono.variable)} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={cn(
+        onest.variable,
+        allura.variable,
+        ibmPlexMono.variable,
+        'scroll-smooth motion-reduce:scroll-auto',
+      )}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <link rel="manifest" href="/manifest.json" />
