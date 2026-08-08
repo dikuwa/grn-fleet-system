@@ -124,7 +124,7 @@ export function Capabilities({
   subheading = 'From transport request to trip closure — the work, decisions and records stay connected.',
 }: CapabilitiesProps) {
   return (
-    <section id="features" className="border-b border-border bg-surface py-20 md:py-24">
+    <section id="platform" className="scroll-mt-20 border-b border-border bg-surface py-20 md:py-24">
       <SectionContainer>
         <SectionHeading title={heading} subtitle={subheading} />
 
@@ -154,7 +154,7 @@ export function Capabilities({
                   </div>
                 </div>
                 <div className="border-t border-border bg-canvas/50 p-4 md:p-5">
-                  <cap.Preview className="transition-transform duration-200 group-hover:-translate-y-0.5" />
+                  <cap.Preview className="transition-transform duration-200 motion-reduce:transition-none group-hover:-translate-y-0.5 motion-reduce:group-hover:translate-y-0" />
                 </div>
               </article>
             );
