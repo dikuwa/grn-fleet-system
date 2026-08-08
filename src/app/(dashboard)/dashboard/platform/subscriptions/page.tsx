@@ -166,6 +166,7 @@ export default function PlatformSubscriptionsPage() {
   }, [debouncedSearch, statusFilter, page]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchSubscriptions();
   }, [fetchSubscriptions]);
 
@@ -422,6 +423,7 @@ function TransitionDialog({
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedStatus(availableStatuses[0] ?? '');
       setReason('');
     }

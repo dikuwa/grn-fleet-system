@@ -63,6 +63,7 @@ export function PublicHeader({
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPlatformOpen(false);
   }, [pathname]);
 

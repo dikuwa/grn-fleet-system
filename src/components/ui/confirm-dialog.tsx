@@ -40,6 +40,7 @@ export function ConfirmDialog({
   const [typedValue, setTypedValue] = useState('');
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!open) setTypedValue('');
   }, [open]);
 

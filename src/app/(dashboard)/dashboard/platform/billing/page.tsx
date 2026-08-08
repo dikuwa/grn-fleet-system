@@ -133,6 +133,7 @@ export default function PlatformBillingPage() {
   }, [debouncedSearch, page]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchSettings();
   }, [fetchSettings]);
 

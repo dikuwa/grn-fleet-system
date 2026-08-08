@@ -19,7 +19,7 @@ export function LicenceUploadPanel({ employeeId }: { employeeId: string }) {
     const response = await fetch(`/api/drivers/${employeeId}/licences`, { method: 'POST', body: formData });
     const data = await response.json();
     setBusy(false);
-    if (!response.ok) return toast({ title: 'Licence upload failed', description: data.error, variant: 'error' });
+    if (!response.ok) { toast({ title: 'Licence upload failed', description: data.error, variant: 'error' }); return; }
     toast({
       title: data.manualEntryRequired ? 'Licence saved for manual review' : 'OCR complete',
       description: data.qualityWarnings?.length ? `Warnings: ${data.qualityWarnings.join(', ').replaceAll('_', ' ')}` : 'Review extracted fields before verification.',

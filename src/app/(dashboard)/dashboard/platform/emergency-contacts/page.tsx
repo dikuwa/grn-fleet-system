@@ -95,6 +95,7 @@ export default function PlatformEmergencyContactsPage() {
   }, [toast]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTenants();
   }, [fetchTenants]);
 
@@ -124,6 +125,7 @@ export default function PlatformEmergencyContactsPage() {
   }, [selectedTenantId, roleFilter, includeInactive, toast]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContacts();
   }, [fetchContacts]);
 

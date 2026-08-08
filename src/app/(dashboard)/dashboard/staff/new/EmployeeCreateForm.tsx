@@ -23,7 +23,7 @@ export function EmployeeCreateForm({ offices, departments }: { offices: Option[]
     });
     const data = await response.json();
     setBusy(false);
-    if (!response.ok) return toast({ title: 'Employee not created', description: data.error, variant: 'error' });
+    if (!response.ok) { toast({ title: 'Employee not created', description: data.error, variant: 'error' }); return; }
     toast({ title: 'Employee created', variant: 'success' });
     router.push(`/dashboard/staff/${data.data.id}`);
   }
