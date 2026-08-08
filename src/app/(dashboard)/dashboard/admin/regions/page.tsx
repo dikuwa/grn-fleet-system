@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useLoadWithRetry } from '@/lib/use-load-with-retry';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -13,23 +12,15 @@ import {
   Plus,
   Loader2,
   Save,
-  X,
   CheckCircle2,
   Trash2,
   Edit2,
   RefreshCw,
   GripVertical,
-  XCircle
+  XCircle,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface Region {
   id: string;
@@ -44,95 +35,74 @@ interface Region {
 
 export default function AdminRegionsPage() {
   const { toast } = useToast();
-  const [showForm, setShowForm] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Region | null>(null);
-
-  // Form state
   const [formName, setFormName] = useState('');
   const [formCode, setFormCode] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formSortOrder, setFormSortOrder] = useState('0');
 
-  const { data, loading, error, reload } = useLoadWithRetry<{ rows: Region[] }>('/api/regions', {
-    errorMessage: 'Failed to load regions',
-  });
+  const { data, loading, error, reload } = useLoadWithRetry<{ rows: Region[] }>('/api/regions', { errorMessage: 'Failed to load regions' });
   const regions = data?.rows ?? [];
 
-  const openCreateForm = () => {
+  const openCreate = () => {
     setEditingId(null);
     setFormName('');
     setFormCode('');
     setFormDescription('');
     setFormSortOrder('0');
-    setShowForm(true);
+    setFormOpen(true);
   };
 
-  const openEditForm = (region: Region) => {
+  const openEdit = (region: Region) => {
     setEditingId(region.id);
     setFormName(region.name);
     setFormCode(region.code);
     setFormDescription(region.description || '');
     setFormSortOrder(String(region.sortOrder ?? 0));
-    setShowForm(true);
-  };
-
-  const closeForm = () => {
-    setShowForm(false);
-    setEditingId(null);
+    setFormOpen(true);
   };
 
   const handleSave = async () => {
-    if (!formName.trim()) return;
+    if (!formName.trim() || !formCode.trim()) return;
     setSaving(true);
-
     try {
       const body = {
         name: formName.trim(),
-        code: formCode.trim(),
+        code: formCode.trim().toUpperCase(),
         description: formDescription.trim() || undefined,
         sortOrder: Number(formSortOrder) || 0,
       };
-
-      const url = '/api/regions';
-      const method = editingId ? 'PATCH' : 'POST';
-
-      const res = await fetch(url, {
-        method,
+      const res = await fetch('/api/regions', {
+        method: editingId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editingId ? { ...body, id: editingId } : body),
       });
-
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to save region');
-
-      toast({ title: `Region ${editingId ? 'updated' : 'created'}`, description: formName.trim(), variant: 'success' });
-      closeForm();
+      toast({ title: editingId ? 'Region updated' : 'Region created', description: formName.trim(), variant: 'success' });
+      setFormOpen(false);
       reload();
     } catch (err) {
       toast({ title: 'Failed to save region', description: err instanceof Error ? err.message : 'Failed to save region', variant: 'error' });
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
-  const handleDelete = async (id: string) => {
-    setDeleting(id);
-
+  const handleDelete = async (region: Region) => {
+    setDeleting(region.id);
     try {
-      const res = await fetch(`/api/regions?id=${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/regions?id=${region.id}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete region');
-      toast({ title: 'Region deleted', description: 'Region removed successfully', variant: 'success' });
+      toast({ title: 'Region deleted', description: `${region.name} was removed.`, variant: 'success' });
       setPendingDelete(null);
       reload();
     } catch (err) {
-      toast({ title: 'Failed to delete region', description: err instanceof Error ? err.message : 'Failed to delete region', variant: 'error' });
-    } finally {
-      setDeleting(null);
-    }
+      toast({ title: 'Region was not deleted', description: err instanceof Error ? err.message : 'Delete failed', variant: 'error' });
+    } finally { setDeleting(null); }
   };
 
   const handleToggleActive = async (region: Region) => {
@@ -144,235 +114,81 @@ export default function AdminRegionsPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update region');
-      toast({ title: `Region ${region.isActive ? 'deactivated' : 'activated'}`, description: region.name, variant: 'success' });
+      toast({ title: region.isActive ? 'Region deactivated' : 'Region activated', description: region.name, variant: 'success' });
       reload();
     } catch (err) {
-      toast({ title: 'Failed to update region', description: err instanceof Error ? err.message : 'Failed to update region', variant: 'error' });
+      toast({ title: 'Failed to update region', description: err instanceof Error ? err.message : 'Update failed', variant: 'error' });
     }
   };
 
-  const activeRegions = regions.filter((r) => r.isActive);
-  const inactiveRegions = regions.filter((r) => !r.isActive);
+  const activeCount = regions.filter((region) => region.isActive).length;
+  const inactiveCount = regions.length - activeCount;
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Administration', href: '/dashboard' },
-        { label: 'Regions' },
-      ]} />
-      <PageHeader
-        title="Region Management"
-        description={`${activeRegions.length} active region${activeRegions.length !== 1 ? 's' : ''}${inactiveRegions.length > 0 ? ` · ${inactiveRegions.length} inactive` : ''}`}
-      >
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={reload}>
-            <RefreshCw className="h-4 w-4" /> Refresh
-          </Button>
-          <Button variant="primary" size="sm" onClick={openCreateForm}>
-            <Plus className="h-4 w-4" /> Add Region
-          </Button>
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Administration' }, { label: 'Regions' }]} />
+      <PageHeader title="Region Management" description="Manage tenant geographic regions used by workflow routing and operational records.">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={reload}><RefreshCw className="h-4 w-4" aria-hidden="true" /> Refresh</Button>
+          <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4" aria-hidden="true" /> Add region</Button>
         </div>
       </PageHeader>
 
+      <section aria-label="Region summary" className="grid gap-3 sm:grid-cols-3">
+        {[
+          ['Total regions', regions.length, 'text-brand-700 dark:text-brand-300'],
+          ['Active', activeCount, 'text-status-success-text'],
+          ['Inactive', inactiveCount, 'text-ink-500'],
+        ].map(([label, value, tone]) => <div key={String(label)} className="rounded-[10px] border border-border bg-surface p-4"><p className={`text-2xl font-semibold tabular-nums ${tone}`}>{Number(value)}</p><p className="mt-1 text-xs text-ink-500">{String(label)}</p></div>)}
+      </section>
 
-
-      {/* Form Modal */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={closeForm}>
-          <div className="mx-4 w-full max-w-md rounded-[12px] border border-border bg-surface p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-ink-950">
-                {editingId ? 'Edit Region' : 'Add Region'}
-              </h3>
-              <button onClick={closeForm} className="text-ink-400 hover:text-ink-700">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <FieldWrapper label="Region Name" required>
-                <Input
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  placeholder="e.g. Khomas Region"
-                  autoFocus
-                />
-              </FieldWrapper>
-              <FieldWrapper label="Code" required>
-                <Input
-                  value={formCode}
-                  onChange={(e) => setFormCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. KH"
-                  maxLength={10}
-                />
-              </FieldWrapper>
-              <FieldWrapper label="Description">
-                <Input
-                  value={formDescription}
-                  onChange={(e) => setFormDescription(e.target.value)}
-                  placeholder="Optional description"
-                />
-              </FieldWrapper>
-              <FieldWrapper label="Sort Order">
-                <Input
-                  type="number"
-                  value={formSortOrder}
-                  onChange={(e) => setFormSortOrder(e.target.value)}
-                  placeholder="0"
-                  min={0}
-                />
-              </FieldWrapper>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="secondary" size="sm" onClick={closeForm}>Cancel</Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleSave}
-                  loading={saving}
-                  disabled={!formName.trim() || !formCode.trim()}
-                >
-                  <Save className="h-4 w-4" />
-                  {editingId ? 'Update' : 'Create'}
-                </Button>
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-14 text-sm text-ink-500" role="status"><Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading regions…</div>
+      ) : error ? (
+        <EmptyState icon={<MapPin className="h-6 w-6" />} title="Failed to load regions" description={error} action={{ label: 'Retry', onClick: reload }} />
+      ) : regions.length === 0 ? (
+        <EmptyState icon={<MapPin className="h-8 w-8" />} title="No regions defined" description="Create the first region when this tenant needs geographic routing or region-scoped operations." action={{ label: 'Add region', onClick: openCreate }} />
+      ) : (
+        <div className="overflow-hidden rounded-[10px] border border-border bg-surface">
+          {regions.map((region) => (
+            <article key={region.id} className={`grid gap-4 border-b border-border px-4 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${!region.isActive ? 'opacity-70' : ''}`}>
+              <div className="flex min-w-0 items-start gap-3">
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[9px] ${region.isActive ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300' : 'bg-muted text-ink-400'}`}><MapPin className="h-5 w-5" aria-hidden="true" /></div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold text-ink-950">{region.name}</h2><Badge variant="info" size="sm">{region.code}</Badge><StatusBadge status={region.isActive ? 'success' : 'cancelled'} label={region.isActive ? 'Active' : 'Inactive'} /></div>
+                  {region.description && <p className="mt-1 text-sm text-ink-500">{region.description}</p>}
+                  {region.sortOrder != null && region.sortOrder > 0 && <p className="mt-1 flex items-center gap-1 text-xs text-ink-400"><GripVertical className="h-3 w-3" aria-hidden="true" /> Sort order {region.sortOrder}</p>}
+                </div>
               </div>
-            </div>
-          </div>
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                <Button variant="secondary" size="compact" onClick={() => openEdit(region)}><Edit2 className="h-3.5 w-3.5" aria-hidden="true" /> Edit</Button>
+                <Button variant="secondary" size="compact" onClick={() => void handleToggleActive(region)}>{region.isActive ? <XCircle className="h-3.5 w-3.5" aria-hidden="true" /> : <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />}{region.isActive ? 'Deactivate' : 'Activate'}</Button>
+                <Button variant="ghost" size="compact" className="text-status-error-text" onClick={() => setPendingDelete(region)} disabled={deleting === region.id}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete</Button>
+              </div>
+            </article>
+          ))}
         </div>
       )}
 
-      <Dialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete region?</DialogTitle>
-            <DialogDescription>
-              {pendingDelete
-                ? `${pendingDelete.name} will be permanently removed. This action cannot be undone.`
-                : 'This action cannot be undone.'}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setPendingDelete(null)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              loading={!!pendingDelete && deleting === pendingDelete.id}
-              onClick={() => pendingDelete && handleDelete(pendingDelete.id)}
-            >
-              <Trash2 className="h-4 w-4" /> Delete region
-            </Button>
-          </DialogFooter>
+      <Dialog open={formOpen} onOpenChange={(open) => { if (!saving) setFormOpen(open); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>{editingId ? 'Edit region' : 'Add region'}</DialogTitle><DialogDescription>Region codes are tenant-scoped and used by workflow and reporting surfaces.</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <FieldWrapper label="Region name" required><Input value={formName} onChange={(event) => setFormName(event.target.value)} placeholder="e.g. Khomas Region" autoFocus /></FieldWrapper>
+            <FieldWrapper label="Code" required><Input value={formCode} onChange={(event) => setFormCode(event.target.value.toUpperCase())} placeholder="e.g. KH" maxLength={10} /></FieldWrapper>
+            <FieldWrapper label="Description"><Input value={formDescription} onChange={(event) => setFormDescription(event.target.value)} placeholder="Optional description" /></FieldWrapper>
+            <FieldWrapper label="Sort order"><Input type="number" value={formSortOrder} onChange={(event) => setFormSortOrder(event.target.value)} min={0} /></FieldWrapper>
+          </div>
+          <DialogFooter><Button variant="secondary" onClick={() => setFormOpen(false)} disabled={saving}>Cancel</Button><Button onClick={() => void handleSave()} loading={saving} disabled={!formName.trim() || !formCode.trim()}><Save className="h-4 w-4" /> {editingId ? 'Save region' : 'Create region'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Loading */}
-      {loading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
-        </div>
-      )}
-
-      {/* Error */}
-      {error && !loading && (
-        <EmptyState
-          icon={<MapPin className="h-6 w-6" />}
-          title="Failed to Load Regions"
-          description={error}
-          action={{ label: 'Retry', onClick: reload }}
-        />
-      )}
-
-      {/* Region List */}
-      {!loading && !error && regions.length === 0 && (
-        <EmptyState
-          icon={<MapPin className="h-8 w-8" />}
-          title="No Regions Defined"
-          description="Create your first region to start organising vehicles and offices by geographic area."
-          action={{ label: 'Add Region', onClick: openCreateForm }}
-        />
-      )}
-
-      {!loading && !error && regions.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>All Regions</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y divide-border">
-              {regions.map((region) => (
-                <div
-                  key={region.id}
-                  className={`flex items-center justify-between px-5 py-3.5 transition-colors ${
-                    !region.isActive ? 'opacity-60' : 'hover:bg-muted/50'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
-                      region.isActive
-                        ? 'bg-brand-50 text-brand-700'
-                        : 'bg-muted text-ink-400'
-                    }`}>
-                      <MapPin className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-ink-950">{region.name}</span>
-                        <Badge variant="info" size="sm">{region.code}</Badge>
-                        {!region.isActive && (
-                          <StatusBadge status="cancelled" label="Inactive" />
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-0.5 text-xs text-ink-500">
-                        {region.description && <span>{region.description}</span>}
-                        {region.sortOrder != null && region.sortOrder > 0 && (
-                          <span className="flex items-center gap-1">
-                            <GripVertical className="h-3 w-3" /> Order: {region.sortOrder}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => openEditForm(region)}
-                      title="Edit region"
-                    >
-                      <Edit2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => handleToggleActive(region)}
-                      title={region.isActive ? 'Deactivate region' : 'Activate region'}
-                    >
-                      {region.isActive ? (
-                        <XCircle className="h-4 w-4 text-ink-400" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                      )}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setPendingDelete(region)}
-                      loading={deleting === region.id}
-                      title="Delete region"
-                      className="text-status-error-text hover:text-red-700"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-          <CardFooter className="text-xs text-ink-500">
-            {regions.length} region{regions.length !== 1 ? 's' : ''} total
-          </CardFooter>
-        </Card>
-      )}
+      <Dialog open={Boolean(pendingDelete)} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Delete region?</DialogTitle><DialogDescription>{pendingDelete ? `Delete ${pendingDelete.name} only if it has no dependent workflow or operational records. If it is already in use, GovFleet will block deletion and you should deactivate it instead.` : 'This action is permanent.'}</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="secondary" onClick={() => setPendingDelete(null)}>Cancel</Button><Button variant="destructive" loading={Boolean(pendingDelete && deleting === pendingDelete.id)} onClick={() => pendingDelete && void handleDelete(pendingDelete)}><Trash2 className="h-4 w-4" /> Delete region</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
