@@ -1,26 +1,26 @@
+import Link from 'next/link';
+import { and, desc, eq, ne, sql, type SQL } from 'drizzle-orm';
 import { getDb, isDbConnected } from '@/db';
 import {
   workflowActions,
-  workflowInstances,
   workflowDefinitions,
+  workflowInstances,
   workflowSteps,
 } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, desc, and, sql, type SQL, ne } from 'drizzle-orm';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StyledSelect } from '@/components/ui/styled-select';
 import {
-  Database,
-  ClipboardCheck,
-  ChevronRight,
-  ChevronLeft,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardCheck,
+  Database,
   XCircle,
 } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
@@ -29,7 +29,6 @@ import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { getSessionPermissions } from '@/lib/auth-helpers';
 import { activeApprovalVisibleTo } from '@/lib/approval-queue';
-import Link from 'next/link';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { groupedCountMap } from '@/lib/statistics';
@@ -77,10 +76,7 @@ async function fetchApprovals(
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
 
-  if (status) {
-    conditions.push(eq(workflowInstances.status, status));
-  }
-
+  if (status) conditions.push(eq(workflowInstances.status, status));
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, totalResult, statusCounts] = await Promise.all([
@@ -162,18 +158,14 @@ async function fetchApprovals(
 
 export default async function ApprovalsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
-
   const session = await getServerSession();
+
   if (!session) {
     return (
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Approvals' }]} />
         <PageHeader title="Approvals" description="Review and manage workflow approvals" />
-        <EmptyState
-          icon={<Database className="h-6 w-6" />}
-          title="Authentication Required"
-          description="Please sign in to view approvals."
-        />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view approvals." />
       </div>
     );
   }
@@ -208,141 +200,76 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Approvals' }]} />
       <PageHeader
         title={result.filters.view === 'history' ? 'Approval History' : 'Assigned Approvals'}
-        description={
-          result.filters.view === 'history'
-            ? 'Decisions you previously completed'
-            : 'Requests currently awaiting your decision'
-        }
+        description={result.filters.view === 'history' ? 'Decisions you previously completed' : 'Requests currently awaiting your decision'}
       >
         <Button variant="secondary" size="sm" asChild>
-          <Link
-            href={
-              result.filters.view === 'history'
-                ? '/dashboard/approvals'
-                : '/dashboard/approvals?view=history'
-            }
-          >
+          <Link href={result.filters.view === 'history' ? '/dashboard/approvals' : '/dashboard/approvals?view=history'}>
             {result.filters.view === 'history' ? 'Assigned Approvals' : 'Approval History'}
           </Link>
         </Button>
       </PageHeader>
 
-      {/* Summary */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-ink-950 text-2xl font-[650] tabular-nums">{result.metrics.total}</p>
-            <p className="text-ink-500 text-xs">Total Workflows</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-status-info-text text-2xl font-[650] tabular-nums">
-              {result.metrics.active}
-            </p>
-            <p className="text-ink-500 text-xs">Active / Awaiting Action</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-status-success-text text-2xl font-[650] tabular-nums">
-              {result.metrics.completed}
-            </p>
-            <p className="text-ink-500 text-xs">Completed</p>
-          </CardContent>
-        </Card>
+      <div className="border-border grid grid-cols-3 gap-px overflow-hidden rounded-[10px] border bg-border">
+        {[
+          ['Total', result.metrics.total, 'text-ink-950'],
+          ['Awaiting Action', result.metrics.active, 'text-status-info-text'],
+          ['Completed', result.metrics.completed, 'text-status-success-text'],
+        ].map(([label, value, tone]) => (
+          <div key={String(label)} className="bg-surface px-3 py-3 text-left sm:px-5 sm:py-4">
+            <p className={`text-xl font-semibold tabular-nums sm:text-2xl ${tone}`}>{value}</p>
+            <p className="text-ink-500 mt-1 text-[11px] sm:text-xs">{label}</p>
+          </div>
+        ))}
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="pt-4">
-          <FilterToolbar
-            resetHref="/dashboard/approvals"
-            isFiltered={hasActiveFilters(result.filters)}
-          >
-            <div className="w-[180px]">
-              <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
-              <StyledSelect
-                name="status"
-                defaultValue={result.filters.status ?? ''}
-                placeholder="All Statuses"
-              >
-                {Object.entries(WORKFLOW_STATUS_LABELS).map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </StyledSelect>
-            </div>
-          </FilterToolbar>
-        </CardContent>
-      </Card>
+      <div className="border-border border-y py-4">
+        <FilterToolbar resetHref="/dashboard/approvals" isFiltered={hasActiveFilters(result.filters)}>
+          <div className="w-full sm:w-[220px]">
+            <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
+            <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
+              {Object.entries(WORKFLOW_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </StyledSelect>
+          </div>
+        </FilterToolbar>
+      </div>
 
-      {/* Approval List */}
       {result.rows.length === 0 ? (
         <EmptyState
           icon={<ClipboardCheck className="h-8 w-8" />}
           title="No approvals found"
-          description={
-            hasActiveFilters(result.filters)
-              ? 'No matching records found. Clear filters to view all records.'
-              : 'No workflow instances to review.'
-          }
+          description={hasActiveFilters(result.filters) ? 'No matching records found. Clear filters to view all records.' : result.filters.view === 'history' ? 'You have no completed approval decisions yet.' : 'Nothing is currently assigned to you.'}
         />
       ) : (
-        <div className="space-y-3">
-          {result.rows.map((wf) => {
-            const requesterName =
-              wf.requesterFirstName && wf.requesterLastName
-                ? `${wf.requesterFirstName} ${wf.requesterLastName}`
-                : 'Unknown';
+        <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
+          {result.rows.map((workflow) => {
+            const requesterName = workflow.requesterFirstName && workflow.requesterLastName
+              ? `${workflow.requesterFirstName} ${workflow.requesterLastName}`
+              : 'Unknown requester';
             return (
               <Link
-                key={wf.id}
-                href={`/dashboard/approvals/${wf.id}`}
-                className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
+                key={workflow.id}
+                href={`/dashboard/approvals/${workflow.id}`}
+                className="focus-ring group border-border hover:bg-muted/40 block border-b px-4 py-4 transition-colors motion-reduce:transition-none last:border-b-0 sm:px-5"
               >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-center gap-4">
-                    <div
-                      className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] ${
-                        wf.status === 'completed'
-                          ? 'bg-status-success-bg text-status-success-text'
-                          : wf.status === 'cancelled'
-                            ? 'bg-status-cancelled-bg text-status-cancelled-text'
-                            : 'bg-status-info-bg text-status-info-text'
-                      }`}
-                    >
-                      {wf.status === 'completed' ? (
-                        <CheckCircle2 className="h-6 w-6" />
-                      ) : wf.status === 'cancelled' ? (
-                        <XCircle className="h-6 w-6" />
-                      ) : (
-                        <ClipboardCheck className="h-6 w-6" />
-                      )}
+                <div className="flex items-start gap-3 sm:items-center sm:gap-4">
+                  <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] sm:mt-0 ${workflow.status === 'completed' ? 'bg-status-success-bg text-status-success-text' : workflow.status === 'cancelled' ? 'bg-status-cancelled-bg text-status-cancelled-text' : 'bg-status-info-bg text-status-info-text'}`}>
+                    {workflow.status === 'completed' ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : workflow.status === 'cancelled' ? <XCircle className="h-4 w-4" aria-hidden="true" /> : <ClipboardCheck className="h-4 w-4" aria-hidden="true" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-ink-950 text-sm font-semibold">{workflow.requestReference || 'No Reference'}</p>
+                      <StatusBadgeWithIcon status={workflow.status} />
+                      <Badge variant={workflow.requestScope === 'national' ? 'emergency' : 'info'} size="sm">{workflow.requestScope ?? 'regional'}</Badge>
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-ink-950 text-sm font-[650]">
-                          {wf.requestReference || 'No Reference'}
-                        </p>
-                        <StatusBadgeWithIcon status={wf.status} />
-                        <Badge
-                          variant={wf.requestScope === 'national' ? 'emergency' : 'info'}
-                          size="sm"
-                        >
-                          {wf.requestScope ?? 'regional'}
-                        </Badge>
-                      </div>
-                      <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                        <span>{requesterName}</span>
-                        <span>{wf.definitionName || 'Workflow'}</span>
-                        <span>Step {wf.currentStepOrder}</span>
-                        <span>{formatDate(wf.createdAt)}</span>
-                      </div>
+                    {workflow.requestPurpose && <p className="text-ink-700 mt-1 line-clamp-2 text-sm">{workflow.requestPurpose}</p>}
+                    <div className="text-ink-500 mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      <span>{requesterName}</span>
+                      <span>{workflow.definitionName || 'Workflow'}</span>
+                      <span>Step {workflow.currentStepOrder}</span>
+                      <span>{formatDate(workflow.createdAt)}</span>
                     </div>
                   </div>
-                  <ChevronRight className="text-ink-300 h-4 w-4 shrink-0" />
+                  <ChevronRight className="text-ink-300 group-hover:text-brand-700 mt-1 h-4 w-4 shrink-0 sm:mt-0" aria-hidden="true" />
                 </div>
               </Link>
             );
@@ -350,33 +277,18 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
         </div>
       )}
 
-      {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="border-border flex items-center justify-between border-t pt-4">
-          <p className="text-ink-500 text-xs">
-            Page {result.page} of {result.totalPages}
-          </p>
+        <div className="border-border flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <p className="text-ink-500 text-xs">Page {result.page} of {result.totalPages}</p>
           <div className="flex items-center gap-2">
             {result.page > 1 && (
               <Button variant="secondary" size="sm" asChild>
-                <Link
-                  href={buildFilterUrl('/dashboard/approvals', sp, {
-                    page: String(result.page - 1),
-                  })}
-                >
-                  <ChevronLeft className="h-3 w-3" /> Previous
-                </Link>
+                <Link href={buildFilterUrl('/dashboard/approvals', sp, { page: String(result.page - 1) })}><ChevronLeft className="h-3 w-3" aria-hidden="true" />Previous</Link>
               </Button>
             )}
             {result.page < result.totalPages && (
               <Button variant="secondary" size="sm" asChild>
-                <Link
-                  href={buildFilterUrl('/dashboard/approvals', sp, {
-                    page: String(result.page + 1),
-                  })}
-                >
-                  Next <ChevronRight className="h-3 w-3" />
-                </Link>
+                <Link href={buildFilterUrl('/dashboard/approvals', sp, { page: String(result.page + 1) })}>Next<ChevronRight className="h-3 w-3" aria-hidden="true" /></Link>
               </Button>
             )}
           </div>

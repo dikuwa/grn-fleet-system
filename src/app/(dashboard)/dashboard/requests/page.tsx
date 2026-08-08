@@ -1,18 +1,17 @@
+import Link from 'next/link';
+import { and, desc, eq, like, or, sql, type SQL } from 'drizzle-orm';
 import { getDb, isDbConnected } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, desc, and, sql, like, or, type SQL } from 'drizzle-orm';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Database, FileText, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Database, FileText, Plus } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE, STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
-import Link from 'next/link';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
 import {
   canPerformDashboardAction,
@@ -45,24 +44,14 @@ async function fetchRequests(
   const status = normalizeOptionalFilter(sp.status);
   const scope = normalizeOptionalFilter(sp.scope);
   const viewMode = sp.view === 'mine' ? 'mine' : sp.view === 'all' ? 'all' : null;
+  const effectiveScope: DashboardRecordScope = viewMode === 'mine' ? 'self' : recordScope;
 
-  // Tenant-scoped users may toggle between their own requests and the full
-  // tenant list. Any other scope is used as-is.
-  const effectiveScope: DashboardRecordScope =
-    viewMode === 'mine' ? 'self' : recordScope;
-
-  const baseConditions: SQL[] = [
-    requestScopeCondition({ tenantId, userId, recordScope: effectiveScope }),
-  ];
+  const baseConditions: SQL[] = [requestScopeCondition({ tenantId, userId, recordScope: effectiveScope })];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
 
-  if (status) {
-    conditions.push(eq(transportRequests.status, status));
-  }
-  if (scope) {
-    conditions.push(eq(transportRequests.scope, scope));
-  }
+  if (status) conditions.push(eq(transportRequests.status, status));
+  if (scope) conditions.push(eq(transportRequests.scope, scope));
   if (search) {
     conditions.push(
       or(
@@ -74,7 +63,6 @@ async function fetchRequests(
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
-
   const [rows, totalResult, metricTotalResult, statusCounts] = await Promise.all([
     db
       .select({
@@ -95,19 +83,10 @@ async function fetchRequests(
       .orderBy(desc(transportRequests.createdAt))
       .limit(limit)
       .offset(offset),
+    db.select({ count: sql<number>`count(*)` }).from(transportRequests).where(where),
+    db.select({ count: sql<number>`count(*)` }).from(transportRequests).where(baseWhere),
     db
-      .select({ count: sql<number>`count(*)` })
-      .from(transportRequests)
-      .where(where),
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(transportRequests)
-      .where(baseWhere),
-    db
-      .select({
-        status: transportRequests.status,
-        count: sql<number>`count(*)`,
-      })
+      .select({ status: transportRequests.status, count: sql<number>`count(*)` })
       .from(transportRequests)
       .where(baseWhere)
       .groupBy(transportRequests.status),
@@ -115,9 +94,7 @@ async function fetchRequests(
 
   const totalCount = numericCount(totalResult[0]?.count);
   const totalPages = Math.ceil(totalCount / limit);
-  const counts = groupedCountMap(
-    statusCounts.map((row) => ({ key: row.status, count: row.count })),
-  );
+  const counts = groupedCountMap(statusCounts.map((row) => ({ key: row.status, count: row.count })));
 
   return {
     rows,
@@ -136,7 +113,6 @@ async function fetchRequests(
 
 export default async function RequestsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
-
   const session = await getServerSession();
 
   if (!session) {
@@ -144,11 +120,7 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} />
         <PageHeader title="Transport Requests" description="Create and manage transport requests" />
-        <EmptyState
-          icon={<FileText className="h-6 w-6" />}
-          title="Authentication Required"
-          description="Please sign in to view transport requests."
-        />
+        <EmptyState icon={<FileText className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view transport requests." />
       </div>
     );
   }
@@ -158,11 +130,7 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} />
         <PageHeader title="Transport Requests" description="Create and manage transport requests" />
-        <EmptyState
-          icon={<Database className="h-6 w-6" />}
-          title="Database Not Configured"
-          description="Set the DATABASE_URL environment variable and run migrations to enable requests."
-        />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" description="Set the DATABASE_URL environment variable and run migrations to enable requests." />
       </div>
     );
   }
@@ -177,8 +145,7 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       : 'Transport Request Oversight';
   const canViewAll = access.recordScope === 'tenant';
   const viewParam = sp.view === 'mine' ? 'mine' : sp.view === 'all' ? 'all' : null;
-  const effectiveRecordScope: DashboardRecordScope =
-    viewParam === 'mine' ? 'self' : access.recordScope ?? 'self';
+  const effectiveRecordScope: DashboardRecordScope = viewParam === 'mine' ? 'self' : access.recordScope ?? 'self';
 
   let result: Awaited<ReturnType<typeof fetchRequests>>;
   try {
@@ -189,11 +156,7 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} />
         <PageHeader title="Transport Requests" description="Create and manage transport requests" />
-        <EmptyState
-          icon={<Database className="h-6 w-6" />}
-          title="Unable to Load Requests"
-          description="The database query failed. Please run migrations and seed first."
-        />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Requests" description="The request register could not be loaded. Please try again after checking the database connection." />
       </div>
     );
   }
@@ -203,189 +166,98 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} />
       <PageHeader
         title={pageTitle}
-        description={
-          access.accessMode === 'tenant_read_only' || access.accessMode === 'tenant_read'
-            ? 'Read-only tenant request oversight'
-            : canViewAll
-              ? 'Review and manage transport requests'
-              : 'Create and follow your requests'
-        }
+        description={access.accessMode === 'tenant_read_only' || access.accessMode === 'tenant_read' ? 'Read-only tenant request oversight' : canViewAll ? 'Review and manage transport requests' : 'Create and follow your requests'}
       >
         {canViewAll && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant={viewParam !== 'mine' ? 'primary' : 'secondary'}
-              size="sm"
-              asChild
-            >
-              <Link href={buildFilterUrl('/dashboard/requests', sp, { view: 'all', page: undefined })}>
-                All Requests
-              </Link>
+          <div className="border-border flex items-center rounded-[8px] border p-0.5">
+            <Button variant={viewParam !== 'mine' ? 'primary' : 'ghost'} size="sm" asChild>
+              <Link href={buildFilterUrl('/dashboard/requests', sp, { view: 'all', page: undefined })}>All Requests</Link>
             </Button>
-            <Button
-              variant={viewParam === 'mine' ? 'primary' : 'secondary'}
-              size="sm"
-              asChild
-            >
-              <Link href={buildFilterUrl('/dashboard/requests', sp, { view: 'mine', page: undefined })}>
-                My Requests
-              </Link>
+            <Button variant={viewParam === 'mine' ? 'primary' : 'ghost'} size="sm" asChild>
+              <Link href={buildFilterUrl('/dashboard/requests', sp, { view: 'mine', page: undefined })}>My Requests</Link>
             </Button>
           </div>
         )}
         {canCreate && (
-          <Button variant="primary" size="sm" asChild>
-            <Link href="/dashboard/requests/new">
-              <Plus className="h-4 w-4" />
-              New Request
-            </Link>
+          <Button size="sm" asChild>
+            <Link href="/dashboard/requests/new"><Plus className="h-4 w-4" aria-hidden="true" />New Request</Link>
           </Button>
         )}
       </PageHeader>
 
-      {/* Summary Cards */}
-      <div className="grid gap-4 sm:grid-cols-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-ink-950 text-2xl font-[650] tabular-nums">
-                {result.metrics.total}
-              </p>
-              <p className="text-ink-500 text-xs">Total Requests</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
-                {result.metrics.pendingApproval}
-              </p>
-              <p className="text-ink-500 text-xs">Pending Approval</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-status-info-text text-2xl font-[650] tabular-nums">
-                {result.metrics.active}
-              </p>
-              <p className="text-ink-500 text-xs">Active / In Progress</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-status-success-text text-2xl font-[650] tabular-nums">
-                {result.metrics.closed}
-              </p>
-              <p className="text-ink-500 text-xs">Closed</p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border lg:grid-cols-4">
+        {[
+          ['Total Requests', result.metrics.total, 'text-ink-950'],
+          ['Pending Approval', result.metrics.pendingApproval, 'text-status-pending-text'],
+          ['Active', result.metrics.active, 'text-status-info-text'],
+          ['Closed', result.metrics.closed, 'text-status-success-text'],
+        ].map(([label, value, tone]) => (
+          <div key={String(label)} className="bg-surface p-4">
+            <p className={`text-xl font-semibold tabular-nums sm:text-2xl ${tone}`}>{value}</p>
+            <p className="text-ink-500 mt-1 text-xs">{label}</p>
+          </div>
+        ))}
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="pt-4">
-          <FilterToolbar
-            resetHref="/dashboard/requests"
-            isFiltered={hasActiveFilters(result.filters)}
-          >
-            <div className="min-w-[200px] flex-1">
-              <label className="text-ink-500 mb-1 block text-xs font-medium">Search</label>
-              <LiveSearchInput
-                name="search"
-                defaultValue={result.filters.search ?? ''}
-                placeholder="Reference, purpose, department…"
-              />
-            </div>
-            <div className="w-[180px]">
-              <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
-              <StyledSelect
-                name="status"
-                defaultValue={result.filters.status ?? ''}
-                placeholder="All Statuses"
-              >
-                {Object.entries(STATUS_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </StyledSelect>
-            </div>
-            <div className="w-[140px]">
-              <label className="text-ink-500 mb-1 block text-xs font-medium">Scope</label>
-              <StyledSelect
-                name="scope"
-                defaultValue={result.filters.scope ?? ''}
-                placeholder="All Scopes"
-              >
-                <option value="regional">Regional</option>
-                <option value="national">National</option>
-              </StyledSelect>
-            </div>
-          </FilterToolbar>
-        </CardContent>
-      </Card>
+      <div className="border-border border-y py-4">
+        <FilterToolbar resetHref="/dashboard/requests" isFiltered={hasActiveFilters(result.filters)} className="items-end">
+          <div className="min-w-[220px] flex-1">
+            <label className="text-ink-500 mb-1 block text-xs font-medium">Search</label>
+            <LiveSearchInput name="search" defaultValue={result.filters.search ?? ''} placeholder="Reference, purpose, department…" />
+          </div>
+          <div className="w-full sm:w-[190px]">
+            <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
+            <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
+              {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </StyledSelect>
+          </div>
+          <div className="w-full sm:w-[150px]">
+            <label className="text-ink-500 mb-1 block text-xs font-medium">Scope</label>
+            <StyledSelect name="scope" defaultValue={result.filters.scope ?? ''} placeholder="All Scopes">
+              <option value="regional">Regional</option>
+              <option value="national">National</option>
+            </StyledSelect>
+          </div>
+        </FilterToolbar>
+      </div>
 
-      {/* Request List */}
       {result.rows.length === 0 ? (
         <EmptyState
           icon={<FileText className="h-8 w-8" />}
           title="No transport requests"
-          description={
-            hasActiveFilters(result.filters)
-              ? 'No matching records found. Clear filters to view all records.'
-              : 'Create your first transport request to get started.'
-          }
+          description={hasActiveFilters(result.filters) ? 'No matching records found. Clear filters to view all records.' : canCreate ? 'Create your first transport request to get started.' : 'No requests are currently available in this workspace.'}
         />
       ) : (
-        <div className="space-y-3">
-          {result.rows.map((req) => {
-            const requesterName =
-              req.requesterFirstName && req.requesterLastName
-                ? `${req.requesterFirstName} ${req.requesterLastName}`
-                : 'Unknown';
-            const variant = STATUS_VARIANTS[req.status as keyof typeof STATUS_VARIANTS] ?? 'info';
-
+        <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
+          {result.rows.map((request) => {
+            const requesterName = request.requesterFirstName && request.requesterLastName
+              ? `${request.requesterFirstName} ${request.requesterLastName}`
+              : 'Unknown requester';
+            const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
             return (
               <Link
-                key={req.id}
-                href={`/dashboard/requests/${req.id}`}
-                className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
+                key={request.id}
+                href={`/dashboard/requests/${request.id}`}
+                className="focus-ring group border-border hover:bg-muted/40 block border-b px-4 py-4 transition-colors motion-reduce:transition-none last:border-b-0 sm:px-5"
               >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-center gap-4">
-                    <div className="bg-brand-50 text-brand-700 flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px]">
-                      <FileText className="h-6 w-6" />
+                <div className="flex items-start gap-3 sm:items-center">
+                  <div className="bg-brand-50 text-brand-700 mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] sm:mt-0">
+                    <FileText className="h-4 w-4" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-ink-950 text-sm font-semibold">{request.reference}</p>
+                      <StatusBadge status={variant} label={STATUS_LABELS[request.status as keyof typeof STATUS_LABELS] ?? request.status} />
+                      <Badge variant={request.scope === 'national' ? 'emergency' : 'info'} size="sm">{request.scope === 'national' ? 'National' : 'Regional'}</Badge>
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-ink-950 text-sm font-[650]">{req.reference}</p>
-                        <StatusBadge
-                          status={variant}
-                          label={
-                            STATUS_LABELS[req.status as keyof typeof STATUS_LABELS] ?? req.status
-                          }
-                        />
-                        <Badge variant={req.scope === 'national' ? 'emergency' : 'info'} size="sm">
-                          {req.scope === 'national' ? 'National' : 'Regional'}
-                        </Badge>
-                      </div>
-                      <div className="text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                        <span>{requesterName}</span>
-                        {req.department && <span>{req.department}</span>}
-                        {req.purpose && (
-                          <span className="max-w-[200px] truncate">{req.purpose}</span>
-                        )}
-                        <span>{formatDate(req.createdAt)}</span>
-                      </div>
+                    {request.purpose && <p className="text-ink-700 mt-1 line-clamp-2 text-sm">{request.purpose}</p>}
+                    <div className="text-ink-500 mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      <span>{requesterName}</span>
+                      {request.department && <span>{request.department}</span>}
+                      <span>{formatDate(request.createdAt)}</span>
                     </div>
                   </div>
-                  <ChevronRight className="text-ink-300 h-4 w-4 shrink-0" />
+                  <ChevronRight className="text-ink-300 group-hover:text-brand-700 mt-1 h-4 w-4 shrink-0 sm:mt-0" aria-hidden="true" />
                 </div>
               </Link>
             );
@@ -393,33 +265,18 @@ export default async function RequestsPage({ searchParams }: PageProps) {
         </div>
       )}
 
-      {/* Pagination */}
       {result.totalPages > 1 && (
-        <div className="border-border flex items-center justify-between border-t pt-4">
-          <p className="text-ink-500 text-xs">
-            Page {result.page} of {result.totalPages} ({result.totalCount} requests)
-          </p>
+        <div className="border-border flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <p className="text-ink-500 text-xs">Page {result.page} of {result.totalPages} ({result.totalCount} requests)</p>
           <div className="flex items-center gap-2">
             {result.page > 1 && (
               <Button variant="secondary" size="sm" asChild>
-                <Link
-                  href={buildFilterUrl('/dashboard/requests', sp, {
-                    page: String(result.page - 1),
-                  })}
-                >
-                  <ChevronLeft className="h-3 w-3" /> Previous
-                </Link>
+                <Link href={buildFilterUrl('/dashboard/requests', sp, { page: String(result.page - 1) })}><ChevronLeft className="h-3 w-3" aria-hidden="true" />Previous</Link>
               </Button>
             )}
             {result.page < result.totalPages && (
               <Button variant="secondary" size="sm" asChild>
-                <Link
-                  href={buildFilterUrl('/dashboard/requests', sp, {
-                    page: String(result.page + 1),
-                  })}
-                >
-                  Next <ChevronRight className="h-3 w-3" />
-                </Link>
+                <Link href={buildFilterUrl('/dashboard/requests', sp, { page: String(result.page + 1) })}>Next<ChevronRight className="h-3 w-3" aria-hidden="true" /></Link>
               </Button>
             )}
           </div>
