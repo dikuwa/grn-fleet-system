@@ -17,6 +17,7 @@ import {
   Settings,
   ShieldCheck,
   Truck,
+  UserCog,
   UserPlus,
   Users,
   Wrench,
@@ -41,6 +42,15 @@ interface DashboardData {
   recentTenants: Array<{ id: string; name: string; code: string; type: string; status: string; lifecycleStatus: string; createdAt: string }>;
   envHealth: { database: boolean; backgroundJobs: boolean; errorMonitoring: boolean; email: boolean };
 }
+
+const METRIC_TONES = [
+  { icon: 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300', value: 'text-brand-700 dark:text-brand-300', border: 'border-brand-200/80 dark:border-brand-900/70' },
+  { icon: 'bg-status-success-bg text-status-success-text', value: 'text-status-success-text', border: 'border-status-success-text/20' },
+  { icon: 'bg-status-pending-bg text-status-pending-text', value: 'text-status-pending-text', border: 'border-status-pending-text/20' },
+  { icon: 'bg-status-warning-bg text-status-warning-text', value: 'text-status-warning-text', border: 'border-status-warning-text/20' },
+  { icon: 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300', value: 'text-brand-700 dark:text-brand-300', border: 'border-brand-200/80 dark:border-brand-900/70' },
+  { icon: 'bg-status-error-bg text-status-error-text', value: 'text-status-error-text', border: 'border-status-error-text/20' },
+] as const;
 
 function tenantStatusVariant(status: string) {
   const value = status.toUpperCase();
@@ -79,7 +89,7 @@ export default function PlatformDashboardPage() {
   const data = dashboardQuery.data;
   const metricItems = [
     { label: 'Tenants', value: data.tenants.total, detail: `${data.tenants.active} active`, icon: Building2, href: '/dashboard/platform/tenants' },
-    { label: 'Platform members', value: data.totalMembers, detail: 'Across tenant memberships', icon: Users, href: '/dashboard/platform/tenants' },
+    { label: 'Platform members', value: data.totalMembers, detail: 'Across tenant memberships', icon: Users, href: '/dashboard/platform/users' },
     { label: 'Fleet vehicles', value: data.vehicles.total, detail: `${data.vehicles.available} available`, icon: Car, href: '/dashboard/platform/tenants' },
     { label: 'Transport requests', value: data.requests.total, detail: 'Across all tenants', icon: Activity, href: '/dashboard/platform/audit' },
     { label: 'Trips', value: data.trips.total, detail: `${data.trips.active} active`, icon: Truck, href: '/dashboard/platform/audit' },
@@ -99,6 +109,7 @@ export default function PlatformDashboardPage() {
       <PageHeader title="Platform Administration" description="Operate tenant onboarding, public enquiries, demonstrations and platform-wide controls.">
         <div className="flex flex-wrap gap-2">
           <Button size="sm" asChild><Link href="/dashboard/platform/onboard"><UserPlus className="h-4 w-4" /> Onboard tenant</Link></Button>
+          <Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/users"><UserCog className="h-4 w-4" /> Platform users</Link></Button>
           <Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/packages"><Package className="h-4 w-4" /> Packages</Link></Button>
           <Button variant="secondary" size="sm" onClick={() => void dashboardQuery.refetch()} loading={dashboardQuery.isFetching}><RefreshCw className="h-4 w-4" /> Refresh</Button>
         </div>
@@ -107,22 +118,33 @@ export default function PlatformDashboardPage() {
       <section aria-labelledby="platform-intake-title" className="space-y-3">
         <div><h2 id="platform-intake-title" className="text-base font-semibold text-ink-950">Public intake</h2><p className="mt-0.5 text-xs text-ink-500">Submissions from the public website that need Platform Administrator attention.</p></div>
         <div className="grid gap-3 lg:grid-cols-2">
-          <Link href="/dashboard/platform/demo-requests" className="focus-ring group rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-300 hover:bg-muted/20 motion-reduce:transition-none">
-            <div className="flex items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700"><MonitorPlay className="h-5 w-5" /></div><div><h3 className="text-sm font-semibold text-ink-950">Demo Requests</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">Qualify prospects, schedule walkthroughs, create sandboxes and convert successful evaluations.</p></div></div>{data.intake.demos.new > 0 && <Badge variant="warning" size="sm">{data.intake.demos.new} new</Badge>}</div>
-            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-3 text-xs"><div><p className="text-lg font-semibold tabular-nums text-ink-950">{data.intake.demos.total}</p><p className="text-ink-500">Total</p></div><div><p className="text-lg font-semibold tabular-nums text-ink-950">{data.intake.demos.qualified}</p><p className="text-ink-500">Qualified</p></div><div><p className="text-lg font-semibold tabular-nums text-ink-950">{data.intake.demos.scheduled}</p><p className="text-ink-500">Scheduled</p></div></div>
+          <Link href="/dashboard/platform/demo-requests" className="focus-ring group rounded-[10px] border border-brand-200 bg-surface p-5 transition-[transform,box-shadow,border-color] hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-sm motion-reduce:transform-none motion-reduce:transition-none dark:border-brand-900/70">
+            <div className="flex items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300"><MonitorPlay className="h-5 w-5" /></div><div><h3 className="text-sm font-semibold text-ink-950">Demo Requests</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">Qualify prospects, schedule walkthroughs, create sandboxes and convert successful evaluations.</p></div></div>{data.intake.demos.new > 0 && <Badge variant="warning" size="sm">{data.intake.demos.new} new</Badge>}</div>
+            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-3 text-xs"><div><p className="text-lg font-semibold tabular-nums text-brand-700 dark:text-brand-300">{data.intake.demos.total}</p><p className="text-ink-500">Total</p></div><div><p className="text-lg font-semibold tabular-nums text-status-warning-text">{data.intake.demos.qualified}</p><p className="text-ink-500">Qualified</p></div><div><p className="text-lg font-semibold tabular-nums text-status-success-text">{data.intake.demos.scheduled}</p><p className="text-ink-500">Scheduled</p></div></div>
           </Link>
 
-          <Link href="/dashboard/platform/enquiries" className="focus-ring group rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-300 hover:bg-muted/20 motion-reduce:transition-none">
-            <div className="flex items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700"><Mail className="h-5 w-5" /></div><div><h3 className="text-sm font-semibold text-ink-950">Public Enquiries</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">Messages from the Contact page. Take ownership, record the response and resolve the interaction.</p></div></div>{data.intake.enquiries.new > 0 && <Badge variant="info" size="sm">{data.intake.enquiries.new} new</Badge>}</div>
-            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-3 text-xs"><div><p className="text-lg font-semibold tabular-nums text-ink-950">{data.intake.enquiries.total}</p><p className="text-ink-500">Total</p></div><div><p className="text-lg font-semibold tabular-nums text-ink-950">{data.intake.enquiries.new}</p><p className="text-ink-500">New</p></div><div><p className="text-lg font-semibold tabular-nums text-ink-950">{data.intake.enquiries.inProgress}</p><p className="text-ink-500">In progress</p></div></div>
+          <Link href="/dashboard/platform/enquiries" className="focus-ring group rounded-[10px] border border-status-pending-text/20 bg-surface p-5 transition-[transform,box-shadow,border-color] hover:-translate-y-0.5 hover:shadow-sm motion-reduce:transform-none motion-reduce:transition-none">
+            <div className="flex items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-status-pending-bg text-status-pending-text"><Mail className="h-5 w-5" /></div><div><h3 className="text-sm font-semibold text-ink-950">Public Enquiries</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">Messages from the Contact page. Take ownership, record the response and resolve the interaction.</p></div></div>{data.intake.enquiries.new > 0 && <Badge variant="info" size="sm">{data.intake.enquiries.new} new</Badge>}</div>
+            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-3 text-xs"><div><p className="text-lg font-semibold tabular-nums text-status-pending-text">{data.intake.enquiries.total}</p><p className="text-ink-500">Total</p></div><div><p className="text-lg font-semibold tabular-nums text-brand-700 dark:text-brand-300">{data.intake.enquiries.new}</p><p className="text-ink-500">New</p></div><div><p className="text-lg font-semibold tabular-nums text-status-warning-text">{data.intake.enquiries.inProgress}</p><p className="text-ink-500">In progress</p></div></div>
           </Link>
         </div>
       </section>
 
       <section aria-labelledby="platform-overview-title" className="space-y-3">
         <h2 id="platform-overview-title" className="text-base font-semibold text-ink-950">Platform overview</h2>
-        <div className="grid gap-px overflow-hidden rounded-[10px] border border-border bg-border sm:grid-cols-2 xl:grid-cols-3">
-          {metricItems.map((metric) => { const Icon = metric.icon; return <Link key={metric.label} href={metric.href} className="focus-ring bg-surface px-4 py-4 transition-colors hover:bg-muted/30 motion-reduce:transition-none"><div className="flex items-center justify-between gap-3"><div><p className="text-2xl font-semibold tabular-nums text-ink-950">{metric.value}</p><p className="mt-0.5 text-sm font-medium text-ink-700">{metric.label}</p><p className="mt-1 text-xs text-ink-500">{metric.detail}</p></div><Icon className="h-5 w-5 text-ink-300" /></div></Link>; })}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {metricItems.map((metric, index) => {
+            const Icon = metric.icon;
+            const tone = METRIC_TONES[index % METRIC_TONES.length];
+            return (
+              <Link key={metric.label} href={metric.href} className={`focus-ring group rounded-[10px] border bg-surface p-4 transition-[transform,box-shadow,border-color] hover:-translate-y-0.5 hover:shadow-sm motion-reduce:transform-none motion-reduce:transition-none ${tone.border}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div><p className={`text-3xl font-[650] tabular-nums ${tone.value}`}>{metric.value}</p><p className="mt-1 text-sm font-semibold text-ink-800">{metric.label}</p><p className="mt-1 text-xs text-ink-500">{metric.detail}</p></div>
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[9px] ${tone.icon}`}><Icon className="h-5 w-5" /></div>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       </section>
 
@@ -145,8 +167,8 @@ export default function PlatformDashboardPage() {
 
       {data.vehicles.total === 0 && data.trips.total === 0 && (
         <section className="grid gap-4 lg:grid-cols-2" aria-label="Operational data status">
-          <div className="rounded-[10px] border border-border bg-surface p-5"><div className="flex items-start gap-3"><Database className="mt-0.5 h-5 w-5 text-ink-400" /><div><h3 className="text-sm font-semibold text-ink-950">No fleet data yet</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">This is expected for a new platform or empty tenants. Fleet records are created inside each tenant workspace, not from the Platform Dashboard.</p><Button variant="ghost" size="sm" className="mt-2" asChild><Link href="/dashboard/platform/tenants">Open tenant management</Link></Button></div></div></div>
-          <div className="rounded-[10px] border border-border bg-surface p-5"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 h-5 w-5 text-ink-400" /><div><h3 className="text-sm font-semibold text-ink-950">No active trip activity</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">Trip activity appears after tenants complete setup and begin operational use. Nothing is missing from this Platform Admin view.</p><Button variant="ghost" size="sm" className="mt-2" asChild><Link href="/dashboard/platform/demo-requests">Review demo pipeline</Link></Button></div></div></div>
+          <div className="rounded-[10px] border border-border bg-surface p-5"><div className="flex items-start gap-3"><Database className="mt-0.5 h-5 w-5 text-brand-700 dark:text-brand-300" /><div><h3 className="text-sm font-semibold text-ink-950">No fleet data yet</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">This is expected for a new platform or empty tenants. Fleet records are created inside each tenant workspace, not from the Platform Dashboard.</p><Button variant="ghost" size="sm" className="mt-2" asChild><Link href="/dashboard/platform/tenants">Open tenant management</Link></Button></div></div></div>
+          <div className="rounded-[10px] border border-border bg-surface p-5"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 h-5 w-5 text-status-success-text" /><div><h3 className="text-sm font-semibold text-ink-950">No active trip activity</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">Trip activity appears after tenants complete setup and begin operational use. Nothing is missing from this Platform Admin view.</p><Button variant="ghost" size="sm" className="mt-2" asChild><Link href="/dashboard/platform/demo-requests">Review demo pipeline</Link></Button></div></div></div>
         </section>
       )}
     </div>
