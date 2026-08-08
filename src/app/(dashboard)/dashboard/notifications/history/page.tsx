@@ -1,13 +1,15 @@
 import { getDb, isDbConnected } from '@/db';
 import { notificationDeliveries, notifications } from '@/db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
+import { notFound } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Database, Mail, Send, CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
+import { hasPermission } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { numericCount } from '@/lib/statistics';
 
 export const dynamic = 'force-dynamic';
@@ -68,35 +70,30 @@ const deliveryStatusVariant: Record<string, 'success' | 'error' | 'pending' | 'i
   skipped: 'info',
 };
 
+function channelLabel(channel: string) {
+  return channel === 'in_app' ? 'In-App' : channel.charAt(0).toUpperCase() + channel.slice(1);
+}
+
 export default async function EmailHistoryPage() {
   const session = await getServerSession();
-  if (!session) {
-    return (
-      <div className="space-y-6">
-        <Breadcrumbs
-          items={[
-            { label: 'Dashboard', href: '/dashboard' },
-            { label: 'Notifications', href: '/dashboard/notifications' },
-            { label: 'Email History' },
-          ]}
-        />
-        <PageHeader title="Email History" description="Sent email notification log" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" />
-      </div>
-    );
-  }
+  if (!session) notFound();
+
+  const canView =
+    (await hasPermission(session, Permissions.TENANT_MANAGE)) ||
+    (await hasPermission(session, Permissions.AUDIT_READ));
+  if (!canView) notFound();
+
+  const breadcrumbs = [
+    { label: 'Dashboard', href: '/dashboard' },
+    { label: 'Notifications', href: '/dashboard/notifications' },
+    { label: 'Delivery History' },
+  ];
 
   if (!isDbConnected()) {
     return (
-      <div className="space-y-6">
-        <Breadcrumbs
-          items={[
-            { label: 'Dashboard', href: '/dashboard' },
-            { label: 'Notifications', href: '/dashboard/notifications' },
-            { label: 'Email History' },
-          ]}
-        />
-        <PageHeader title="Email History" description="Sent email notification log" />
+      <div className="space-y-5 sm:space-y-6">
+        <Breadcrumbs items={breadcrumbs} />
+        <PageHeader title="Delivery History" description="Tenant-scoped notification delivery records" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" />
       </div>
     );
@@ -108,169 +105,84 @@ export default async function EmailHistoryPage() {
   } catch (error) {
     console.error('Delivery history query failed:', error);
     return (
-      <div className="space-y-6">
-        <Breadcrumbs
-          items={[
-            { label: 'Dashboard', href: '/dashboard' },
-            { label: 'Notifications', href: '/dashboard/notifications' },
-            { label: 'Email History' },
-          ]}
-        />
-        <PageHeader title="Email History" description="Sent email notification log" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load History" />
+      <div className="space-y-5 sm:space-y-6">
+        <Breadcrumbs items={breadcrumbs} />
+        <PageHeader title="Delivery History" description="Tenant-scoped notification delivery records" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Delivery History" />
       </div>
     );
   }
 
   const { deliveries, metrics } = history;
+  const summary = [
+    { label: 'Total', value: metrics.total, tone: 'text-ink-950', icon: Mail },
+    { label: 'Sent', value: metrics.sent, tone: 'text-status-success-text', icon: CheckCircle2 },
+    { label: 'Failed', value: metrics.failed, tone: 'text-status-error-text', icon: XCircle },
+    { label: 'Pending', value: metrics.pending, tone: 'text-status-pending-text', icon: Clock },
+  ];
 
   return (
-    <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Notifications', href: '/dashboard/notifications' },
-          { label: 'Email History' },
-        ]}
-      />
+    <div className="space-y-5 sm:space-y-6">
+      <Breadcrumbs items={breadcrumbs} />
       <PageHeader
-        title="Email History"
-        description={`${metrics.total} delivery records · ${metrics.sent} sent, ${metrics.failed} failed`}
+        title="Delivery History"
+        description={`${metrics.total} tenant delivery record${metrics.total === 1 ? '' : 's'} · ${metrics.email} email`}
       />
 
-      {/* Summary Stats */}
-      <div className="grid gap-4 sm:grid-cols-4">
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-ink-950 text-2xl font-[650] tabular-nums">{metrics.total}</p>
-            <div className="text-ink-500 mt-1 flex items-center justify-center gap-1 text-xs">
-              <Mail className="h-3 w-3" /> Total Deliveries
+      <section aria-label="Delivery summary" className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border sm:grid-cols-4">
+        {summary.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.label} className="bg-surface min-h-16 px-3 py-3 sm:px-4">
+              <p className={`text-xl font-semibold tabular-nums ${item.tone}`}>{item.value}</p>
+              <p className="text-ink-500 mt-1 flex items-center gap-1.5 text-[11px]">
+                <Icon className="h-3 w-3" aria-hidden="true" /> {item.label}
+              </p>
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-status-success-text text-2xl font-[650] tabular-nums">
-              {metrics.sent}
-            </p>
-            <div className="text-ink-500 mt-1 flex items-center justify-center gap-1 text-xs">
-              <CheckCircle2 className="h-3 w-3" /> Sent
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-status-error-text text-2xl font-[650] tabular-nums">
-              {metrics.failed}
-            </p>
-            <div className="text-ink-500 mt-1 flex items-center justify-center gap-1 text-xs">
-              <XCircle className="h-3 w-3" /> Failed
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 text-center">
-            <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
-              {metrics.pending}
-            </p>
-            <div className="text-ink-500 mt-1 flex items-center justify-center gap-1 text-xs">
-              <Clock className="h-3 w-3" /> Pending
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+          );
+        })}
+      </section>
 
-      {/* Delivery Records */}
       {deliveries.length === 0 ? (
-        <Card>
-          <CardContent className="py-12">
-            <EmptyState
-              icon={<Send className="h-6 w-6" />}
-              title="No Email History"
-              description="Email delivery records will appear here once notifications are sent. Ensure Resend is configured."
-            />
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<Send className="h-6 w-6" />}
+          title="No Delivery History"
+          description="Delivery attempts will appear here when tenant notifications are sent through configured channels."
+        />
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-border bg-muted border-b">
-                    <th className="text-ink-500 px-4 py-3 text-left text-xs font-medium tracking-wider uppercase">
-                      Status
-                    </th>
-                    <th className="text-ink-500 px-4 py-3 text-left text-xs font-medium tracking-wider uppercase">
-                      Title
-                    </th>
-                    <th className="text-ink-500 px-4 py-3 text-left text-xs font-medium tracking-wider uppercase">
-                      Channel
-                    </th>
-                    <th className="text-ink-500 px-4 py-3 text-left text-xs font-medium tracking-wider uppercase">
-                      Attempt
-                    </th>
-                    <th className="text-ink-500 px-4 py-3 text-left text-xs font-medium tracking-wider uppercase">
-                      Error
-                    </th>
-                    <th className="text-ink-500 px-4 py-3 text-right text-xs font-medium tracking-wider uppercase">
-                      Date
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-border divide-y">
-                  {deliveries.map((d) => (
-                    <tr key={d.id} className="hover:bg-canvas/50 transition-colors">
-                      <td className="px-4 py-3">
-                        <StatusBadge
-                          status={deliveryStatusVariant[d.status] || 'pending'}
-                          label={d.status.charAt(0).toUpperCase() + d.status.slice(1)}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <p className="text-ink-950 max-w-[250px] truncate text-sm font-medium">
-                          {d.notifTitle}
-                        </p>
-                        {d.notifBody && (
-                          <p className="text-ink-500 max-w-[250px] truncate text-xs">
-                            {d.notifBody}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="bg-muted text-ink-700 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium">
-                          {d.channel === 'email' ? (
-                            <Mail className="h-3 w-3" />
-                          ) : (
-                            <RefreshCw className="h-3 w-3" />
-                          )}
-                          {d.channel}
-                        </span>
-                      </td>
-                      <td className="text-ink-500 px-4 py-3 text-xs tabular-nums">#{d.attempt}</td>
-                      <td className="max-w-[200px] px-4 py-3">
-                        {d.errorSummary ? (
-                          <span className="text-status-error-text block truncate text-xs">
-                            {d.errorSummary}
-                          </span>
-                        ) : d.providerId ? (
-                          <span className="text-ink-400 font-mono text-xs">
-                            {d.providerId.slice(0, 16)}...
-                          </span>
-                        ) : (
-                          <span className="text-ink-400 text-xs">{'\u2014'}</span>
-                        )}
-                      </td>
-                      <td className="text-ink-500 px-4 py-3 text-right text-xs whitespace-nowrap">
-                        {formatDateTime(d.createdAt)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
+          {deliveries.map((delivery) => (
+            <article key={delivery.id} className="border-border border-b px-4 py-4 last:border-b-0 sm:px-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <StatusBadge
+                      status={deliveryStatusVariant[delivery.status] || 'pending'}
+                      label={delivery.status.charAt(0).toUpperCase() + delivery.status.slice(1)}
+                    />
+                    <span className="bg-muted text-ink-600 inline-flex min-h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] font-medium">
+                      {delivery.channel === 'email' ? <Mail className="h-3 w-3" aria-hidden="true" /> : <RefreshCw className="h-3 w-3" aria-hidden="true" />}
+                      {channelLabel(delivery.channel)}
+                    </span>
+                    <span className="text-ink-400 text-[11px] tabular-nums">Attempt #{delivery.attempt}</span>
+                  </div>
+                  <h2 className="text-ink-950 mt-2 break-words text-sm font-semibold">{delivery.notifTitle}</h2>
+                  {delivery.notifBody && <p className="text-ink-500 mt-1 line-clamp-2 text-xs leading-5">{delivery.notifBody}</p>}
+                  {delivery.errorSummary ? (
+                    <p className="text-status-error-text mt-2 break-words text-xs">{delivery.errorSummary}</p>
+                  ) : delivery.providerId ? (
+                    <p className="text-ink-400 mt-2 break-all font-mono text-[11px]">Provider: {delivery.providerId}</p>
+                  ) : null}
+                </div>
+                <time className="text-ink-400 shrink-0 text-xs tabular-nums sm:text-right">{formatDateTime(delivery.createdAt)}</time>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {deliveries.length === 100 && (
+        <p className="text-ink-500 text-xs">Showing the latest 100 delivery attempts. Use the Delivery Dashboard for filtered operational monitoring and retry actions.</p>
       )}
     </div>
   );
