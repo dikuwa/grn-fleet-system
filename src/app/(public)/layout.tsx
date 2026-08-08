@@ -13,6 +13,11 @@ import { AnnouncementBar } from '@/components/public/announcement-bar';
 import { getPublicSiteSettings } from '@/lib/platform/cms-public';
 import { readPublicSiteContent } from '@/lib/platform/site-settings-content';
 
+// Public pages are fully CMS-driven (hero, announcement, contact, footer,
+// SEO). Render them on demand so Platform Admin edits take effect immediately
+// instead of serving build-time snapshots from the prerender cache.
+export const dynamic = 'force-dynamic';
+
 export default async function PublicLayout({
   children,
 }: {
