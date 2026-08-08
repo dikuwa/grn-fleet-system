@@ -1,37 +1,37 @@
 'use client';
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
+  AlertCircle,
+  AlertTriangle,
   Bell,
   BellOff,
   CheckCheck,
-  Clock,
-  AlertTriangle,
-  Info,
-  FileText,
-  Truck,
-  Gauge,
-  Fuel,
-  Wrench,
   CheckCircle2,
-  Settings,
+  ChevronRight,
+  Clock,
+  FileText,
+  Fuel,
+  Gauge,
+  Inbox,
+  Info,
   Mail,
   Save,
-  AlertCircle,
-  ChevronRight,
-  Inbox,
+  Settings,
+  Trash2,
+  Truck,
   Wifi,
   WifiOff,
-  Trash2,
+  Wrench,
   X,
 } from 'lucide-react';
-import Link from 'next/link';
 import {
   broadcastNotificationChange,
   fetchNotifications,
@@ -50,14 +50,20 @@ import {
 import { StyledDateInput } from '@/components/ui/styled-select';
 import { FieldWrapper } from '@/components/ui/input';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { useToast } from '@/lib/use-toast';
 
 type NotificationType =
-  'all' | 'action_required' | 'awareness' | 'reminder' | 'escalation' | 'outcome';
+  | 'all'
+  | 'action_required'
+  | 'awareness'
+  | 'reminder'
+  | 'escalation'
+  | 'outcome';
 type NotificationFilter = 'all' | 'unread' | 'read';
 
 interface Notification {
   id: string;
-  type: 'action_required' | 'awareness' | 'reminder' | 'escalation' | 'outcome';
+  type: Exclude<NotificationType, 'all'>;
   title: string;
   body: string;
   time: string;
@@ -69,33 +75,13 @@ interface Notification {
   mandatory: boolean;
 }
 
-const typeColors: Record<NotificationType, { bg: string; text: string; icon: React.ReactNode }> = {
-  all: { bg: 'bg-muted', text: 'text-ink-500', icon: <Inbox className="h-4 w-4" /> },
-  action_required: {
-    bg: 'bg-blue-50 dark:bg-blue-950/50',
-    text: 'text-blue-700 dark:text-blue-300',
-    icon: <AlertCircle className="h-4 w-4" />,
-  },
-  awareness: {
-    bg: 'bg-amber-50 dark:bg-amber-950/50',
-    text: 'text-amber-700 dark:text-amber-300',
-    icon: <Info className="h-4 w-4" />,
-  },
-  reminder: {
-    bg: 'bg-purple-50 dark:bg-purple-950/50',
-    text: 'text-purple-700 dark:text-purple-300',
-    icon: <Clock className="h-4 w-4" />,
-  },
-  escalation: {
-    bg: 'bg-red-50 dark:bg-red-950/50',
-    text: 'text-red-700 dark:text-red-300',
-    icon: <AlertTriangle className="h-4 w-4" />,
-  },
-  outcome: {
-    bg: 'bg-green-50 dark:bg-green-950/50',
-    text: 'text-green-700 dark:text-green-300',
-    icon: <CheckCircle2 className="h-4 w-4" />,
-  },
+const typePresentation: Record<NotificationType, { icon: React.ReactNode; variant: 'default' | 'info' | 'warning' | 'error' | 'success' }> = {
+  all: { icon: <Inbox className="h-4 w-4" />, variant: 'default' },
+  action_required: { icon: <AlertCircle className="h-4 w-4" />, variant: 'info' },
+  awareness: { icon: <Info className="h-4 w-4" />, variant: 'warning' },
+  reminder: { icon: <Clock className="h-4 w-4" />, variant: 'info' },
+  escalation: { icon: <AlertTriangle className="h-4 w-4" />, variant: 'error' },
+  outcome: { icon: <CheckCircle2 className="h-4 w-4" />, variant: 'success' },
 };
 
 const typeLabels: Record<NotificationType, string> = {
@@ -117,8 +103,17 @@ const entityIcons: Record<string, React.ReactNode> = {
   office: <Bell className="h-3.5 w-3.5" />,
 };
 
+const notificationTone = (type: Notification['type']) => {
+  if (type === 'escalation') return 'bg-status-error-bg text-status-error-text';
+  if (type === 'awareness') return 'bg-status-warning-bg text-status-warning-text';
+  if (type === 'outcome') return 'bg-status-success-bg text-status-success-text';
+  if (type === 'action_required') return 'bg-status-info-bg text-status-info-text';
+  return 'bg-muted text-ink-600';
+};
+
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   useNotificationBroadcast();
   const [selectedType, setSelectedType] = useState<NotificationType>('all');
   const [filterMode, setFilterMode] = useState<NotificationFilter>('all');
@@ -130,6 +125,7 @@ export default function NotificationsPage() {
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [clearAllConfirm, setClearAllConfirm] = useState(false);
+
   const notificationQuery = useQuery({
     queryKey: notificationQueryKey,
     queryFn: ({ signal }) => fetchNotifications(signal),
@@ -139,6 +135,7 @@ export default function NotificationsPage() {
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
   });
+
   const notifications = useMemo<Notification[]>(
     () =>
       (notificationQuery.data?.notifications || []).map((notification) => ({
@@ -167,46 +164,44 @@ export default function NotificationsPage() {
     [notificationQuery.data],
   );
 
-  const filtered = notifications
-    .filter((n) => {
-      const typeMatch = selectedType === 'all' || n.type === selectedType;
-      const readMatch =
-        filterMode === 'all' ||
-        (filterMode === 'unread' && !n.isRead) ||
-        (filterMode === 'read' && n.isRead);
-      return typeMatch && readMatch;
-    })
-    .sort((a, b) => {
-      const typeRank: Record<Notification['type'], number> = {
-        action_required: 0,
-        escalation: 1,
-        reminder: 2,
-        outcome: 3,
-        awareness: 4,
-      };
-      const priorityRank = { high: 0, normal: 1, low: 2 } as const;
-      return (
-        typeRank[a.type] - typeRank[b.type] ||
-        priorityRank[a.priority] - priorityRank[b.priority] ||
-        Number(a.isRead) - Number(b.isRead)
-      );
-    });
+  const filtered = useMemo(
+    () =>
+      notifications
+        .filter((notification) => {
+          const typeMatch = selectedType === 'all' || notification.type === selectedType;
+          const readMatch =
+            filterMode === 'all' ||
+            (filterMode === 'unread' && !notification.isRead) ||
+            (filterMode === 'read' && notification.isRead);
+          return typeMatch && readMatch;
+        })
+        .sort((a, b) => {
+          const typeRank: Record<Notification['type'], number> = {
+            action_required: 0,
+            escalation: 1,
+            reminder: 2,
+            outcome: 3,
+            awareness: 4,
+          };
+          const priorityRank = { high: 0, normal: 1, low: 2 } as const;
+          return (
+            typeRank[a.type] - typeRank[b.type] ||
+            priorityRank[a.priority] - priorityRank[b.priority] ||
+            Number(a.isRead) - Number(b.isRead)
+          );
+        }),
+    [filterMode, notifications, selectedType],
+  );
 
   const unreadCount = notificationQuery.data?.unreadCount || 0;
+
   useEffect(() => {
     const preferences = notificationQuery.data?.preferences;
     if (!preferences) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setEmailNotifications(preferences.emailNotifications);
-      setInAppNotifications(preferences.inAppNotifications);
-      setQuietHoursStart(preferences.quietHoursStart || '20:00');
-      setQuietHoursEnd(preferences.quietHoursEnd || '07:00');
-    });
-    return () => {
-      cancelled = true;
-    };
+    setEmailNotifications(preferences.emailNotifications);
+    setInAppNotifications(preferences.inAppNotifications);
+    setQuietHoursStart(preferences.quietHoursStart || '20:00');
+    setQuietHoursEnd(preferences.quietHoursEnd || '07:00');
   }, [notificationQuery.data?.preferences]);
 
   const savePreferences = useCallback(async () => {
@@ -226,21 +221,29 @@ export default function NotificationsPage() {
       if (!response.ok) throw new Error('Unable to save notification preferences');
       await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
       setPreferencesOpen(false);
+      toast({ title: 'Preferences saved', description: 'Notification delivery settings have been updated.', variant: 'success' });
+    } catch (error) {
+      toast({ title: 'Could not save preferences', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' });
     } finally {
       setSavingPreferences(false);
     }
-  }, [emailNotifications, inAppNotifications, queryClient, quietHoursEnd, quietHoursStart]);
+  }, [emailNotifications, inAppNotifications, queryClient, quietHoursEnd, quietHoursStart, toast]);
 
   const markAllRead = useCallback(async () => {
-    const response = await fetch('/api/notifications', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'mark_read' }),
-    });
-    if (!response.ok) throw new Error('Unable to mark notifications as read');
-    await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
-    broadcastNotificationChange();
-  }, [queryClient]);
+    try {
+      const response = await fetch('/api/notifications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_read' }),
+      });
+      if (!response.ok) throw new Error('Unable to mark notifications as read');
+      await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
+      broadcastNotificationChange();
+      toast({ title: 'Notifications updated', description: 'All visible notifications are marked as read.', variant: 'success' });
+    } catch (error) {
+      toast({ title: 'Update failed', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' });
+    }
+  }, [queryClient, toast]);
 
   const markOneRead = useCallback(
     (notificationId: string) => {
@@ -262,7 +265,10 @@ export default function NotificationsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'mark_read', notificationId }),
         keepalive: true,
-      }).then(() => broadcastNotificationChange());
+      }).then((response) => {
+        if (!response.ok) void queryClient.invalidateQueries({ queryKey: notificationQueryKey });
+        broadcastNotificationChange();
+      });
     },
     [queryClient],
   );
@@ -273,247 +279,160 @@ export default function NotificationsPage() {
         method: 'DELETE',
         keepalive: true,
       });
-      if (response.ok) {
-        queryClient.setQueryData<NotificationFeed>(notificationQueryKey, (current) => {
-          if (!current) return current;
-          const removed = current.notifications.find((n) => n.id === notificationId);
-          return {
-            ...current,
-            notifications: current.notifications.filter((n) => n.id !== notificationId),
-            unreadCount:
-              removed && !removed.isRead
-                ? Math.max(0, current.unreadCount - 1)
-                : current.unreadCount,
-          };
-        });
-        broadcastNotificationChange();
-      } else {
-        // Re-fetch on failure to restore correct state
+      if (!response.ok) {
         await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
+        throw new Error('Unable to dismiss notification');
       }
+      queryClient.setQueryData<NotificationFeed>(notificationQueryKey, (current) => {
+        if (!current) return current;
+        const removed = current.notifications.find((notification) => notification.id === notificationId);
+        return {
+          ...current,
+          notifications: current.notifications.filter((notification) => notification.id !== notificationId),
+          unreadCount: removed && !removed.isRead ? Math.max(0, current.unreadCount - 1) : current.unreadCount,
+        };
+      });
+      broadcastNotificationChange();
+      toast({ title: 'Notification dismissed', variant: 'success' });
     },
-    [queryClient],
+    [queryClient, toast],
   );
 
   const clearAll = useCallback(async () => {
     const response = await fetch('/api/notifications', { method: 'DELETE', keepalive: true });
-    if (response.ok) {
-      await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
-      broadcastNotificationChange();
-    } else {
-      await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
-    }
-  }, [queryClient]);
+    await queryClient.invalidateQueries({ queryKey: notificationQueryKey });
+    if (!response.ok) throw new Error('Unable to clear notifications');
+    broadcastNotificationChange();
+    toast({ title: 'Notifications cleared', description: 'Required unresolved actions were preserved.', variant: 'success' });
+  }, [queryClient, toast]);
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Notifications' }]}
-      />
-      <PageHeader
-        title="Notifications"
-        description={`${unreadCount} unread notification${unreadCount !== 1 ? 's' : ''}`}
-      >
-        <div className="flex items-center gap-2">
-          <div
-            className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-              notificationQuery.isError
-                ? 'bg-status-error-bg text-status-error-text'
-                : 'bg-status-success-bg text-status-success-text'
-            }`}
-          >
-            {notificationQuery.isError ? (
-              <WifiOff className="h-3 w-3" />
-            ) : (
-              <Wifi className="h-3 w-3" />
-            )}
-            {notificationQuery.isError ? 'Connection error' : 'Live'}
-          </div>
-          <Button variant="secondary" size="sm" onClick={markAllRead} disabled={unreadCount === 0}>
-            <CheckCheck className="h-4 w-4" />
-            Mark All Read
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Notifications' }]} />
+      <PageHeader title="Notifications" description={`${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`}>
+        <span className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium ${notificationQuery.isError ? 'bg-status-error-bg text-status-error-text' : 'bg-status-success-bg text-status-success-text'}`}>
+          {notificationQuery.isError ? <WifiOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Wifi className="h-3.5 w-3.5" aria-hidden="true" />}
+          {notificationQuery.isError ? 'Connection error' : 'Live'}
+        </span>
+        <Button variant="secondary" size="sm" onClick={() => void markAllRead()} disabled={unreadCount === 0}>
+          <CheckCheck className="h-4 w-4" aria-hidden="true" /> Mark All Read
+        </Button>
+        {notifications.length > 0 && (
+          <Button variant="secondary" size="sm" onClick={() => setClearAllConfirm(true)}>
+            <Trash2 className="h-4 w-4" aria-hidden="true" /> Clear All
           </Button>
-          {notifications.length > 0 && (
-            <Button variant="secondary" size="sm" onClick={() => setClearAllConfirm(true)}>
-              <Trash2 className="h-4 w-4" />
-              Clear All
-            </Button>
-          )}
-          <Button variant="secondary" size="sm" onClick={() => setPreferencesOpen(true)}>
-            <Settings className="h-4 w-4" />
-            Preferences
-          </Button>
-        </div>
+        )}
+        <Button variant="secondary" size="sm" onClick={() => setPreferencesOpen(true)}>
+          <Settings className="h-4 w-4" aria-hidden="true" /> Preferences
+        </Button>
       </PageHeader>
 
-      {/* Filter Bar */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap gap-1.5">
-              {(Object.entries(typeLabels) as [NotificationType, string][]).map(
-                ([value, label]) => (
-                  <button
-                    key={value}
-                    onClick={() => setSelectedType(value)}
-                    className={`inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                      selectedType === value
-                        ? 'bg-brand-800 text-white'
-                        : 'text-ink-500 hover:text-ink-700 hover:bg-muted'
-                    }`}
-                  >
-                    {typeColors[value].icon}
-                    {label}
-                  </button>
-                ),
-              )}
-            </div>
-            <div className="border-border flex items-center gap-1 rounded-[8px] border p-0.5">
-              {(['all', 'unread', 'read'] as NotificationFilter[]).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setFilterMode(f)}
-                  className={`rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors ${
-                    filterMode === f ? 'bg-brand-800 text-white' : 'text-ink-500 hover:text-ink-700'
-                  }`}
-                >
-                  {f.charAt(0).toUpperCase() + f.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="border-border space-y-3 border-y py-4">
+        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Notification type">
+          {(Object.entries(typeLabels) as [NotificationType, string][]).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={selectedType === value}
+              onClick={() => setSelectedType(value)}
+              className={`focus-ring inline-flex min-h-9 items-center gap-1.5 rounded-[7px] px-3 text-xs font-medium transition-colors motion-reduce:transition-none ${selectedType === value ? 'bg-brand-800 text-white' : 'text-ink-500 hover:bg-muted hover:text-ink-800'}`}
+            >
+              {typePresentation[value].icon}{label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Read status">
+          {(['all', 'unread', 'read'] as NotificationFilter[]).map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              onClick={() => setFilterMode(filter)}
+              aria-pressed={filterMode === filter}
+              className={`focus-ring min-h-8 rounded-[7px] px-2.5 text-xs font-medium transition-colors motion-reduce:transition-none ${filterMode === filter ? 'bg-muted text-ink-950' : 'text-ink-500 hover:text-ink-800'}`}
+            >
+              {filter.charAt(0).toUpperCase() + filter.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      {/* Notification List */}
-      {filtered.length === 0 ? (
+      {notificationQuery.isLoading ? (
+        <div className="text-ink-500 py-12 text-center text-sm">Loading notifications…</div>
+      ) : filtered.length === 0 ? (
         <EmptyState
           title="No notifications"
-          description={
-            filterMode === 'unread'
-              ? 'You have no unread notifications. Great job staying on top of things!'
-              : 'No notifications match your current filters.'
-          }
-          icon={
-            filterMode === 'unread' ? <BellOff className="h-6 w-6" /> : <Bell className="h-6 w-6" />
-          }
+          description={filterMode === 'unread' ? 'There are no unread notifications in this view.' : 'No notifications match your current filters.'}
+          icon={filterMode === 'unread' ? <BellOff className="h-6 w-6" /> : <Bell className="h-6 w-6" />}
         />
       ) : (
-        <div className="space-y-2">
-          {filtered.map((notification) => {
-            const colors = typeColors[notification.type];
-            return (
-              <Card
-                key={notification.id}
-                hover
-                className={!notification.isRead ? 'border-brand-200 bg-brand-50/30' : ''}
-              >
-                <CardContent className="pt-4">
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
-                        !notification.isRead ? colors.bg : 'bg-muted'
-                      } ${!notification.isRead ? colors.text : 'text-ink-500'}`}
-                    >
-                      {colors.icon}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p
-                              className={`text-sm ${
-                                !notification.isRead
-                                  ? 'text-ink-950 font-semibold'
-                                  : 'text-ink-700 font-medium'
-                              }`}
-                            >
-                              {notification.title}
-                            </p>
-                            {!notification.isRead && (
-                              <span className="bg-brand-600 h-2 w-2 shrink-0 rounded-full" />
-                            )}
-                            {notification.priority === 'high' && (
-                              <Badge variant="pending" size="sm">
-                                High
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-ink-500 mt-0.5 text-sm">{notification.body}</p>
-                          <div className="mt-2 flex flex-wrap items-center gap-3">
-                            <span className="text-ink-400 text-xs">{notification.time}</span>
-                            <Badge variant="default" size="sm" className="gap-1">
-                              {entityIcons[notification.entityType] || <Bell className="h-3 w-3" />}
-                              {typeLabels[notification.type]}
-                            </Badge>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {notification.actionUrl && (
-                      <Link
-                        href={notification.actionUrl}
-                        onClick={() => markOneRead(notification.id)}
-                        aria-label={`Open ${notification.title}`}
-                        className="text-brand-700 hover:bg-brand-50 flex h-8 shrink-0 items-center justify-center gap-1 rounded-md px-2 text-xs font-semibold transition-colors"
-                      >
-                        Review
-                        <ChevronRight className="h-4 w-4" />
-                      </Link>
-                    )}
-                    {!notification.isRead && (
-                      <button
-                        onClick={() => markOneRead(notification.id)}
-                        aria-label="Mark as read"
-                        className="text-ink-400 hover:bg-muted hover:text-ink-700 flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors"
-                        title="Mark as read"
-                      >
-                        <CheckCheck className="h-4 w-4" />
-                      </button>
-                    )}
-                    {!(notification.mandatory && notification.status === 'action_required') && (
-                      <button
-                        onClick={() => {
-                          setDeleteTarget(notification.id);
-                        }}
-                        aria-label="Dismiss notification"
-                        className="text-ink-300 hover:bg-status-error-bg hover:text-status-error-text flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors"
-                        title="Dismiss"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    )}
+        <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
+          {filtered.map((notification) => (
+            <article
+              key={notification.id}
+              className={`border-border border-b px-4 py-4 last:border-b-0 sm:px-5 ${!notification.isRead ? 'bg-brand-50/30 dark:bg-brand-950/15' : ''}`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] ${notification.isRead ? 'bg-muted text-ink-500' : notificationTone(notification.type)}`} aria-hidden="true">
+                  {typePresentation[notification.type].icon}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className={`text-sm ${notification.isRead ? 'text-ink-800 font-medium' : 'text-ink-950 font-semibold'}`}>{notification.title}</h2>
+                    {!notification.isRead && <span className="bg-brand-600 h-2 w-2 rounded-full" aria-label="Unread" />}
+                    {notification.priority === 'high' && <Badge variant="warning" size="sm">High priority</Badge>}
                   </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+                  <p className="text-ink-600 mt-1 text-sm leading-relaxed">{notification.body}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="text-ink-400 text-xs">{notification.time}</span>
+                    <Badge variant={typePresentation[notification.type].variant} size="sm" className="gap-1">
+                      {entityIcons[notification.entityType] || <Bell className="h-3 w-3" />}
+                      {typeLabels[notification.type]}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                  {notification.actionUrl && (
+                    <Button variant="secondary" size="sm" asChild>
+                      <Link href={notification.actionUrl} onClick={() => markOneRead(notification.id)}>
+                        Review <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                      </Link>
+                    </Button>
+                  )}
+                  {!notification.isRead && (
+                    <button type="button" onClick={() => markOneRead(notification.id)} className="focus-ring text-ink-400 hover:bg-muted hover:text-ink-800 flex h-9 w-9 items-center justify-center rounded-[8px]" aria-label={`Mark ${notification.title} as read`}>
+                      <CheckCheck className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  )}
+                  {!(notification.mandatory && notification.status === 'action_required') && (
+                    <button type="button" onClick={() => setDeleteTarget(notification.id)} className="focus-ring text-ink-400 hover:bg-status-error-bg hover:text-status-error-text flex h-9 w-9 items-center justify-center rounded-[8px]" aria-label={`Dismiss ${notification.title}`}>
+                      <X className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </article>
+          ))}
         </div>
       )}
-      {/* Delete confirmation dialog */}
+
       {deleteTarget && (
         <ConfirmDialog
-          open={!!deleteTarget}
-          onOpenChange={(open) => {
-            if (!open) setDeleteTarget(null);
-          }}
+          open={Boolean(deleteTarget)}
+          onOpenChange={(open) => !open && setDeleteTarget(null)}
           title="Dismiss notification"
           description="This informational notification will be dismissed from your list."
           confirmLabel="Dismiss"
           cancelLabel="Cancel"
           variant="destructive"
           onConfirm={async () => {
-            if (deleteTarget) {
-              await deleteOne(deleteTarget);
-              setDeleteTarget(null);
-            }
+            if (!deleteTarget) return;
+            await deleteOne(deleteTarget);
+            setDeleteTarget(null);
           }}
         />
       )}
 
-      {/* Clear all confirmation dialog */}
       <ConfirmDialog
         open={clearAllConfirm}
         onOpenChange={setClearAllConfirm}
@@ -529,60 +448,32 @@ export default function NotificationsPage() {
       />
 
       <Dialog open={preferencesOpen} onOpenChange={setPreferencesOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Notification preferences</DialogTitle>
-            <DialogDescription>
-              Choose personal delivery channels and quiet hours.
-            </DialogDescription>
+            <DialogDescription>Choose personal delivery channels and quiet hours.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <label className="border-border flex items-center justify-between rounded-[8px] border p-3">
-              <span className="text-ink-950 flex items-center gap-2 text-sm">
-                <Bell className="h-4 w-4" /> In-app notifications
-              </span>
-              <input
-                type="checkbox"
-                checked={inAppNotifications}
-                onChange={(event) => setInAppNotifications(event.target.checked)}
-                className="accent-brand-800 h-4 w-4"
-              />
+            <label className="border-border flex cursor-pointer items-center justify-between gap-3 rounded-[8px] border p-3">
+              <span className="text-ink-950 flex items-center gap-2 text-sm"><Bell className="h-4 w-4" aria-hidden="true" />In-app notifications</span>
+              <Checkbox checked={inAppNotifications} onCheckedChange={(checked) => setInAppNotifications(checked === true)} aria-label="Enable in-app notifications" />
             </label>
-            <label className="border-border flex items-center justify-between rounded-[8px] border p-3">
-              <span className="text-ink-950 flex items-center gap-2 text-sm">
-                <Mail className="h-4 w-4" /> Email notifications
-              </span>
-              <input
-                type="checkbox"
-                checked={emailNotifications}
-                onChange={(event) => setEmailNotifications(event.target.checked)}
-                className="accent-brand-800 h-4 w-4"
-              />
+            <label className="border-border flex cursor-pointer items-center justify-between gap-3 rounded-[8px] border p-3">
+              <span className="text-ink-950 flex items-center gap-2 text-sm"><Mail className="h-4 w-4" aria-hidden="true" />Email notifications</span>
+              <Checkbox checked={emailNotifications} onCheckedChange={(checked) => setEmailNotifications(checked === true)} aria-label="Enable email notifications" />
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <FieldWrapper label="Quiet hours start">
-                <StyledDateInput
-                  type="time"
-                  value={quietHoursStart}
-                  onChange={(event) => setQuietHoursStart(event.target.value)}
-                />
+                <StyledDateInput type="time" value={quietHoursStart} onChange={(event) => setQuietHoursStart(event.target.value)} />
               </FieldWrapper>
               <FieldWrapper label="Quiet hours end">
-                <StyledDateInput
-                  type="time"
-                  value={quietHoursEnd}
-                  onChange={(event) => setQuietHoursEnd(event.target.value)}
-                />
+                <StyledDateInput type="time" value={quietHoursEnd} onChange={(event) => setQuietHoursEnd(event.target.value)} />
               </FieldWrapper>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setPreferencesOpen(false)}>
-              Cancel
-            </Button>
-            <Button loading={savingPreferences} onClick={savePreferences}>
-              <Save className="h-4 w-4" /> Save preferences
-            </Button>
+            <Button variant="secondary" onClick={() => setPreferencesOpen(false)}>Cancel</Button>
+            <Button loading={savingPreferences} onClick={() => void savePreferences()}><Save className="h-4 w-4" aria-hidden="true" />Save preferences</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
