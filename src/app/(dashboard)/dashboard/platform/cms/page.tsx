@@ -1,31 +1,38 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
+import { Input, Label, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
-  FileText,
-  Plus,
-  Search,
-  RefreshCw,
-  Loader2,
-  Edit3,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { EmptyState } from '@/components/ui/empty-state';
+import {
   Archive,
   Clock,
+  Edit3,
+  FileText,
   Globe,
-  Settings2,
+  Loader2,
   MessagesSquare,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { SiteSettingsTab } from './settings-tab';
 import { FaqsTab } from './faqs-tab';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface CMSContent {
   id: string;
@@ -41,6 +48,26 @@ interface CMSContent {
   updatedAt: string;
   createdByUserId: string | null;
 }
+
+interface PageForm {
+  pageType: string;
+  slug: string;
+  title: string;
+  description: string;
+  status: string;
+  isListed: boolean;
+  navOrder: string;
+}
+
+const EMPTY_PAGE_FORM: PageForm = {
+  pageType: 'custom',
+  slug: '',
+  title: '',
+  description: '',
+  status: 'draft',
+  isListed: true,
+  navOrder: '0',
+};
 
 const STATUS_CONFIG: Record<string, { label: string; variant: BadgeProps['variant'] }> = {
   draft: { label: 'Draft', variant: 'default' },
@@ -63,10 +90,7 @@ const PAGE_TYPE_LABELS: Record<string, string> = {
   custom: 'Custom',
 };
 
-const PAGE_TYPE_OPTIONS = Object.entries(PAGE_TYPE_LABELS).map(([value, label]) => ({
-  value,
-  label,
-}));
+const PAGE_TYPE_OPTIONS = Object.entries(PAGE_TYPE_LABELS).map(([value, label]) => ({ value, label }));
 
 const TABS = [
   { id: 'pages', label: 'Pages', icon: FileText },
@@ -76,16 +100,20 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 80);
 
 export default function PlatformCMSPage() {
   const { toast } = useToast();
-
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [activeTab, setActiveTab] = useState<TabId>('pages');
 
-  // Pages tab state
   const [pages, setPages] = useState<CMSContent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -93,61 +121,40 @@ export default function PlatformCMSPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
 
-  // Site settings tab state
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingPage, setEditingPage] = useState<CMSContent | null>(null);
+  const [pageForm, setPageForm] = useState<PageForm>({ ...EMPTY_PAGE_FORM });
+  const [savingPage, setSavingPage] = useState(false);
+
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsContent, setSettingsContent] = useState<Record<string, unknown> | null>(null);
   const [settingsBrand, setSettingsBrand] = useState<Record<string, unknown> | null>(null);
   const [settingsUpdatedAt, setSettingsUpdatedAt] = useState<string | null>(null);
 
-  // -----------------------------------------------------------------------
-  // Data fetching
-  // -----------------------------------------------------------------------
-
   const fetchPages = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
-      if (searchQuery) params.set('q', searchQuery);
+      if (searchQuery.trim()) params.set('q', searchQuery.trim());
       if (statusFilter) params.set('status', statusFilter);
       if (typeFilter) params.set('pageType', typeFilter);
-
       const res = await fetch(`/api/platform/cms/content?${params}`);
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to fetch');
-      setPages(json.data.content);
+      if (!res.ok) throw new Error(json.error || 'Failed to load CMS pages');
+      setPages(json.data?.content ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load');
+      setError(err instanceof Error ? err.message : 'Failed to load CMS pages');
     } finally {
       setLoading(false);
     }
   }, [searchQuery, statusFilter, typeFilter]);
 
   useEffect(() => {
-    let ignore = false;
-    async function load() {
-      try {
-        const res = await fetch('/api/platform/cms/content');
-        const json = await res.json();
-        if (ignore) return;
-        if (!res.ok) throw new Error(json.error || 'Failed to fetch');
-        setPages(json.data.content);
-        setLoading(false);
-      } catch (err) {
-        if (!ignore) {
-          setError(err instanceof Error ? err.message : 'Failed to load');
-          setLoading(false);
-        }
-      }
-    }
-    void load();
-    return () => {
-      ignore = true;
-    };
-  }, []);
-
-  // -----------------------------------------------------------------------
-  // Site settings loading
-  // -----------------------------------------------------------------------
+    const timer = window.setTimeout(() => void fetchPages(), 250);
+    return () => window.clearTimeout(timer);
+  }, [fetchPages]);
 
   const fetchSettings = useCallback(async () => {
     setSettingsLoading(true);
@@ -173,88 +180,133 @@ export default function PlatformCMSPage() {
   }, []);
 
   useEffect(() => {
-    if (activeTab !== 'settings') return;
-    let ignore = false;
-    async function load() {
-      try {
-        const res = await fetch('/api/platform/cms/settings');
-        const json = await res.json();
-        if (ignore) return;
-        if (!res.ok) throw new Error(json.error || 'Failed to fetch settings');
-        const { publicContent, settings } = json.data ?? {};
-        setSettingsContent(publicContent ?? {});
-        setSettingsBrand({
-          siteName: settings?.siteName ?? 'GovFleet Namibia',
-          siteTagline: settings?.siteTagline ?? '',
-          logoUrl: settings?.logoUrl ?? '',
-          faviconUrl: settings?.faviconUrl ?? '',
-        });
-        setSettingsUpdatedAt(settings?.updatedAt ?? null);
-        setSettingsError(null);
-        setSettingsLoading(false);
-      } catch (err) {
-        if (!ignore) {
-          setSettingsError(err instanceof Error ? err.message : 'Failed to load settings');
-          setSettingsLoading(false);
-        }
-      }
+    if (activeTab !== 'settings' || settingsContent) return;
+    void fetchSettings();
+  }, [activeTab, fetchSettings, settingsContent]);
+
+  const filteredCountLabel = useMemo(() => {
+    const filtered = Boolean(searchQuery || statusFilter || typeFilter);
+    return `${pages.length} ${filtered ? 'matching' : 'available'} page${pages.length === 1 ? '' : 's'}`;
+  }, [pages.length, searchQuery, statusFilter, typeFilter]);
+
+  const openCreate = () => {
+    setEditingPage(null);
+    setPageForm({ ...EMPTY_PAGE_FORM });
+    setEditorOpen(true);
+  };
+
+  const openEdit = (page: CMSContent) => {
+    setEditingPage(page);
+    setPageForm({
+      pageType: page.pageType,
+      slug: page.slug,
+      title: page.title,
+      description: page.description ?? '',
+      status: page.status,
+      isListed: page.isListed,
+      navOrder: String(page.navOrder ?? 0),
+    });
+    setEditorOpen(true);
+  };
+
+  const closeEditor = () => {
+    if (savingPage) return;
+    setEditorOpen(false);
+    setEditingPage(null);
+    setPageForm({ ...EMPTY_PAGE_FORM });
+  };
+
+  const savePage = async () => {
+    const title = pageForm.title.trim();
+    const slug = slugify(pageForm.slug || pageForm.title);
+    if (!title || !slug || !pageForm.pageType) {
+      toast({
+        title: 'Missing page information',
+        description: 'Title, slug and page type are required.',
+        variant: 'error',
+      });
+      return;
     }
-    void load();
-    return () => {
-      ignore = true;
-    };
-  }, [activeTab]);
 
-  const handleSettingsSaved = useCallback((updatedAt: string) => {
-    setSettingsUpdatedAt(updatedAt);
-  }, []);
-
-  // -----------------------------------------------------------------------
-  // Actions
-  // -----------------------------------------------------------------------
-
-  const archivePage = useCallback(async (id: string) => {
+    setSavingPage(true);
     try {
-      const res = await fetch(`/api/platform/cms/content/${id}`, { method: 'DELETE' });
+      const payload = {
+        pageType: pageForm.pageType,
+        slug,
+        title,
+        description: pageForm.description.trim() || null,
+        status: pageForm.status,
+        isListed: pageForm.isListed,
+        navOrder: Number.parseInt(pageForm.navOrder || '0', 10) || 0,
+      };
+      const res = await fetch(
+        editingPage ? `/api/platform/cms/content/${editingPage.id}` : '/api/platform/cms/content',
+        {
+          method: editingPage ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+      );
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to archive');
-      toast({ title: 'Archived', description: 'Page archived', variant: 'success' });
-      fetchPages();
+      if (!res.ok) throw new Error(json.error || 'Failed to save page');
+      toast({
+        title: editingPage ? 'Page updated' : 'Page created',
+        description: `${title} is saved as ${payload.status}.`,
+        variant: 'success',
+      });
+      closeEditor();
+      await fetchPages();
     } catch (err) {
-      toast({ title: 'Error', description: err instanceof Error ? err.message : 'Failed', variant: 'error' });
+      toast({
+        title: 'Could not save page',
+        description: err instanceof Error ? err.message : 'Save failed',
+        variant: 'error',
+      });
+    } finally {
+      setSavingPage(false);
     }
-  }, [toast, fetchPages]);
+  };
 
-  // -----------------------------------------------------------------------
-  // Render
-  // -----------------------------------------------------------------------
+  const archivePage = (page: CMSContent) => {
+    confirm({
+      title: `Archive ${page.title}?`,
+      description: 'The page record will be archived and removed from normal public navigation. Its version history is preserved.',
+      confirmLabel: 'Archive Page',
+      variant: 'destructive',
+      onConfirm: async () => {
+        const res = await fetch(`/api/platform/cms/content/${page.id}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to archive page');
+        toast({ title: 'Page archived', description: page.title, variant: 'success' });
+        await fetchPages();
+      },
+    });
+  };
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleDateString('en-NA', { year: 'numeric', month: 'short', day: 'numeric' });
+    return new Date(dateStr).toLocaleDateString('en-NA', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
   };
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Platform', href: '/dashboard/platform' },
-        { label: 'Content Management' },
-      ]} />
-
+      <Breadcrumbs items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Content Management' }]} />
       <PageHeader
         title="Content Management"
-        description="Manage public website pages, editable site content, and FAQs"
+        description="Manage public site settings, structured page records and frequently asked questions."
       >
         {activeTab === 'pages' && (
-          <Button size="sm" onClick={() => toast({ title: 'Coming Soon', description: 'CMS page editor is under development — the structured public site is code-driven for now' })}>
-            <Plus className="h-4 w-4 mr-1" />
-            New Page
+          <Button size="sm" onClick={openCreate}>
+            <Plus className="h-4 w-4" aria-hidden="true" /> New Page
           </Button>
         )}
       </PageHeader>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border pb-px">
+      <div className="border-border flex gap-1 overflow-x-auto border-b pb-px" role="tablist" aria-label="Content management sections">
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
@@ -262,15 +314,16 @@ export default function PlatformCMSPage() {
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={active}
               onClick={() => setActiveTab(tab.id)}
-              aria-current={active ? 'page' : undefined}
-              className={`inline-flex items-center gap-2 rounded-t-[8px] px-4 py-2.5 text-sm font-medium transition-colors ${
+              className={`focus-ring inline-flex min-h-10 shrink-0 items-center gap-2 rounded-t-[8px] px-3 py-2 text-sm font-medium transition-colors motion-reduce:transition-none sm:px-4 ${
                 active
-                  ? 'border-b-2 border-brand-600 text-ink-950'
-                  : 'text-ink-500 hover:text-ink-800 hover:bg-muted/50'
+                  ? 'border-brand-600 text-ink-950 border-b-2'
+                  : 'text-ink-500 hover:bg-muted/50 hover:text-ink-800'
               }`}
             >
-              <Icon className="h-4 w-4" />
+              <Icon className="h-4 w-4" aria-hidden="true" />
               {tab.label}
             </button>
           );
@@ -285,129 +338,214 @@ export default function PlatformCMSPage() {
           brand={settingsBrand}
           updatedAt={settingsUpdatedAt}
           onRetry={fetchSettings}
-          onSaved={handleSettingsSaved}
+          onSaved={setSettingsUpdatedAt}
         />
       )}
 
       {activeTab === 'faqs' && <FaqsTab />}
 
       {activeTab === 'pages' && (
-      <>
-      <div className="space-y-6">
-      {/* Filters */}
-      <Card>
-        <CardContent className="py-4">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-              <input
-                type="text"
-                placeholder="Search pages..."
+        <div className="space-y-5">
+          <div className="border-border grid gap-3 border-y py-4 sm:grid-cols-2 lg:grid-cols-[minmax(240px,1fr)_180px_190px_auto] lg:items-center">
+            <div className="relative">
+              <Search className="text-ink-400 pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" aria-hidden="true" />
+              <Input
+                type="search"
+                aria-label="Search public pages"
+                placeholder="Search pages by title or slug..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 h-10 text-sm border border-border rounded-[8px] bg-surface focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                className="pl-9"
               />
             </div>
-            <StyledSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-40">
-              <option value="">All Statuses</option>
+            <StyledSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter pages by status">
+              <option value="">All statuses</option>
               <option value="draft">Draft</option>
               <option value="published">Published</option>
               <option value="scheduled">Scheduled</option>
               <option value="archived">Archived</option>
             </StyledSelect>
-            <StyledSelect value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="w-44">
-              <option value="">All Types</option>
-              {PAGE_TYPE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
+            <StyledSelect value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter pages by type">
+              <option value="">All page types</option>
+              {PAGE_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </StyledSelect>
-            <Button variant="secondary" size="compact" onClick={fetchPages}>
-              <RefreshCw className="h-4 w-4" />
+            <Button variant="secondary" size="sm" onClick={() => void fetchPages()} loading={loading}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" /> Refresh
             </Button>
           </div>
-        </CardContent>
-      </Card>
 
-      {/* Content List */}
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
-          <span className="ml-2 text-sm text-ink-500">Loading pages...</span>
-        </div>
-      ) : error ? (
-        <div className="text-center py-16">
-          <p className="text-sm text-status-error-text">{error}</p>
-          <Button variant="secondary" size="compact" onClick={fetchPages} className="mt-3">Retry</Button>
-        </div>
-      ) : pages.length === 0 ? (
-        <Card>
-          <CardContent className="py-16 text-center">
-            <FileText className="h-12 w-12 text-ink-300 mx-auto mb-3" />
-            <p className="text-sm text-ink-500 mb-4">No content pages found</p>
-            <p className="text-xs text-ink-400">CMS pages will appear here once created</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-2">
-          {pages.map((page) => {
-            const statusConfig = STATUS_CONFIG[page.status] || { label: page.status, variant: 'default' };
-            return (
-              <Card key={page.id} className="hover:border-brand-300 transition-colors">
-                <CardContent className="py-3 px-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Globe className="h-4 w-4 text-ink-400 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-medium text-ink-900 truncate">{page.title}</h3>
-                          <Badge variant={statusConfig.variant} size="sm">{statusConfig.label}</Badge>
-                          {page.version > 1 && (
-                            <span className="text-[10px] text-ink-400">v{page.version}</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-ink-500 mt-0.5">
-                          <span className="font-mono">/{page.slug}</span>
-                          <span>·</span>
-                          <span>{PAGE_TYPE_LABELS[page.pageType] || page.pageType}</span>
-                          {!page.isListed && <span className="text-ink-400 italic">(unlisted)</span>}
-                        </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-ink-500 text-xs">{filteredCountLabel}</p>
+            {(searchQuery || statusFilter || typeFilter) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearchQuery('');
+                  setStatusFilter('');
+                  setTypeFilter('');
+                }}
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="text-ink-500 flex items-center justify-center gap-2 py-14 text-sm">
+              <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading pages…
+            </div>
+          ) : error ? (
+            <EmptyState
+              icon={<FileText className="h-6 w-6" />}
+              title="Could not load public pages"
+              description={error}
+              action={{ label: 'Retry', onClick: fetchPages }}
+            />
+          ) : pages.length === 0 ? (
+            <EmptyState
+              icon={<FileText className="h-6 w-6" />}
+              title="No public pages found"
+              description={searchQuery || statusFilter || typeFilter ? 'Adjust or clear the current filters.' : 'Create a structured page record or manage the site through Site Settings.'}
+              action={!searchQuery && !statusFilter && !typeFilter ? { label: 'Create Page', onClick: openCreate } : undefined}
+            />
+          ) : (
+            <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
+              <div className="border-border bg-muted/40 text-ink-500 hidden grid-cols-[minmax(0,1.4fr)_160px_120px_160px_auto] gap-4 border-b px-5 py-3 text-xs font-medium lg:grid">
+                <span>Page</span><span>Type</span><span>Status</span><span>Updated</span><span className="text-right">Actions</span>
+              </div>
+              {pages.map((page) => {
+                const statusConfig = STATUS_CONFIG[page.status] || { label: page.status, variant: 'default' as const };
+                return (
+                  <div key={page.id} className="border-border grid gap-3 border-b px-4 py-4 last:border-b-0 sm:px-5 lg:grid-cols-[minmax(0,1.4fr)_160px_120px_160px_auto] lg:items-center">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Globe className="text-ink-400 h-4 w-4 shrink-0" aria-hidden="true" />
+                        <h3 className="text-ink-950 truncate text-sm font-semibold">{page.title}</h3>
+                        {page.version > 1 && <span className="text-ink-400 text-[10px]">v{page.version}</span>}
                       </div>
+                      <p className="text-ink-500 mt-1 truncate font-mono text-xs">/{page.slug}</p>
+                      {page.description && <p className="text-ink-500 mt-1 line-clamp-2 text-xs">{page.description}</p>}
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-ink-400 shrink-0">
+                    <div className="text-ink-600 text-xs">{PAGE_TYPE_LABELS[page.pageType] || page.pageType}</div>
+                    <div><Badge variant={statusConfig.variant} size="sm">{statusConfig.label}</Badge></div>
+                    <div className="text-ink-500 text-xs">
+                      <p>{formatDate(page.updatedAt)}</p>
                       {page.publishedAt && (
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {formatDate(page.publishedAt)}
-                        </span>
+                        <p className="mt-0.5 flex items-center gap-1"><Clock className="h-3 w-3" aria-hidden="true" />Published {formatDate(page.publishedAt)}</p>
                       )}
-                      <span className="text-ink-300">·</span>
-                      <span>Updated {formatDate(page.updatedAt)}</span>
-                      <Button variant="ghost" size="compact" onClick={() => toast({ title: 'Coming Soon', description: 'CMS editor is under development' })}>
-                        <Edit3 className="h-4 w-4" />
+                    </div>
+                    <div className="flex flex-wrap gap-1 lg:justify-end">
+                      <Button variant="ghost" size="sm" onClick={() => openEdit(page)}>
+                        <Edit3 className="h-4 w-4" aria-hidden="true" /> Edit
                       </Button>
                       {page.status !== 'archived' && (
-                        <Button variant="ghost" size="compact" onClick={() => archivePage(page.id)} className="text-status-error-text">
-                          <Archive className="h-4 w-4" />
+                        <Button variant="ghost" size="sm" onClick={() => archivePage(page)} className="text-status-error-text">
+                          <Archive className="h-4 w-4" aria-hidden="true" /> Archive
                         </Button>
                       )}
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
-      </div>
-      </>
-      )}
+
+      <Dialog open={editorOpen} onOpenChange={(open) => !savingPage && (open ? setEditorOpen(true) : closeEditor())}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{editingPage ? 'Edit public page' : 'Create public page'}</DialogTitle>
+            <DialogDescription>
+              Manage safe page metadata and publication state. Homepage messaging, contact details and structured marketing sections remain managed through Site Settings.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label required>Title</Label>
+              <Input
+                value={pageForm.title}
+                onChange={(e) => {
+                  const title = e.target.value;
+                  setPageForm((current) => ({
+                    ...current,
+                    title,
+                    slug: editingPage || current.slug ? current.slug : slugify(title),
+                  }));
+                }}
+                placeholder="Public page title"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label required>Slug</Label>
+              <Input
+                value={pageForm.slug}
+                onChange={(e) => setPageForm((current) => ({ ...current, slug: slugify(e.target.value) }))}
+                placeholder="page-slug"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label required>Page type</Label>
+              <StyledSelect value={pageForm.pageType} onChange={(e) => setPageForm((current) => ({ ...current, pageType: e.target.value }))}>
+                {PAGE_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </StyledSelect>
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Description</Label>
+              <Textarea
+                value={pageForm.description}
+                onChange={(e) => setPageForm((current) => ({ ...current, description: e.target.value }))}
+                rows={3}
+                placeholder="Short public-facing description"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Status</Label>
+              <StyledSelect value={pageForm.status} onChange={(e) => setPageForm((current) => ({ ...current, status: e.target.value }))}>
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="archived">Archived</option>
+              </StyledSelect>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Navigation order</Label>
+              <Input
+                inputMode="numeric"
+                value={pageForm.navOrder}
+                onChange={(e) => setPageForm((current) => ({ ...current, navOrder: e.target.value.replace(/[^0-9-]/g, '') }))}
+              />
+            </div>
+            <label className="border-border flex cursor-pointer items-start gap-3 rounded-[8px] border p-3 sm:col-span-2">
+              <Checkbox
+                checked={pageForm.isListed}
+                onCheckedChange={(checked) => setPageForm((current) => ({ ...current, isListed: checked === true }))}
+                aria-label="Show page in public navigation where supported"
+              />
+              <span>
+                <span className="text-ink-900 block text-sm font-medium">List this page</span>
+                <span className="text-ink-500 mt-0.5 block text-xs">Allow the public navigation system to include this page where its page type is supported.</span>
+              </span>
+            </label>
+          </div>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={closeEditor} disabled={savingPage}>Cancel</Button>
+            <Button onClick={() => void savePage()} loading={savingPage}>{editingPage ? 'Save Changes' : 'Create Page'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {confirmDialog}
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Settings tab mount — loads settings via the admin API then renders the editor
-// ---------------------------------------------------------------------------
 
 function SettingsTabMount({
   loading,
@@ -428,30 +566,25 @@ function SettingsTabMount({
 }) {
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
-        <span className="ml-2 text-sm text-ink-500">Loading site settings…</span>
+      <div className="text-ink-500 flex items-center justify-center gap-2 py-16 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading site settings…
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="text-center py-16">
-        <p className="text-sm text-status-error-text">{error}</p>
-        <Button variant="secondary" size="compact" onClick={onRetry} className="mt-3">
-          Retry
-        </Button>
-      </div>
+      <EmptyState
+        icon={<Settings2 className="h-6 w-6" />}
+        title="Could not load site settings"
+        description={error}
+        action={{ label: 'Retry', onClick: onRetry }}
+      />
     );
   }
 
   if (!content || !brand) {
-    return (
-      <div className="text-center py-16">
-        <p className="text-sm text-ink-500">No settings available.</p>
-      </div>
-    );
+    return <EmptyState icon={<Settings2 className="h-6 w-6" />} title="No settings available" />;
   }
 
   return (
