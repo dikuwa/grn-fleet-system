@@ -1,9 +1,5 @@
 /**
  * Real-time visibility split + role-based operation.
- *
- * The visibility section pairs benefit copy with a large analytics/map
- * preview. The roles section explains how each role uses the same system —
- * simplified public wording, no internal implementation details.
  */
 
 import { CheckCircle2 } from 'lucide-react';
@@ -20,43 +16,23 @@ const VISIBILITY_BENEFITS = [
 ];
 
 const ROLES = [
-  {
-    role: 'Requester',
-    text: 'Creates transport requests with route, programme and passenger details.',
-  },
-  {
-    role: 'Approvers',
-    text: 'Review requests requiring their decision, with comments and audit trail.',
-  },
-  {
-    role: 'Transport Officer',
-    text: 'Coordinates vehicle and driver allocation and prepares trip authorities.',
-  },
-  {
-    role: 'Driver',
-    text: 'Records authorised trip activity through a mobile self-service portal.',
-  },
-  {
-    role: 'Administrator',
-    text: 'Configures users, organisational structure and platform settings.',
-  },
-  {
-    role: 'Auditor',
-    text: 'Reviews records, documents and accountability trails.',
-  },
+  { role: 'Requester', text: 'Creates transport requests with route, programme and passenger details.' },
+  { role: 'Approvers', text: 'Review requests requiring their decision, with comments and audit trail.' },
+  { role: 'Transport Officer', text: 'Coordinates vehicle and driver allocation and prepares trip authorities.' },
+  { role: 'Driver', text: 'Records authorised trip activity through a mobile self-service portal.' },
+  { role: 'Administrator', text: 'Configures users, organisational structure and platform settings.' },
+  { role: 'Auditor', text: 'Reviews records, documents and accountability trails.' },
 ];
 
 export function VisibilityRoles() {
   return (
     <>
-      {/* Real-time visibility */}
-      <section className="border-b border-border bg-surface py-20 md:py-24">
+      <section id="operations" className="scroll-mt-20 border-b border-border bg-surface py-20 md:py-24">
         <SectionContainer>
           <div className="grid items-center gap-12 lg:grid-cols-2">
             <div>
               <SectionHeading
                 align="left"
-                eyebrow="Operational visibility"
                 title="Real-Time Visibility. Operational Accountability."
                 subtitle="One dashboard that shows what the fleet is doing — live."
               />
@@ -79,20 +55,15 @@ export function VisibilityRoles() {
         </SectionContainer>
       </section>
 
-      {/* Role-based operation */}
       <section className="border-b border-border bg-canvas py-20 md:py-24">
         <SectionContainer>
           <SectionHeading
-            eyebrow="One platform, every role"
             title="Designed Around How Teams Actually Work"
             subtitle="The same system serves every role in the fleet operation — with access and actions matched to each responsibility."
           />
           <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {ROLES.map((r) => (
-              <div
-                key={r.role}
-                className="rounded-[10px] border border-border bg-surface p-6"
-              >
+              <div key={r.role} className="rounded-[10px] border border-border bg-surface p-6">
                 <h3 className="text-sm font-semibold text-ink-950">{r.role}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-ink-500">{r.text}</p>
               </div>
