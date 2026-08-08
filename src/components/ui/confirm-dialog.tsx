@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -10,6 +10,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { AlertTriangle } from 'lucide-react';
 
 interface ConfirmDialogProps {
@@ -38,6 +39,10 @@ export function ConfirmDialog({
   const [loading, setLoading] = useState(false);
   const [typedValue, setTypedValue] = useState('');
 
+  useEffect(() => {
+    if (!open) setTypedValue('');
+  }, [open]);
+
   const handleConfirm = async () => {
     setLoading(true);
     try {
@@ -48,17 +53,16 @@ export function ConfirmDialog({
     }
   };
 
-  const canConfirm = requireTypedConfirm
-    ? typedValue === requireTypedConfirm
-    : true;
+  const canConfirm = requireTypedConfirm ? typedValue === requireTypedConfirm : true;
+  const isCritical = variant === 'destructive' || variant === 'emergency';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !loading && onOpenChange(nextOpen)}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          {variant === 'destructive' || variant === 'emergency' ? (
+          {isCritical ? (
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-status-error-bg text-status-error-text">
-              <AlertTriangle className="h-5 w-5" />
+              <AlertTriangle className="h-5 w-5" aria-hidden="true" />
             </div>
           ) : null}
           <DialogTitle>{title}</DialogTitle>
@@ -67,25 +71,23 @@ export function ConfirmDialog({
 
         {requireTypedConfirm && (
           <div className="space-y-2">
-            <p className="text-xs text-ink-500">
+            <label htmlFor="confirm-dialog-value" className="text-xs text-ink-500">
               Type <span className="font-semibold text-ink-700">{requireTypedConfirm}</span> to confirm:
-            </p>
-            <input
-              type="text"
+            </label>
+            <Input
+              id="confirm-dialog-value"
               value={typedValue}
-              onChange={(e) => setTypedValue(e.target.value)}
-              className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-status-error-text"
+              onChange={(event) => setTypedValue(event.target.value)}
               placeholder={requireTypedConfirm}
+              autoComplete="off"
+              disabled={loading}
+              error={typedValue.length > 0 && !canConfirm}
             />
           </div>
         )}
 
-        <DialogFooter>
-          <Button
-            variant="secondary"
-            onClick={() => onOpenChange(false)}
-            disabled={loading}
-          >
+        <DialogFooter className="mobile-action-bar">
+          <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={loading}>
             {cancelLabel}
           </Button>
           <Button
@@ -108,9 +110,6 @@ export function ConfirmDialog({
   );
 }
 
-/**
- * Hook for managing confirm dialog state
- */
 export function useConfirm() {
   const [state, setState] = useState<{
     open: boolean;
@@ -124,7 +123,7 @@ export function useConfirm() {
   const dialog = (
     <ConfirmDialog
       open={state.open}
-      onOpenChange={(open) => setState((s) => ({ ...s, open }))}
+      onOpenChange={(open) => setState((current) => ({ ...current, open }))}
       {...state.props}
     />
   );
