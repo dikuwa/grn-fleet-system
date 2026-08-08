@@ -92,46 +92,35 @@ function getNavGroups(activeWorkspace: WorkspaceId) {
   const navigation = getWorkspaceNavigation(activeWorkspace);
 
   if (activeWorkspace === 'platform_admin') {
-    const subscriptionIndex = navigation.findIndex((item) => item.path === '/dashboard/platform/subscriptions');
-    const subscriptionItem = navigation[subscriptionIndex];
-    if (subscriptionItem && !navigation.some((item) => item.path === '/dashboard/platform/packages')) {
-      navigation.splice(subscriptionIndex + 1, 0, {
-        ...subscriptionItem,
-        id: 'platform-packages',
-        path: '/dashboard/platform/packages',
-        href: '/dashboard/platform/packages',
-        label: 'Subscription Packages',
-        icon: 'Package',
-        order: subscriptionItem.order + 1,
-      });
-    }
+    const root = navigation.find((item) => item.path === '/dashboard/platform');
+    if (root) {
+      const ensure = (
+        path: string,
+        id: string,
+        label: string,
+        icon: string,
+        order: number,
+        section = 'Platform',
+      ) => {
+        if (navigation.some((item) => item.path === path)) return;
+        navigation.push({
+          ...root,
+          id,
+          path,
+          href: path,
+          label,
+          icon,
+          order,
+          section,
+        });
+      };
 
-    const demoIndex = navigation.findIndex((item) => item.path === '/dashboard/platform/demo-requests');
-    const demoItem = navigation[demoIndex];
-    if (demoItem && !navigation.some((item) => item.path === '/dashboard/platform/enquiries')) {
-      navigation.splice(demoIndex + 1, 0, {
-        ...demoItem,
-        id: 'platform-enquiries',
-        path: '/dashboard/platform/enquiries',
-        href: '/dashboard/platform/enquiries',
-        label: 'Public Enquiries',
-        icon: 'MessageSquareText',
-        order: demoItem.order + 1,
-      });
-    }
-
-    const tenantIndex = navigation.findIndex((item) => item.path === '/dashboard/platform/tenants');
-    const tenantItem = navigation[tenantIndex];
-    if (tenantItem && !navigation.some((item) => item.path === '/dashboard/platform/users')) {
-      navigation.splice(tenantIndex + 1, 0, {
-        ...tenantItem,
-        id: 'platform-users',
-        path: '/dashboard/platform/users',
-        href: '/dashboard/platform/users',
-        label: 'Platform Users',
-        icon: 'UserCog',
-        order: tenantItem.order + 1,
-      });
+      // These are first-class Platform Admin tools. Keep them explicit rather
+      // than deriving them from neighbouring routes so they remain visible even
+      // if another platform route is permission-filtered or reordered later.
+      ensure('/dashboard/platform/users', 'platform-users', 'Platform Users', 'UserCog', 505, 'Platform Access');
+      ensure('/dashboard/platform/enquiries', 'platform-enquiries', 'Public Enquiries', 'MessageSquareText', 551);
+      ensure('/dashboard/platform/packages', 'platform-packages', 'Subscription Packages', 'Package', 541);
     }
   }
 
