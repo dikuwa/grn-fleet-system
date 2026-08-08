@@ -114,47 +114,63 @@ export async function GET(request: NextRequest) {
       licencesByProfile.set(licence.driverProfileId, list);
     }
 
-    // Build enriched driver records with licence-expiry alert data so the
-    // roster can surface expiring/expired licences without extra round-trips.
+    // Eligibility must use the currently active, verified licence version only.
+    // Superseded/inactive verified records and provisional uploads remain visible
+    // in history but never make a driver assignment-eligible.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const enrichedDrivers = driverEmployees.map((emp) => {
       const profile = profileMap.get(emp.id);
       const licences = profile ? licencesByProfile.get(profile.id) || [] : [];
 
-      const activeLicences = licences.filter((l) => l.verificationStatus === 'verified' || l.isActive);
+      const activeLicences = licences.filter(
+        (licence) => licence.verificationStatus === 'verified' && licence.isActive,
+      );
       const expiries = activeLicences
-        .map((l) => ({ id: l.id, licenceClass: l.licenceClass, expiryDate: l.expiryDate, daysUntil: Math.ceil((new Date(l.expiryDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) }))
+        .map((licence) => ({
+          id: licence.id,
+          licenceClass: licence.licenceClass,
+          expiryDate: licence.expiryDate,
+          daysUntil: Math.ceil(
+            (new Date(licence.expiryDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+          ),
+        }))
         .sort((a, b) => a.daysUntil - b.daysUntil);
       const nextExpiry = expiries[0] ?? null;
-      const hasExpiredLicence = expiries.some((e) => e.daysUntil < 0);
-      const hasExpiringLicence = expiries.some((e) => e.daysUntil >= 0 && e.daysUntil <= 60);
+      const hasExpiredLicence = expiries.some((expiry) => expiry.daysUntil < 0);
+      const hasExpiringLicence = expiries.some(
+        (expiry) => expiry.daysUntil >= 0 && expiry.daysUntil <= 60,
+      );
       const hasValidLicence = expiries.length > 0 && !hasExpiredLicence;
-      const hasVerifiedLicence = licences.some((l) => l.verificationStatus === 'verified');
+      const hasVerifiedLicence = activeLicences.length > 0;
       const pendingVerification =
         licences.length > 0 &&
         !hasVerifiedLicence &&
-        licences.some((l) => ['uploaded', 'awaiting_review', 'needs_correction', 'pending'].includes(l.verificationStatus));
+        licences.some((licence) =>
+          ['uploaded', 'awaiting_review', 'needs_correction', 'pending'].includes(
+            licence.verificationStatus,
+          ),
+        );
 
       return {
         ...emp,
         driverStatus: profile?.driverStatus || 'unauthorised',
         licenceCount: licences.length,
-        activeLicenceCount: licences.filter(
-          (l) => l.verificationStatus === 'verified' && new Date(l.expiryDate) > new Date(),
+        activeLicenceCount: activeLicences.filter(
+          (licence) => new Date(licence.expiryDate) > new Date(),
         ).length,
         nextExpiry,
         hasExpiredLicence,
         hasExpiringLicence,
         hasValidLicence,
         pendingVerification,
-        licences: licences.map((l) => ({
-          id: l.id,
-          licenceNumber: l.licenceNumber,
-          licenceClass: l.licenceClass,
-          expiryDate: l.expiryDate,
-          verificationStatus: l.verificationStatus,
-          isActive: l.isActive,
+        licences: licences.map((licence) => ({
+          id: licence.id,
+          licenceNumber: licence.licenceNumber,
+          licenceClass: licence.licenceClass,
+          expiryDate: licence.expiryDate,
+          verificationStatus: licence.verificationStatus,
+          isActive: licence.isActive,
         })),
       };
     });
@@ -162,14 +178,23 @@ export async function GET(request: NextRequest) {
     // Server-side stats across the whole tenant roster (not the filtered page).
     const stats = {
       total: enrichedDrivers.length,
-      verifiedValid: enrichedDrivers.filter((d) => d.activeLicenceCount > 0).length,
-      expiring: enrichedDrivers.filter((d) => d.hasExpiringLicence && !d.hasExpiredLicence).length,
-      expired: enrichedDrivers.filter((d) => d.hasExpiredLicence).length,
-      pendingVerification: enrichedDrivers.filter((d) => d.pendingVerification).length,
-      ineligible: enrichedDrivers.filter(
-        (d) => d.driverStatus !== 'authorised' || d.hasExpiredLicence || (d.licenceCount > 0 && d.activeLicenceCount === 0 && !d.pendingVerification),
+      verifiedValid: enrichedDrivers.filter((driver) => driver.activeLicenceCount > 0).length,
+      expiring: enrichedDrivers.filter(
+        (driver) => driver.hasExpiringLicence && !driver.hasExpiredLicence,
       ).length,
-      available: enrichedDrivers.filter((d) => d.driverStatus === 'authorised' && d.hasValidLicence).length,
+      expired: enrichedDrivers.filter((driver) => driver.hasExpiredLicence).length,
+      pendingVerification: enrichedDrivers.filter((driver) => driver.pendingVerification).length,
+      ineligible: enrichedDrivers.filter(
+        (driver) =>
+          driver.driverStatus !== 'authorised' ||
+          driver.hasExpiredLicence ||
+          (driver.licenceCount > 0 &&
+            driver.activeLicenceCount === 0 &&
+            !driver.pendingVerification),
+      ).length,
+      available: enrichedDrivers.filter(
+        (driver) => driver.driverStatus === 'authorised' && driver.hasValidLicence,
+      ).length,
     };
 
     // Search across driver + licence fields (name, employee number, licence
@@ -182,17 +207,20 @@ export async function GET(request: NextRequest) {
           `${driver.firstName} ${driver.lastName}`.toLowerCase().includes(needle) ||
           driver.employeeNumber.toLowerCase().includes(needle) ||
           driver.licences.some(
-            (l) =>
-              l.licenceNumber.toLowerCase().includes(needle) ||
-              l.licenceClass.toLowerCase().includes(needle),
+            (licence) =>
+              licence.licenceNumber.toLowerCase().includes(needle) ||
+              licence.licenceClass.toLowerCase().includes(needle),
           ),
       );
     }
-    if (statusFilter === 'expired') filtered = filtered.filter((d) => d.hasExpiredLicence);
-    else if (statusFilter === 'expiring') filtered = filtered.filter((d) => d.hasExpiringLicence && !d.hasExpiredLicence);
-    else if (statusFilter === 'valid') filtered = filtered.filter((d) => d.hasValidLicence);
-    else if (statusFilter === 'pending') filtered = filtered.filter((d) => d.pendingVerification);
-    else if (statusFilter === 'no_licence') filtered = filtered.filter((d) => d.licenceCount === 0);
+    if (statusFilter === 'expired') filtered = filtered.filter((driver) => driver.hasExpiredLicence);
+    else if (statusFilter === 'expiring') {
+      filtered = filtered.filter(
+        (driver) => driver.hasExpiringLicence && !driver.hasExpiredLicence,
+      );
+    } else if (statusFilter === 'valid') filtered = filtered.filter((driver) => driver.hasValidLicence);
+    else if (statusFilter === 'pending') filtered = filtered.filter((driver) => driver.pendingVerification);
+    else if (statusFilter === 'no_licence') filtered = filtered.filter((driver) => driver.licenceCount === 0);
 
     const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -223,7 +251,10 @@ export async function POST(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-    const permCheck = await requireAnyPermission(session, [Permissions.DRIVER_MANAGE, Permissions.STAFF_MANAGE]);
+    const permCheck = await requireAnyPermission(session, [
+      Permissions.DRIVER_MANAGE,
+      Permissions.STAFF_MANAGE,
+    ]);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
@@ -235,7 +266,13 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
-    const [employee] = await db.select({ id: employees.id, isDriver: employees.isDriver, employmentStatus: employees.employmentStatus, userId: employees.userId })
+    const [employee] = await db
+      .select({
+        id: employees.id,
+        isDriver: employees.isDriver,
+        employmentStatus: employees.employmentStatus,
+        userId: employees.userId,
+      })
       .from(employees)
       .where(and(eq(employees.id, body.employeeId), eq(employees.tenantId, session.tenantId)))
       .limit(1);
@@ -243,12 +280,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Active staff member not found' }, { status: 404 });
     }
 
-    const [existingProfile] = await db.select({ id: driverProfiles.id })
+    const [existingProfile] = await db
+      .select({ id: driverProfiles.id })
       .from(driverProfiles)
       .where(eq(driverProfiles.employeeId, employee.id))
       .limit(1);
 
-    // Even when reusing an existing profile, ensure the Driver role is assigned
+    // Even when reusing an existing profile, ensure an active Driver role is assigned.
     await ensureDriverRoleAssignment(db, employee, session);
 
     if (existingProfile) {
@@ -256,33 +294,38 @@ export async function POST(request: NextRequest) {
     }
 
     const verified = body.verificationStatus === 'verified';
-    const [profile] = await db.insert(driverProfiles).values({
-      employeeId: employee.id,
-      driverStatus: verified ? 'authorised' : 'pending_verification',
-      availabilityStatus: verified ? (body.availabilityStatus || 'available') : 'unavailable',
-      internalAuthorisationRef: body.internalAuthorisationRef?.trim() || null,
-      lastVerifiedAt: verified ? new Date() : null,
-      verifiedByUserId: verified ? session.user.id : null,
-      notes: body.notes?.trim() || null,
-    }).returning();
+    const [profile] = await db
+      .insert(driverProfiles)
+      .values({
+        employeeId: employee.id,
+        driverStatus: verified ? 'authorised' : 'pending_verification',
+        availabilityStatus: verified ? body.availabilityStatus || 'available' : 'unavailable',
+        internalAuthorisationRef: body.internalAuthorisationRef?.trim() || null,
+        lastVerifiedAt: verified ? new Date() : null,
+        verifiedByUserId: verified ? session.user.id : null,
+        notes: body.notes?.trim() || null,
+      })
+      .returning();
 
-    const [licence] = await db.insert(driverLicences).values({
-      driverProfileId: profile.id,
-      licenceNumber: body.licenceNumber.trim(),
-      licenceClass: body.licenceClass.trim(),
-      issueDate: body.issueDate,
-      expiryDate: body.expiryDate,
-      allowedVehicleCategories: body.allowedVehicleCategories?.trim() || null,
-      isVerified: verified,
-      verificationStatus: verified ? 'verified' : 'pending',
-      notes: body.licenceNotes?.trim() || null,
-    }).returning();
+    const [licence] = await db
+      .insert(driverLicences)
+      .values({
+        driverProfileId: profile.id,
+        licenceNumber: body.licenceNumber.trim(),
+        licenceClass: body.licenceClass.trim(),
+        issueDate: body.issueDate,
+        expiryDate: body.expiryDate,
+        allowedVehicleCategories: body.allowedVehicleCategories?.trim() || null,
+        isVerified: verified,
+        verificationStatus: verified ? 'verified' : 'pending',
+        notes: body.licenceNotes?.trim() || null,
+      })
+      .returning();
 
-    await db.update(employees).set({ isDriver: true, updatedAt: new Date() }).where(eq(employees.id, employee.id));
-
-    // Driver role was already assigned by ensureDriverRoleAssignment() above.
-    // The second call is unnecessary since the function is called before the
-    // 409 check — both new and reuse paths are covered by that single call.
+    await db
+      .update(employees)
+      .set({ isDriver: true, updatedAt: new Date() })
+      .where(eq(employees.id, employee.id));
 
     await db.insert(auditEvents).values({
       tenantId: session.tenantId,
@@ -303,18 +346,14 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * Ensure the employee has the "Assigned Driver" role in the role_assignment
- * system.  This is called both when creating a new profile and when reusing
- * an existing one (409 path) so that the workflow engine's permission check
- * (DRIVER_LOG_CREATE) always passes for the affected user.
- */
+/** Ensure the employee has a currently active Assigned Driver role. */
 async function ensureDriverRoleAssignment(
   db: ReturnType<typeof getDb>,
   employee: { id: string; userId: string | null },
   session: { tenantId: string },
 ) {
   if (!employee.userId) return;
+
   const [membership] = await db
     .select({ id: tenantMemberships.id })
     .from(tenantMemberships)
@@ -326,27 +365,40 @@ async function ensureDriverRoleAssignment(
     )
     .limit(1);
   if (!membership) return;
+
   const [driverRole] = await db
     .select({ id: roles.id })
     .from(roles)
     .where(and(eq(roles.tenantId, session.tenantId), eq(roles.name, 'Assigned Driver')))
     .limit(1);
   if (!driverRole) return;
-  const [existing] = await db
-    .select({ id: roleAssignments.id })
+
+  const assignments = await db
+    .select({
+      id: roleAssignments.id,
+      startDate: roleAssignments.startDate,
+      endDate: roleAssignments.endDate,
+    })
     .from(roleAssignments)
     .where(
       and(
         eq(roleAssignments.tenantMembershipId, membership.id),
         eq(roleAssignments.roleId, driverRole.id),
       ),
-    )
-    .limit(1);
-  if (!existing) {
+    );
+
+  const now = new Date();
+  const hasActiveRole = assignments.some((assignment) => {
+    const startsAt = assignment.startDate ? new Date(assignment.startDate) : null;
+    const endsAt = assignment.endDate ? new Date(assignment.endDate) : null;
+    return (!startsAt || startsAt <= now) && (!endsAt || endsAt > now);
+  });
+
+  if (!hasActiveRole) {
     await db.insert(roleAssignments).values({
       tenantMembershipId: membership.id,
       roleId: driverRole.id,
-      startDate: new Date(),
+      startDate: now,
       reason: 'Auto-assigned via driver profile creation',
     });
   }
