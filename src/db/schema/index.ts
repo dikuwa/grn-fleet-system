@@ -5,6 +5,7 @@ export * from './invitations';
 export * from './demo-requests';
 export * from './cms-content';
 export * from './reset-requests';
+export * from './data-protection';
 export * from './auth';
 export * from './better-auth';
 export * from './people';

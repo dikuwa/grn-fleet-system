@@ -1,22 +1,16 @@
-/**
- * Platform Reset Dry-Run API
- *
- * POST /api/platform/reset/[id]/dry-run — Run a dry-run for a reset request
- */
-
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { eq } from 'drizzle-orm';
+import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { tenantResetRequests } from '@/db/schema/reset-requests';
-import { eq } from 'drizzle-orm';
-import { runDevelopmentDataReset, type ResetOptions, type ResetMode } from '@/lib/data-reset/engine';
+import { previewTenantOperationalReset } from '@/lib/data-protection/reset-service';
 import { recordAuditEvent } from '@/lib/audit-event';
 
-// ---------------------------------------------------------------------------
-// POST — Execute dry-run for a reset request
-// ---------------------------------------------------------------------------
-
+/**
+ * Production-safe dry run. This never mutates tenant operational data and does
+ * not use the development-only environment reset guard.
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -25,89 +19,72 @@ export async function POST(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-
     const permCheck = await requirePermission(session, Permissions.RESET_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
     const db = getDb();
-
-    // Fetch the reset request
-    const [resetRequest] = await db
-      .select()
-      .from(tenantResetRequests)
-      .where(eq(tenantResetRequests.id, id))
-      .limit(1);
-
-    if (!resetRequest) {
-      return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
+    const [resetRequest] = await db.select().from(tenantResetRequests).where(eq(tenantResetRequests.id, id)).limit(1);
+    if (!resetRequest) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
+    if (resetRequest.scope !== 'operational') {
+      return NextResponse.json({ error: 'Only operational resets are supported for production-safe execution. Create a new operational reset request.' }, { status: 400 });
+    }
+    if (!['approved', 'pending_review'].includes(resetRequest.status)) {
+      return NextResponse.json({ error: 'Dry run is available after submission/review and before execution.' }, { status: 400 });
     }
 
-    // Map scope to reset mode
-    const scopeToMode: Record<string, ResetMode> = {
-      operational: 'operational',
-      temporary_data: 'operational',
-      fleet: 'operational',
-      user_access: 'operational',
-      full: 'operational',
-    };
+    const { preview } = await previewTenantOperationalReset(resetRequest.tenantId);
+    const previousMetadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
 
-    const mode = scopeToMode[resetRequest.scope] || 'operational';
+    // A fresh plan invalidates an earlier recovery point for this request. The
+    // old snapshot remains safely retained in Backup & Restore, but execution
+    // requires a new snapshot tied to this exact plan.
+    await db.update(tenantResetRequests).set({
+      validationResults: {
+        dryRunSummary: preview.dryRunSummary,
+        steps: preview.steps,
+        preserved: preview.preserved,
+        review: preview.review,
+        warnings: [],
+        errors: [],
+        fingerprint: preview.fingerprint,
+        plannedAt: preview.plannedAt,
+      },
+      backupCreated: false,
+      backupLocation: null,
+      backupSizeBytes: null,
+      backupRecordCount: null,
+      rollbackPossible: false,
+      metadata: {
+        ...previousMetadata,
+        dryRunAt: preview.plannedAt,
+        dryRunFingerprint: preview.fingerprint,
+        dryRunTotal: preview.dryRunSummary.total,
+        backupSnapshotId: null,
+      },
+      updatedAt: new Date(),
+    }).where(eq(tenantResetRequests.id, id));
 
-    // Execute dry-run
-    const opts: ResetOptions = {
-      tenantId: resetRequest.tenantId,
-      mode,
-      dryRun: true,
-      initiator: `platform-admin:${session.user.id}`,
-      skipStorage: true,
-      skipFiles: true,
-    };
-
-    const outcome = await runDevelopmentDataReset(opts);
-
-    // Update request with validation results
-    await db
-      .update(tenantResetRequests)
-      .set({
-        validationResults: {
-          dryRunSummary: outcome.report.dryRunSummary,
-          steps: outcome.report.steps,
-          preserved: outcome.report.preserved,
-          review: outcome.report.review,
-          warnings: outcome.report.warnings,
-          errors: outcome.report.errors,
-        },
-        updatedAt: new Date(),
-      })
-      .where(eq(tenantResetRequests.id, id));
-
-    // Record audit event
     await recordAuditEvent({
-      tenantId: session.tenantId,
+      tenantId: resetRequest.tenantId,
       actorUserId: session.user.id,
       action: 'reset_request.dry_run',
       entityType: 'reset_request',
       entityId: id,
-      summary: `Dry-run for reset request ${id} (${resetRequest.scope})`,
+      summary: `Operational reset dry run completed; ${preview.dryRunSummary.total} tenant-scoped rows would be removed.`,
       after: {
         scope: resetRequest.scope,
-        dryRunSummary: outcome.report.dryRunSummary,
+        dryRunSummary: preview.dryRunSummary,
+        fingerprint: preview.fingerprint,
       },
     });
 
     return NextResponse.json({
       success: true,
-      data: {
-        report: outcome.report,
-        dryRunSummary: outcome.report.dryRunSummary,
-        steps: outcome.report.steps,
-        preserved: outcome.report.preserved,
-        review: outcome.report.review,
-      },
+      data: preview,
     });
   } catch (error) {
     console.error('[Platform Reset Dry-Run] POST failed:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }
