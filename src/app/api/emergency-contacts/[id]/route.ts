@@ -1,21 +1,34 @@
 /**
  * Emergency Contact detail API
  *
- * PATCH /api/emergency-contacts/[id] — Toggle active status or update contact
- * DELETE /api/emergency-contacts/[id] — Soft delete (deactivate) an emergency contact
+ * PATCH /api/emergency-contacts/[id] — Update contact fields or active status
+ * DELETE /api/emergency-contacts/[id] — Delete an emergency contact
+ *
+ * Platform admins may target another tenant via `tenantId`; normal tenant
+ * users remain locked to their session tenant.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  hasPermission,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import {
-  setEmergencyContactActive,
   deleteEmergencyContact,
+  isEmergencyContactRole,
+  setEmergencyContactActive,
+  updateEmergencyContact,
 } from '@/lib/incidents/emergency-contacts';
 
-// ---------------------------------------------------------------------------
-// PATCH — Toggle active status
-// ---------------------------------------------------------------------------
+function resolveTenantId(
+  sessionTenantId: string,
+  tenantOverride: string | null | undefined,
+  isPlatformAdmin: boolean,
+) {
+  return tenantOverride && isPlatformAdmin ? tenantOverride : sessionTenantId;
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -31,16 +44,59 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await req.json();
-    const { isActive } = body;
+    const isPlatformAdmin = await hasPermission(session, Permissions.PLATFORM_ADMIN);
+    const tenantId = resolveTenantId(
+      session.tenantId,
+      typeof body.tenantId === 'string' ? body.tenantId : null,
+      isPlatformAdmin,
+    );
 
-    if (typeof isActive !== 'boolean') {
-      return NextResponse.json({ error: 'isActive (boolean) is required' }, { status: 400 });
+    const hasContactFields = ['name', 'phone', 'role', 'region', 'sortOrder'].some(
+      (key) => Object.prototype.hasOwnProperty.call(body, key),
+    );
+
+    if (!hasContactFields) {
+      if (typeof body.isActive !== 'boolean') {
+        return NextResponse.json(
+          { error: 'Provide contact fields to edit or isActive to change status' },
+          { status: 400 },
+        );
+      }
+      const row = await setEmergencyContactActive(
+        tenantId,
+        id,
+        body.isActive,
+        session.user.id,
+      );
+      if (!row) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+      return NextResponse.json({ data: row });
     }
 
-    const row = await setEmergencyContactActive(session.tenantId, id, isActive, session.user.id);
-    if (!row) {
-      return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+    const { name, phone, role, region, sortOrder, isActive } = body;
+    if (!name?.trim()) {
+      return NextResponse.json({ error: 'Name is required' }, { status: 400 });
     }
+    if (!phone?.trim()) {
+      return NextResponse.json({ error: 'Phone number is required' }, { status: 400 });
+    }
+    if (!role?.trim() || !isEmergencyContactRole(role)) {
+      return NextResponse.json({ error: 'A valid contact role is required' }, { status: 400 });
+    }
+
+    const row = await updateEmergencyContact(
+      tenantId,
+      id,
+      {
+        name: name.trim(),
+        phone: phone.trim(),
+        role,
+        region: typeof region === 'string' && region.trim() ? region.trim() : null,
+        sortOrder: sortOrder != null ? Number(sortOrder) : 0,
+        isActive: typeof isActive === 'boolean' ? isActive : undefined,
+      },
+      session.user.id,
+    );
+    if (!row) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
 
     return NextResponse.json({ data: row });
   } catch (error) {
@@ -48,10 +104,6 @@ export async function PATCH(
     return NextResponse.json({ error: 'Failed to update contact' }, { status: 500 });
   }
 }
-
-// ---------------------------------------------------------------------------
-// DELETE — Remove an emergency contact
-// ---------------------------------------------------------------------------
 
 export async function DELETE(
   req: NextRequest,
@@ -66,10 +118,16 @@ export async function DELETE(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
-    const row = await deleteEmergencyContact(session.tenantId, id, session.user.id);
-    if (!row) {
-      return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
-    }
+    const { searchParams } = new URL(req.url);
+    const isPlatformAdmin = await hasPermission(session, Permissions.PLATFORM_ADMIN);
+    const tenantId = resolveTenantId(
+      session.tenantId,
+      searchParams.get('tenantId'),
+      isPlatformAdmin,
+    );
+
+    const row = await deleteEmergencyContact(tenantId, id, session.user.id);
+    if (!row) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
 
     return NextResponse.json({ success: true });
   } catch (error) {
