@@ -1,24 +1,13 @@
 'use client';
 
-/**
- * Site Settings tab — Platform Admin editing of the public website content.
- *
- * Content is grouped into cards: Brand, Homepage hero, Announcement, Contact,
- * Request Demo, Footer and SEO. One Save button persists everything through
- * /api/platform/cms/settings, which sanitises every field server-side.
- * CMS controls content only — structure and design stay in code.
- */
-
-import { useState, useCallback } from 'react';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { useCallback, useState } from 'react';
+import { Info, Loader2, Save } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input, Label, Textarea } from '@/components/ui/input';
-import { Loader2, Save, Info } from 'lucide-react';
+import { StyledDateInput } from '@/components/ui/styled-select';
 import { useToast } from '@/lib/use-toast';
-
-// ---------------------------------------------------------------------------
-// Types (mirror the server-side shape)
-// ---------------------------------------------------------------------------
 
 interface PublicContent {
   announcement: {
@@ -31,7 +20,7 @@ interface PublicContent {
     endDate: string | null;
   };
   hero: {
-    eyebrow: string;
+    eyebrow?: string;
     title: string;
     description: string;
     proofPoints: string[];
@@ -94,563 +83,199 @@ interface SettingsTabProps {
   onSaved: (updatedAt: string) => void;
 }
 
-// ---------------------------------------------------------------------------
-// Field primitives
-// ---------------------------------------------------------------------------
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <Label className="text-sm font-medium text-ink-800">{label}</Label>
       {children}
-      {hint ? <p className="text-xs text-ink-400">{hint}</p> : null}
+      {hint ? <p className="text-xs leading-relaxed text-ink-400">{hint}</p> : null}
     </div>
   );
 }
 
-function inputClass() {
-  return 'w-full h-10 px-3 text-sm border border-border rounded-[8px] bg-surface focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500';
+function SectionHeader({ title, description }: { title: string; description: string }) {
+  return (
+    <CardHeader>
+      <CardTitle className="text-base">{title}</CardTitle>
+      <p className="text-xs leading-relaxed text-ink-500">{description}</p>
+    </CardHeader>
+  );
 }
 
-function textareaClass() {
-  return 'w-full px-3 py-2 text-sm border border-border rounded-[8px] bg-surface focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500';
-}
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export function SiteSettingsTab({
-  content: initialContent,
-  brand: initialBrand,
-  lastUpdatedAt,
-  onSaved,
-}: SettingsTabProps) {
+export function SiteSettingsTab({ content: initialContent, brand: initialBrand, lastUpdatedAt, onSaved }: SettingsTabProps) {
   const { toast } = useToast();
-
   const [content, setContent] = useState<PublicContent>(initialContent);
   const [brand, setBrand] = useState<BrandFields>(initialBrand);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(lastUpdatedAt);
 
-  // Props are always fresh on mount — the tab is unmounted whenever the user
-  // leaves it, so there is no need to re-sync from parent props.
-
   const setHero = useCallback((key: keyof PublicContent['hero'], value: unknown) => {
-    setContent((prev) => ({ ...prev, hero: { ...prev.hero, [key]: value } }));
+    setContent((current) => ({ ...current, hero: { ...current.hero, [key]: value } }));
   }, []);
-
-  const setAnnouncement = useCallback(
-    (key: keyof PublicContent['announcement'], value: unknown) => {
-      setContent((prev) => ({
-        ...prev,
-        announcement: { ...prev.announcement, [key]: value },
-      }));
-    },
-    [],
-  );
-
-  const setContact = useCallback(
-    (key: keyof PublicContent['contact'], value: string) => {
-      setContent((prev) => ({ ...prev, contact: { ...prev.contact, [key]: value } }));
-    },
-    [],
-  );
-
+  const setAnnouncement = useCallback((key: keyof PublicContent['announcement'], value: unknown) => {
+    setContent((current) => ({ ...current, announcement: { ...current.announcement, [key]: value } }));
+  }, []);
+  const setContact = useCallback((key: keyof PublicContent['contact'], value: string) => {
+    setContent((current) => ({ ...current, contact: { ...current.contact, [key]: value } }));
+  }, []);
   const setDemo = useCallback((key: keyof PublicContent['demo'], value: string) => {
-    setContent((prev) => ({ ...prev, demo: { ...prev.demo, [key]: value } }));
+    setContent((current) => ({ ...current, demo: { ...current.demo, [key]: value } }));
   }, []);
-
-  const setFooter = useCallback(
-    (key: keyof PublicContent['footer'], value: string) => {
-      setContent((prev) => ({ ...prev, footer: { ...prev.footer, [key]: value } }));
-    },
-    [],
-  );
-
+  const setFooter = useCallback((key: keyof PublicContent['footer'], value: string) => {
+    setContent((current) => ({ ...current, footer: { ...current.footer, [key]: value } }));
+  }, []);
   const setSeo = useCallback((key: keyof PublicContent['seo'], value: string) => {
-    setContent((prev) => ({ ...prev, seo: { ...prev.seo, [key]: value } }));
+    setContent((current) => ({ ...current, seo: { ...current.seo, [key]: value } }));
   }, []);
 
-  const handleSave = async () => {
+  const save = async () => {
     setSaving(true);
     try {
+      // Preserve the legacy eyebrow property in storage if it exists, but the
+      // public design no longer exposes or renders an eyebrow control.
+      const payloadContent = {
+        ...content,
+        hero: { ...content.hero, eyebrow: initialContent.hero.eyebrow ?? '' },
+      };
       const res = await fetch('/api/platform/cms/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brand, publicContent: content }),
+        body: JSON.stringify({ brand, publicContent: payloadContent }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to save settings');
       const updatedAt = json.data?.settings?.updatedAt ?? new Date().toISOString();
       setSavedAt(updatedAt);
       onSaved(updatedAt);
-      toast({
-        title: 'Saved',
-        description: 'Public site content updated. Changes are live on the public site.',
-        variant: 'success',
-      });
-    } catch (err) {
-      toast({
-        title: 'Error',
-        description: err instanceof Error ? err.message : 'Failed to save settings',
-        variant: 'error',
-      });
+      toast({ title: 'Public site updated', description: 'Content changes are live on the public site.', variant: 'success' });
+    } catch (error) {
+      toast({ title: 'Could not save site settings', description: error instanceof Error ? error.message : 'Save failed', variant: 'error' });
     } finally {
       setSaving(false);
     }
   };
 
-  const formatSaved = (iso: string | null) => {
-    if (!iso) return 'Not saved yet';
-    return `Last updated ${new Date(iso).toLocaleString('en-NA', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    })}`;
-  };
+  const savedLabel = savedAt
+    ? `Last updated ${new Date(savedAt).toLocaleString('en-NA', { dateStyle: 'medium', timeStyle: 'short' })}`
+    : 'Not saved yet';
 
-  const cardHeader = (title: string, description: string) => (
-    <CardHeader>
-      <CardTitle className="text-base">{title}</CardTitle>
-      <p className="text-xs text-ink-500">{description}</p>
-    </CardHeader>
-  );
+  const seoPairs: Array<[keyof PublicContent['seo'], keyof PublicContent['seo'], string]> = [
+    ['homepageTitle', 'homepageDescription', 'Homepage'],
+    ['aboutTitle', 'aboutDescription', 'About'],
+    ['servicesTitle', 'servicesDescription', 'Platform / Services'],
+    ['contactTitle', 'contactDescription', 'Contact'],
+    ['demoTitle', 'demoDescription', 'Request Demo'],
+    ['faqTitle', 'faqDescription', 'FAQs'],
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Save bar */}
-      <div className="flex items-center justify-between rounded-[12px] border border-border bg-surface p-4">
-        <div className="flex items-center gap-3 text-sm text-ink-500">
-          <Info className="h-4 w-4 text-brand-500" />
-          <span>
-            Changes are saved directly to the live public site. Content only —
-            layout and design are controlled by code.
-          </span>
-          <span className="hidden text-xs text-ink-400 md:inline">· {formatSaved(savedAt)}</span>
+      <div className="sticky top-[calc(4rem+env(safe-area-inset-top,0px))] z-20 flex flex-col gap-3 rounded-[10px] border border-border bg-surface/95 p-4 shadow-sm backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" aria-hidden="true" />
+          <div><p className="text-sm font-medium text-ink-800">Public website content</p><p className="mt-0.5 text-xs text-ink-500">Content is editable here; layout, workflow and permissions remain controlled by code. · {savedLabel}</p></div>
         </div>
-        <Button onClick={handleSave} disabled={saving} size="sm">
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin mr-1" />
-              Saving…
-            </>
-          ) : (
-            <>
-              <Save className="h-4 w-4 mr-1" />
-              Save Changes
-            </>
-          )}
-        </Button>
+        <Button size="sm" onClick={() => void save()} loading={saving}><Save className="h-4 w-4" /> Save changes</Button>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Brand */}
-        <Card className="lg:col-span-1">
-          {cardHeader('Brand', 'Public platform name, wordmark and favicon')}
+        <Card>
+          <SectionHeader title="Brand" description="Public platform name, logo references and browser icon." />
           <CardContent className="space-y-4">
-            <Field label="Public platform name">
-              <Input
-                className={inputClass()}
-                value={brand.siteName}
-                maxLength={120}
-                onChange={(e) => setBrand((prev) => ({ ...prev, siteName: e.target.value }))}
-              />
-            </Field>
-            <Field label="Tagline">
-              <Input
-                className={inputClass()}
-                value={brand.siteTagline}
-                maxLength={200}
-                onChange={(e) => setBrand((prev) => ({ ...prev, siteTagline: e.target.value }))}
-              />
-            </Field>
-            <Field label="Logo URL" hint="https:// image URL for the public wordmark">
-              <Input
-                className={inputClass()}
-                value={brand.logoUrl}
-                onChange={(e) => setBrand((prev) => ({ ...prev, logoUrl: e.target.value }))}
-              />
-            </Field>
-            <Field label="Favicon URL">
-              <Input
-                className={inputClass()}
-                value={brand.faviconUrl}
-                onChange={(e) => setBrand((prev) => ({ ...prev, faviconUrl: e.target.value }))}
-              />
-            </Field>
+            <Field label="Public platform name"><Input value={brand.siteName} maxLength={120} onChange={(event) => setBrand((current) => ({ ...current, siteName: event.target.value }))} /></Field>
+            <Field label="Tagline"><Input value={brand.siteTagline} maxLength={200} onChange={(event) => setBrand((current) => ({ ...current, siteTagline: event.target.value }))} /></Field>
+            <Field label="Logo URL" hint="Public HTTPS image URL for the wordmark."><Input type="url" value={brand.logoUrl} onChange={(event) => setBrand((current) => ({ ...current, logoUrl: event.target.value }))} /></Field>
+            <Field label="Favicon URL"><Input type="url" value={brand.faviconUrl} onChange={(event) => setBrand((current) => ({ ...current, faviconUrl: event.target.value }))} /></Field>
           </CardContent>
         </Card>
 
-        {/* Homepage hero */}
-        <Card className="lg:col-span-1">
-          {cardHeader('Homepage hero', 'Headline, description and CTAs on the homepage')}
+        <Card>
+          <SectionHeader title="Homepage hero" description="Headline, supporting copy, proof points and the two existing calls to action." />
           <CardContent className="space-y-4">
-            <Field label="Eyebrow / contextual label">
-              <Input
-                className={inputClass()}
-                value={content.hero.eyebrow}
-                maxLength={120}
-                onChange={(e) => setHero('eyebrow', e.target.value)}
-              />
-            </Field>
-            <Field label="Hero title">
-              <Input
-                className={inputClass()}
-                value={content.hero.title}
-                maxLength={200}
-                onChange={(e) => setHero('title', e.target.value)}
-              />
-            </Field>
-            <Field label="Hero description">
-              <Textarea
-                className={textareaClass()}
-                rows={3}
-                value={content.hero.description}
-                maxLength={600}
-                onChange={(e) => setHero('description', e.target.value)}
-              />
-            </Field>
-            <Field label="Value statements" hint="One per line — shown under the hero">
-              <Textarea
-                className={textareaClass()}
-                rows={4}
-                value={content.hero.proofPoints.join('\n')}
-                onChange={(e) =>
-                  setHero(
-                    'proofPoints',
-                    e.target.value.split('\n').map((p) => p.trim()).filter(Boolean),
-                  )
-                }
-              />
-            </Field>
+            <Field label="Hero title"><Input value={content.hero.title} maxLength={200} onChange={(event) => setHero('title', event.target.value)} /></Field>
+            <Field label="Hero description"><Textarea rows={3} value={content.hero.description} maxLength={600} onChange={(event) => setHero('description', event.target.value)} /></Field>
+            <Field label="Value statements" hint="One statement per line."><Textarea rows={5} value={content.hero.proofPoints.join('\n')} onChange={(event) => setHero('proofPoints', event.target.value.split('\n').map((value) => value.trim()).filter(Boolean))} /></Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Primary CTA label">
-                <Input
-                  className={inputClass()}
-                  value={content.hero.primaryCtaLabel}
-                  maxLength={60}
-                  onChange={(e) => setHero('primaryCtaLabel', e.target.value)}
-                />
-              </Field>
-              <Field label="Primary CTA link" hint="e.g. /request-demo or https://…">
-                <Input
-                  className={inputClass()}
-                  value={content.hero.primaryCtaHref}
-                  onChange={(e) => setHero('primaryCtaHref', e.target.value)}
-                />
-              </Field>
-              <Field label="Secondary CTA label">
-                <Input
-                  className={inputClass()}
-                  value={content.hero.secondaryCtaLabel}
-                  maxLength={60}
-                  onChange={(e) => setHero('secondaryCtaLabel', e.target.value)}
-                />
-              </Field>
-              <Field label="Secondary CTA link">
-                <Input
-                  className={inputClass()}
-                  value={content.hero.secondaryCtaHref}
-                  onChange={(e) => setHero('secondaryCtaHref', e.target.value)}
-                />
-              </Field>
+              <Field label="Primary CTA label"><Input value={content.hero.primaryCtaLabel} onChange={(event) => setHero('primaryCtaLabel', event.target.value)} /></Field>
+              <Field label="Primary CTA link"><Input value={content.hero.primaryCtaHref} onChange={(event) => setHero('primaryCtaHref', event.target.value)} /></Field>
+              <Field label="Secondary CTA label"><Input value={content.hero.secondaryCtaLabel} onChange={(event) => setHero('secondaryCtaLabel', event.target.value)} /></Field>
+              <Field label="Secondary CTA link"><Input value={content.hero.secondaryCtaHref} onChange={(event) => setHero('secondaryCtaHref', event.target.value)} /></Field>
             </div>
           </CardContent>
         </Card>
 
-        {/* Announcement */}
         <Card className="lg:col-span-2">
-          {cardHeader('Announcement bar', 'Optional banner above the header (e.g. “Pilot applications now open”)')}
-          <CardContent>
-            <div className="mb-4 flex items-center gap-2">
-              <input
-                id="announcement-enabled"
-                type="checkbox"
-                checked={content.announcement.enabled}
-                onChange={(e) => setAnnouncement('enabled', e.target.checked)}
-                className="h-4 w-4 rounded border-border text-brand-600 focus:ring-brand-500"
-              />
-              <Label htmlFor="announcement-enabled" className="text-sm font-medium text-ink-800">
-                Show announcement bar
-              </Label>
+          <SectionHeader title="Announcement bar" description="Optional public banner and its active date window." />
+          <CardContent className="space-y-4">
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm font-medium text-ink-800">
+              <Checkbox checked={content.announcement.enabled} onCheckedChange={(checked) => setAnnouncement('enabled', checked === true)} /> Show announcement bar
+            </label>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Label"><Input value={content.announcement.label} maxLength={60} onChange={(event) => setAnnouncement('label', event.target.value)} /></Field>
+              <Field label="Message"><Input value={content.announcement.message} maxLength={200} onChange={(event) => setAnnouncement('message', event.target.value)} /></Field>
+              <Field label="Link label"><Input value={content.announcement.linkLabel} onChange={(event) => setAnnouncement('linkLabel', event.target.value)} /></Field>
+              <Field label="Link href"><Input value={content.announcement.linkHref} onChange={(event) => setAnnouncement('linkHref', event.target.value)} /></Field>
+              <Field label="Start date"><StyledDateInput type="date" value={content.announcement.startDate ?? ''} onChange={(event) => setAnnouncement('startDate', event.target.value || null)} /></Field>
+              <Field label="End date"><StyledDateInput type="date" value={content.announcement.endDate ?? ''} onChange={(event) => setAnnouncement('endDate', event.target.value || null)} /></Field>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <SectionHeader title="Contact page" description="Public contact details and introductory copy." />
+          <CardContent className="space-y-4">
+            <Field label="Intro"><Textarea rows={3} value={content.contact.intro} onChange={(event) => setContact('intro', event.target.value)} /></Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Label" hint="Small prefix, e.g. “New”">
-                <Input
-                  className={inputClass()}
-                  value={content.announcement.label}
-                  maxLength={60}
-                  onChange={(e) => setAnnouncement('label', e.target.value)}
-                />
-              </Field>
-              <Field label="Message">
-                <Input
-                  className={inputClass()}
-                  value={content.announcement.message}
-                  maxLength={200}
-                  onChange={(e) => setAnnouncement('message', e.target.value)}
-                />
-              </Field>
-              <Field label="Link label" hint="Optional">
-                <Input
-                  className={inputClass()}
-                  value={content.announcement.linkLabel}
-                  maxLength={60}
-                  onChange={(e) => setAnnouncement('linkLabel', e.target.value)}
-                />
-              </Field>
-              <Field label="Link href" hint="Optional">
-                <Input
-                  className={inputClass()}
-                  value={content.announcement.linkHref}
-                  onChange={(e) => setAnnouncement('linkHref', e.target.value)}
-                />
-              </Field>
-              <Field label="Start date" hint="Optional — ISO date">
-                <Input
-                  className={inputClass()}
-                  type="date"
-                  value={content.announcement.startDate ?? ''}
-                  onChange={(e) => setAnnouncement('startDate', e.target.value || null)}
-                />
-              </Field>
-              <Field label="End date" hint="Optional — ISO date">
-                <Input
-                  className={inputClass()}
-                  type="date"
-                  value={content.announcement.endDate ?? ''}
-                  onChange={(e) => setAnnouncement('endDate', e.target.value || null)}
-                />
-              </Field>
+              <Field label="Sales / demo email"><Input type="email" value={content.contact.salesEmail} onChange={(event) => setContact('salesEmail', event.target.value)} /></Field>
+              <Field label="Support email"><Input type="email" value={content.contact.supportEmail} onChange={(event) => setContact('supportEmail', event.target.value)} /></Field>
+              <Field label="Phone"><Input type="tel" value={content.contact.phone} onChange={(event) => setContact('phone', event.target.value)} /></Field>
+              <Field label="Secondary phone"><Input type="tel" value={content.contact.secondaryPhone} onChange={(event) => setContact('secondaryPhone', event.target.value)} /></Field>
+              <Field label="Address"><Input value={content.contact.address} onChange={(event) => setContact('address', event.target.value)} /></Field>
+              <Field label="City"><Input value={content.contact.city} onChange={(event) => setContact('city', event.target.value)} /></Field>
+              <Field label="Country"><Input value={content.contact.country} onChange={(event) => setContact('country', event.target.value)} /></Field>
+              <Field label="Business hours"><Input value={content.contact.hours} onChange={(event) => setContact('hours', event.target.value)} /></Field>
             </div>
+            <Field label="Map URL"><Input type="url" value={content.contact.mapUrl} onChange={(event) => setContact('mapUrl', event.target.value)} /></Field>
           </CardContent>
         </Card>
 
-        {/* Contact */}
-        <Card className="lg:col-span-1">
-          {cardHeader('Contact', 'Public contact details shown in the header, footer and contact page')}
+        <Card>
+          <SectionHeader title="Request Demo" description="Public demo page copy and confirmation messaging." />
           <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Sales / demo email">
-                <Input
-                  className={inputClass()}
-                  type="email"
-                  value={content.contact.salesEmail}
-                  maxLength={160}
-                  onChange={(e) => setContact('salesEmail', e.target.value)}
-                />
-              </Field>
-              <Field label="Support email">
-                <Input
-                  className={inputClass()}
-                  type="email"
-                  value={content.contact.supportEmail}
-                  maxLength={160}
-                  onChange={(e) => setContact('supportEmail', e.target.value)}
-                />
-              </Field>
-              <Field label="Phone">
-                <Input
-                  className={inputClass()}
-                  value={content.contact.phone}
-                  maxLength={60}
-                  onChange={(e) => setContact('phone', e.target.value)}
-                />
-              </Field>
-              <Field label="Secondary phone">
-                <Input
-                  className={inputClass()}
-                  value={content.contact.secondaryPhone}
-                  maxLength={60}
-                  onChange={(e) => setContact('secondaryPhone', e.target.value)}
-                />
-              </Field>
-            </div>
-            <Field label="Address">
-              <Input
-                className={inputClass()}
-                value={content.contact.address}
-                maxLength={240}
-                onChange={(e) => setContact('address', e.target.value)}
-              />
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="City">
-                <Input
-                  className={inputClass()}
-                  value={content.contact.city}
-                  maxLength={80}
-                  onChange={(e) => setContact('city', e.target.value)}
-                />
-              </Field>
-              <Field label="Country">
-                <Input
-                  className={inputClass()}
-                  value={content.contact.country}
-                  maxLength={80}
-                  onChange={(e) => setContact('country', e.target.value)}
-                />
-              </Field>
-              <Field label="Hours">
-                <Input
-                  className={inputClass()}
-                  value={content.contact.hours}
-                  maxLength={120}
-                  onChange={(e) => setContact('hours', e.target.value)}
-                />
-              </Field>
-            </div>
-            <Field label="Map URL" hint="Optional — only shown if a real location is configured">
-              <Input
-                className={inputClass()}
-                value={content.contact.mapUrl}
-                onChange={(e) => setContact('mapUrl', e.target.value)}
-              />
-            </Field>
-            <Field label="Contact page intro">
-              <Textarea
-                className={textareaClass()}
-                rows={2}
-                value={content.contact.intro}
-                maxLength={600}
-                onChange={(e) => setContact('intro', e.target.value)}
-              />
-            </Field>
+            <Field label="Page title"><Input value={content.demo.pageTitle} onChange={(event) => setDemo('pageTitle', event.target.value)} /></Field>
+            <Field label="Description"><Textarea rows={3} value={content.demo.description} onChange={(event) => setDemo('description', event.target.value)} /></Field>
+            <Field label="Form introduction"><Textarea rows={3} value={content.demo.formIntro} onChange={(event) => setDemo('formIntro', event.target.value)} /></Field>
+            <Field label="Success message"><Textarea rows={3} value={content.demo.successMessage} onChange={(event) => setDemo('successMessage', event.target.value)} /></Field>
+            <Field label="Expected response"><Input value={content.demo.expectedResponse} onChange={(event) => setDemo('expectedResponse', event.target.value)} /></Field>
           </CardContent>
         </Card>
 
-        {/* Request demo */}
-        <Card className="lg:col-span-1">
-          {cardHeader('Request a Demo', 'Copy for the /request-demo page and success state')}
-          <CardContent className="space-y-4">
-            <Field label="Page title">
-              <Input
-                className={inputClass()}
-                value={content.demo.pageTitle}
-                maxLength={200}
-                onChange={(e) => setDemo('pageTitle', e.target.value)}
-              />
-            </Field>
-            <Field label="Page description">
-              <Textarea
-                className={textareaClass()}
-                rows={2}
-                value={content.demo.description}
-                maxLength={600}
-                onChange={(e) => setDemo('description', e.target.value)}
-              />
-            </Field>
-            <Field label="Form intro">
-              <Textarea
-                className={textareaClass()}
-                rows={2}
-                value={content.demo.formIntro}
-                maxLength={600}
-                onChange={(e) => setDemo('formIntro', e.target.value)}
-              />
-            </Field>
-            <Field label="Success message" hint="Shown after a demo request is submitted">
-              <Textarea
-                className={textareaClass()}
-                rows={3}
-                value={content.demo.successMessage}
-                maxLength={600}
-                onChange={(e) => setDemo('successMessage', e.target.value)}
-              />
-            </Field>
-            <Field label="Expected response" hint="What the prospect should expect next">
-              <Textarea
-                className={textareaClass()}
-                rows={2}
-                value={content.demo.expectedResponse}
-                maxLength={600}
-                onChange={(e) => setDemo('expectedResponse', e.target.value)}
-              />
-            </Field>
-          </CardContent>
-        </Card>
-
-        {/* Footer */}
-        <Card className="lg:col-span-1">
-          {cardHeader('Footer', 'Footer description and copyright text')}
-          <CardContent className="space-y-4">
-            <Field label="Footer description">
-              <Textarea
-                className={textareaClass()}
-                rows={4}
-                value={content.footer.description}
-                maxLength={600}
-                onChange={(e) => setFooter('description', e.target.value)}
-              />
-            </Field>
-            <Field label="Copyright text" hint="Blank uses the default © {year} GovFleet Namibia">
-              <Input
-                className={inputClass()}
-                value={content.footer.copyrightText}
-                maxLength={200}
-                onChange={(e) => setFooter('copyrightText', e.target.value)}
-              />
-            </Field>
-          </CardContent>
-        </Card>
-
-        {/* SEO */}
         <Card className="lg:col-span-2">
-          {cardHeader('SEO', 'Meta titles and descriptions per public page (kept within sensible lengths)')}
-          <CardContent>
-            <div className="grid gap-4 md:grid-cols-2">
-              {(
-                [
-                  ['homepage', 'Homepage'],
-                  ['about', 'About'],
-                  ['services', 'Services'],
-                  ['contact', 'Contact'],
-                  ['demo', 'Request Demo'],
-                  ['faq', 'FAQ'],
-                ] as const
-              ).map(([key, label]) => (
-                <div key={key} className="space-y-4 rounded-[10px] border border-border p-4">
-                  <p className="text-sm font-medium text-ink-800">{label}</p>
-                  <Field label="Meta title">
-                    <Input
-                      className={inputClass()}
-                      value={content.seo[`${key}Title`]}
-                      maxLength={200}
-                      onChange={(e) => setSeo(`${key}Title`, e.target.value)}
-                    />
-                  </Field>
-                  <Field label="Meta description">
-                    <Textarea
-                      className={textareaClass()}
-                      rows={2}
-                      value={content.seo[`${key}Description`]}
-                      maxLength={600}
-                      onChange={(e) => setSeo(`${key}Description`, e.target.value)}
-                    />
-                  </Field>
+          <SectionHeader title="Footer" description="Public footer copy. Navigation structure remains controlled by code." />
+          <CardContent className="grid gap-4 lg:grid-cols-2">
+            <Field label="Description"><Textarea rows={3} value={content.footer.description} onChange={(event) => setFooter('description', event.target.value)} /></Field>
+            <Field label="Copyright text"><Textarea rows={3} value={content.footer.copyrightText} onChange={(event) => setFooter('copyrightText', event.target.value)} /></Field>
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <SectionHeader title="Search & sharing metadata" description="Page titles/descriptions and the public social-share image." />
+          <CardContent className="space-y-5">
+            <div className="grid gap-5 lg:grid-cols-2">
+              {seoPairs.map(([titleKey, descriptionKey, label]) => (
+                <div key={label} className="space-y-3 rounded-[8px] border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">{label}</p>
+                  <Field label="Title"><Input value={content.seo[titleKey]} onChange={(event) => setSeo(titleKey, event.target.value)} /></Field>
+                  <Field label="Description"><Textarea rows={3} value={content.seo[descriptionKey]} onChange={(event) => setSeo(descriptionKey, event.target.value)} /></Field>
                 </div>
               ))}
             </div>
-            <div className="mt-4 max-w-md">
-              <Field label="Social share image URL" hint="https:// image used for Open Graph cards">
-                <Input
-                  className={inputClass()}
-                  value={content.seo.socialImageUrl}
-                  onChange={(e) => setSeo('socialImageUrl', e.target.value)}
-                />
-              </Field>
-            </div>
+            <div className="max-w-xl"><Field label="Social share image URL"><Input type="url" value={content.seo.socialImageUrl} onChange={(event) => setSeo('socialImageUrl', event.target.value)} /></Field></div>
           </CardContent>
         </Card>
       </div>
+
+      {saving && <span className="sr-only" role="status"><Loader2 className="h-4 w-4" /> Saving settings</span>}
     </div>
   );
 }
