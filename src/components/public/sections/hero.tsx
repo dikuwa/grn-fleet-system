@@ -78,10 +78,10 @@ export function Hero({ title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION,
               <div
                 className="relative mx-auto w-full transform-gpu transition-transform duration-500 ease-out motion-reduce:transition-none sm:w-[96%] md:[transform:perspective(1500px)_rotateY(-8deg)_rotateX(1.5deg)_rotateZ(-1deg)] lg:w-full lg:[transform:perspective(1600px)_rotateY(-10deg)_rotateX(2deg)_rotateZ(-1.25deg)]"
               >
-                <div className="relative rounded-[26px] border border-white/16 bg-[#171a20] p-[7px] shadow-[0_28px_70px_rgba(0,0,0,0.34)] sm:rounded-[32px] sm:p-[9px]">
+                <div className="relative rounded-[26px] border border-white/[0.16] bg-[#171a20] p-[7px] shadow-[0_28px_70px_rgba(0,0,0,0.34)] sm:rounded-[32px] sm:p-[9px]">
                   <div className="pointer-events-none absolute inset-y-[12%] -right-[6px] hidden w-[5px] rounded-r-full border border-l-0 border-white/10 bg-[#242831] opacity-75 md:block" />
-                  <div className="pointer-events-none absolute right-[30%] top-[5px] hidden h-[3px] w-[34%] rounded-full bg-white/8 sm:block" />
-                  <div className="overflow-hidden rounded-[20px] border border-white/8 bg-surface/95 sm:rounded-[24px]">
+                  <div className="pointer-events-none absolute right-[30%] top-[5px] hidden h-[3px] w-[34%] rounded-full bg-white/[0.08] sm:block" />
+                  <div className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-surface/95 sm:rounded-[24px]">
                     <ProductDashboardPreview className="border-0 shadow-none ring-0" />
                   </div>
                 </div>
@@ -89,7 +89,7 @@ export function Hero({ title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION,
 
               <div
                 aria-hidden="true"
-                className="mx-auto mt-3 h-px w-[72%] bg-white/8 opacity-70 md:w-[58%]"
+                className="mx-auto mt-3 h-px w-[72%] bg-white/[0.08] opacity-70 md:w-[58%]"
               />
             </div>
           </div>
