@@ -6,15 +6,20 @@
 
 import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import type { PublicFaq } from '@/lib/platform/cms-public';
 
-export function FaqAccordion({ items }: { items: PublicFaq[] }) {
+export interface FaqDisplayItem {
+  id: string;
+  question: string;
+  answer: string;
+}
+
+export function FaqAccordion({ items }: { items: FaqDisplayItem[] }) {
   return (
-    <>
+    <div className="space-y-3">
       {items.map((faq) => (
         <FaqItem key={faq.id} question={faq.question} answer={faq.answer} />
       ))}
-    </>
+    </div>
   );
 }
 
@@ -26,10 +31,10 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
     >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+      <summary className="focus-ring flex cursor-pointer list-none items-center justify-between gap-4 rounded-[10px] p-5">
         <h3 className="text-sm font-medium text-ink-950">{question}</h3>
         <ChevronDown
-          className={`h-4 w-4 shrink-0 text-ink-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`h-4 w-4 shrink-0 text-ink-400 transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
           aria-hidden="true"
         />
       </summary>
