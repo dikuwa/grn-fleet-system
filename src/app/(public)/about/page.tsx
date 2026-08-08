@@ -1,14 +1,10 @@
 /**
  * About — concise but visually connected to the homepage.
- *
- * Mission, values and pilot are CMS-driven (safe defaults otherwise).
- * The stats section uses honest product facts only — no fabricated
- * percentages, uptime or sector counts.
  */
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Globe, Shield, Gauge, Eye, ScrollText, Workflow, ArrowRight } from 'lucide-react';
+import { ArrowRight, Eye, Gauge, Globe, ScrollText, Shield, Workflow } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getPublishedContentBySlug, getPublicSiteSettings } from '@/lib/platform/cms-public';
 import type { PublicCmsContent, PublicSiteSettings } from '@/lib/platform/cms-public';
@@ -27,14 +23,7 @@ interface Value {
   icon: string;
 }
 
-const ICON_MAP: Record<string, LucideIcon> = {
-  Shield,
-  Gauge,
-  Eye,
-  ScrollText,
-  Workflow,
-};
-
+const ICON_MAP: Record<string, LucideIcon> = { Shield, Gauge, Eye, ScrollText, Workflow };
 const resolveIcon = (name?: string | null): LucideIcon =>
   (name && name in ICON_MAP ? ICON_MAP[name] : Shield);
 
@@ -113,38 +102,32 @@ export default async function AboutPage() {
   return (
     <>
       <PageHero
-        eyebrow="About"
         title={`About ${siteName}`}
         description="Modernising fleet operations — public and private — through digital workflow automation."
       />
 
-      {/* Mission */}
       <section className="border-b border-border bg-surface py-20 md:py-24">
         <SectionContainer>
           <div className="mx-auto max-w-[800px] text-center">
-            <SectionHeading eyebrow="Our mission" title="Why GovFleet Exists" />
-            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-ink-500">
-              {mission}
-            </p>
+            <SectionHeading title="Why GovFleet Exists" />
+            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-ink-500">{mission}</p>
           </div>
         </SectionContainer>
       </section>
 
-      {/* Values */}
       <section className="border-b border-border bg-canvas py-20 md:py-24">
         <SectionContainer>
           <SectionHeading
-            eyebrow="What we stand for"
             title="Our Values"
             subtitle="The principles behind every workflow we build."
           />
-          <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mx-auto mt-14 flex max-w-5xl flex-wrap justify-center gap-5">
             {values.map((v) => {
               const Icon = resolveIcon(v.icon);
               return (
                 <div
                   key={v.title}
-                  className="rounded-[10px] border border-border bg-surface p-6"
+                  className="w-full rounded-[10px] border border-border bg-surface p-6 sm:basis-[48%] lg:basis-[31%]"
                 >
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
                     <Icon className="h-5 w-5" aria-hidden="true" />
@@ -158,34 +141,24 @@ export default async function AboutPage() {
         </SectionContainer>
       </section>
 
-      {/* Honest product facts */}
       <section className="border-b border-border bg-surface py-20 md:py-24">
         <SectionContainer>
           <SectionHeading
-            eyebrow="Product facts"
             title="What the Platform Provides"
             subtitle="Capabilities you can verify against the live platform."
           />
           <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {PRODUCT_FACTS.map((fact) => (
-              <div
-                key={fact.label}
-                className="rounded-[10px] border border-border bg-surface p-6 text-center"
-              >
-                <p className="text-2xl font-[650] tracking-tight text-brand-800 dark:text-brand-300">
-                  {fact.value}
-                </p>
-                <p className="mt-1.5 text-xs font-medium uppercase tracking-wider text-ink-500">
-                  {fact.label}
-                </p>
+              <div key={fact.label} className="rounded-[10px] border border-border bg-surface p-6 text-center">
+                <p className="text-2xl font-[650] tracking-tight text-brand-800 dark:text-brand-300">{fact.value}</p>
+                <p className="mt-1.5 text-xs font-medium uppercase tracking-wider text-ink-500">{fact.label}</p>
               </div>
             ))}
           </div>
         </SectionContainer>
       </section>
 
-      {/* Pilot */}
-      <section id="pilot" className="border-b border-border bg-canvas py-20 md:py-24">
+      <section id="pilot" className="scroll-mt-20 border-b border-border bg-canvas py-20 md:py-24">
         <SectionContainer>
           <div className="mx-auto max-w-3xl rounded-[12px] border border-border bg-surface p-8 md:p-12">
             <div className="flex items-center gap-3">

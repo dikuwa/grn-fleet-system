@@ -1,9 +1,9 @@
 /**
  * Shared public section primitives.
  *
- * SectionContainer standardises the max-width / vertical rhythm used across
- * every public page; SectionHeading provides the eyebrow + title + subtitle
- * pattern so sections stay visually consistent without repeating markup.
+ * Public sections intentionally avoid eyebrow labels. Titles and supporting
+ * copy provide the hierarchy, keeping the visual language cleaner and more
+ * consistent across the marketing site.
  */
 
 import { cn } from '@/lib/utils';
@@ -18,13 +18,14 @@ export function SectionContainer({
   id?: string;
 }) {
   return (
-    <div id={id} className={cn('mx-auto w-full max-w-[1200px] px-6', className)}>
+    <div id={id} className={cn('mx-auto w-full max-w-[1200px] px-4 sm:px-6', className)}>
       {children}
     </div>
   );
 }
 
 export interface SectionHeadingProps {
+  /** Retained for CMS/backwards compatibility; intentionally not rendered. */
   eyebrow?: string;
   title: string;
   subtitle?: string;
@@ -33,7 +34,6 @@ export interface SectionHeadingProps {
 }
 
 export function SectionHeading({
-  eyebrow,
   title,
   subtitle,
   align = 'center',
@@ -47,12 +47,7 @@ export function SectionHeading({
         className,
       )}
     >
-      {eyebrow && (
-        <p className="text-xs font-semibold uppercase tracking-widest text-brand-700 dark:text-brand-400">
-          {eyebrow}
-        </p>
-      )}
-      <h2 className="mt-3 text-3xl font-[650] tracking-tight text-ink-950 md:text-4xl">
+      <h2 className="text-3xl font-[650] tracking-tight text-ink-950 md:text-4xl">
         {title}
       </h2>
       {subtitle && (
