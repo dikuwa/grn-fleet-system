@@ -86,7 +86,6 @@ export async function GET(
       return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
     }
 
-    // Linked transport requests (tenant-scoped)
     const linkedRequests = await db
       .select({
         id: transportRequests.id,
@@ -143,7 +142,6 @@ export async function PATCH(
       if (permCheck instanceof NextResponse) return permCheck;
     }
 
-    // Only drafts and changes-requested programmes can be edited.
     if (!['draft', 'changes_requested'].includes(existing.status)) {
       return NextResponse.json(
         { error: `A programme with status "${existing.status}" cannot be edited` },
@@ -171,14 +169,112 @@ export async function PATCH(
       estimatedKilometres,
     } = body;
 
-    if (title !== undefined && (typeof title !== 'string' || !title.trim())) {
-      return NextResponse.json({ error: 'Programme title cannot be empty' }, { status: 400 });
+    if (title !== undefined) {
+      if (typeof title !== 'string' || !title.trim()) {
+        return NextResponse.json({ error: 'Programme title cannot be empty' }, { status: 400 });
+      }
+      if (title.trim().length > 300) {
+        return NextResponse.json(
+          { error: 'Programme title must be 300 characters or fewer' },
+          { status: 400 },
+        );
+      }
     }
-    if (startDate && endDate && new Date(endDate) < new Date(startDate)) {
+
+    const effectiveStart =
+      startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
+    const effectiveEnd =
+      endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate;
+    if (
+      (effectiveStart && Number.isNaN(new Date(effectiveStart).getTime())) ||
+      (effectiveEnd && Number.isNaN(new Date(effectiveEnd).getTime()))
+    ) {
+      return NextResponse.json({ error: 'Programme dates are invalid' }, { status: 400 });
+    }
+    if (effectiveStart && effectiveEnd && new Date(effectiveEnd) < new Date(effectiveStart)) {
       return NextResponse.json(
         { error: 'End date must be on or after the start date' },
         { status: 400 },
       );
+    }
+
+    if (
+      estimatedKilometres !== undefined &&
+      estimatedKilometres !== null &&
+      estimatedKilometres !== '' &&
+      (!Number.isFinite(Number(estimatedKilometres)) || Number(estimatedKilometres) < 0)
+    ) {
+      return NextResponse.json(
+        { error: 'Estimated kilometres must be a non-negative number' },
+        { status: 400 },
+      );
+    }
+    if (
+      expectedParticipants !== undefined &&
+      expectedParticipants !== null &&
+      expectedParticipants !== '' &&
+      (!Number.isFinite(Number(expectedParticipants)) || Number(expectedParticipants) < 0)
+    ) {
+      return NextResponse.json(
+        { error: 'Expected participants must be a non-negative number' },
+        { status: 400 },
+      );
+    }
+
+    if (departmentId !== undefined && departmentId) {
+      const [departmentRow] = await db
+        .select({ id: departments.id })
+        .from(departments)
+        .where(and(eq(departments.id, departmentId), eq(departments.tenantId, tenantId)))
+        .limit(1);
+      if (!departmentRow) {
+        return NextResponse.json(
+          { error: 'Department not found in your organisation' },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (ownerEmployeeId !== undefined && ownerEmployeeId) {
+      const [owner] = await db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.id, ownerEmployeeId), eq(employees.tenantId, tenantId)))
+        .limit(1);
+      if (!owner) {
+        return NextResponse.json(
+          { error: 'Programme owner not found in your organisation' },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (officeId !== undefined && officeId) {
+      const [office] = await db
+        .select({ id: offices.id })
+        .from(offices)
+        .where(and(eq(offices.id, officeId), eq(offices.tenantId, tenantId)))
+        .limit(1);
+      if (!office) {
+        return NextResponse.json(
+          { error: 'Office not found in your organisation' },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (regionId !== undefined && regionId) {
+      const [regionRow] = await db
+        .select({ id: regions.id })
+        .from(regions)
+        .where(and(eq(regions.id, regionId), eq(regions.tenantId, tenantId)))
+        .limit(1);
+      if (!regionRow) {
+        return NextResponse.json(
+          { error: 'Region not found in your organisation' },
+          { status: 400 },
+        );
+      }
     }
 
     const [updated] = await db
@@ -197,7 +293,8 @@ export async function PATCH(
               ? null
               : userId
             : existing.ownerUserId,
-        startDate: startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate,
+        startDate:
+          startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate,
         endDate: endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate,
         venue: venue !== undefined ? venue?.trim() || null : existing.venue,
         officeId: officeId !== undefined ? officeId || null : existing.officeId,
@@ -205,7 +302,7 @@ export async function PATCH(
         region: region !== undefined ? region?.trim() || null : existing.region,
         expectedParticipants:
           expectedParticipants !== undefined
-            ? expectedParticipants != null && Number.isFinite(Number(expectedParticipants))
+            ? expectedParticipants != null && expectedParticipants !== ''
               ? Number(expectedParticipants)
               : null
             : existing.expectedParticipants,
@@ -219,13 +316,13 @@ export async function PATCH(
             : existing.estimatedTravelRequirement,
         estimatedKilometres:
           estimatedKilometres !== undefined
-            ? estimatedKilometres != null && Number.isFinite(Number(estimatedKilometres))
+            ? estimatedKilometres != null && estimatedKilometres !== ''
               ? Number(estimatedKilometres)
               : null
             : existing.estimatedKilometres,
         updatedAt: new Date(),
       })
-      .where(eq(programmes.id, id))
+      .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
       .returning();
 
     await recordAuditEvent({
@@ -286,7 +383,6 @@ export async function DELETE(
       if (permCheck instanceof NextResponse) return permCheck;
     }
 
-    // Unlink any transport requests that reference this draft.
     await db
       .update(transportRequests)
       .set({ programmeId: null })
@@ -294,7 +390,9 @@ export async function DELETE(
         and(eq(transportRequests.programmeId, id), eq(transportRequests.tenantId, tenantId)),
       );
 
-    await db.delete(programmes).where(eq(programmes.id, id));
+    await db
+      .delete(programmes)
+      .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)));
 
     await recordAuditEvent({
       tenantId,
