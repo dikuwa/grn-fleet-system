@@ -10,18 +10,16 @@
 import type { Metadata } from 'next';
 import { getPublicSiteSettings } from '@/lib/platform/cms-public';
 import type { PublicSiteSettings } from '@/lib/platform/cms-public';
+import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
+import { readPublicSiteContent } from '@/lib/platform/site-settings-content';
 import { PageHero } from '@/components/public/page-hero';
 import { SectionContainer } from '@/components/public/section';
 import { RequestDemoForm } from './request-demo-form';
 
-export const metadata: Metadata = {
-  title: 'Request a Demo | GovFleet Namibia',
-  description:
-    'See how GovFleet manages transport requests, approvals, vehicles, drivers, fuel and trip records in one accountable digital platform.',
-};
-
-const DEFAULT_INTRO =
-  'Tell us about your organisation and fleet operations. Our team will review your requirements and contact you using the details provided.';
+export async function generateMetadata(): Promise<Metadata> {
+  const seo = await getPublicSeoContent();
+  return publicPageMetadata(seo, 'demo');
+}
 
 export default async function RequestDemoPage() {
   let settings: PublicSiteSettings | null = null;
@@ -31,24 +29,23 @@ export default async function RequestDemoPage() {
     // fall back to defaults
   }
 
-  const heroSection = (settings?.heroSection as Record<string, unknown> | undefined) ?? {};
-  const intro =
-    typeof heroSection.demoIntro === 'string' && heroSection.demoIntro.trim()
-      ? heroSection.demoIntro
-      : DEFAULT_INTRO;
+  const demo = readPublicSiteContent(settings).demo;
   const siteName = settings?.siteName || 'GovFleet Namibia';
 
   return (
     <>
       <PageHero
-        eyebrow="Request a Demo"
+        eyebrow={demo.pageTitle}
         title={`See ${siteName} Working`}
-        description={intro}
+        description={demo.description}
       />
       <section className="bg-canvas py-16 md:py-20">
         <SectionContainer>
           <div className="mx-auto max-w-2xl">
-            <RequestDemoForm />
+            <RequestDemoForm
+              successMessage={demo.successMessage}
+              expectedResponse={demo.expectedResponse}
+            />
           </div>
         </SectionContainer>
       </section>

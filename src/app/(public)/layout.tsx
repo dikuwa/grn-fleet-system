@@ -9,7 +9,9 @@
 
 import { PublicHeader } from '@/components/public/public-header';
 import { PublicFooter } from '@/components/public/public-footer';
+import { AnnouncementBar } from '@/components/public/announcement-bar';
 import { getPublicSiteSettings } from '@/lib/platform/cms-public';
+import { readPublicSiteContent } from '@/lib/platform/site-settings-content';
 
 export default async function PublicLayout({
   children,
@@ -23,8 +25,11 @@ export default async function PublicLayout({
     // CMS unreachable — header/footer fall back to safe defaults.
   }
 
+  const publicContent = readPublicSiteContent(settings);
+
   return (
     <div className="flex min-h-screen flex-col">
+      <AnnouncementBar announcement={publicContent.announcement} />
       <PublicHeader
         siteName={settings?.siteName ?? undefined}
         logoUrl={settings?.logoUrl ?? null}
@@ -33,6 +38,8 @@ export default async function PublicLayout({
       <PublicFooter
         siteName={settings?.siteName ?? undefined}
         siteTagline={settings?.siteTagline ?? null}
+        description={publicContent.footer.description}
+        copyrightText={publicContent.footer.copyrightText}
         contactEmail={settings?.contactEmail ?? null}
         contactPhone={settings?.contactPhone ?? null}
         address={settings?.address ?? null}

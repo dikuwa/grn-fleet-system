@@ -12,15 +12,15 @@ import type { LucideIcon } from 'lucide-react';
 import { FileText, Truck, ClipboardCheck, Fuel, Wrench, BarChart3, ShieldCheck, Smartphone } from 'lucide-react';
 import { getPublishedContentBySlug } from '@/lib/platform/cms-public';
 import type { PublicCmsContent } from '@/lib/platform/cms-public';
+import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
 import { PageHero } from '@/components/public/page-hero';
 import { SectionContainer, SectionHeading } from '@/components/public/section';
 import { FinalCta } from '@/components/public/sections/faq-final-cta';
 
-export const metadata: Metadata = {
-  title: 'Platform Services | GovFleet Namibia',
-  description:
-    'End-to-end digital fleet management: transport requests, approvals, allocation, inspections, fuel, compliance, analytics and driver self-service.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const seo = await getPublicSeoContent();
+  return publicPageMetadata(seo, 'services');
+}
 
 // ---------------------------------------------------------------------------
 // Types & defaults

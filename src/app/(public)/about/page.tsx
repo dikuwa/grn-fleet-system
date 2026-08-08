@@ -12,14 +12,14 @@ import { Globe, Shield, Gauge, Eye, ScrollText, Workflow, ArrowRight } from 'luc
 import type { LucideIcon } from 'lucide-react';
 import { getPublishedContentBySlug, getPublicSiteSettings } from '@/lib/platform/cms-public';
 import type { PublicCmsContent, PublicSiteSettings } from '@/lib/platform/cms-public';
+import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
 import { PageHero } from '@/components/public/page-hero';
 import { SectionContainer, SectionHeading } from '@/components/public/section';
 
-export const metadata: Metadata = {
-  title: 'About | GovFleet Namibia',
-  description:
-    'GovFleet modernises public and private fleet operations through accountable digital workflow automation.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const seo = await getPublicSeoContent();
+  return publicPageMetadata(seo, 'about');
+}
 
 interface Value {
   title: string;

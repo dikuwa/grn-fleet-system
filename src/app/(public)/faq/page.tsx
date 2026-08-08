@@ -12,15 +12,16 @@ import {
   getPublishedFaqCategories,
 } from '@/lib/platform/cms-public';
 import type { PublicFaq } from '@/lib/platform/cms-public';
+import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
+import { JsonLd } from '@/components/public/json-ld';
 import { PageHero } from '@/components/public/page-hero';
 import { SectionContainer } from '@/components/public/section';
 import { FaqAccordion } from './faq-accordion';
 
-export const metadata: Metadata = {
-  title: 'FAQ | GovFleet Namibia',
-  description:
-    'Answers to the questions organisations ask most about GovFleet digital fleet management.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const seo = await getPublicSeoContent();
+  return publicPageMetadata(seo, 'faq');
+}
 
 export default async function FaqPage() {
   let faqs: PublicFaq[] = [];
@@ -60,8 +61,22 @@ export default async function FaqPage() {
     }))
     .filter((g) => g.items.length > 0);
 
+  const faqPageJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqs.map((faq) => ({
+      '@type': 'Question',
+      name: faq.question,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: faq.answer,
+      },
+    })),
+  };
+
   return (
     <>
+      <JsonLd data={faqPageJsonLd} />
       <PageHero
         eyebrow="FAQ"
         title="Frequently Asked Questions"

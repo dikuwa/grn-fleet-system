@@ -4,13 +4,25 @@
  * Fields follow the spec (Full Name, Organisation, Organisation Type, Email,
  * Phone, Approximate Fleet Size, Message). Submits to /api/demo-requests,
  * which persists the lead and blocks duplicate in-progress submissions from
- * the same email. Shows an intentional success state on completion.
+ * the same email. Shows an intentional success state (CMS-editable copy)
+ * on completion.
  */
 
 'use client';
 
 import { useState } from 'react';
 import { CheckCircle2, Send } from 'lucide-react';
+
+interface RequestDemoFormProps {
+  successMessage?: string;
+  expectedResponse?: string;
+}
+
+const DEFAULT_SUCCESS =
+  'Demo request received. Our team will review your organisation’s requirements and contact you using the details provided.';
+
+const DEFAULT_EXPECTED =
+  'A member of our team will contact you to schedule a short walkthrough tailored to your organisation.';
 
 const ORGANISATION_TYPES = [
   'Government Ministry',
@@ -36,7 +48,10 @@ const inputCls =
   'h-11 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600';
 const labelCls = 'block text-xs font-medium text-ink-500 mb-1';
 
-export function RequestDemoForm() {
+export function RequestDemoForm({
+  successMessage = DEFAULT_SUCCESS,
+  expectedResponse = DEFAULT_EXPECTED,
+}: RequestDemoFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
@@ -84,8 +99,10 @@ export function RequestDemoForm() {
           Demo request received
         </h2>
         <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-ink-500">
-          Our team will review your organisation&apos;s requirements and contact you
-          using the details provided.
+          {successMessage}
+        </p>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink-400">
+          {expectedResponse}
         </p>
       </div>
     );

@@ -15,6 +15,7 @@
  *   07 FAQ + final conversion CTA
  */
 
+import type { Metadata } from 'next';
 import {
   getPublishedContentBySlug,
   getPublishedFaqs,
@@ -24,6 +25,9 @@ import type {
   PublicCmsContent,
   PublicSiteSettings,
 } from '@/lib/platform/cms-public';
+import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
+import { readPublicSiteContent } from '@/lib/platform/site-settings-content';
+import { JsonLd } from '@/components/public/json-ld';
 import { Hero } from '@/components/public/sections/hero';
 import { TrustValueStrip } from '@/components/public/sections/trust-value-strip';
 import { Capabilities } from '@/components/public/sections/capabilities';
@@ -31,6 +35,15 @@ import { Workflow } from '@/components/public/sections/workflow';
 import { VisibilityRoles } from '@/components/public/sections/visibility-roles';
 import { SectorsMetricsPilot } from '@/components/public/sections/sectors-metrics-pilot';
 import { FaqSection, FinalCta } from '@/components/public/sections/faq-final-cta';
+
+// ---------------------------------------------------------------------------
+// Metadata (CMS-driven SEO)
+// ---------------------------------------------------------------------------
+
+export async function generateMetadata(): Promise<Metadata> {
+  const seo = await getPublicSeoContent();
+  return publicPageMetadata(seo, 'homepage');
+}
 
 // ---------------------------------------------------------------------------
 // CMS extraction helpers (all with safe defaults)
@@ -106,9 +119,30 @@ export default async function HomePage() {
   const workflow = workflowFrom(homepage);
   const pilot = pilotFrom(homepage);
   const faq = faqHeadingFrom(homepage);
+  const publicContent = readPublicSiteContent(settings);
+  const siteName = settings?.siteName || 'GovFleet Namibia';
+
+  const organizationJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: siteName,
+    description: publicContent.hero.description,
+    url: process.env.NEXT_PUBLIC_SITE_URL ?? undefined,
+    email: publicContent.contact.salesEmail || undefined,
+    telephone: publicContent.contact.phone || undefined,
+    address: publicContent.contact.address
+      ? {
+          '@type': 'PostalAddress',
+          streetAddress: publicContent.contact.address || undefined,
+          addressLocality: publicContent.contact.city || undefined,
+          addressCountry: publicContent.contact.country || undefined,
+        }
+      : undefined,
+  };
 
   return (
     <>
+      <JsonLd data={organizationJsonLd} />
       <Hero
         eyebrow={hero.eyebrow}
         title={hero.title}

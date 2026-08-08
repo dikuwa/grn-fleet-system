@@ -18,6 +18,8 @@ import {
 export interface PublicFooterProps {
   siteName?: string;
   siteTagline?: string | null;
+  description?: string;
+  copyrightText?: string;
   contactEmail?: string | null;
   contactPhone?: string | null;
   address?: string | null;
@@ -26,6 +28,8 @@ export interface PublicFooterProps {
 export function PublicFooter({
   siteName = APP_NAME,
   siteTagline,
+  description,
+  copyrightText,
   contactEmail,
   contactPhone,
   address,
@@ -46,9 +50,9 @@ export function PublicFooter({
                 {siteName}
               </span>
             </div>
-            {siteTagline && (
+            {(description || siteTagline) && (
               <p className="mt-4 max-w-xs text-sm leading-relaxed text-white/60">
-                {siteTagline}
+                {description || siteTagline}
               </p>
             )}
             <div className="mt-6 space-y-2.5">
@@ -87,7 +91,9 @@ export function PublicFooter({
 
         <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 md:flex-row">
           <p className="text-sm text-white/50">
-            &copy; {year} {siteName}. All rights reserved.
+            {copyrightText
+              ? copyrightText.replace('{year}', String(year))
+              : `© ${year} ${siteName}. All rights reserved.`}
           </p>
           <div className="flex flex-wrap items-center gap-6">
             {FOOTER_LEGAL_LINKS.map((link) => (

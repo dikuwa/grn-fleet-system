@@ -2,26 +2,27 @@
  * Contact — conversion-support page.
  *
  * Server component loads contact details from CMS site settings (never
- * hardcoded). The enquiry form is a client component that persists to
- * /api/public/enquiries (cms_enquiries) for Platform Admin review.
- * Demo requests are a first-class flow at /request-demo, not a buried
- * checkbox here.
+ * hardcoded; rows are hidden when not configured). The enquiry form is a
+ * client component that persists to /api/public/enquiries (cms_enquiries)
+ * for Platform Admin review. Demo requests are a first-class flow at
+ * /request-demo, not a buried checkbox here.
  */
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Mail, Phone, MapPin, ArrowRight } from 'lucide-react';
+import { Mail, Phone, MapPin, Clock, ArrowRight, ExternalLink } from 'lucide-react';
 import { getPublicSiteSettings } from '@/lib/platform/cms-public';
 import type { PublicSiteSettings } from '@/lib/platform/cms-public';
+import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
+import { readPublicSiteContent } from '@/lib/platform/site-settings-content';
 import { PageHero } from '@/components/public/page-hero';
 import { SectionContainer } from '@/components/public/section';
 import { ContactForm } from './contact-form';
 
-export const metadata: Metadata = {
-  title: 'Contact | GovFleet Namibia',
-  description:
-    'Contact the GovFleet team for support, demonstrations or enquiries about digital fleet management.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const seo = await getPublicSeoContent();
+  return publicPageMetadata(seo, 'contact');
+}
 
 export default async function ContactPage() {
   let settings: PublicSiteSettings | null = null;
@@ -31,9 +32,18 @@ export default async function ContactPage() {
     // fall back to defaults
   }
 
-  const contactEmail = settings?.contactEmail || 'support@govfleet.gov.na';
-  const contactPhone = settings?.contactPhone || '+264 61 200 7000';
-  const address = settings?.address || 'Windhoek, Namibia';
+  const content = readPublicSiteContent(settings);
+  const contact = content.contact;
+
+  // Never hardcode contact details — fall back to the legacy settings columns
+  // (still CMS-managed) and hide any row that has no value at all.
+  const email =
+    contact.salesEmail || contact.supportEmail || settings?.contactEmail || '';
+  const phone = contact.phone || settings?.contactPhone || '';
+  const addressParts = [contact.address, contact.city, contact.country].filter(Boolean);
+  const address = addressParts.join(', ') || settings?.address || '';
+  const hours = contact.hours;
+  const mapUrl = contact.mapUrl;
   const siteName = settings?.siteName || 'GovFleet Namibia';
 
   return (
@@ -41,7 +51,7 @@ export default async function ContactPage() {
       <PageHero
         eyebrow="Contact"
         title="Talk to the GovFleet Team"
-        description="Get in touch for support, demonstrations or enquiries about fleet operations."
+        description={contact.intro}
       />
 
       <section className="bg-canvas py-16 md:py-20">
@@ -49,40 +59,79 @@ export default async function ContactPage() {
           <div className="grid gap-10 lg:grid-cols-5">
             {/* Contact details + demo CTA */}
             <div className="lg:col-span-2">
-              <div className="grid gap-4 sm:grid-cols-1">
-                <a
-                  href={`mailto:${contactEmail}`}
-                  className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-200"
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
-                    <Mail className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                  <span>
-                    <span className="block text-sm font-semibold text-ink-950">Email</span>
-                    <span className="mt-1 block text-sm text-ink-500">{contactEmail}</span>
-                  </span>
-                </a>
-                <a
-                  href={`tel:${contactPhone.replace(/\s/g, '')}`}
-                  className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-200"
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
-                    <Phone className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                  <span>
-                    <span className="block text-sm font-semibold text-ink-950">Phone</span>
-                    <span className="mt-1 block text-sm text-ink-500">{contactPhone}</span>
-                  </span>
-                </a>
-                <div className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
-                    <MapPin className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                  <span>
-                    <span className="block text-sm font-semibold text-ink-950">Office</span>
-                    <span className="mt-1 block text-sm text-ink-500">{address}</span>
-                  </span>
-                </div>
+              <div className="grid gap-4">
+                {email ? (
+                  <a
+                    href={`mailto:${email}`}
+                    className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-200"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                      <Mail className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-ink-950">Email</span>
+                      <span className="mt-1 block break-all text-sm text-ink-500">{email}</span>
+                    </span>
+                  </a>
+                ) : null}
+
+                {phone ? (
+                  <a
+                    href={`tel:${phone.replace(/\s/g, '')}`}
+                    className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-200"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                      <Phone className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-ink-950">Phone</span>
+                      <span className="mt-1 block text-sm text-ink-500">{phone}</span>
+                    </span>
+                  </a>
+                ) : null}
+
+                {address ? (
+                  <div className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                      <MapPin className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-ink-950">Office</span>
+                      <span className="mt-1 block text-sm text-ink-500">{address}</span>
+                    </span>
+                  </div>
+                ) : null}
+
+                {hours ? (
+                  <div className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                      <Clock className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-ink-950">Hours</span>
+                      <span className="mt-1 block text-sm text-ink-500">{hours}</span>
+                    </span>
+                  </div>
+                ) : null}
+
+                {mapUrl ? (
+                  <a
+                    href={mapUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-start gap-4 rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-200"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                      <ExternalLink className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-ink-950">Map</span>
+                      <span className="mt-1 block text-sm text-ink-500">
+                        View location on the map
+                      </span>
+                    </span>
+                  </a>
+                ) : null}
               </div>
 
               <div className="mt-6 rounded-[10px] border border-brand-200 bg-brand-50 p-6 dark:border-brand-800 dark:bg-brand-900/30">
