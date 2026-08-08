@@ -24,13 +24,10 @@ import { getDb } from '@/db';
 import { tenantSetupProgress } from '@/db/schema/invitations';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { offices, departments } from '@/db/schema/people';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { seedDefaultIncidentCategories } from '@/lib/incidents/categories';
 import { eq } from 'drizzle-orm';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 const TOTAL_STEPS = 11;
 
@@ -40,13 +37,17 @@ interface SetupProgressData {
   stepData: Record<string, unknown>;
 }
 
-// ---------------------------------------------------------------------------
-// GET — Load progress
-// ---------------------------------------------------------------------------
+async function requireTenantSetupAccess(request: NextRequest) {
+  const auth = await requireRequestAuth(request);
+  if (!auth.ok) return auth;
+  const permission = await requirePermission(auth.session, Permissions.TENANT_MANAGE);
+  if (permission instanceof NextResponse) return { ok: false as const, error: permission };
+  return auth;
+}
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireRequestAuth(request);
+    const auth = await requireTenantSetupAccess(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
@@ -56,7 +57,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No tenant context' }, { status: 400 });
     }
 
-    // Get tenant info
     const [tenant] = await db
       .select()
       .from(tenants)
@@ -67,14 +67,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    // Get setup progress
     const [progress] = await db
       .select()
       .from(tenantSetupProgress)
       .where(eq(tenantSetupProgress.tenantId, tenantId))
       .limit(1);
 
-    // Get existing offices and departments
     const tenantOffices = await db
       .select()
       .from(offices)
@@ -85,7 +83,6 @@ export async function GET(request: NextRequest) {
       .from(departments)
       .where(eq(departments.tenantId, tenantId));
 
-    // Get branding
     const [branding] = await db
       .select()
       .from(tenantBranding)
@@ -130,13 +127,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// POST — Save progress
-// ---------------------------------------------------------------------------
-
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireRequestAuth(request);
+    const auth = await requireTenantSetupAccess(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
@@ -151,7 +144,6 @@ export async function POST(request: NextRequest) {
     const db = getDb();
     const now = new Date();
 
-    // Finalize action — marks setup complete and flips the tenant lifecycle
     if (action === 'complete') {
       await db
         .update(tenants)
@@ -172,7 +164,6 @@ export async function POST(request: NextRequest) {
         })
         .where(eq(tenantSetupProgress.tenantId, tenantId));
 
-      // Seed default incident categories for the tenant (fire-and-forget)
       await seedDefaultIncidentCategories(tenantId, session.user.id).catch(() => {});
 
       return NextResponse.json({
@@ -181,29 +172,34 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (currentStep < 0 || currentStep >= TOTAL_STEPS) {
+    if (!Number.isInteger(currentStep) || currentStep < 0 || currentStep >= TOTAL_STEPS) {
       return NextResponse.json({ error: 'Invalid step number' }, { status: 400 });
     }
+    if (!Array.isArray(completedSteps) || completedSteps.some((step) => !Number.isInteger(step) || step < 0 || step >= TOTAL_STEPS)) {
+      return NextResponse.json({ error: 'Invalid completed step data' }, { status: 400 });
+    }
+    if (!stepData || typeof stepData !== 'object' || Array.isArray(stepData)) {
+      return NextResponse.json({ error: 'Invalid setup data' }, { status: 400 });
+    }
 
-    // Check existing progress
     const [existing] = await db
       .select({ id: tenantSetupProgress.id })
       .from(tenantSetupProgress)
       .where(eq(tenantSetupProgress.tenantId, tenantId))
       .limit(1);
 
-    const isReady = completedSteps.length >= TOTAL_STEPS - 1; // All steps except Review
+    const isReady = completedSteps.length >= TOTAL_STEPS - 1;
 
     if (existing) {
       await db
         .update(tenantSetupProgress)
         .set({
           currentStep,
-          completedSteps: completedSteps ?? [],
-          stepData: stepData ?? {},
+          completedSteps,
+          stepData,
           lastSavedAt: now,
           isReady,
-          readinessScore: Math.round(((completedSteps?.length ?? 0) / TOTAL_STEPS) * 100),
+          readinessScore: Math.round((completedSteps.length / TOTAL_STEPS) * 100),
           updatedAt: now,
         })
         .where(eq(tenantSetupProgress.id, existing.id));
@@ -211,12 +207,12 @@ export async function POST(request: NextRequest) {
       await db.insert(tenantSetupProgress).values({
         tenantId,
         currentStep,
-        completedSteps: completedSteps ?? [],
-        stepData: stepData ?? {},
+        completedSteps,
+        stepData,
         totalSteps: TOTAL_STEPS,
         lastSavedAt: now,
         isReady,
-        readinessScore: Math.round(((completedSteps?.length ?? 0) / TOTAL_STEPS) * 100),
+        readinessScore: Math.round((completedSteps.length / TOTAL_STEPS) * 100),
       });
     }
 
