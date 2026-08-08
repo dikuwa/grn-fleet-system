@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, or } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { notifications } from '@/db/schema/notifications';
 import { roleAssignments, roles, tenantMemberships } from '@/db/schema/tenants';
@@ -15,9 +15,12 @@ interface PlatformIntakeNotificationInput {
 }
 
 /**
- * Notify active Platform Super Administrators about unauthenticated public-site
- * intake. Each notification is written against the administrator's own platform
- * membership tenant, preserving the existing notification tenant boundary.
+ * Notify active Platform Administrators about unauthenticated public-site intake.
+ *
+ * A platform operator may have more than one membership. Notifications are
+ * therefore written once per active platform membership instead of deduping by
+ * user alone. The notification feed remains tenant-bound, so whichever platform
+ * membership is active in the session receives the unread bell count correctly.
  */
 export async function notifyPlatformIntake(input: PlatformIntakeNotificationInput) {
   const db = getDb();
@@ -34,13 +37,15 @@ export async function notifyPlatformIntake(input: PlatformIntakeNotificationInpu
     .where(
       and(
         eq(tenantMemberships.status, 'active'),
-        eq(roles.name, SystemRoles.PLATFORM_ADMIN),
+        inArray(roles.name, [SystemRoles.PLATFORM_ADMIN, SystemRoles.PLATFORM_SUPPORT]),
         or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
       ),
     );
 
   const uniqueRecipients = Array.from(
-    new Map(recipients.map((recipient) => [recipient.userId, recipient])).values(),
+    new Map(
+      recipients.map((recipient) => [`${recipient.userId}:${recipient.tenantId}`, recipient]),
+    ).values(),
   );
 
   if (uniqueRecipients.length === 0) return;
@@ -61,8 +66,9 @@ export async function notifyPlatformIntake(input: PlatformIntakeNotificationInpu
         actionUrl: input.actionUrl,
         workspace: WorkspaceIds.PLATFORM_ADMIN,
         status: 'unread',
+        isRead: false,
         priority: input.priority ?? 'normal',
-        dedupeKey: `${input.eventType}:${input.entityId}:${recipient.userId}`,
+        dedupeKey: `${input.eventType}:${input.entityId}:${recipient.userId}:${recipient.tenantId}`,
       })),
     )
     .onConflictDoNothing({ target: notifications.dedupeKey });
