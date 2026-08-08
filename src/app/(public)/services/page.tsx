@@ -1,30 +1,42 @@
 /**
  * Services / Platform — detailed capability page.
  *
- * CMS-driven module list rendered as a responsive capability grid (no long
- * alternating layout / excessive whitespace). Uses the flat PageHero and the
- * shared FinalCta for the conversion path.
+ * Uses product-led capability stories rather than a uniform wall of cards.
+ * Copy may remain CMS-driven while the visual system stays controlled by code.
  */
 
 import type { Metadata } from 'next';
 import { CheckCircle2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { FileText, Truck, ClipboardCheck, Fuel, Wrench, BarChart3, ShieldCheck, Smartphone } from 'lucide-react';
+import {
+  BarChart3,
+  ClipboardCheck,
+  FileText,
+  Fuel,
+  Smartphone,
+  Truck,
+  Wrench,
+} from 'lucide-react';
 import { getPublishedContentBySlug } from '@/lib/platform/cms-public';
 import type { PublicCmsContent } from '@/lib/platform/cms-public';
 import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
 import { PageHero } from '@/components/public/page-hero';
 import { SectionContainer, SectionHeading } from '@/components/public/section';
 import { FinalCta } from '@/components/public/sections/faq-final-cta';
+import {
+  AnalyticsPreview,
+  ApprovalWorkflowPreview,
+  FuelManagementPreview,
+  InspectionPreview,
+  MaintenancePreview,
+  VehicleAllocationPreview,
+} from '@/components/public/previews';
+import { cn } from '@/lib/utils';
 
 export async function generateMetadata(): Promise<Metadata> {
   const seo = await getPublicSeoContent();
   return publicPageMetadata(seo, 'services');
 }
-
-// ---------------------------------------------------------------------------
-// Types & defaults
-// ---------------------------------------------------------------------------
 
 interface ServiceModule {
   title: string;
@@ -40,17 +52,30 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Fuel,
   Wrench,
   BarChart3,
-  ShieldCheck,
   Smartphone,
 };
+
+const PREVIEW_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  FileText: ApprovalWorkflowPreview,
+  Truck: VehicleAllocationPreview,
+  ClipboardCheck: InspectionPreview,
+  Fuel: FuelManagementPreview,
+  Wrench: MaintenancePreview,
+  BarChart3: AnalyticsPreview,
+  Smartphone: AnalyticsPreview,
+};
+
 const resolveIcon = (name?: string | null): LucideIcon =>
-  (name && name in ICON_MAP ? ICON_MAP[name] : FileText);
+  name && name in ICON_MAP ? ICON_MAP[name] : FileText;
+
+const resolvePreview = (name?: string | null): React.ComponentType<{ className?: string }> =>
+  name && name in PREVIEW_MAP ? PREVIEW_MAP[name] : ApprovalWorkflowPreview;
 
 const DEFAULT_MODULES: ServiceModule[] = [
   {
     title: 'Transport Requests & Approvals',
     description:
-      'A guided multi-step workflow for submitting, reviewing and approving transport requests, with configurable approval chains and separation of duty.',
+      'A guided workflow for submitting, reviewing and approving transport requests while preserving separation of duty and a complete decision trail.',
     icon: 'FileText',
     features: [
       'Programme activity selection with route calculation',
@@ -63,32 +88,32 @@ const DEFAULT_MODULES: ServiceModule[] = [
   {
     title: 'Vehicle Allocation & Trip Management',
     description:
-      'Vehicle assignment, pre-trip inspection, trip authority and driver acknowledgment with real-time status tracking.',
+      'Assign the right vehicle and driver, prepare the trip authority and keep each operating stage connected through closure.',
     icon: 'Truck',
     features: [
-      'Vehicle recommender with defect and availability checks',
-      'Pre-trip and return inspection checklists',
-      'Driver logsheet and daily log recording',
-      'Active trip tracking with duration updates',
+      'Vehicle recommendation with defect and availability checks',
+      'Pre-trip and return inspection records',
+      'Driver logsheet and daily activity capture',
+      'Active trip status and duration updates',
       'Trip closure with kilometre variance calculation',
     ],
   },
   {
     title: 'Inspections & Defect Management',
     description:
-      'Standardised inspection checklists with automatic defect creation for failed items and resolution tracking.',
+      'Standardise vehicle checks and turn failed items into tracked defects rather than disconnected paper notes.',
     icon: 'ClipboardCheck',
     features: [
-      'Pre-trip inspection tied to vehicle release',
+      'Inspection status tied to vehicle readiness',
       'Critical items create blocking defects',
-      'Inline defect resolution with notes',
+      'Defect resolution with notes and ownership',
       'Per-vehicle defect history for trends',
     ],
   },
   {
     title: 'Fuel Management & Expenses',
     description:
-      'Fuel transaction recording with odometer validation, receipt capture and consumption reporting.',
+      'Record fuel with odometer and receipt evidence, then analyse consumption by vehicle, trip and reporting period.',
     icon: 'Fuel',
     features: [
       'Fuel transactions with odometer validation',
@@ -100,11 +125,11 @@ const DEFAULT_MODULES: ServiceModule[] = [
   {
     title: 'Fleet Compliance & Maintenance',
     description:
-      'Licence, insurance and roadworthy tracking with expiry alerts and maintenance scheduling.',
+      'Keep licence, insurance, roadworthy and maintenance obligations visible before they become operational blockers.',
     icon: 'Wrench',
     features: [
       '30/14/7-day expiry alerts',
-      'Maintenance event scheduling and cost recording',
+      'Maintenance scheduling and cost recording',
       'Predictive maintenance using odometer patterns',
       'Vehicle lifecycle from acquisition to write-off',
     ],
@@ -112,7 +137,7 @@ const DEFAULT_MODULES: ServiceModule[] = [
   {
     title: 'Reports, Analytics & Mobile Access',
     description:
-      'Fleet utilisation, fuel, trip and approval-turnaround reporting, plus a mobile driver portal that works offline.',
+      'Give management a clear operating picture while drivers capture authorised field activity from a mobile-first workspace.',
     icon: 'BarChart3',
     features: [
       'Utilisation, fuel and kilometre variance reports',
@@ -143,52 +168,64 @@ export default async function ServicesPage() {
   try {
     cms = await getPublishedContentBySlug('services');
   } catch {
-    // fall back to defaults
+    // Safe defaults below keep the public page available.
   }
 
   const modules = extractModules(cms?.content);
   const intro =
     (cms?.content?.intro as string) ||
-    'End-to-end digital fleet management for any organisation — government, municipalities, mines, logistics and private fleets.';
+    'Connect requests, approvals, vehicles, drivers, fuel, maintenance and reporting in one accountable operating system.';
 
   return (
     <>
-      <PageHero
-        eyebrow="Platform"
-        title="Platform Services"
-        description={intro}
-      />
+      <PageHero title="Platform Services" description={intro} />
 
       <section id="solutions" className="border-b border-border bg-surface py-20 md:py-24">
         <SectionContainer>
           <SectionHeading
-            title="Complete Fleet Operations"
-            subtitle="Every capability a fleet operation needs — from request to close."
+            title="See the Work, Not Just a Feature List"
+            subtitle="Each capability is part of the same operational record — from the first request to the final audit trail."
           />
-          <div className="mt-14 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {modules.map((module) => {
+
+          <div className="mt-16 divide-y divide-border border-y border-border">
+            {modules.map((module, index) => {
               const Icon = resolveIcon(module.icon);
+              const Preview = resolvePreview(module.icon);
+              const reverse = index % 2 === 1;
+
               return (
                 <article
-                  key={module.title}
-                  className="flex flex-col rounded-[10px] border border-border bg-surface p-6 transition-all hover:border-brand-200 hover:shadow-sm"
+                  key={`${module.title}-${index}`}
+                  className="grid items-center gap-10 py-12 lg:grid-cols-2 lg:gap-16 lg:py-16"
                 >
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
-                    <Icon className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                  <h2 className="mt-4 text-base font-semibold text-ink-950">{module.title}</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-ink-500">{module.description}</p>
-                  <ul className="mt-4 space-y-2">
-                    {module.features.map((f) => (
-                      <li key={f} className="flex items-start gap-2 text-xs text-ink-600">
-                        <CheckCircle2
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-success-text"
-                          aria-hidden="true"
-                        />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
+                  <div className={cn(reverse && 'lg:order-2')}>
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                        <Icon className="h-5 w-5" aria-hidden="true" />
+                      </span>
+                      <h2 className="text-xl font-semibold tracking-tight text-ink-950 md:text-2xl">
+                        {module.title}
+                      </h2>
+                    </div>
+                    <p className="mt-5 max-w-xl text-sm leading-7 text-ink-500 md:text-base">
+                      {module.description}
+                    </p>
+                    <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+                      {module.features.map((feature) => (
+                        <li key={feature} className="flex items-start gap-2 text-sm text-ink-600">
+                          <CheckCircle2
+                            className="mt-0.5 h-4 w-4 shrink-0 text-status-success-text"
+                            aria-hidden="true"
+                          />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className={cn('min-w-0', reverse && 'lg:order-1')}>
+                    <Preview />
+                  </div>
                 </article>
               );
             })}

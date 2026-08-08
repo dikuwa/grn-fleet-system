@@ -7,6 +7,7 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default: 'bg-muted text-ink-700',
+        secondary: 'bg-muted text-ink-700',
         success: 'bg-status-success-bg text-status-success-text',
         pending: 'bg-status-pending-bg text-status-pending-text',
         warning: 'bg-status-warning-bg text-status-warning-text',
@@ -61,7 +62,7 @@ export function StatusBadge({
           status === 'error' && 'bg-status-error-text',
           status === 'cancelled' && 'bg-status-cancelled-text',
           status === 'emergency' && 'bg-status-emergency-text',
-          (!status || status === 'default') && 'bg-ink-500',
+          (!status || status === 'default' || status === 'secondary') && 'bg-ink-500',
         )}
       />
       {label}

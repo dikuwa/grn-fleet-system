@@ -16,3 +16,8 @@ export { FleetMapPreview } from '@/components/public/previews/fleet-map-preview'
 export { DriverSelfServicePreview } from '@/components/public/previews/driver-self-service-preview';
 export { AnalyticsPreview } from '@/components/public/previews/analytics-preview';
 export { TripAuthorityPreview } from '@/components/public/previews/trip-authority-preview';
+export {
+  InspectionPreview,
+  FuelManagementPreview,
+  MaintenancePreview,
+} from '@/components/public/previews/operations-control-previews';

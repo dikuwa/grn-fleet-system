@@ -127,6 +127,62 @@ export async function upsertEmergencyContact(
   return row;
 }
 
+export async function updateEmergencyContact(
+  tenantId: string,
+  id: string,
+  input: EmergencyContactInput,
+  actorUserId: string,
+) {
+  const db = getDb();
+  const before = await getEmergencyContact(tenantId, id);
+  if (!before) return null;
+
+  const [row] = await db
+    .update(emergencyContacts)
+    .set({
+      name: input.name,
+      phone: input.phone,
+      role: input.role,
+      region: input.region ?? null,
+      sortOrder: input.sortOrder ?? 0,
+      isActive: input.isActive ?? before.isActive,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(emergencyContacts.tenantId, tenantId), eq(emergencyContacts.id, id)))
+    .returning();
+
+  if (!row) return null;
+
+  await recordAuditEvent({
+    tenantId,
+    actorUserId,
+    eventType: 'emergency_contact_updated',
+    action: 'update',
+    entityType: 'emergency_contact',
+    entityId: row.id,
+    summary: `Emergency contact ${row.name} updated`,
+    before: {
+      name: before.name,
+      phone: before.phone,
+      role: before.role,
+      region: before.region,
+      sortOrder: before.sortOrder,
+      isActive: before.isActive,
+    },
+    after: {
+      name: row.name,
+      phone: row.phone,
+      role: row.role,
+      region: row.region,
+      sortOrder: row.sortOrder,
+      isActive: row.isActive,
+    },
+    sourceChannel: 'web',
+  });
+
+  return row;
+}
+
 export async function setEmergencyContactActive(
   tenantId: string,
   id: string,
