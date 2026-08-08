@@ -41,6 +41,34 @@ import { WorkspaceIds, type WorkspaceId } from '@/lib/workspaces';
 
 type Metric = { label: string; value: number; href?: string; icon: React.ReactNode };
 
+const METRIC_TONES = [
+  {
+    accent: 'text-brand-700 dark:text-brand-300',
+    icon: 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300',
+    border: 'border-brand-200/80 dark:border-brand-900/70',
+  },
+  {
+    accent: 'text-status-success-text',
+    icon: 'bg-status-success-bg text-status-success-text',
+    border: 'border-status-success-text/20',
+  },
+  {
+    accent: 'text-status-warning-text',
+    icon: 'bg-status-warning-bg text-status-warning-text',
+    border: 'border-status-warning-text/20',
+  },
+  {
+    accent: 'text-status-pending-text',
+    icon: 'bg-status-pending-bg text-status-pending-text',
+    border: 'border-status-pending-text/20',
+  },
+  {
+    accent: 'text-status-error-text',
+    icon: 'bg-status-error-bg text-status-error-text',
+    border: 'border-status-error-text/20',
+  },
+] as const;
+
 async function countRows(query: Promise<Array<{ count: number }>>) {
   const rows = await query;
   return Number(rows[0]?.count || 0);
@@ -437,7 +465,7 @@ export default async function DashboardPage() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <PageHeader
         title={workspaceLabel}
         description="Current activity, attention items and shortcuts for this responsibility workspace."
@@ -448,22 +476,28 @@ export default async function DashboardPage() {
           <h2 id="workspace-overview-heading" className="text-ink-950 text-sm font-semibold">Workspace overview</h2>
           <p className="text-ink-500 hidden text-xs sm:block">Only data visible to your active workspace is counted.</p>
         </div>
-        <div className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border lg:grid-cols-4">
-          {dashboardMetrics.map((metric) => (
-            <div key={metric.label} className="bg-surface min-w-0 p-4 sm:p-5">
-              <div className="text-brand-700">{metric.icon}</div>
-              <p className="text-ink-950 mt-4 text-2xl font-semibold tabular-nums">{metric.value}</p>
-              <p className="text-ink-500 mt-1 text-xs">{metric.label}</p>
-              {metric.href && (
-                <Link
-                  className="text-brand-700 focus-ring mt-3 inline-flex items-center gap-1 rounded text-xs font-medium hover:underline"
-                  href={metric.href}
-                >
-                  Open <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </Link>
-              )}
-            </div>
-          ))}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(auto-fit,minmax(210px,1fr))]">
+          {dashboardMetrics.map((metric, index) => {
+            const tone = METRIC_TONES[index % METRIC_TONES.length];
+            return (
+              <article
+                key={metric.label}
+                className={`group min-w-0 rounded-[12px] border bg-surface p-4 shadow-sm transition-[transform,box-shadow,border-color] hover:-translate-y-0.5 hover:shadow-md motion-reduce:transform-none motion-reduce:transition-none sm:p-5 ${tone.border}`}
+              >
+                <div className={`flex h-10 w-10 items-center justify-center rounded-[10px] ${tone.icon}`}>{metric.icon}</div>
+                <p className={`mt-4 text-3xl font-[650] tabular-nums ${tone.accent}`}>{metric.value}</p>
+                <p className="text-ink-600 mt-1 text-sm font-medium">{metric.label}</p>
+                {metric.href && (
+                  <Link
+                    className="text-brand-700 focus-ring mt-4 inline-flex items-center gap-1 rounded text-xs font-semibold hover:underline"
+                    href={metric.href}
+                  >
+                    Open <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" aria-hidden="true" />
+                  </Link>
+                )}
+              </article>
+            );
+          })}
         </div>
       </section>
 
