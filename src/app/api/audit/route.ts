@@ -1,39 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { and, count, desc, eq, gte, ilike, lte, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { user } from '@/db/schema/better-auth';
-import { eq, and, desc, count, sql, gte, lte, ilike } from 'drizzle-orm';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { formatAuditEvent } from '@/lib/human-readable';
+
+function csvCell(value: unknown) {
+  if (value === null || value === undefined) return '';
+  const text =
+    typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
-    // Require auth — audit data is tenant-scoped
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // Require AUDIT_READ permission
     const permCheck = await requirePermission(session, Permissions.AUDIT_READ);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const tenantId = session.tenantId;
-
     const eventType = searchParams.get('eventType');
     const search = searchParams.get('search');
     const action = searchParams.get('action');
     const entityType = searchParams.get('documentType');
     const dateFrom = searchParams.get('dateFrom');
     const dateTo = searchParams.get('dateTo');
-    const limit = parseInt(searchParams.get('limit') || '50', 10);
-    const offset = parseInt(searchParams.get('offset') || '0', 10);
+    const exportFormat = searchParams.get('export');
+    const requestedLimit = parseInt(searchParams.get('limit') || '50', 10);
+    const requestedOffset = parseInt(searchParams.get('offset') || '0', 10);
+    const limit = exportFormat === 'csv' ? 5000 : Math.min(Math.max(requestedLimit, 1), 250);
+    const offset = exportFormat === 'csv' ? 0 : Math.max(requestedOffset, 0);
 
     const db = getDb();
-
-    // Build filters
     const conditions = [eq(auditEvents.tenantId, tenantId)];
 
     if (eventType && eventType !== 'all') {
@@ -43,7 +48,6 @@ export async function GET(request: NextRequest) {
     if (entityType) conditions.push(eq(auditEvents.entityType, entityType));
     if (dateFrom) conditions.push(gte(auditEvents.createdAt, new Date(`${dateFrom}T00:00:00`)));
     if (dateTo) conditions.push(lte(auditEvents.createdAt, new Date(`${dateTo}T23:59:59.999`)));
-
     if (search) {
       conditions.push(
         sql`(${auditEvents.action} ILIKE ${'%' + search + '%'} OR ${auditEvents.actorUserId} ILIKE ${'%' + search + '%'} OR ${auditEvents.summary} ILIKE ${'%' + search + '%'})`,
@@ -51,22 +55,17 @@ export async function GET(request: NextRequest) {
     }
 
     const whereClause = and(...conditions);
-
-    // Get total count
     const [totalResult] = await db.select({ count: count() }).from(auditEvents).where(whereClause);
 
-    // Get events
     const eventRows = await db
-      .select({
-        event: auditEvents,
-        actorName: user.name,
-      })
+      .select({ event: auditEvents, actorName: user.name })
       .from(auditEvents)
       .leftJoin(user, eq(user.id, auditEvents.actorUserId))
       .where(whereClause)
       .orderBy(desc(auditEvents.createdAt))
       .limit(limit)
       .offset(offset);
+
     const events = eventRows.map(({ event, actorName }) => {
       const formatted = formatAuditEvent({
         eventType: event.eventType,
@@ -83,7 +82,43 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Hash chain verification status (last 5 events)
+    if (exportFormat === 'csv') {
+      const header = [
+        'Timestamp',
+        'Event Type',
+        'Action',
+        'Summary',
+        'Actor',
+        'Actor User ID',
+        'Entity Type',
+        'Entity ID',
+        'Source Channel',
+        'Correlation ID',
+      ];
+      const rows = events.map((event) => [
+        event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
+        event.eventType,
+        event.action,
+        event.summary,
+        event.actorName,
+        event.actorUserId,
+        event.entityType,
+        event.entityId,
+        event.sourceChannel,
+        event.correlationId,
+      ]);
+      const csv = [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+      const stamp = new Date().toISOString().slice(0, 10);
+      return new NextResponse(csv, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="tenant-audit-${stamp}.csv"`,
+          'Cache-Control': 'private, no-store',
+        },
+      });
+    }
+
     const lastEvents = await db
       .select({
         id: auditEvents.id,

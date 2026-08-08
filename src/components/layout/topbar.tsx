@@ -70,12 +70,15 @@ export function Topbar({
     staleTime: 30_000,
   });
 
+  // Keep the topbar responsive without hammering the notifications endpoint on
+  // every authenticated page. Broadcast events, focus and reconnect still
+  // refresh immediately; the interval is only a quiet safety net.
   const notificationQuery = useQuery({
     queryKey: notificationQueryKey,
     queryFn: ({ signal }) => fetchNotifications(signal),
     enabled: Boolean(userId),
-    staleTime: 3_000,
-    refetchInterval: 5_000,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
@@ -87,8 +90,8 @@ export function Topbar({
   );
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (accountRef.current && !accountRef.current.contains(e.target as Node)) {
+    const handler = (event: MouseEvent) => {
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
         setShowAccountMenu(false);
       }
     };
@@ -97,8 +100,8 @@ export function Topbar({
   }, []);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShowAccountMenu(false);
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowAccountMenu(false);
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
@@ -130,9 +133,7 @@ export function Topbar({
         body: JSON.stringify({ workspace }),
       });
       const json = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(json?.error || 'Workspace switch failed');
-      }
+      if (!response.ok) throw new Error(json?.error || 'Workspace switch failed');
       setShowAccountMenu(false);
       window.location.assign('/dashboard');
     } catch (error) {
@@ -191,18 +192,12 @@ export function Topbar({
         >
           <Bell className="h-[18px] w-[18px]" aria-hidden="true" />
           {unreadCount > 0 && (
-            <span
-              aria-hidden="true"
-              className="bg-status-error-text absolute -top-0.5 -right-0.5 flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] leading-none font-bold text-white"
-            >
+            <span aria-hidden="true" className="bg-status-error-text absolute -top-0.5 -right-0.5 flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] leading-none font-bold text-white">
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}
           {attentionTotal > 0 && (
-            <span
-              aria-hidden="true"
-              className="bg-status-warning-text absolute -top-0.5 -left-0.5 flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] leading-none font-bold text-white"
-            >
+            <span aria-hidden="true" className="bg-status-warning-text absolute -top-0.5 -left-0.5 flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] leading-none font-bold text-white">
               {attentionTotal > 99 ? '99+' : attentionTotal}
             </span>
           )}
@@ -220,34 +215,19 @@ export function Topbar({
             aria-haspopup="menu"
             aria-expanded={showAccountMenu}
           >
-            <UserAvatar
-              src={avatarSrc}
-              name={displayName}
-              className="h-7 w-7 rounded-[6px] text-xs"
-            />
+            <UserAvatar src={avatarSrc} name={displayName} className="h-7 w-7 rounded-[6px] text-xs" />
             <span className="hidden max-w-[150px] min-w-0 flex-col items-start leading-tight sm:flex">
               <span className="text-ink-700 w-full truncate text-[13px] font-medium">{displayName}</span>
               <span className="text-ink-500 w-full truncate text-[11px]">{activeWorkspaceLabel}</span>
             </span>
-            <ChevronDown
-              className={`text-ink-400 hidden h-3.5 w-3.5 transition-transform motion-reduce:transition-none sm:block ${showAccountMenu ? 'rotate-180' : ''}`}
-              aria-hidden="true"
-            />
+            <ChevronDown className={`text-ink-400 hidden h-3.5 w-3.5 transition-transform motion-reduce:transition-none sm:block ${showAccountMenu ? 'rotate-180' : ''}`} aria-hidden="true" />
           </button>
 
           {showAccountMenu && (
-            <div
-              className="border-border bg-surface fixed inset-x-3 top-[calc(4rem+env(safe-area-inset-top,0px))] z-50 max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-[10px] border p-1.5 shadow-lg min-[360px]:left-auto min-[360px]:w-72 sm:absolute sm:inset-x-auto sm:top-11 sm:right-0 sm:w-72"
-              role="menu"
-              aria-label="Account menu"
-            >
+            <div className="border-border bg-surface fixed inset-x-3 top-[calc(4rem+env(safe-area-inset-top,0px))] z-50 max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-[10px] border p-1.5 shadow-lg min-[360px]:left-auto min-[360px]:w-72 sm:absolute sm:inset-x-auto sm:top-11 sm:right-0 sm:w-72" role="menu" aria-label="Account menu">
               <div className="border-border border-b px-3 py-3">
                 <div className="flex items-center gap-3">
-                  <UserAvatar
-                    src={avatarSrc}
-                    name={displayName}
-                    className="h-10 w-10 shrink-0 rounded-[8px] text-sm"
-                  />
+                  <UserAvatar src={avatarSrc} name={displayName} className="h-10 w-10 shrink-0 rounded-[8px] text-sm" />
                   <div className="min-w-0 flex-1">
                     <p className="text-ink-950 truncate text-sm font-medium">{displayName}</p>
                     {roleLabel && <p className="text-ink-500 truncate text-xs">{roleLabel}</p>}
@@ -258,28 +238,15 @@ export function Topbar({
 
               {eligibleWorkspaces.length > 1 && (
                 <div className="border-border border-b px-1 py-2">
-                  <p className="text-ink-400 px-2 pb-1 text-[10px] font-semibold tracking-wider uppercase">
-                    Active workspace
-                  </p>
+                  <p className="text-ink-400 px-2 pb-1 text-[10px] font-semibold tracking-wider uppercase">Active workspace</p>
                   {eligibleWorkspaces.map((workspace) => {
                     const selected = workspace.id === activeWorkspace;
                     const switching = workspace.id === switchingWorkspace;
                     return (
-                      <button
-                        key={workspace.id}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => void switchWorkspace(workspace.id)}
-                        disabled={Boolean(switchingWorkspace)}
-                        className={`${menuItemClass} disabled:cursor-wait disabled:opacity-60`}
-                      >
+                      <button key={workspace.id} type="button" role="menuitem" onClick={() => void switchWorkspace(workspace.id)} disabled={Boolean(switchingWorkspace)} className={`${menuItemClass} disabled:cursor-wait disabled:opacity-60`}>
                         <BriefcaseBusiness className="h-4 w-4 shrink-0" aria-hidden="true" />
                         <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
-                        {switching ? (
-                          <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                        ) : selected ? (
-                          <Check className="text-brand-700 h-4 w-4" aria-hidden="true" />
-                        ) : null}
+                        {switching ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : selected ? <Check className="text-brand-700 h-4 w-4" aria-hidden="true" /> : null}
                       </button>
                     );
                   })}
@@ -288,47 +255,35 @@ export function Topbar({
 
               <div className="mt-1 space-y-0.5">
                 <Link href="/dashboard/profile" className={menuItemClass} onClick={() => setShowAccountMenu(false)} role="menuitem">
-                  <User className="h-4 w-4" aria-hidden="true" />
-                  My Profile
+                  <User className="h-4 w-4" aria-hidden="true" /> My Profile
                 </Link>
                 {roleNames.includes(SystemRoles.TENANT_ADMIN) && (
                   <Link href="/dashboard/settings" className={menuItemClass} onClick={() => setShowAccountMenu(false)} role="menuitem">
-                    <Settings className="h-4 w-4" aria-hidden="true" />
-                    Tenant Settings
+                    <Settings className="h-4 w-4" aria-hidden="true" /> Tenant Settings
                   </Link>
                 )}
-
                 {profile?.tenantSlug && (
                   <div className="text-ink-500 flex min-h-10 w-full items-center gap-2 rounded-[7px] px-3 py-2 text-sm">
-                    <Building2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{profile.tenantSlug}</span>
+                    <Building2 className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="truncate">{profile.tenantSlug}</span>
                   </div>
                 )}
-
                 {pwa.state !== 'installed' && pwa.state !== 'unsupported' && (
                   <button
                     type="button"
                     role="menuitem"
                     onClick={async () => {
-                      if (pwa.state === 'can-install') {
-                        await pwa.promptInstall();
-                      } else if (pwa.state === 'ios') {
-                        setShowIosInstall(true);
-                      }
+                      if (pwa.state === 'can-install') await pwa.promptInstall();
+                      else if (pwa.state === 'ios') setShowIosInstall(true);
                       setShowAccountMenu(false);
                     }}
                     className={menuItemClass}
                   >
-                    <Download className="h-4 w-4" aria-hidden="true" />
-                    Install GovFleet App
+                    <Download className="h-4 w-4" aria-hidden="true" /> Install GovFleet App
                   </button>
                 )}
-
                 <div className="border-border my-1 border-t" />
-
                 <button type="button" role="menuitem" onClick={handleSignOut} className={menuItemClass}>
-                  <LogOut className="h-4 w-4" aria-hidden="true" />
-                  Sign Out
+                  <LogOut className="h-4 w-4" aria-hidden="true" /> Sign Out
                 </button>
               </div>
             </div>
