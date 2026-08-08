@@ -29,6 +29,8 @@ const publicRoutes = [
   '/services',
   '/contact',
   '/privacy',
+  '/request-demo',
+  '/faq',
 ];
 
 export async function proxy(request: NextRequest) {

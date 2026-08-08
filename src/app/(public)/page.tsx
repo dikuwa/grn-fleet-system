@@ -53,21 +53,24 @@ function heroFrom(
   content: PublicCmsContent | null,
   settings: PublicSiteSettings | null,
 ) {
+  // New Site Settings editor is authoritative (metadata.publicSite.hero);
+  // legacy heroSection / cms-content fields remain as fallbacks.
+  const p = readPublicSiteContent(settings).hero;
   const s = (settings?.heroSection as Record<string, unknown> | undefined) ?? {};
   const c = content?.content ?? {};
 
   const str = (source: Record<string, unknown>, key: string): string | undefined =>
     typeof source[key] === 'string' ? String(source[key]) : undefined;
 
-  const proofPoints = Array.isArray(s.proofPoints)
-    ? s.proofPoints.filter((p): p is string => typeof p === 'string')
+  const legacyProofPoints = Array.isArray(s.proofPoints)
+    ? s.proofPoints.filter((pt): pt is string => typeof pt === 'string')
     : undefined;
 
   return {
-    eyebrow: str(s, 'eyebrow') ?? str(c, 'eyebrow'),
-    title: str(s, 'title') ?? str(c, 'heroTitle'),
-    description: str(s, 'description') ?? str(c, 'heroDescription'),
-    proofPoints,
+    eyebrow: p.eyebrow || str(s, 'eyebrow') || str(c, 'eyebrow'),
+    title: p.title || str(s, 'title') || str(c, 'heroTitle'),
+    description: p.description || str(s, 'description') || str(c, 'heroDescription'),
+    proofPoints: legacyProofPoints?.length ? legacyProofPoints : p.proofPoints,
   };
 }
 
