@@ -71,5 +71,10 @@ export async function notifyPlatformIntake(input: PlatformIntakeNotificationInpu
         dedupeKey: `${input.eventType}:${input.entityId}:${recipient.userId}:${recipient.tenantId}`,
       })),
     )
-    .onConflictDoNothing({ target: notifications.dedupeKey });
+    // The database enforces dedupe_key through a partial unique index
+    // (WHERE dedupe_key IS NOT NULL). PostgreSQL cannot infer that partial
+    // index from ON CONFLICT (dedupe_key) unless the same predicate is supplied,
+    // so use target-less DO NOTHING and let PostgreSQL resolve the applicable
+    // unique constraint/index safely.
+    .onConflictDoNothing();
 }
