@@ -1,10 +1,10 @@
 /**
  * Trust strip + value proposition strip.
  *
- * Organisation types use lightweight editorial imagery rather than logos or
- * icon tiles. Images are requested from Unsplash at card-sized WebP quality,
- * lazy-loaded and decoded asynchronously so the section stays visual without
- * becoming the homepage's performance bottleneck.
+ * Organisation types use approved local generated imagery rather than remote
+ * image providers. The tiny WebP assets are embedded as data URIs so this
+ * marketing strip cannot fail because a third-party image endpoint changes or
+ * blocks a request.
  */
 
 import {
@@ -15,58 +15,52 @@ import {
   Users,
 } from 'lucide-react';
 import { SectionContainer } from '@/components/public/section';
+import { SECTOR_IMAGE_DATA } from '@/components/public/sector-image-data';
 
 const ORGANISATIONS = [
   {
+    key: 'government-ministries',
     label: 'Government Ministries',
-    image:
-      'https://images.unsplash.com/photo-1764050445785-6eac7a808616?fit=crop&fm=webp&q=68&w=640',
-    alt: 'Modern public-sector office building',
-    position: '50% 45%',
+    alt: 'Namibian public-sector civic building',
+    position: '50% 48%',
   },
   {
+    key: 'regional-councils',
     label: 'Regional Councils',
-    image:
-      'https://images.unsplash.com/photo-1751799179162-3c5ae641999e?fit=crop&fm=webp&q=68&w=640',
     alt: 'Contemporary regional administration building',
-    position: '50% 48%',
+    position: '50% 50%',
   },
   {
+    key: 'municipalities',
     label: 'Municipalities',
-    image:
-      'https://images.unsplash.com/photo-1774116196662-a9e1e4fa1612?fit=crop&fm=webp&q=68&w=640',
-    alt: 'Urban civic and municipal environment',
-    position: '50% 61%',
+    alt: 'Modern civic building in a municipal setting',
+    position: '50% 52%',
   },
   {
+    key: 'public-enterprises',
     label: 'Public Enterprises',
-    image:
-      'https://images.unsplash.com/photo-1755176226778-13f234648d89?fit=crop&fm=webp&q=68&w=640',
-    alt: 'Large modern institutional office building',
-    position: '50% 48%',
+    alt: 'Modern institutional office building',
+    position: '50% 50%',
   },
   {
+    key: 'mining-industry',
     label: 'Mining & Industry',
-    image:
-      'https://images.unsplash.com/photo-1544531697-0f624508b0d4?fit=crop&fm=webp&q=68&w=640',
-    alt: 'Heavy mining equipment operating underground',
+    alt: 'Heavy mining equipment operating in a quarry',
+    position: '50% 54%',
+  },
+  {
+    key: 'logistics-providers',
+    label: 'Logistics Providers',
+    alt: 'Commercial freight truck travelling on a highway',
     position: '50% 55%',
   },
   {
-    label: 'Logistics Providers',
-    image:
-      'https://images.unsplash.com/photo-1776521905669-97fa944bf30c?fit=crop&fm=webp&q=68&w=640',
-    alt: 'Commercial truck travelling on a highway',
-    position: '50% 62%',
-  },
-  {
+    key: 'private-organisations',
     label: 'Private Organisations',
-    image:
-      'https://images.unsplash.com/photo-1774544368113-b66148dab467?fit=crop&fm=webp&q=68&w=640',
-    alt: 'Modern commercial office building',
+    alt: 'Modern private-sector office building',
     position: '50% 48%',
   },
-];
+] as const;
 
 const VALUES = [
   {
@@ -119,22 +113,23 @@ export function TrustValueStrip({ orgs }: TrustValueStripProps) {
                 key={org.label}
                 className="group min-w-0 overflow-hidden rounded-[10px] border border-border bg-canvas transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-brand-300 motion-reduce:transform-none motion-reduce:transition-none dark:hover:border-brand-800"
               >
-                <div className="relative aspect-[4/3] overflow-hidden bg-muted">
-                  {/* Remote images are intentionally card-sized, WebP and lazy. */}
+                <div className="relative aspect-[8/5] overflow-hidden bg-muted">
+                  {/* The source is an approved local data URI, so no network dependency exists. */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={org.image}
+                    src={SECTOR_IMAGE_DATA[org.key]}
                     alt={org.alt}
-                    width={640}
-                    height={480}
+                    width={160}
+                    height={100}
                     loading="lazy"
                     decoding="async"
-                    fetchPriority="low"
-                    referrerPolicy="no-referrer"
-                    className="h-full w-full object-cover opacity-90 transition-[transform,opacity] duration-300 group-hover:scale-[1.015] group-hover:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
+                    className="h-full w-full object-cover opacity-90 transition-[transform,opacity] duration-300 group-hover:scale-[1.02] group-hover:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
                     style={{ objectPosition: org.position }}
                   />
-                  <div className="pointer-events-none absolute inset-0 border-b border-white/5 bg-brand-950/10" aria-hidden="true" />
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10"
+                  />
                 </div>
                 <div className="flex min-h-14 items-center px-3 py-3">
                   <span className="text-xs font-semibold leading-snug text-ink-800 sm:text-sm">
