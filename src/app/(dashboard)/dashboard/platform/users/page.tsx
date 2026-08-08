@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Copy, Plus, RefreshCw, Shield, UserCog, UserMinus, UserRoundCheck } from 'lucide-react';
+import { Plus, RefreshCw, Shield, UserCog, UserMinus, UserRoundCheck } from 'lucide-react';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { CopyFeedbackButton } from '@/components/ui/copy-feedback-button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Label } from '@/components/ui/input';
@@ -177,7 +178,7 @@ export default function PlatformUsersPage() {
       </Dialog>
 
       <Dialog open={Boolean(created)} onOpenChange={(open) => !open && setCreated(null)}>
-        <DialogContent className="sm:max-w-lg">{created && <><DialogHeader><DialogTitle>Platform user created</DialogTitle><DialogDescription>The temporary password is shown once. Share it through an appropriate private channel.</DialogDescription></DialogHeader><div className="space-y-2 rounded-[8px] border border-border bg-muted/30 p-4 font-mono text-sm"><p><span className="text-ink-500">Name:</span> {created.name}</p><p><span className="text-ink-500">Email:</span> {created.email}</p><p><span className="text-ink-500">Username:</span> {created.username}</p><p><span className="text-ink-500">Role:</span> {created.roleName}</p><p><span className="text-ink-500">Temporary password:</span> {created.temporaryPassword}</p></div><DialogFooter><Button variant="secondary" onClick={() => void navigator.clipboard.writeText(`GovFleet platform access\nUsername: ${created.username}\nEmail: ${created.email}\nTemporary password: ${created.temporaryPassword}\nRole: ${created.roleName}`)}><Copy className="h-4 w-4" /> Copy credentials</Button><Button onClick={() => setCreated(null)}>Done</Button></DialogFooter></> }</DialogContent>
+        <DialogContent className="sm:max-w-lg">{created && <><DialogHeader><DialogTitle>Platform user created</DialogTitle><DialogDescription>The temporary password is shown once. Share it through an appropriate private channel.</DialogDescription></DialogHeader><div className="space-y-2 rounded-[8px] border border-border bg-muted/30 p-4 font-mono text-sm"><p><span className="text-ink-500">Name:</span> {created.name}</p><p><span className="text-ink-500">Email:</span> {created.email}</p><p><span className="text-ink-500">Username:</span> {created.username}</p><p><span className="text-ink-500">Role:</span> {created.roleName}</p><p><span className="text-ink-500">Temporary password:</span> {created.temporaryPassword}</p></div><DialogFooter><CopyFeedbackButton text={`GovFleet platform access\nUsername: ${created.username}\nEmail: ${created.email}\nTemporary password: ${created.temporaryPassword}\nRole: ${created.roleName}`} label="Copy credentials" copiedLabel="Copied" /><Button onClick={() => setCreated(null)}>Done</Button></DialogFooter></> }</DialogContent>
       </Dialog>
 
       {confirmDialog}

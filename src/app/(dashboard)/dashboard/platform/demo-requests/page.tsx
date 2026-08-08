@@ -8,7 +8,6 @@ import {
   CalendarClock,
   Car,
   CheckCircle2,
-  Copy,
   ExternalLink,
   Mail,
   MonitorPlay,
@@ -23,6 +22,7 @@ import {
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { CopyFeedbackButton } from '@/components/ui/copy-feedback-button';
 import {
   Dialog,
   DialogContent,
@@ -273,13 +273,6 @@ export default function PlatformDemoRequestsPage() {
     });
   };
 
-  const copyCredentials = async () => {
-    if (!credentials) return;
-    const text = `GovFleet walkthrough sandbox\nUsername: ${credentials.username}\nEmail: ${credentials.email}\nTemporary password: ${credentials.temporaryPassword}\nLogin: ${credentials.loginUrl}\nExpires: ${displayDate(credentials.expiresAt, true)}`;
-    await navigator.clipboard.writeText(text);
-    toast({ title: 'Sandbox credentials copied', variant: 'success' });
-  };
-
   const selectedConfig = selected ? STATUS_CONFIG[selected.status] ?? { label: selected.status, variant: 'default' as BadgeVariant } : null;
   const canSandbox = selected && ['qualified', 'scheduled', 'completed'].includes(selected.status) && (!selected.sandbox || selected.sandbox.status === 'deleted');
 
@@ -322,7 +315,7 @@ export default function PlatformDemoRequestsPage() {
 
       <Dialog open={sandboxOpen} onOpenChange={setSandboxOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Create walkthrough sandbox</DialogTitle><DialogDescription>Creates a real isolated tenant with a temporary Tenant Administrator login. The sandbox is clearly marked as demo data and expires automatically by policy.</DialogDescription></DialogHeader><div className="space-y-4"><div className="space-y-1.5"><Label>Package</Label><StyledSelect value={sandboxPackageId} onChange={(event) => setSandboxPackageId(event.target.value)}>{packages.map((pkg) => <option key={pkg.id} value={pkg.id}>{pkg.name} ({pkg.code})</option>)}</StyledSelect></div><div className="space-y-1.5"><Label>Access duration</Label><StyledSelect value={sandboxDays} onChange={(event) => setSandboxDays(event.target.value)}><option value="3">3 days</option><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option></StyledSelect></div></div><DialogFooter><Button variant="secondary" onClick={() => setSandboxOpen(false)}>Cancel</Button><Button onClick={() => void createSandbox()} loading={sandboxCreating} disabled={!sandboxPackageId}><MonitorPlay className="h-4 w-4" /> Create sandbox</Button></DialogFooter></DialogContent></Dialog>
 
-      <Dialog open={Boolean(credentials)} onOpenChange={(open) => { if (!open) setCredentials(null); }}><DialogContent className="sm:max-w-lg">{credentials && <><DialogHeader><DialogTitle>Sandbox credentials</DialogTitle><DialogDescription>These temporary credentials are shown once. Copy them now and share them through an appropriate channel.</DialogDescription></DialogHeader><div className="space-y-3 rounded-[8px] border border-border bg-muted/30 p-4 font-mono text-sm"><p><span className="text-ink-500">Username:</span> {credentials.username}</p><p><span className="text-ink-500">Email:</span> {credentials.email}</p><p><span className="text-ink-500">Password:</span> {credentials.temporaryPassword}</p><p className="break-all"><span className="text-ink-500">Login:</span> {credentials.loginUrl}</p><p><span className="text-ink-500">Expires:</span> {displayDate(credentials.expiresAt, true)}</p></div><DialogFooter className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void copyCredentials()}><Copy className="h-4 w-4" /> Copy credentials</Button><Button asChild><a href={credentials.loginUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /> Open login</a></Button></DialogFooter></> }</DialogContent></Dialog>
+      <Dialog open={Boolean(credentials)} onOpenChange={(open) => { if (!open) setCredentials(null); }}><DialogContent className="sm:max-w-lg">{credentials && <><DialogHeader><DialogTitle>Sandbox credentials</DialogTitle><DialogDescription>These temporary credentials are shown once. Copy them now and share them through an appropriate channel.</DialogDescription></DialogHeader><div className="space-y-3 rounded-[8px] border border-border bg-muted/30 p-4 font-mono text-sm"><p><span className="text-ink-500">Username:</span> {credentials.username}</p><p><span className="text-ink-500">Email:</span> {credentials.email}</p><p><span className="text-ink-500">Password:</span> {credentials.temporaryPassword}</p><p className="break-all"><span className="text-ink-500">Login:</span> {credentials.loginUrl}</p><p><span className="text-ink-500">Expires:</span> {displayDate(credentials.expiresAt, true)}</p></div><DialogFooter className="flex flex-wrap gap-2"><CopyFeedbackButton text={`GovFleet walkthrough sandbox\nUsername: ${credentials.username}\nEmail: ${credentials.email}\nTemporary password: ${credentials.temporaryPassword}\nLogin: ${credentials.loginUrl}\nExpires: ${displayDate(credentials.expiresAt, true)}`} label="Copy credentials" copiedLabel="Copied" /><Button asChild><a href={credentials.loginUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /> Open login</a></Button></DialogFooter></> }</DialogContent></Dialog>
 
       {confirmDialog}
     </div>
