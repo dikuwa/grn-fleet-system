@@ -2,8 +2,8 @@
  * FAQ section + final conversion CTA.
  *
  * FAQ items come from the CMS `cms_faqs` table (via getPublishedFaqs) and
- * are editable by Platform Admin. The final CTA is the primary prospect
- * conversion point.
+ * are editable by Platform Admin. The homepage intentionally shows only the
+ * first five published FAQs; the dedicated /faq page remains the full list.
  */
 
 'use client';
@@ -21,6 +21,8 @@ export interface FaqSectionProps {
   subheading?: string;
 }
 
+const HOMEPAGE_FAQ_LIMIT = 5;
+
 export function FaqSection({
   faqs = [],
   heading = 'Frequently Asked Questions',
@@ -28,23 +30,28 @@ export function FaqSection({
 }: FaqSectionProps) {
   if (!faqs.length) return null;
 
+  const visibleFaqs = faqs.slice(0, HOMEPAGE_FAQ_LIMIT);
+  const hasMoreFaqs = faqs.length > HOMEPAGE_FAQ_LIMIT;
+
   return (
     <section className="border-b border-border bg-canvas py-20 md:py-24">
       <SectionContainer>
         <SectionHeading title={heading} subtitle={subheading} />
         <div className="mx-auto mt-12 max-w-3xl space-y-3">
-          {faqs.map((faq) => (
+          {visibleFaqs.map((faq) => (
             <FaqItem key={faq.id} question={faq.question} answer={faq.answer} />
           ))}
         </div>
-        <div className="mt-10 text-center">
-          <Link
-            href="/faq"
-            className="text-sm font-medium text-brand-700 underline-offset-4 transition-colors hover:underline dark:text-brand-400"
-          >
-            View all FAQs →
-          </Link>
-        </div>
+        {hasMoreFaqs ? (
+          <div className="mt-10 text-center">
+            <Link
+              href="/faq"
+              className="inline-flex min-h-11 items-center justify-center rounded-[8px] px-4 text-sm font-medium text-brand-700 underline-offset-4 transition-colors hover:bg-brand-50 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-brand-400 dark:hover:bg-brand-950/40"
+            >
+              View all questions →
+            </Link>
+          </div>
+        ) : null}
       </SectionContainer>
     </section>
   );
