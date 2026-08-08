@@ -1,45 +1,37 @@
 /**
  * Public site header — shared across every public route.
  *
- * Sticky, restrained and theme-aware. Desktop nav, theme toggle, Sign In and
- * Request Demo on the right; mobile menu on small screens. The header is a
- * client component only where interaction requires it (pathname highlighting
- * and the mobile menu).
+ * The product story is intentionally consolidated under one Platform menu.
+ * This prevents several top-level items from appearing active at the same time
+ * and lets visitors jump straight to the relevant homepage section.
  */
 
 'use client';
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu } from 'lucide-react';
+import { ChevronDown, Menu } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { APP_NAME } from '@/lib/constants';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { PublicMobileNav } from '@/components/public/public-mobile-nav';
 import {
+  PLATFORM_NAV_LINKS,
   PUBLIC_NAV_LINKS,
   REQUEST_DEMO_HREF,
   SIGN_IN_HREF,
 } from '@/components/public/nav';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface PublicHeaderProps {
   siteName?: string;
   logoUrl?: string | null;
 }
 
-/** Resolve whether a nav link is "active" for the current pathname. */
 function isNavActive(href: string, pathname: string): boolean {
-  if (href === '/') return pathname === '/';
-  if (href.startsWith('/#')) {
-    // Anchor to the homepage — active only while on the homepage.
-    return pathname === '/' || pathname.startsWith('/services');
-  }
-  // Segment-aware: /about matches /about and any sub-path.
   const segment = href.split('#')[0];
-  if (pathname === segment) return true;
-  if (segment !== '/' && pathname.startsWith(`${segment}/`)) return true;
-  return false;
+  if (!segment || segment === '/') return pathname === '/';
+  return pathname === segment || pathname.startsWith(`${segment}/`);
 }
 
 export function PublicHeader({
@@ -48,39 +40,94 @@ export function PublicHeader({
 }: PublicHeaderProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [platformOpen, setPlatformOpen] = useState(false);
+  const platformRef = useRef<HTMLDivElement>(null);
+  const platformActive = pathname === '/' || pathname === '/services';
+
+  useEffect(() => {
+    setPlatformOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!platformOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!platformRef.current?.contains(event.target as Node)) setPlatformOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPlatformOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [platformOpen]);
 
   return (
     <>
       <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur-sm">
-        <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between gap-4 px-6">
-          {/* Brand */}
+        <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between gap-4 px-4 sm:px-6">
           <Link
             href="/"
-            className="flex min-w-0 items-center gap-2.5 focus-ring rounded-[8px]"
+            className="focus-ring flex min-w-0 items-center gap-2.5 rounded-[8px]"
             aria-label={`${siteName} — home`}
           >
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={logoUrl}
-                alt={siteName}
-                className="h-8 w-8 rounded-lg object-contain"
-              />
+              <img src={logoUrl} alt={siteName} className="h-8 w-8 rounded-lg object-contain" />
             ) : (
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-800 text-sm font-bold text-white">
                 G
               </span>
             )}
-            <span className="truncate text-sm font-semibold text-ink-950">
-              {siteName}
-            </span>
+            <span className="truncate text-sm font-semibold text-ink-950">{siteName}</span>
           </Link>
 
-          {/* Desktop navigation */}
-          <nav
-            aria-label="Main"
-            className="hidden items-center gap-1 lg:flex"
-          >
+          <nav aria-label="Main" className="hidden items-center gap-1 lg:flex">
+            <div ref={platformRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setPlatformOpen((open) => !open)}
+                aria-expanded={platformOpen}
+                aria-haspopup="menu"
+                className={cn(
+                  'focus-ring inline-flex items-center gap-1.5 rounded-[8px] px-3 py-2 text-sm transition-colors motion-reduce:transition-none',
+                  platformActive
+                    ? 'bg-muted font-medium text-ink-950'
+                    : 'text-ink-500 hover:bg-muted/60 hover:text-ink-950',
+                )}
+              >
+                Platform
+                <ChevronDown
+                  className={cn('h-4 w-4 transition-transform motion-reduce:transition-none', platformOpen && 'rotate-180')}
+                  aria-hidden="true"
+                />
+              </button>
+
+              <div
+                role="menu"
+                className={cn(
+                  'absolute left-0 top-[calc(100%+0.5rem)] w-64 origin-top-left rounded-[10px] border border-border bg-surface p-2 shadow-xl transition duration-150 motion-reduce:transition-none',
+                  platformOpen
+                    ? 'visible translate-y-0 opacity-100'
+                    : 'invisible -translate-y-1 opacity-0 pointer-events-none',
+                )}
+              >
+                {PLATFORM_NAV_LINKS.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    role="menuitem"
+                    onClick={() => setPlatformOpen(false)}
+                    className="focus-ring flex rounded-[7px] px-3 py-2.5 text-sm text-ink-700 transition-colors hover:bg-muted hover:text-ink-950"
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+
             {PUBLIC_NAV_LINKS.map((link) => {
               const active = isNavActive(link.href, pathname);
               return (
@@ -89,9 +136,9 @@ export function PublicHeader({
                   href={link.href}
                   aria-current={active ? 'page' : undefined}
                   className={cn(
-                    'rounded-[8px] px-3 py-2 text-sm transition-colors',
+                    'rounded-[8px] px-3 py-2 text-sm transition-colors motion-reduce:transition-none',
                     active
-                      ? 'font-medium text-ink-950 bg-muted'
+                      ? 'bg-muted font-medium text-ink-950'
                       : 'text-ink-500 hover:bg-muted/60 hover:text-ink-950',
                   )}
                 >
@@ -101,7 +148,6 @@ export function PublicHeader({
             })}
           </nav>
 
-          {/* Right actions */}
           <div className="flex items-center gap-2">
             <PublicThemeToggle />
             <Link
@@ -116,7 +162,6 @@ export function PublicHeader({
             >
               Request Demo
             </Link>
-            {/* Mobile menu trigger */}
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
