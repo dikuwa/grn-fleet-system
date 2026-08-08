@@ -35,21 +35,17 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  // Live attention badge counts, fetched once per workspace change and shared
-  // by the desktop sidebar and the mobile bottom nav.
   const badgeCounts = useAttentionBadges(activeWorkspace);
 
   return (
-    <div className="bg-canvas min-h-screen transition-colors duration-200">
-      {/* Desktop sidebar */}
+    <div className="bg-canvas min-h-screen transition-colors duration-200 motion-reduce:transition-none">
       <Sidebar
         collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
         activeWorkspace={activeWorkspace}
         badgeCounts={badgeCounts}
       />
 
-      {/* Mobile sidebar */}
       <MobileSidebar
         open={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
@@ -60,10 +56,9 @@ export function DashboardShell({
         }
       />
 
-      {/* Main content area */}
       <div
         className={cn(
-          'min-w-0 transition-all duration-200',
+          'min-w-0 transition-[margin] duration-200 motion-reduce:transition-none',
           sidebarCollapsed ? 'md:ml-[72px]' : 'md:ml-[248px]',
         )}
       >
@@ -82,6 +77,7 @@ export function DashboardShell({
         <main className="page-enter mx-auto max-w-[1440px] min-w-0 px-3 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] min-[360px]:px-4 sm:py-6 md:px-6 md:pb-6 lg:px-8">
           <ErrorBoundary label="Dashboard">{children}</ErrorBoundary>
         </main>
+
         <OfflineIndicator />
         <OfflineSyncHandler />
         <InstallPwaBanner />
@@ -92,10 +88,14 @@ export function DashboardShell({
         />
       </div>
 
-      {/* Global notification toaster — one instance for all dashboard pages */}
       <Toaster
         position="top-right"
         gutter={8}
+        containerStyle={{
+          top: 'calc(1rem + env(safe-area-inset-top, 0px))',
+          right: 'max(1rem, env(safe-area-inset-right, 0px))',
+          left: 'max(1rem, env(safe-area-inset-left, 0px))',
+        }}
         toastOptions={{
           duration: 4000,
           style: {
@@ -103,17 +103,18 @@ export function DashboardShell({
             color: 'var(--color-ink-950)',
             border: '1px solid var(--color-border)',
             borderRadius: '10px',
-            boxShadow: '0 4px 16px rgb(0 0 0 / 0.08)',
-            fontFamily: 'var(--font-onest), sans-serif',
+            boxShadow: '0 8px 28px rgb(0 0 0 / 0.12)',
+            fontFamily: 'inherit',
             fontSize: '14px',
-            padding: '12px 16px',
+            padding: '12px 14px',
+            width: 'min(400px, calc(100vw - 2rem))',
             maxWidth: '400px',
           },
           success: {
             style: {
               background: 'var(--color-status-success-bg)',
               color: 'var(--color-status-success-text)',
-              border: '1px solid var(--color-status-success-bg)',
+              border: '1px solid color-mix(in srgb, var(--color-status-success-text) 18%, transparent)',
             },
             iconTheme: {
               primary: 'var(--color-status-success-text)',
@@ -124,7 +125,7 @@ export function DashboardShell({
             style: {
               background: 'var(--color-status-error-bg)',
               color: 'var(--color-status-error-text)',
-              border: '1px solid var(--color-status-error-bg)',
+              border: '1px solid color-mix(in srgb, var(--color-status-error-text) 18%, transparent)',
             },
             iconTheme: {
               primary: 'var(--color-status-error-text)',
@@ -135,7 +136,7 @@ export function DashboardShell({
             style: {
               background: 'var(--color-status-pending-bg)',
               color: 'var(--color-status-pending-text)',
-              border: '1px solid var(--color-status-pending-bg)',
+              border: '1px solid color-mix(in srgb, var(--color-status-pending-text) 18%, transparent)',
             },
             iconTheme: {
               primary: 'var(--color-status-pending-text)',
