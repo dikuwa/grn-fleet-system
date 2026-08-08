@@ -10,15 +10,22 @@ import {
   employees,
 } from '@/db/schema';
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
-import { hasPermission, requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  getSessionWorkspace,
+  hasPermission,
+  requireAnyPermission,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { WorkspaceIds } from '@/lib/workspaces';
 import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { licenceOcrConfidence, parseNamibianLicenceOcr } from '@/lib/driver-licence-ocr';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 
-/** Roles that receive licence-renewal review notifications. */
-const REVIEW_ROLES = ['Transport Administrator', 'Control Administrative Officer', 'Tenant Administrator'] as const;
+/** The operational role that receives actionable licence-renewal reviews. */
+const REVIEW_ROLES = ['Transport Administrator'] as const;
 
 async function notifyTransportAdmins(tenantId: string, input: {
   title: string;
@@ -235,11 +242,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     summary: `Driver licence version ${version} uploaded for employee ${id}`,
   });
 
-  // Notify Transport Administration that a renewal is pending review.
   if (licence.verificationStatus === 'awaiting_review' || licence.verificationStatus === 'needs_correction') {
     await notifyTransportAdmins(auth.session.tenantId, {
       title: 'Driver licence renewal pending review',
-      body: `A renewed licence (version ${version}) was submitted for driver ${id.slice(0, 8)} and awaits verification.`, // masked below
+      body: `A renewed licence (version ${version}) was submitted for driver ${id.slice(0, 8)} and awaits verification.`,
       entityType: 'driver_licence',
       entityId: licence.id,
       actionUrl: `/dashboard/drivers/licences/${licence.id}`,
@@ -264,7 +270,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .where(and(eq(driverLicences.id, body.licenceId), eq(driverProfiles.employeeId, id))).limit(1);
   if (!licence) return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
   if (body.action !== 'correct') {
-    const permission = await requireAnyPermission(auth.session, [Permissions.LICENCE_VERIFY, Permissions.DRIVER_MANAGE]);
+    const workspace = await getSessionWorkspace(auth.session);
+    if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
+      return NextResponse.json(
+        { error: 'Licence review decisions are available only in the Transport Administration workspace.' },
+        { status: 403 },
+      );
+    }
+    const permission = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
     if (permission instanceof NextResponse) return permission;
   }
   const current = licence.driver_licences;
@@ -287,7 +300,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }).where(eq(driverLicences.id, current.id));
   } else if (body.action === 'verify' || body.action === 'approve') {
     if (!current.frontImageKey || !current.backImageKey) return NextResponse.json({ error: 'Front and back images are required before verification.' }, { status: 409 });
-    // Approve may carry final corrected values confirmed by the reviewer.
     if (body.action === 'approve' && body.corrections) {
       const allowed = ['licenceNumber', 'licenceClass', 'issueDate', 'expiryDate', 'holderName', 'dateOfBirth', 'nationalIdNumber', 'issueNumber', 'driverRestrictionCode'];
       const confirmed = Object.entries(body.corrections).filter(([field]) => allowed.includes(field));
@@ -306,8 +318,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         }).where(eq(driverLicences.id, current.id));
       }
     }
-    // Supersede any other active licence version for this driver profile so
-    // exactly one licence is the current active verified record.
     await db.update(driverLicences)
       .set({
         isActive: false,
@@ -349,7 +359,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     reason: body.reason,
   });
 
-  // Notify the driver of the review outcome (best-effort, never blocks).
   const [driverRow] = await db
     .select({ userId: employees.userId, email: employees.email, firstName: employees.firstName })
     .from(employees)
