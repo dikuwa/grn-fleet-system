@@ -48,7 +48,7 @@ export default function PlatformUsersPage() {
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [roleName, setRoleName] = useState(SystemRoles.PLATFORM_SUPPORT);
+  const [roleName, setRoleName] = useState<string>(SystemRoles.PLATFORM_SUPPORT);
   const [created, setCreated] = useState<CreatedCredentials | null>(null);
 
   const load = useCallback(async () => {
