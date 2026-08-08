@@ -11,7 +11,7 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { cmsContent, cmsContentVersions } from '@/db/schema/cms-content';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // GET — Get a content entry

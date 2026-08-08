@@ -10,7 +10,7 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { cmsContent } from '@/db/schema/cms-content';
-import { eq, and, desc, count, or, like, asc } from 'drizzle-orm';
+import { eq, and, desc, count, or, like } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // GET — List CMS content
@@ -36,8 +36,8 @@ export async function GET(request: NextRequest) {
     const db = getDb();
 
     const conditions: ReturnType<typeof and>[] = [];
-    if (status) conditions.push(eq(cmsContent.status, status as any));
-    if (pageType) conditions.push(eq(cmsContent.pageType, pageType as any));
+    if (status) conditions.push(eq(cmsContent.status, status as never));
+    if (pageType) conditions.push(eq(cmsContent.pageType, pageType as never));
     if (q) {
       conditions.push(
         or(
