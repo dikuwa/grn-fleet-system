@@ -18,10 +18,7 @@ function slugify(value: string) {
 
 function splitName(value: string) {
   const parts = value.trim().split(/\s+/).filter(Boolean);
-  return {
-    firstName: parts[0] || 'Demo',
-    lastName: parts.slice(1).join(' ') || 'Administrator',
-  };
+  return { firstName: parts[0] || 'Demo', lastName: parts.slice(1).join(' ') || 'Administrator' };
 }
 
 export async function POST(request: NextRequest) {
@@ -40,22 +37,15 @@ export async function POST(request: NextRequest) {
     const packageId = typeof body?.packageId === 'string' ? body.packageId : '';
     const requestedDays = Number.parseInt(String(body?.expiresInDays ?? '7'), 10);
     const expiresInDays = Math.min(30, Math.max(1, Number.isFinite(requestedDays) ? requestedDays : 7));
-
-    if (!demoRequestId || !packageId) {
-      return NextResponse.json({ error: 'Demo request and sandbox package are required' }, { status: 400 });
-    }
+    if (!demoRequestId || !packageId) return NextResponse.json({ error: 'Demo request and sandbox package are required' }, { status: 400 });
 
     const db = getDb();
     const [demo] = await db.select().from(demoRequests).where(eq(demoRequests.id, demoRequestId)).limit(1);
     if (!demo) return NextResponse.json({ error: 'Demo request not found' }, { status: 404 });
-    if (demo.status === 'converted' || demo.status === 'cancelled') {
-      return NextResponse.json({ error: `A ${demo.status} demo request cannot create a sandbox.` }, { status: 409 });
-    }
+    if (demo.status === 'converted' || demo.status === 'cancelled') return NextResponse.json({ error: `A ${demo.status} demo request cannot create a sandbox.` }, { status: 409 });
 
     const [existingSandbox] = await db.select().from(demoSandboxes).where(eq(demoSandboxes.demoRequestId, demoRequestId)).limit(1);
-    if (existingSandbox && existingSandbox.status !== 'deleted') {
-      return NextResponse.json({ error: 'This demo request already has a sandbox', data: existingSandbox }, { status: 409 });
-    }
+    if (existingSandbox && existingSandbox.status !== 'deleted') return NextResponse.json({ error: 'This demo request already has a sandbox', data: existingSandbox }, { status: 409 });
 
     const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 8);
     const tenantSlug = `demo-${slugify(demo.company)}-${suffix}`.slice(0, 50);
@@ -64,42 +54,20 @@ export async function POST(request: NextRequest) {
     const expiresAt = new Date(now.getTime() + expiresInDays * 24 * 60 * 60 * 1000);
 
     const [tenant] = await db.insert(tenants).values({
-      name: `${demo.company} — Demo Sandbox`,
-      code: tenantCode,
-      slug: tenantSlug,
-      type: 'demo_sandbox',
-      status: 'TRIAL',
-      lifecycleStatus: 'ACTIVE',
-      createdByUserId: session.user.id,
-      primaryContactName: demo.name,
-      primaryContactEmail: demo.email,
-      primaryContactPhone: demo.phone,
-      lifecycleReason: `Walkthrough sandbox for demo request ${demo.id}`,
-      lifecycleChangedAt: now,
-      timezone: demo.timezone || 'Africa/Windhoek',
-      locale: 'en-NA',
+      name: `${demo.company} — Demo Sandbox`, code: tenantCode, slug: tenantSlug, type: 'demo_sandbox',
+      status: 'TRIAL', lifecycleStatus: 'ACTIVE', createdByUserId: session.user.id,
+      primaryContactName: demo.name, primaryContactEmail: demo.email, primaryContactPhone: demo.phone,
+      lifecycleReason: `Walkthrough sandbox for demo request ${demo.id}`, lifecycleChangedAt: now,
+      timezone: demo.timezone || 'Africa/Windhoek', locale: 'en-NA',
       metadata: { isDemoSandbox: true, demoRequestId: demo.id, expiresAt: expiresAt.toISOString() },
     }).returning();
     createdTenantId = tenant.id;
 
-    await createSubscription({
-      tenantId: tenant.id,
-      packageId,
-      billingInterval: 'monthly',
-      status: 'trialing',
-      trialDays: expiresInDays,
-    });
+    await createSubscription({ tenantId: tenant.id, packageId, billingInterval: 'monthly', status: 'trialing', trialDays: expiresInDays });
 
     const tenantAdminDefinition = RoleDefinitions.TENANT_ADMIN;
-    const [tenantAdminRole] = await db.insert(roles).values({
-      tenantId: tenant.id,
-      name: tenantAdminDefinition.name,
-      description: 'Demo sandbox tenant administrator',
-      isSystem: true,
-    }).returning();
-    await db.insert(rolePermissions).values(
-      tenantAdminDefinition.permissions.map((permissionCode) => ({ roleId: tenantAdminRole.id, permissionCode })),
-    );
+    const [tenantAdminRole] = await db.insert(roles).values({ tenantId: tenant.id, name: tenantAdminDefinition.name, description: 'Demo sandbox tenant administrator', isSystem: true }).returning();
+    await db.insert(rolePermissions).values(tenantAdminDefinition.permissions.map((permissionCode) => ({ roleId: tenantAdminRole.id, permissionCode })));
 
     const loginUserId = crypto.randomUUID();
     createdUserId = loginUserId;
@@ -108,106 +76,23 @@ export async function POST(request: NextRequest) {
     const tempPassword = `Gf!${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const passwordHash = await bcrypt.hash(tempPassword, 10);
 
-    await db.insert(user).values({
-      id: loginUserId,
-      email: loginEmail,
-      username,
-      emailVerified: true,
-      name: demo.name,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(userProfiles).values({
-      id: loginUserId,
-      userId: loginUserId,
-      displayName: demo.name,
-      requiresPasswordChange: false,
-      passwordStatus: 'temporary',
-      status: 'active',
-      accountEnabled: true,
-    });
-    await db.insert(account).values({
-      id: crypto.randomUUID(),
-      accountId: loginUserId,
-      providerId: 'email',
-      userId: loginUserId,
-      password: passwordHash,
-      createdAt: now,
-      updatedAt: now,
-    });
+    await db.insert(user).values({ id: loginUserId, email: loginEmail, username, emailVerified: true, name: demo.name, createdAt: now, updatedAt: now });
+    await db.insert(userProfiles).values({ id: loginUserId, userId: loginUserId, displayName: demo.name, requiresPasswordChange: false, passwordStatus: 'temporary', status: 'active', accountEnabled: true });
+    await db.insert(account).values({ id: crypto.randomUUID(), accountId: loginUserId, providerId: 'email', userId: loginUserId, password: passwordHash, createdAt: now, updatedAt: now });
 
-    const [membership] = await db.insert(tenantMemberships).values({
-      tenantId: tenant.id,
-      userId: loginUserId,
-      status: 'active',
-      activeWorkspace: 'tenant_admin',
-      joinedAt: now,
-    }).returning();
+    const [membership] = await db.insert(tenantMemberships).values({ tenantId: tenant.id, userId: loginUserId, status: 'active', activeWorkspace: 'tenant_admin', joinedAt: now }).returning();
     await db.insert(roleAssignments).values({ tenantMembershipId: membership.id, roleId: tenantAdminRole.id, startDate: now });
 
     const names = splitName(demo.name);
-    await db.insert(employees).values({
-      tenantId: tenant.id,
-      employeeNumber: 'DEMO-001',
-      firstName: names.firstName,
-      lastName: names.lastName,
-      email: demo.email,
-      phone: demo.phone,
-      jobTitle: demo.jobTitle,
-      employmentType: 'demo',
-      employmentStatus: 'active',
-      availabilityStatus: 'available',
-      userId: loginUserId,
-      notes: 'Sandbox administrator generated from public demo request.',
-    });
+    await db.insert(employees).values({ tenantId: tenant.id, employeeNumber: 'DEMO-001', firstName: names.firstName, lastName: names.lastName, email: demo.email, phone: demo.phone, jobTitle: demo.jobTitle, employmentType: 'demo', employmentStatus: 'active', availabilityStatus: 'available', userId: loginUserId, notes: 'Sandbox administrator generated from public demo request.' });
 
-    const [sandbox] = await db.insert(demoSandboxes).values({
-      demoRequestId: demo.id,
-      tenantId: tenant.id,
-      packageId,
-      adminUserId: loginUserId,
-      adminEmail: loginEmail,
-      passwordHash,
-      accessCode: suffix.toUpperCase(),
-      isPasswordTemporary: true,
-      status: 'active',
-      isActive: true,
-      expiresAt,
-      metadata: { prospectEmail: demo.email, username },
-    }).returning();
+    const [sandbox] = await db.insert(demoSandboxes).values({ demoRequestId: demo.id, tenantId: tenant.id, packageId, adminUserId: loginUserId, adminEmail: loginEmail, passwordHash, accessCode: suffix.toUpperCase(), isPasswordTemporary: true, status: 'active', isActive: true, expiresAt, metadata: { prospectEmail: demo.email, username } }).returning();
 
-    await db.update(demoRequests).set({
-      status: demo.status === 'new' ? 'qualified' : demo.status,
-      qualifiedAt: demo.qualifiedAt ?? now,
-      qualifiedByUserId: demo.qualifiedByUserId ?? session.user.id,
-      contactNotes: [demo.contactNotes, `Walkthrough sandbox created. Expires ${expiresAt.toISOString()}.`].filter(Boolean).join('\n'),
-      updatedAt: now,
-    }).where(eq(demoRequests.id, demo.id));
+    await db.update(demoRequests).set({ status: demo.status === 'new' ? 'qualified' : demo.status, qualifiedAt: demo.qualifiedAt ?? now, qualifiedByUserId: demo.qualifiedByUserId ?? session.user.id, contactNotes: [demo.contactNotes, `Walkthrough sandbox created. Expires ${expiresAt.toISOString()}.`].filter(Boolean).join('\n'), updatedAt: now }).where(eq(demoRequests.id, demo.id));
 
-    await recordAuditEvent({
-      tenantId: tenant.id,
-      actorUserId: session.user.id,
-      eventType: 'demo_sandbox_created',
-      action: 'CREATE',
-      entityType: 'tenant',
-      entityId: tenant.id,
-      summary: `Demo sandbox created for ${demo.company}; expires ${expiresAt.toISOString()}`,
-    }).catch(() => {});
+    await recordAuditEvent({ tenantId: tenant.id, actorUserId: session.user.id, eventType: 'demo_sandbox_created', action: 'CREATE', entityType: 'tenant', entityId: tenant.id, summary: `Demo sandbox created for ${demo.company}; expires ${expiresAt.toISOString()}` }).catch(() => {});
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        sandbox: { ...sandbox, passwordHash: undefined },
-        tenant: { id: tenant.id, name: tenant.name, code: tenant.code, slug: tenant.slug },
-        credentials: {
-          username,
-          email: loginEmail,
-          temporaryPassword: tempPassword,
-          loginUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`,
-          expiresAt: expiresAt.toISOString(),
-        },
-      },
-    }, { status: 201 });
+    return NextResponse.json({ success: true, data: { sandbox: { ...sandbox, passwordHash: undefined }, tenant: { id: tenant.id, name: tenant.name, code: tenant.code, slug: tenant.slug }, credentials: { username, email: loginEmail, temporaryPassword: tempPassword, loginUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`, expiresAt: expiresAt.toISOString() } } }, { status: 201 });
   } catch (error) {
     console.error('[Platform Demo Sandbox] POST failed:', error);
     const db = getDb();
@@ -228,17 +113,33 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json().catch(() => null);
     const demoRequestId = typeof body?.demoRequestId === 'string' ? body.demoRequestId : '';
     const action = typeof body?.action === 'string' ? body.action : '';
-    if (!demoRequestId || !['revoke', 'expire'].includes(action)) {
-      return NextResponse.json({ error: 'A valid demo request and sandbox action are required' }, { status: 400 });
-    }
+    if (!demoRequestId || !['revoke', 'expire', 'delete'].includes(action)) return NextResponse.json({ error: 'A valid demo request and sandbox action are required' }, { status: 400 });
 
     const db = getDb();
     const [sandbox] = await db.select().from(demoSandboxes).where(eq(demoSandboxes.demoRequestId, demoRequestId)).limit(1);
     if (!sandbox) return NextResponse.json({ error: 'Sandbox not found' }, { status: 404 });
+    if (sandbox.status === 'converted') return NextResponse.json({ error: 'A converted sandbox cannot be deleted. Its conversion record must be retained.' }, { status: 409 });
 
-    const nextStatus = action === 'revoke' ? 'revoked' : 'expired';
-    const [updated] = await db.update(demoSandboxes).set({ status: nextStatus, isActive: false }).where(and(eq(demoSandboxes.id, sandbox.id), eq(demoSandboxes.demoRequestId, demoRequestId))).returning();
-    await db.update(tenants).set({ status: 'SUSPENDED', lifecycleStatus: 'SUSPENDED', lifecycleReason: `Demo sandbox ${nextStatus}`, lifecycleChangedAt: new Date(), updatedAt: new Date() }).where(eq(tenants.id, sandbox.tenantId));
+    const nextStatus = action === 'revoke' ? 'revoked' : action === 'expire' ? 'expired' : 'deleted';
+    const [updated] = await db.update(demoSandboxes).set({ status: nextStatus, isActive: false, conversionNotes: action === 'delete' ? 'Removed by Platform Administrator; retained as an audit tombstone.' : sandbox.conversionNotes }).where(and(eq(demoSandboxes.id, sandbox.id), eq(demoSandboxes.demoRequestId, demoRequestId))).returning();
+
+    await db.update(tenants).set({
+      status: action === 'delete' ? 'ARCHIVED' : 'SUSPENDED',
+      lifecycleStatus: action === 'delete' ? 'ARCHIVED' : 'SUSPENDED',
+      lifecycleReason: action === 'delete' ? 'Demo sandbox removed by Platform Administrator' : `Demo sandbox ${nextStatus}`,
+      lifecycleChangedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(tenants.id, sandbox.tenantId));
+
+    await recordAuditEvent({
+      tenantId: sandbox.tenantId,
+      actorUserId: session.user.id,
+      eventType: action === 'delete' ? 'demo_sandbox_deleted' : 'demo_sandbox_status_changed',
+      action: action === 'delete' ? 'DELETE' : 'UPDATE',
+      entityType: 'tenant',
+      entityId: sandbox.tenantId,
+      summary: action === 'delete' ? 'Demo sandbox removed and archived by Platform Administrator.' : `Demo sandbox ${nextStatus}.`,
+    }).catch(() => {});
 
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
