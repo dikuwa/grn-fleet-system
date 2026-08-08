@@ -40,6 +40,7 @@ import {
   AlertTriangle,
   FilePlus2,
   Menu,
+  Package,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -74,11 +75,40 @@ const iconRegistry: Record<string, LucideIcon> = {
   Link2,
   GitBranch,
   AlertTriangle,
+  Package,
 };
 
 function getNavGroups(activeWorkspace: WorkspaceId) {
+  const navigation = getWorkspaceNavigation(activeWorkspace);
+
+  // Package management is a first-class Platform Admin capability. Keep this
+  // alongside Subscriptions in the same canonical navigation source used by
+  // desktop and mobile sidebars. The route remains protected by the platform
+  // parent access boundary while the dedicated route is rolled into the
+  // registry in the next access-registry consolidation.
+  if (
+    activeWorkspace === 'platform_admin' &&
+    !navigation.some((item) => item.path === '/dashboard/platform/packages')
+  ) {
+    const subscriptionIndex = navigation.findIndex(
+      (item) => item.path === '/dashboard/platform/subscriptions',
+    );
+    const subscriptionItem = navigation[subscriptionIndex];
+    if (subscriptionItem) {
+      navigation.splice(subscriptionIndex + 1, 0, {
+        ...subscriptionItem,
+        id: 'platform-packages',
+        path: '/dashboard/platform/packages',
+        href: '/dashboard/platform/packages',
+        label: 'Subscription Packages',
+        icon: 'Package',
+        order: subscriptionItem.order + 1,
+      });
+    }
+  }
+
   const groups = new Map<string, ReturnType<typeof getWorkspaceNavigation>>();
-  for (const item of getWorkspaceNavigation(activeWorkspace)) {
+  for (const item of navigation) {
     const group = groups.get(item.section) ?? [];
     group.push(item);
     groups.set(item.section, group);
