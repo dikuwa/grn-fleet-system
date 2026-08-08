@@ -153,7 +153,7 @@ export default function DeliveryDashboardPage() {
             <RefreshCw className="h-4 w-4" aria-hidden="true" /> Refresh
           </Button>
           <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/notifications/history"><Mail className="h-4 w-4" aria-hidden="true" /> Email History</Link>
+            <Link href="/dashboard/notifications/history"><Mail className="h-4 w-4" aria-hidden="true" /> Delivery History</Link>
           </Button>
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/reports/licence-expiry"><AlertTriangle className="h-4 w-4" aria-hidden="true" /> Licence Expiry</Link>
