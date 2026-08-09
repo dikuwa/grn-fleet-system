@@ -7,11 +7,14 @@ import { regions } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, or, sql } from 'drizzle-orm';
-import { recordAuditEvent } from '@/lib/audit-event';
 import {
   isProgrammeOwnedByUser,
   resolveProgrammeAccess,
 } from '@/lib/programme-access';
+
+function isAtomicProgrammeMarker(error: unknown, marker: string) {
+  return String((error as { message?: string })?.message || error).includes(marker);
+}
 
 /**
  * Programme detail API
@@ -90,11 +93,8 @@ export async function GET(
     if (!programme) return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
 
     const isOwner = isProgrammeOwnedByUser(programme, session.user.id, access.employeeId);
-    const isShared =
-      ['approved', 'published'].includes(programme.status) &&
-      programme.archivedAt == null;
+    const isShared = ['approved', 'published'].includes(programme.status) && programme.archivedAt == null;
     if (!access.tenantWide && !isOwner && !isShared) {
-      // Hide existence of another requester's private programme.
       return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
     }
 
@@ -213,17 +213,17 @@ export async function PATCH(
       estimatedKilometres !== undefined &&
       estimatedKilometres !== null &&
       estimatedKilometres !== '' &&
-      (!Number.isFinite(Number(estimatedKilometres)) || Number(estimatedKilometres) < 0)
+      (!Number.isInteger(Number(estimatedKilometres)) || Number(estimatedKilometres) < 0)
     ) {
-      return NextResponse.json({ error: 'Estimated kilometres must be a non-negative number' }, { status: 400 });
+      return NextResponse.json({ error: 'Estimated kilometres must be a non-negative whole number' }, { status: 400 });
     }
     if (
       expectedParticipants !== undefined &&
       expectedParticipants !== null &&
       expectedParticipants !== '' &&
-      (!Number.isFinite(Number(expectedParticipants)) || Number(expectedParticipants) < 0)
+      (!Number.isInteger(Number(expectedParticipants)) || Number(expectedParticipants) < 0)
     ) {
-      return NextResponse.json({ error: 'Expected participants must be a non-negative number' }, { status: 400 });
+      return NextResponse.json({ error: 'Expected participants must be a non-negative whole number' }, { status: 400 });
     }
 
     if (departmentId !== undefined && departmentId) {
@@ -275,63 +275,122 @@ export async function PATCH(
       if (!regionRow) return NextResponse.json({ error: 'Region not found in your organisation' }, { status: 400 });
     }
 
-    const [updated] = await db
-      .update(programmes)
-      .set({
-        title: title !== undefined ? title.trim() : existing.title,
-        description: description !== undefined ? description?.trim() || null : existing.description,
-        purpose: purpose !== undefined ? purpose?.trim() || null : existing.purpose,
-        department: department !== undefined ? department?.trim() || null : existing.department,
-        departmentId: departmentId !== undefined ? departmentId || null : existing.departmentId,
-        ownerEmployeeId: resolvedOwnerEmployeeId,
-        ownerUserId: resolvedOwnerUserId,
-        startDate: startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate,
-        endDate: endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate,
-        venue: venue !== undefined ? venue?.trim() || null : existing.venue,
-        officeId: officeId !== undefined ? officeId || null : existing.officeId,
-        regionId: regionId !== undefined ? regionId || null : existing.regionId,
-        region: region !== undefined ? region?.trim() || null : existing.region,
-        expectedParticipants:
-          expectedParticipants !== undefined
-            ? expectedParticipants != null && expectedParticipants !== ''
-              ? Number(expectedParticipants)
-              : null
-            : existing.expectedParticipants,
-        plannedActivities: plannedActivities !== undefined ? plannedActivities?.trim() || null : existing.plannedActivities,
-        estimatedTravelRequirement:
-          estimatedTravelRequirement !== undefined
-            ? estimatedTravelRequirement?.trim() || null
-            : existing.estimatedTravelRequirement,
-        estimatedKilometres:
-          estimatedKilometres !== undefined
-            ? estimatedKilometres != null && estimatedKilometres !== ''
-              ? Number(estimatedKilometres)
-              : null
-            : existing.estimatedKilometres,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(programmes.id, id),
-        eq(programmes.tenantId, tenantId),
-        eq(programmes.status, existing.status),
-      ))
-      .returning();
+    const nextTitle = title !== undefined ? title.trim() : existing.title;
+    const nextDescription = description !== undefined ? description?.trim() || null : existing.description;
+    const nextPurpose = purpose !== undefined ? purpose?.trim() || null : existing.purpose;
+    const nextDepartment = department !== undefined ? department?.trim() || null : existing.department;
+    const nextDepartmentId = departmentId !== undefined ? departmentId || null : existing.departmentId;
+    const nextStartDate = startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
+    const nextEndDate = endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate;
+    const nextVenue = venue !== undefined ? venue?.trim() || null : existing.venue;
+    const nextOfficeId = officeId !== undefined ? officeId || null : existing.officeId;
+    const nextRegionId = regionId !== undefined ? regionId || null : existing.regionId;
+    const nextRegion = region !== undefined ? region?.trim() || null : existing.region;
+    const nextExpectedParticipants =
+      expectedParticipants !== undefined
+        ? expectedParticipants != null && expectedParticipants !== ''
+          ? Number(expectedParticipants)
+          : null
+        : existing.expectedParticipants;
+    const nextPlannedActivities =
+      plannedActivities !== undefined ? plannedActivities?.trim() || null : existing.plannedActivities;
+    const nextEstimatedTravelRequirement =
+      estimatedTravelRequirement !== undefined
+        ? estimatedTravelRequirement?.trim() || null
+        : existing.estimatedTravelRequirement;
+    const nextEstimatedKilometres =
+      estimatedKilometres !== undefined
+        ? estimatedKilometres != null && estimatedKilometres !== ''
+          ? Number(estimatedKilometres)
+          : null
+        : existing.estimatedKilometres;
+    const beforeAudit = JSON.stringify({
+      status: existing.status,
+      title: existing.title,
+      ownerEmployeeId: existing.ownerEmployeeId,
+    });
+    const afterAudit = JSON.stringify({
+      status: existing.status,
+      title: nextTitle,
+      ownerEmployeeId: resolvedOwnerEmployeeId,
+    });
 
-    if (!updated) {
-      return NextResponse.json({ error: 'This programme changed while you were editing it. Refresh and try again.' }, { status: 409 });
+    try {
+      await db.execute(sql`
+        WITH programme_updated AS (
+          UPDATE programmes
+          SET
+            title = ${nextTitle},
+            description = ${nextDescription},
+            purpose = ${nextPurpose},
+            department = ${nextDepartment},
+            department_id = ${nextDepartmentId}::uuid,
+            owner_employee_id = ${resolvedOwnerEmployeeId}::uuid,
+            owner_user_id = ${resolvedOwnerUserId},
+            start_date = ${nextStartDate},
+            end_date = ${nextEndDate},
+            venue = ${nextVenue},
+            office_id = ${nextOfficeId}::uuid,
+            region_id = ${nextRegionId}::uuid,
+            region = ${nextRegion},
+            expected_participants = ${nextExpectedParticipants},
+            planned_activities = ${nextPlannedActivities},
+            estimated_travel_requirement = ${nextEstimatedTravelRequirement},
+            estimated_kilometres = ${nextEstimatedKilometres},
+            updated_at = now()
+          WHERE id = ${id}::uuid
+            AND tenant_id = ${tenantId}::uuid
+            AND status = ${existing.status}
+          RETURNING id
+        ),
+        audit_inserted AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id, action,
+            entity_type, entity_id, source_channel, before, after, summary, created_at
+          )
+          SELECT
+            ${tenantId}::uuid,
+            ${Date.now()},
+            'programme.edited',
+            ${userId},
+            'programme.edited',
+            'programme',
+            pu.id,
+            'web',
+            ${beforeAudit}::jsonb,
+            ${afterAudit}::jsonb,
+            ${`Programme ${existing.reference} was edited`},
+            now()
+          FROM programme_updated pu
+          RETURNING id
+        )
+        SELECT CAST(
+          CASE
+            WHEN (SELECT count(*) FROM programme_updated) = 1
+             AND (SELECT count(*) FROM audit_inserted) = 1
+            THEN '1'
+            ELSE 'atomic_programme_edit_failed'
+          END AS integer
+        ) AS committed
+      `);
+    } catch (error) {
+      if (isAtomicProgrammeMarker(error, 'atomic_programme_edit_failed')) {
+        return NextResponse.json(
+          { error: 'This programme changed while you were editing it. Refresh and try again.' },
+          { status: 409 },
+        );
+      }
+      throw error;
     }
 
-    await recordAuditEvent({
-      tenantId,
-      actorUserId: userId,
-      action: 'programme.edited',
-      entityType: 'programme',
-      entityId: id,
-      sourceChannel: 'web',
-      before: { status: existing.status, title: existing.title, ownerEmployeeId: existing.ownerEmployeeId },
-      after: { status: updated.status, title: updated.title, ownerEmployeeId: updated.ownerEmployeeId },
-      summary: `Programme ${existing.reference} was edited`,
-    });
+    const [updated] = await db
+      .select()
+      .from(programmes)
+      .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
+      .limit(1);
+    if (!updated) {
+      return NextResponse.json({ error: 'Programme was updated but could not be reloaded' }, { status: 500 });
+    }
 
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
@@ -378,25 +437,59 @@ export async function DELETE(
       if (permCheck instanceof NextResponse) return permCheck;
     }
 
-    await db
-      .update(transportRequests)
-      .set({ programmeId: null })
-      .where(and(eq(transportRequests.programmeId, id), eq(transportRequests.tenantId, tenantId)));
-
-    await db
-      .delete(programmes)
-      .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)));
-
-    await recordAuditEvent({
-      tenantId,
-      actorUserId: userId,
-      action: 'programme.deleted',
-      entityType: 'programme',
-      entityId: id,
-      sourceChannel: 'web',
-      before: { title: existing.title, reference: existing.reference, status: existing.status },
-      summary: `Draft programme ${existing.reference} was deleted`,
+    const beforeAudit = JSON.stringify({
+      title: existing.title,
+      reference: existing.reference,
+      status: existing.status,
     });
+
+    try {
+      await db.execute(sql`
+        WITH programme_deleted AS (
+          DELETE FROM programmes
+          WHERE id = ${id}::uuid
+            AND tenant_id = ${tenantId}::uuid
+            AND status = 'draft'
+          RETURNING id
+        ),
+        audit_inserted AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id, action,
+            entity_type, entity_id, source_channel, before, summary, created_at
+          )
+          SELECT
+            ${tenantId}::uuid,
+            ${Date.now()},
+            'programme.deleted',
+            ${userId},
+            'programme.deleted',
+            'programme',
+            pd.id,
+            'web',
+            ${beforeAudit}::jsonb,
+            ${`Draft programme ${existing.reference} was deleted`},
+            now()
+          FROM programme_deleted pd
+          RETURNING id
+        )
+        SELECT CAST(
+          CASE
+            WHEN (SELECT count(*) FROM programme_deleted) = 1
+             AND (SELECT count(*) FROM audit_inserted) = 1
+            THEN '1'
+            ELSE 'atomic_programme_delete_failed'
+          END AS integer
+        ) AS committed
+      `);
+    } catch (error) {
+      if (isAtomicProgrammeMarker(error, 'atomic_programme_delete_failed')) {
+        return NextResponse.json(
+          { error: 'This programme changed before deletion. Refresh and try again.' },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {
