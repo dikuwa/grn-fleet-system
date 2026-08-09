@@ -1,36 +1,51 @@
 import { and, eq, inArray, isNotNull, isNull, or, type SQL } from 'drizzle-orm';
-import { workflowSteps } from '@/db/schema/workflows';
+import { workflowInstances, workflowSteps } from '@/db/schema/workflows';
 import type { PermissionCode } from '@/lib/permissions';
 
 /**
- * Predicate for the active approvals a user should see in their queue.
+ * Predicate for active approvals visible to a user.
  *
- * Mirrors the runtime authorization model used by `getApprovalDetail.canAct`
- * and the workflow engine: an active approval belongs to a user when the
- * current step is explicitly assigned to them, OR when the step carries no
- * assignment but they hold the required permission.
+ * The durable per-instance current assignment is authoritative whenever it is
+ * present. This prevents a dynamically resolved acting/delegated holder from
+ * sharing the same queue item with every user who happens to hold the same
+ * permission, and prevents request-level reassignment from mutating the shared
+ * workflow definition.
  *
- * The engine resolves step holders at runtime (`resolveRoleHolder` — acting
- * delegations, availability, dynamic drivers) without persisting them, so the
- * raw `assignedUserId` column alone would leave the queue empty for every
- * permission-routed step. The `acknowledge` step is always unassigned in the
- * DB and is therefore surfaced through the permission branch too — the action
- * API still enforces the allocated-driver check.
+ * The legacy fallbacks are intentionally restricted to instances whose current
+ * assignment has not yet been persisted (for example an active instance that
+ * existed before migration 0050 and has not been refreshed by the engine):
+ *   1. explicit workflow-step assignment, then
+ *   2. an unassigned permission-routed step.
  *
- * @param userId          the signed-in user id
- * @param permissionCodes permission codes held by the user (may be empty)
+ * Once the engine persists currentAssignedUserId, only that user sees the
+ * active item in the SQL queue/badge. Action-time authorization remains the
+ * final security boundary.
  */
 export function activeApprovalVisibleTo(
   userId: string,
   permissionCodes: readonly PermissionCode[],
 ): SQL {
-  const assignedToMe = eq(workflowSteps.assignedUserId, userId);
-  if (permissionCodes.length === 0) return assignedToMe;
+  const persistedAssignedToMe = eq(workflowInstances.currentAssignedUserId, userId);
 
-  const unassignedWithPermission = and(
+  const legacyExplicitAssignedToMe = and(
+    isNull(workflowInstances.currentAssignedUserId),
+    eq(workflowSteps.assignedUserId, userId),
+  );
+
+  if (permissionCodes.length === 0) {
+    return or(persistedAssignedToMe, legacyExplicitAssignedToMe) ?? persistedAssignedToMe;
+  }
+
+  const legacyUnassignedWithPermission = and(
+    isNull(workflowInstances.currentAssignedUserId),
     isNull(workflowSteps.assignedUserId),
     isNotNull(workflowSteps.requiredPermission),
     inArray(workflowSteps.requiredPermission, [...permissionCodes]),
   );
-  return or(assignedToMe, unassignedWithPermission) ?? assignedToMe;
+
+  return or(
+    persistedAssignedToMe,
+    legacyExplicitAssignedToMe,
+    legacyUnassignedWithPermission,
+  ) ?? persistedAssignedToMe;
 }
