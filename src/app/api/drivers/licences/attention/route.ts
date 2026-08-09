@@ -1,10 +1,12 @@
 /**
  * GET /api/drivers/licences/attention
  *
- * Live count of driver licences awaiting verification for the tenant
- * (verificationStatus in the pending-review set, active records only).
- * Used by the Licence Verification sidebar badge in the Transport
- * Administration workspace. Mirrors the licence queue's pending definition.
+ * Live count of driver licences awaiting verification for the tenant.
+ * Pending renewal submissions are intentionally inactive until approved so the
+ * previous verified licence can remain operational; therefore the badge must
+ * count pending-review statuses regardless of the isActive flag.
+ * Used by the Licence Verification sidebar badge and mirrors the queue's
+ * pending definition.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -49,7 +51,6 @@ export async function GET(request: NextRequest) {
       .where(
         and(
           eq(employees.tenantId, session.tenantId),
-          eq(driverLicences.isActive, true),
           inArray(driverLicences.verificationStatus, [...PENDING_REVIEW]),
         ),
       );
