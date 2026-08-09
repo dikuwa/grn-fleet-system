@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { getDb } from '@/db';
 import { vehicleAllocations, trips } from '@/db/schema/trips';
 import { requestDrivers, transportRequests } from '@/db/schema/requests';
@@ -19,6 +20,7 @@ import { and, desc, eq, gt, inArray, lt } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { createScopedNotifications } from '@/lib/notification-service';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 const ALLOCATABLE_STATUSES = [
   'approved',
@@ -27,7 +29,7 @@ const ALLOCATABLE_STATUSES = [
   'release_pending',
   'vehicle_allocated',
 ];
-const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed', 'released'] as const;
+const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 
 export async function POST(req: NextRequest) {
   try {
@@ -151,8 +153,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Allocation dates are invalid' }, { status: 400 });
     }
 
-    // Vehicle and driver conflicts use the canonical allocation vocabulary from
-    // the schema: provisional, confirmed and released are all live bookings.
     const [vehicleOverlap] = await db.select({ id: vehicleAllocations.id })
       .from(vehicleAllocations)
       .where(and(
@@ -181,9 +181,6 @@ export async function POST(req: NextRequest) {
           licenceStatus: driverLicences.verificationStatus,
           licenceExpiry: driverLicences.expiryDate,
           licenceClass: driverLicences.licenceClass,
-          userId: employees.userId,
-          email: employees.email,
-          firstName: employees.firstName,
         })
         .from(employees)
         .innerJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
@@ -219,16 +216,12 @@ export async function POST(req: NextRequest) {
 
       const licenceCodes = [
         ...codes.map((row) => row.code),
-        ...String(driver.licenceClass || '')
-          .split(',')
-          .map((code) => code.trim())
-          .filter(Boolean),
+        ...String(driver.licenceClass || '').split(',').map((code) => code.trim()).filter(Boolean),
       ];
 
       driverCompliance = calculateDriverCompliance({
         employeeStatus: driver.employmentStatus,
-        availabilityStatus:
-          driver.availabilityStatus !== 'available' ? driver.availabilityStatus : driver.profileAvailability,
+        availabilityStatus: driver.availabilityStatus !== 'available' ? driver.availabilityStatus : driver.profileAvailability,
         driverStatus: driver.driverStatus,
         licenceStatus: driver.licenceStatus,
         licenceExpiry: driver.licenceExpiry,
@@ -249,53 +242,80 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const [allocation] = await db
-      .insert(vehicleAllocations)
-      .values({
-        requestId: resolvedRequestId,
-        vehicleId: resolvedVehicleId,
-        driverEmployeeId: resolvedDriverId,
-        startAt,
-        endAt,
-        state: 'confirmed',
-        allocatedByUserId: userId,
-        recommendationScore: recommendation?.topVariant?.score ?? null,
-      })
-      .returning();
+    const [existingRequestDriver] = resolvedDriverId
+      ? await db.select({ id: requestDrivers.id })
+          .from(requestDrivers)
+          .where(and(eq(requestDrivers.requestId, resolvedRequestId), eq(requestDrivers.employeeId, resolvedDriverId)))
+          .limit(1)
+      : [undefined];
 
-    const [trip] = await db
-      .insert(trips)
-      .values({
-        tenantId,
-        requestId: resolvedRequestId,
-        allocationId: allocation.id,
-        vehicleId: resolvedVehicleId,
-        status: 'pending',
-      })
-      .returning();
+    const allocationId = randomUUID();
+    const tripId = randomUUID();
+    const now = new Date();
 
-    await db
-      .update(transportRequests)
-      .set({
-        assignedDriverEmployeeId: resolvedDriverId,
-        status: 'vehicle_allocated',
-        updatedAt: new Date(),
-      })
-      .where(eq(transportRequests.id, resolvedRequestId));
+    await runAtomicMutations((tx) => {
+      const mutations = [
+        tx.insert(vehicleAllocations).values({
+          id: allocationId,
+          requestId: resolvedRequestId,
+          vehicleId: resolvedVehicleId,
+          driverEmployeeId: resolvedDriverId,
+          startAt,
+          endAt,
+          state: 'confirmed',
+          allocatedByUserId: userId,
+          recommendationScore: recommendation?.topVariant?.score ?? null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+        tx.insert(trips).values({
+          id: tripId,
+          tenantId,
+          requestId: resolvedRequestId,
+          allocationId,
+          vehicleId: resolvedVehicleId,
+          status: 'pending',
+          createdAt: now,
+          updatedAt: now,
+        }),
+        tx.update(transportRequests)
+          .set({ assignedDriverEmployeeId: resolvedDriverId, status: 'vehicle_allocated', updatedAt: now })
+          .where(and(eq(transportRequests.id, resolvedRequestId), eq(transportRequests.tenantId, tenantId))),
+      ];
 
-    if (resolvedDriverId) {
-      await db
-        .update(requestDrivers)
-        .set({ isConfirmed: false })
-        .where(eq(requestDrivers.requestId, resolvedRequestId));
-      await db
-        .update(requestDrivers)
-        .set({
-          isConfirmed: true,
-          licenceValidated: true,
-          driverType: 'assigned',
-        })
-        .where(and(eq(requestDrivers.requestId, resolvedRequestId), eq(requestDrivers.employeeId, resolvedDriverId)));
+      if (resolvedDriverId) {
+        mutations.push(
+          tx.update(requestDrivers)
+            .set({ isConfirmed: false })
+            .where(eq(requestDrivers.requestId, resolvedRequestId)),
+        );
+        if (existingRequestDriver) {
+          mutations.push(
+            tx.update(requestDrivers)
+              .set({ isConfirmed: true, licenceValidated: true, driverType: 'assigned' })
+              .where(eq(requestDrivers.id, existingRequestDriver.id)),
+          );
+        } else {
+          mutations.push(
+            tx.insert(requestDrivers).values({
+              requestId: resolvedRequestId,
+              employeeId: resolvedDriverId,
+              driverType: 'assigned',
+              isConfirmed: true,
+              licenceValidated: true,
+            }),
+          );
+        }
+      }
+      return mutations;
+    });
+
+    const [[allocation], [trip]] = await Promise.all([
+      db.select().from(vehicleAllocations).where(eq(vehicleAllocations.id, allocationId)).limit(1),
+      db.select().from(trips).where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId))).limit(1),
+    ]);
+    if (!allocation || !trip) {
+      throw new Error('Atomic allocation creation committed but created records could not be reloaded');
     }
 
     const doc = await onTripIssued(allocation.id, tenantId, userId);
@@ -303,11 +323,7 @@ export async function POST(req: NextRequest) {
     await recordAuditEvent({
       tenantId,
       actorUserId: userId,
-      action: resolvedDriverId
-        ? allocation.driverEmployeeId
-          ? 'allocation.created_with_driver'
-          : 'allocation.created'
-        : 'allocation.created',
+      action: resolvedDriverId ? 'allocation.created_with_driver' : 'allocation.created',
       entityType: 'allocation',
       entityId: allocation.id,
       summary: `Allocation created for ${foundReq.reference}: vehicle ${vehicle.licenceNumber}${resolvedDriverId ? `, driver ${resolvedDriverId.slice(0, 8)}` : ''}`,
@@ -350,8 +366,8 @@ export async function POST(req: NextRequest) {
               to: driverRow.email,
               type: 'allocation_created',
               title: '🚗 You have been assigned as driver',
-              body: `A vehicle (${vehicle.licenceNumber}) has been allocated to your request ${foundReq.reference} from ${startAt.toLocaleDateString('en-NA')}.`,
-              actionUrl: `/dashboard/trips`,
+              body: `A vehicle (${vehicle.licenceNumber}) has been allocated to request ${foundReq.reference} from ${startAt.toLocaleDateString('en-NA')}.`,
+              actionUrl: '/dashboard/trips',
               recipientName: driverRow.firstName || 'Driver',
             });
           }
@@ -364,11 +380,7 @@ export async function POST(req: NextRequest) {
     try {
       const { sendNotificationEmail } = await import('@/lib/email');
       const [requester] = await db
-        .select({
-          email: employees.email,
-          firstName: employees.firstName,
-          lastName: employees.lastName,
-        })
+        .select({ email: employees.email, firstName: employees.firstName, lastName: employees.lastName })
         .from(transportRequests)
         .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
         .where(and(eq(transportRequests.id, resolvedRequestId), eq(transportRequests.tenantId, tenantId)))
@@ -400,9 +412,6 @@ export async function POST(req: NextRequest) {
     if ((error as { code?: string })?.code === '23P01') {
       return NextResponse.json({ error: 'Vehicle is already allocated during this period' }, { status: 409 });
     }
-    return NextResponse.json(
-      { error: 'Failed to create allocation' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to create allocation' }, { status: 500 });
   }
 }

@@ -1,8 +1,8 @@
 /**
  * Allocation Driver Assignment API
  *
- * PATCH /api/allocations/[id]/driver  — Assign a driver to an allocation
- * DELETE /api/allocations/[id]/driver  — Unassign the driver
+ * PATCH /api/allocations/[id]/driver  — Assign/replace a driver
+ * DELETE /api/allocations/[id]/driver — Unassign the driver before issue
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,14 +16,16 @@ import {
   driverLicenceCodes,
   driverProfessionalAuthorisations,
 } from '@/db/schema/people';
-import { auditEvents } from '@/db/schema/audit';
 import { eq, and, gt, lt, inArray, ne, sql, desc } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { calculateDriverCompliance } from '@/lib/employee-lifecycle';
 import { recordAuditEvent } from '@/lib/audit-event';
-import { transportRequests } from '@/db/schema/requests';
+import { requestDrivers, transportRequests } from '@/db/schema/requests';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
+import { runAtomicMutations } from '@/lib/db-atomic';
+
+const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 
 export async function PATCH(
   request: NextRequest,
@@ -42,14 +44,11 @@ export async function PATCH(
 
     const body = await request.json();
     const { driverEmployeeId } = body;
-
     if (!driverEmployeeId) {
       return NextResponse.json({ error: 'driverEmployeeId is required' }, { status: 400 });
     }
 
     const db = getDb();
-
-    // Verify allocation exists and belongs to this tenant
     const [allocation] = await db
       .select({
         id: vehicleAllocations.id,
@@ -65,17 +64,18 @@ export async function PATCH(
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
-      .where(and(eq(vehicleAllocations.id, id), eq(vehicles.tenantId, session.tenantId)))
+      .where(and(
+        eq(vehicleAllocations.id, id),
+        eq(vehicles.tenantId, session.tenantId),
+        eq(transportRequests.tenantId, session.tenantId),
+      ))
       .limit(1);
 
-    if (!allocation) {
-      return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
-    }
-    if (!['provisional', 'confirmed'].includes(allocation.state)) {
-      return NextResponse.json({ error: 'Driver replacement is only allowed before physical issue' }, { status: 409 });
+    if (!allocation) return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+    if (!LIVE_ALLOCATION_STATES.includes(allocation.state as typeof LIVE_ALLOCATION_STATES[number])) {
+      return NextResponse.json({ error: 'Driver replacement is only allowed before physical issue/closure' }, { status: 409 });
     }
 
-    // Verify the employee exists, is a driver, and belongs to this tenant
     const [driver] = await db
       .select({
         id: employees.id,
@@ -101,16 +101,14 @@ export async function PATCH(
       .orderBy(desc(driverLicences.version))
       .limit(1);
 
-    if (!driver) {
-      return NextResponse.json({ error: 'Driver has no active licence profile.' }, { status: 409 });
-    }
+    if (!driver) return NextResponse.json({ error: 'Driver has no active licence profile.' }, { status: 409 });
 
     const [conflict] = await db.select({ id: vehicleAllocations.id })
       .from(vehicleAllocations)
       .where(and(
         eq(vehicleAllocations.driverEmployeeId, driverEmployeeId),
         ne(vehicleAllocations.id, id),
-        inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+        inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
         lt(vehicleAllocations.startAt, allocation.endAt),
         gt(vehicleAllocations.endAt, allocation.startAt),
       ))
@@ -130,7 +128,7 @@ export async function PATCH(
       driverStatus: driver.driverStatus,
       licenceStatus: driver.licenceStatus,
       licenceExpiry: driver.licenceExpiry,
-      licenceCodes: codes.length ? codes.map((row) => row.code) : [],
+      licenceCodes: codes.map((row) => row.code),
       requiredLicenceClass: allocation.requiredLicenceClass,
       professionalRequired: allocation.professionalAuthorisationRequired,
       professionalVerified: professional[0]?.isVerified,
@@ -145,37 +143,74 @@ export async function PATCH(
       }, { status: 409 });
     }
 
-    // Assign driver
-    await db
-      .update(vehicleAllocations)
-      .set({ driverEmployeeId, version: sql`${vehicleAllocations.version} + 1`, updatedAt: new Date() })
-      .where(eq(vehicleAllocations.id, id));
+    const [existingRequestDriver] = await db.select({ id: requestDrivers.id })
+      .from(requestDrivers)
+      .where(and(eq(requestDrivers.requestId, allocation.requestId), eq(requestDrivers.employeeId, driverEmployeeId)))
+      .limit(1);
 
-    await recordAuditEvent({
-      tenantId: session.tenantId,
-      actorUserId: session.user.id,
-      action: allocation.driverEmployeeId ? 'driver.replaced' : 'driver.assigned',
-      entityType: 'allocation',
-      entityId: id,
-      summary: allocation.driverEmployeeId ? `Driver replaced: ${allocation.driverEmployeeId} → ${driverEmployeeId}` : `Driver ${driverEmployeeId} assigned to allocation`,
-      before: { driverEmployeeId: allocation.driverEmployeeId },
-      after: { driverEmployeeId, compliance },
-    });
-    await recordTenantRequestActivity({
-      tenantId: session.tenantId,
-      requestId: allocation.requestId,
-      reference: allocation.requestReference,
-      stage: 'driver_assigned',
-      officeLabel: 'Transport office',
+    const now = new Date();
+    await runAtomicMutations((tx) => {
+      const mutations = [
+        tx.update(vehicleAllocations)
+          .set({ driverEmployeeId, version: sql`${vehicleAllocations.version} + 1`, updatedAt: now })
+          .where(eq(vehicleAllocations.id, id)),
+        tx.update(transportRequests)
+          .set({ assignedDriverEmployeeId: driverEmployeeId, updatedAt: now })
+          .where(and(eq(transportRequests.id, allocation.requestId), eq(transportRequests.tenantId, session.tenantId))),
+        tx.update(requestDrivers)
+          .set({ isConfirmed: false })
+          .where(eq(requestDrivers.requestId, allocation.requestId)),
+      ];
+      if (existingRequestDriver) {
+        mutations.push(
+          tx.update(requestDrivers)
+            .set({ isConfirmed: true, licenceValidated: true, driverType: 'assigned' })
+            .where(eq(requestDrivers.id, existingRequestDriver.id)),
+        );
+      } else {
+        mutations.push(
+          tx.insert(requestDrivers).values({
+            requestId: allocation.requestId,
+            employeeId: driverEmployeeId,
+            driverType: 'assigned',
+            isConfirmed: true,
+            licenceValidated: true,
+          }),
+        );
+      }
+      return mutations;
     });
 
-    // Notify the assigned driver by email (best-effort, never blocks the response)
+    try {
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        action: allocation.driverEmployeeId ? 'driver.replaced' : 'driver.assigned',
+        entityType: 'allocation',
+        entityId: id,
+        summary: allocation.driverEmployeeId
+          ? `Driver replaced: ${allocation.driverEmployeeId} → ${driverEmployeeId}`
+          : `Driver ${driverEmployeeId} assigned to allocation`,
+        before: { driverEmployeeId: allocation.driverEmployeeId },
+        after: { driverEmployeeId, compliance },
+      });
+      await recordTenantRequestActivity({
+        tenantId: session.tenantId,
+        requestId: allocation.requestId,
+        reference: allocation.requestReference,
+        stage: 'driver_assigned',
+        officeLabel: 'Transport office',
+      });
+    } catch (activityError) {
+      console.warn('[Allocation Driver] Post-commit audit/activity failed:', activityError);
+    }
+
     try {
       const { sendNotificationEmail } = await import('@/lib/email');
       const [driverRow] = await db
         .select({ email: employees.email, firstName: employees.firstName })
         .from(employees)
-        .where(eq(employees.id, driverEmployeeId))
+        .where(and(eq(employees.id, driverEmployeeId), eq(employees.tenantId, session.tenantId)))
         .limit(1);
       if (driverRow?.email) {
         await sendNotificationEmail({
@@ -183,7 +218,7 @@ export async function PATCH(
           type: 'allocation_created',
           title: '🚗 You have been assigned as driver',
           body: `You have been assigned to allocation for request ${allocation.requestReference ?? ''}. Please review the trip authority in the system.`,
-          actionUrl: `/dashboard/trips`,
+          actionUrl: '/dashboard/trips',
           recipientName: driverRow.firstName || 'Driver',
         });
       }
@@ -214,35 +249,55 @@ export async function DELETE(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-
-    // Verify allocation exists and belongs to this tenant
     const [allocation] = await db
-      .select({ id: vehicleAllocations.id })
+      .select({
+        id: vehicleAllocations.id,
+        state: vehicleAllocations.state,
+        requestId: vehicleAllocations.requestId,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
-      .where(and(eq(vehicleAllocations.id, id), eq(vehicles.tenantId, session.tenantId)))
+      .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+      .where(and(
+        eq(vehicleAllocations.id, id),
+        eq(vehicles.tenantId, session.tenantId),
+        eq(transportRequests.tenantId, session.tenantId),
+      ))
       .limit(1);
 
-    if (!allocation) {
-      return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+    if (!allocation) return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+    if (!LIVE_ALLOCATION_STATES.includes(allocation.state as typeof LIVE_ALLOCATION_STATES[number])) {
+      return NextResponse.json({ error: 'Driver can only be unassigned before physical issue/closure' }, { status: 409 });
     }
 
-    // Unassign driver
-    await db
-      .update(vehicleAllocations)
-      .set({ driverEmployeeId: null, updatedAt: new Date() })
-      .where(eq(vehicleAllocations.id, id));
+    const now = new Date();
+    await runAtomicMutations((tx) => [
+      tx.update(vehicleAllocations)
+        .set({ driverEmployeeId: null, version: sql`${vehicleAllocations.version} + 1`, updatedAt: now })
+        .where(eq(vehicleAllocations.id, id)),
+      tx.update(transportRequests)
+        .set({ assignedDriverEmployeeId: null, updatedAt: now })
+        .where(and(eq(transportRequests.id, allocation.requestId), eq(transportRequests.tenantId, session.tenantId))),
+      tx.update(requestDrivers)
+        .set({ isConfirmed: false })
+        .where(eq(requestDrivers.requestId, allocation.requestId)),
+    ]);
 
-    await db.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'driver_unassigned',
-      actorUserId: session.user.id,
-      action: 'unassign',
-      entityType: 'allocation',
-      entityId: id,
-      summary: 'Driver removed from allocation',
-    });
+    try {
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        action: 'driver.unassigned',
+        entityType: 'allocation',
+        entityId: id,
+        summary: 'Driver removed from allocation',
+        before: { driverEmployeeId: allocation.driverEmployeeId },
+        after: { driverEmployeeId: null },
+      });
+    } catch (auditError) {
+      console.warn('[Allocation Driver] Post-commit audit failed:', auditError);
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {
