@@ -11,9 +11,23 @@ import { getDb } from '@/db';
 import { notificationDeliveries, notifications } from '@/db/schema/notifications';
 import { employees } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { requireAnyPermission } from '@/lib/auth-helpers';
+import { recordAuditEvent } from '@/lib/audit-event';
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function summariseDeliveryError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, 500);
+}
 
 export async function POST(
   request: NextRequest,
@@ -33,7 +47,6 @@ export async function POST(
 
     const db = getDb();
 
-    // Fetch the delivery record with its notification
     const [delivery] = await db
       .select({
         id: notificationDeliveries.id,
@@ -87,7 +100,6 @@ export async function POST(
       );
     }
 
-    // Find the recipient's email from employee records
     let recipientEmail: string | null = null;
     if (delivery.notification.recipientUserId) {
       const [employee] = await db
@@ -110,60 +122,95 @@ export async function POST(
       );
     }
 
-    // Attempt to resend the email
+    const resend = new Resend(resendApiKey);
+    const safeTitle = escapeHtml(delivery.notification.title);
+    const safeBody = escapeHtml(delivery.notification.body || delivery.notification.title).replaceAll('\n', '<br />');
+
     let retryStatus: 'sent' | 'failed' = 'failed';
     let retryErrorSummary: string | undefined;
+    let providerId: string | null = null;
 
-        try {
-          const resend = new Resend(resendApiKey);
-          await resend.emails.send({
-            from: process.env.EMAIL_FROM || 'noreply@grnfleet.gov.na',
-            to: recipientEmail,
-            subject: delivery.notification.title,
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #1F2937; border-bottom: 2px solid #E5E7EB; padding-bottom: 8px;">
-                  ${delivery.notification.title}
-                </h2>
-                <p style="color: #374151; font-size: 15px; line-height: 1.6;">
-                  ${delivery.notification.body || delivery.notification.title}
-                </p>
-                <p style="color: #6B7280; font-size: 13px;">
-                  This is a retry attempt for a failed notification delivery.
-                </p>
-                <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 16px 0;" />
-                <p style="color: #9CA3AF; font-size: 12px;">
-                  This is an automated message from the Government Fleet Management System.
-                </p>
-              </div>
-            `,
-          });
-          retryStatus = 'sent';
-        } catch (retryError) {
-          retryStatus = 'failed';
-          retryErrorSummary = String(retryError);
-        }
+    try {
+      const result = await resend.emails.send({
+        from: process.env.EMAIL_FROM || 'noreply@grnfleet.gov.na',
+        to: recipientEmail,
+        subject: delivery.notification.title,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #1F2937; border-bottom: 2px solid #E5E7EB; padding-bottom: 8px;">
+              ${safeTitle}
+            </h2>
+            <p style="color: #374151; font-size: 15px; line-height: 1.6;">
+              ${safeBody}
+            </p>
+            <p style="color: #6B7280; font-size: 13px;">
+              This is a retry attempt for a failed notification delivery.
+            </p>
+            <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 16px 0;" />
+            <p style="color: #9CA3AF; font-size: 12px;">
+              This is an automated message from the Government Fleet Management System.
+            </p>
+          </div>
+        `,
+      });
 
-        // Record the retry attempt
-        const [newRecord] = await db
-          .insert(notificationDeliveries)
-          .values({
-            notificationId: delivery.notificationId,
-            channel: 'email',
-            attempt: delivery.attempt + 1,
-            status: retryStatus,
-            errorSummary: retryErrorSummary,
-          })
-          .returning();
+      if (result.error) {
+        throw new Error(result.error.message || 'Email provider rejected the retry');
+      }
 
-        return NextResponse.json({
-          success: retryStatus === 'sent',
+      providerId = result.data?.id ?? null;
+      retryStatus = 'sent';
+    } catch (retryError) {
+      retryStatus = 'failed';
+      retryErrorSummary = summariseDeliveryError(retryError);
+    }
+
+    const [newRecord] = await db
+      .insert(notificationDeliveries)
+      .values({
+        notificationId: delivery.notificationId,
+        channel: 'email',
+        attempt: delivery.attempt + 1,
+        status: retryStatus,
+        providerId,
+        errorSummary: retryErrorSummary,
+      })
+      .returning();
+
+    await recordAuditEvent({
+      tenantId: session.tenantId,
+      actorUserId: session.user.id,
+      action: retryStatus === 'sent' ? 'notification.delivery-retried' : 'notification.delivery-retry-failed',
+      entityType: 'notification_delivery',
+      entityId: newRecord.id,
+      after: {
+        notificationId: delivery.notificationId,
+        previousDeliveryId: delivery.id,
+        attempt: newRecord.attempt,
+        channel: newRecord.channel,
+        status: retryStatus,
+        providerId,
+      },
+      summary: retryStatus === 'sent'
+        ? `Retried notification delivery attempt ${newRecord.attempt}`
+        : `Notification delivery retry attempt ${newRecord.attempt} failed`,
+    });
+
+    if (retryStatus === 'failed') {
+      return NextResponse.json(
+        {
+          error: retryErrorSummary || 'Email provider rejected the retry',
           data: newRecord,
-        });
+        },
+        { status: 502 },
+      );
+    }
+
+    return NextResponse.json({ success: true, data: newRecord });
   } catch (error) {
     console.error('[deliveries/retry] Failed:', error);
     return NextResponse.json(
-      { error: 'Failed to retry delivery: ' + String(error) },
+      { error: 'Failed to retry delivery: ' + summariseDeliveryError(error) },
       { status: 500 },
     );
   }
