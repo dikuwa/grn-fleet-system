@@ -1,13 +1,11 @@
 import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   tripAmendments,
   tripAuthorities,
-  tripAuthorityVersions,
 } from '@/db/schema/trips';
-import { generatedDocuments } from '@/db/schema/documents';
 import { auditEvents } from '@/db/schema/audit';
 import { requireAnyPermission, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -21,6 +19,12 @@ function originalValue(authority: typeof tripAuthorities.$inferSelect, type: Ame
   if (type === 'route_change') return { origin: authority.origin, destination: authority.destination, approvedRoute: authority.approvedRoute };
   if (type === 'purpose_clarification') return { purpose: authority.purpose };
   return { specialConditions: authority.specialConditions, specialAuthorityGranted: authority.specialAuthorityGranted };
+}
+
+function optionalDate(value: unknown): Date | null {
+  if (value == null || value === '') return null;
+  const parsed = new Date(String(value));
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
 }
 
 export async function POST(
@@ -165,65 +169,149 @@ export async function PATCH(
     }
 
     const values = record.amendment.newValue;
-    const patch: Partial<typeof tripAuthorities.$inferInsert> = {
-      version: record.amendment.version,
-      documentVersion: record.amendment.version,
-      updatedAt: now,
-    };
-    if (record.amendment.amendmentType === 'date_extension') {
-      if (values.validFrom) patch.validFrom = new Date(String(values.validFrom));
-      if (values.validUntil) patch.validUntil = new Date(String(values.validUntil));
-    } else if (record.amendment.amendmentType === 'route_change') {
-      if (values.origin) patch.origin = String(values.origin);
-      if (values.destination) patch.destination = String(values.destination);
-      if (values.approvedRoute) patch.approvedRoute = String(values.approvedRoute);
-    } else if (record.amendment.amendmentType === 'purpose_clarification') {
-      patch.purpose = String(values.purpose || '');
-    } else {
-      patch.specialConditions = String(values.specialConditions || '');
-      patch.specialAuthorityGranted = values.specialAuthorityGranted === true;
+    const amendmentType = record.amendment.amendmentType;
+    const validFrom = amendmentType === 'date_extension' ? optionalDate(values.validFrom) : null;
+    const validUntil = amendmentType === 'date_extension' ? optionalDate(values.validUntil) : null;
+    if (amendmentType === 'date_extension') {
+      if (values.validFrom != null && !validFrom) {
+        return NextResponse.json({ error: 'Amended start date is invalid' }, { status: 422 });
+      }
+      if (values.validUntil != null && !validUntil) {
+        return NextResponse.json({ error: 'Amended end date is invalid' }, { status: 422 });
+      }
+      const effectiveStart = validFrom ?? record.authority.validFrom;
+      const effectiveEnd = validUntil ?? record.authority.validUntil;
+      if (effectiveStart && effectiveEnd && effectiveEnd <= effectiveStart) {
+        return NextResponse.json({ error: 'Amended authority end date must be after the start date' }, { status: 422 });
+      }
     }
 
-    await runAtomicMutations((tx) => [
-      // Do not swallow this unique conflict: the immutable version row is also
-      // the concurrency guard that prevents two approval decisions from winning.
-      tx.insert(tripAuthorityVersions).values({
-        authorityId: record.authority.id,
-        version: record.authority.version,
-        status: 'superseded',
-        snapshot: record.authority as unknown as Record<string, unknown>,
-        reason: record.amendment.reason,
-        createdByUserId: session.user.id,
-      }),
-      tx.update(tripAuthorities).set(patch).where(and(
-        eq(tripAuthorities.id, record.authority.id),
-        eq(tripAuthorities.tenantId, session.tenantId),
-        eq(tripAuthorities.version, record.authority.version),
-      )),
-      tx.update(generatedDocuments).set({
-        status: 'superseded',
-        updatedAt: now,
-      }).where(and(
-        eq(generatedDocuments.tenantId, session.tenantId),
-        eq(generatedDocuments.entityType, 'trip'),
-        eq(generatedDocuments.entityId, id),
-        eq(generatedDocuments.status, 'issued'),
-      )),
-      tx.update(tripAmendments).set({
-        status: 'approved',
-        approvedByUserId: session.user.id,
-        approvedAt: now,
-      }).where(and(
-        eq(tripAmendments.id, body.amendmentId),
-        eq(tripAmendments.status, 'pending'),
-      )),
-      tx.insert(auditEvents).values(auditEvent),
-    ]);
+    const origin = amendmentType === 'route_change' && values.origin ? String(values.origin) : null;
+    const destination = amendmentType === 'route_change' && values.destination ? String(values.destination) : null;
+    const approvedRoute = amendmentType === 'route_change' && values.approvedRoute ? String(values.approvedRoute) : null;
+    const purpose = amendmentType === 'purpose_clarification' ? String(values.purpose || '') : null;
+    const specialConditions = amendmentType === 'special_authorisation' ? String(values.specialConditions || '') : null;
+    const specialAuthorityGranted = amendmentType === 'special_authorisation' ? values.specialAuthorityGranted === true : null;
+    const auditBefore = JSON.stringify(record.amendment.originalValue ?? {});
+    const auditAfter = JSON.stringify(record.amendment.newValue ?? {});
+    const decisionReason = comment || record.amendment.reason;
+
+    // One statement owns the full approval transition. The pending amendment is
+    // claimed first; every dependent write is chained to that claim. If the
+    // authority version changed concurrently, the final guard deliberately
+    // raises an error and PostgreSQL rolls the entire statement back.
+    await db.execute(sql`
+      WITH amendment_claim AS (
+        UPDATE trip_amendments
+        SET status = 'approved',
+            approved_by_user_id = ${session.user.id},
+            approved_at = ${now}
+        WHERE id = ${body.amendmentId}::uuid
+          AND authority_id = ${record.authority.id}::uuid
+          AND status = 'pending'
+        RETURNING id
+      ),
+      authority_claim AS (
+        UPDATE trip_authorities
+        SET version = ${record.amendment.version},
+            document_version = ${record.amendment.version},
+            valid_from = CASE
+              WHEN ${amendmentType} = 'date_extension' AND ${validFrom}::timestamptz IS NOT NULL THEN ${validFrom}
+              ELSE valid_from
+            END,
+            valid_until = CASE
+              WHEN ${amendmentType} = 'date_extension' AND ${validUntil}::timestamptz IS NOT NULL THEN ${validUntil}
+              ELSE valid_until
+            END,
+            origin = CASE
+              WHEN ${amendmentType} = 'route_change' AND ${origin}::text IS NOT NULL THEN ${origin}
+              ELSE origin
+            END,
+            destination = CASE
+              WHEN ${amendmentType} = 'route_change' AND ${destination}::text IS NOT NULL THEN ${destination}
+              ELSE destination
+            END,
+            approved_route = CASE
+              WHEN ${amendmentType} = 'route_change' AND ${approvedRoute}::text IS NOT NULL THEN ${approvedRoute}
+              ELSE approved_route
+            END,
+            purpose = CASE WHEN ${amendmentType} = 'purpose_clarification' THEN ${purpose} ELSE purpose END,
+            special_conditions = CASE WHEN ${amendmentType} = 'special_authorisation' THEN ${specialConditions} ELSE special_conditions END,
+            special_authority_granted = CASE
+              WHEN ${amendmentType} = 'special_authorisation' THEN ${specialAuthorityGranted}
+              ELSE special_authority_granted
+            END,
+            updated_at = ${now}
+        WHERE id = ${record.authority.id}::uuid
+          AND tenant_id = ${session.tenantId}::uuid
+          AND version = ${record.authority.version}
+          AND EXISTS (SELECT 1 FROM amendment_claim)
+        RETURNING *
+      ),
+      version_insert AS (
+        INSERT INTO trip_authority_versions (
+          authority_id, version, status, snapshot, reason, created_by_user_id
+        )
+        SELECT
+          id,
+          version,
+          status,
+          to_jsonb(authority_claim),
+          ${record.amendment.reason},
+          ${session.user.id}
+        FROM authority_claim
+        RETURNING id
+      ),
+      documents_update AS (
+        UPDATE generated_documents
+        SET status = 'superseded', updated_at = ${now}
+        WHERE tenant_id = ${session.tenantId}::uuid
+          AND entity_type = 'trip'
+          AND entity_id = ${id}::uuid
+          AND status = 'issued'
+          AND EXISTS (SELECT 1 FROM version_insert)
+        RETURNING id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id, action,
+          entity_type, entity_id, before, after, reason, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${Date.now()},
+          'trip_authority_amendment_approved',
+          ${session.user.id},
+          'approve',
+          'trip_amendment',
+          ${body.amendmentId}::uuid,
+          ${auditBefore}::jsonb,
+          ${auditAfter}::jsonb,
+          ${decisionReason},
+          'web'
+        FROM version_insert
+        RETURNING id
+      )
+      SELECT CASE
+        WHEN (SELECT count(*) FROM amendment_claim) = 1
+         AND (SELECT count(*) FROM authority_claim) = 1
+         AND (SELECT count(*) FROM version_insert) = 1
+         AND (SELECT count(*) FROM audit_insert) = 1
+        THEN 1
+        ELSE CAST('atomic_authority_amendment_failed' AS integer)
+      END AS committed
+    `);
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[authority/amendments] PATCH failed:', error);
     if ((error as { code?: string })?.code === '23505') {
+      return NextResponse.json(
+        { error: 'This Trip Authority changed while the amendment was being decided. Refresh and review the latest version.' },
+        { status: 409 },
+      );
+    }
+    if (String(error).includes('atomic_authority_amendment_failed')) {
       return NextResponse.json(
         { error: 'This Trip Authority changed while the amendment was being decided. Refresh and review the latest version.' },
         { status: 409 },
