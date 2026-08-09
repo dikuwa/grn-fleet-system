@@ -18,19 +18,25 @@ async function validateReferences(
   const parentId = typeof body.parentId === 'string' && body.parentId ? body.parentId : null;
   if (parentId === currentId) return 'An organisation unit cannot be its own parent.';
 
+  const requireActiveParent = !currentId || body.parentId !== undefined;
   let cursor = parentId;
   const visited = new Set<string>();
+  let firstParent = true;
   while (cursor) {
     if (visited.has(cursor) || cursor === currentId) {
       return 'The selected parent would create a circular organisation hierarchy.';
     }
     visited.add(cursor);
     const [parent] = await db
-      .select({ parentId: departments.parentId })
+      .select({ parentId: departments.parentId, isActive: departments.isActive })
       .from(departments)
       .where(and(eq(departments.id, cursor), eq(departments.tenantId, tenantId)))
       .limit(1);
     if (!parent) return 'The selected parent unit does not belong to this tenant.';
+    if (firstParent && requireActiveParent && !parent.isActive) {
+      return 'The selected parent unit is archived. Choose an active organisation unit.';
+    }
+    firstParent = false;
     cursor = parent.parentId;
   }
 
@@ -49,18 +55,23 @@ async function validateReferences(
         ),
       )
       .limit(1);
-    if (!office) return 'One or more selected offices do not belong to this tenant.';
+    if (!office) return 'One or more selected offices are inactive or do not belong to this tenant.';
   }
 
-  if (typeof body.headEmployeeId === 'string' && body.headEmployeeId) {
+  const validateHead = !currentId || body.headEmployeeId !== undefined;
+  if (validateHead && typeof body.headEmployeeId === 'string' && body.headEmployeeId) {
     const [head] = await db
       .select({ id: employees.id })
       .from(employees)
       .where(
-        and(eq(employees.id, body.headEmployeeId), eq(employees.tenantId, tenantId)),
+        and(
+          eq(employees.id, body.headEmployeeId),
+          eq(employees.tenantId, tenantId),
+          eq(employees.employmentStatus, 'active'),
+        ),
       )
       .limit(1);
-    if (!head) return 'The selected unit head does not belong to this tenant.';
+    if (!head) return 'The selected unit head must be an active employee in this tenant.';
   }
   return null;
 }
