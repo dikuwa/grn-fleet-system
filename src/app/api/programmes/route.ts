@@ -1,16 +1,19 @@
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { programmes } from '@/db/schema/programmes';
+import { programmeReferenceSequences } from '@/db/schema/request-sequences';
+import { auditEvents } from '@/db/schema/audit';
 import { employees, departments, offices } from '@/db/schema/people';
 import { regions } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, like, or, desc, sql, type SQL } from 'drizzle-orm';
-import { recordAuditEvent } from '@/lib/audit-event';
 import {
   programmeOwnershipCondition,
   resolveProgrammeAccess,
 } from '@/lib/programme-access';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 /**
  * Programme management API
@@ -223,12 +226,29 @@ export async function POST(request: NextRequest) {
     }
 
     const now = new Date();
-    const seq = String(Math.floor(Math.random() * 900) + 100);
-    const reference = `GRN/PGM/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}/${seq}`;
+    const sequenceYear = Number(
+      new Intl.DateTimeFormat('en', { timeZone: 'Africa/Windhoek', year: 'numeric' }).format(now),
+    );
+    const [sequence] = await db
+      .insert(programmeReferenceSequences)
+      .values({ tenantId, sequenceYear, currentValue: 1, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [programmeReferenceSequences.tenantId, programmeReferenceSequences.sequenceYear],
+        set: {
+          currentValue: sql`${programmeReferenceSequences.currentValue} + 1`,
+          updatedAt: now,
+        },
+      })
+      .returning({ currentValue: programmeReferenceSequences.currentValue });
+    if (!sequence?.currentValue) {
+      throw new Error('Unable to allocate a programme reference');
+    }
+    const reference = `GRN/PGM/${sequenceYear}/${String(sequence.currentValue).padStart(6, '0')}`;
+    const programmeId = randomUUID();
 
-    const [created] = await db
-      .insert(programmes)
-      .values({
+    await runAtomicMutations((tx) => [
+      tx.insert(programmes).values({
+        id: programmeId,
         tenantId,
         reference,
         title: title.trim(),
@@ -256,24 +276,32 @@ export async function POST(request: NextRequest) {
             : null,
         status: 'draft',
         createdByUserId: userId,
-      })
-      .returning();
+      }),
+      tx.insert(auditEvents).values({
+        tenantId,
+        tenantSequence: Date.now(),
+        eventType: 'programme_created',
+        actorUserId: userId,
+        action: 'programme.created',
+        entityType: 'programme',
+        entityId: programmeId,
+        sourceChannel: 'web',
+        after: {
+          reference,
+          title: title.trim(),
+          status: 'draft',
+          ownerEmployeeId: resolvedOwnerEmployeeId,
+        },
+        summary: `Programme ${reference} created as a draft`,
+      }),
+    ]);
 
-    await recordAuditEvent({
-      tenantId,
-      actorUserId: userId,
-      action: 'programme.created',
-      entityType: 'programme',
-      entityId: created.id,
-      sourceChannel: 'web',
-      after: {
-        reference: created.reference,
-        title: created.title,
-        status: 'draft',
-        ownerEmployeeId: created.ownerEmployeeId,
-      },
-      summary: `Programme ${created.reference} created as a draft`,
-    });
+    const [created] = await db
+      .select()
+      .from(programmes)
+      .where(and(eq(programmes.id, programmeId), eq(programmes.tenantId, tenantId)))
+      .limit(1);
+    if (!created) throw new Error('Programme committed but could not be reloaded');
 
     return NextResponse.json({ success: true, data: created });
   } catch (error) {
