@@ -84,69 +84,69 @@ async function fetchRequestDetail(id: string, tenantId: string) {
 
   const [activities, passengers, drivers, routes, attachments, linkedProgramme] =
     await Promise.all([
-    db
-      .select()
-      .from(requestActivities)
-      .where(eq(requestActivities.requestId, id))
-      .orderBy(requestActivities.startDate),
-    db
-      .select({
-        id: requestPassengers.id,
-        employeeId: requestPassengers.employeeId,
-        externalName: requestPassengers.externalName,
-        status: requestPassengers.status,
-        createdAt: requestPassengers.createdAt,
-        empFirstName: employees.firstName,
-        empLastName: employees.lastName,
-      })
-      .from(requestPassengers)
-      .leftJoin(employees, eq(requestPassengers.employeeId, employees.id))
-      .where(eq(requestPassengers.requestId, id)),
-    db
-      .select({
-        id: requestDrivers.id,
-        employeeId: requestDrivers.employeeId,
-        driverType: requestDrivers.driverType,
-        sortOrder: requestDrivers.sortOrder,
-        isConfirmed: requestDrivers.isConfirmed,
-        licenceValidated: requestDrivers.licenceValidated,
-        createdAt: requestDrivers.createdAt,
-        empFirstName: employees.firstName,
-        empLastName: employees.lastName,
-      })
-      .from(requestDrivers)
-      .leftJoin(employees, eq(requestDrivers.employeeId, employees.id))
-      .where(eq(requestDrivers.requestId, id))
-      .orderBy(requestDrivers.sortOrder),
-    db
-      .select()
-      .from(requestRoutes)
-      .where(eq(requestRoutes.requestId, id))
-      .orderBy(requestRoutes.createdAt),
-    db
-      .select()
-      .from(requestAttachments)
-      .where(eq(requestAttachments.requestId, id))
-      .orderBy(desc(requestAttachments.createdAt)),
-    request.programmeId
-      ? db
-          .select({
-            id: programmes.id,
-            reference: programmes.reference,
-            title: programmes.title,
-            status: programmes.status,
-            startDate: programmes.startDate,
-            endDate: programmes.endDate,
-            venue: programmes.venue,
-          })
-          .from(programmes)
-          .where(
-            and(eq(programmes.id, request.programmeId), eq(programmes.tenantId, tenantId)),
-          )
-          .limit(1)
-          .then((r) => r[0] ?? null)
-      : Promise.resolve(null),
-  ]);
+      db
+        .select()
+        .from(requestActivities)
+        .where(eq(requestActivities.requestId, id))
+        .orderBy(requestActivities.startDate),
+      db
+        .select({
+          id: requestPassengers.id,
+          employeeId: requestPassengers.employeeId,
+          externalName: requestPassengers.externalName,
+          status: requestPassengers.status,
+          createdAt: requestPassengers.createdAt,
+          empFirstName: employees.firstName,
+          empLastName: employees.lastName,
+        })
+        .from(requestPassengers)
+        .leftJoin(employees, eq(requestPassengers.employeeId, employees.id))
+        .where(eq(requestPassengers.requestId, id)),
+      db
+        .select({
+          id: requestDrivers.id,
+          employeeId: requestDrivers.employeeId,
+          driverType: requestDrivers.driverType,
+          sortOrder: requestDrivers.sortOrder,
+          isConfirmed: requestDrivers.isConfirmed,
+          licenceValidated: requestDrivers.licenceValidated,
+          createdAt: requestDrivers.createdAt,
+          empFirstName: employees.firstName,
+          empLastName: employees.lastName,
+        })
+        .from(requestDrivers)
+        .leftJoin(employees, eq(requestDrivers.employeeId, employees.id))
+        .where(eq(requestDrivers.requestId, id))
+        .orderBy(requestDrivers.sortOrder),
+      db
+        .select()
+        .from(requestRoutes)
+        .where(eq(requestRoutes.requestId, id))
+        .orderBy(requestRoutes.createdAt),
+      db
+        .select()
+        .from(requestAttachments)
+        .where(eq(requestAttachments.requestId, id))
+        .orderBy(desc(requestAttachments.createdAt)),
+      request.programmeId
+        ? db
+            .select({
+              id: programmes.id,
+              reference: programmes.reference,
+              title: programmes.title,
+              status: programmes.status,
+              startDate: programmes.startDate,
+              endDate: programmes.endDate,
+              venue: programmes.venue,
+            })
+            .from(programmes)
+            .where(
+              and(eq(programmes.id, request.programmeId), eq(programmes.tenantId, tenantId)),
+            )
+            .limit(1)
+            .then((r) => r[0] ?? null)
+        : Promise.resolve(null),
+    ]);
 
   return { request, activities, passengers, drivers, routes, attachments, linkedProgramme };
 }
@@ -226,9 +226,6 @@ export default async function RequestDetailPage({ params }: PageProps) {
     request.requesterUserId === session.user.id || request.enteredByUserId === session.user.id;
 
   if (access.recordScope !== 'tenant' && !isOwner) {
-    // Drafts are private working records. Passenger/approver participation is
-    // meaningful only after submission and must never disclose an unsubmitted
-    // request through a guessed or previously shared UUID.
     if (request.status === 'draft') notFound();
 
     const db = getDb();
@@ -276,12 +273,13 @@ export default async function RequestDetailPage({ params }: PageProps) {
     ]);
     const canReviewApproval = Boolean(
       assignedApproval &&
-      (assignedApproval.assignedUserId === session.user.id ||
-        (assignedApproval.requiredPermission &&
-          permissionCodes.includes(assignedApproval.requiredPermission as PermissionCode))),
+        (assignedApproval.assignedUserId === session.user.id ||
+          (assignedApproval.requiredPermission &&
+            permissionCodes.includes(assignedApproval.requiredPermission as PermissionCode))),
     );
     if (!participant && !canReviewApproval && !previousApproval) notFound();
   }
+
   const canModify = access.actions.includes('update') && (access.recordScope === 'tenant' || isOwner);
   const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
   const requesterName =
@@ -300,7 +298,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
       />
       <PageHeader title={request.reference} description={request.purpose || 'Transport request'}>
         {canModify &&
-          request.requesterUserId === session.user.id &&
+          isOwner &&
           ['returned', 'rejected', 'supervisor_rejected'].includes(request.status) && (
             <ResubmitRequestButton requestId={id} />
           )}
