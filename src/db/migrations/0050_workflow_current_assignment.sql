@@ -29,6 +29,7 @@ DECLARE
   step_action text;
   fixed_assigned_user text;
   fixed_step_id uuid;
+  fixed_employee_id uuid;
   driver_user_id text;
   driver_employee_id uuid;
 BEGIN
@@ -72,14 +73,16 @@ BEGIN
           );
         END IF;
       ELSIF fixed_assigned_user IS NOT NULL THEN
-        NEW.current_assigned_user_id := fixed_assigned_user;
         SELECT e.id
-        INTO NEW.current_assigned_employee_id
+        INTO fixed_employee_id
         FROM employees e
         INNER JOIN transport_requests tr ON tr.tenant_id = e.tenant_id
         WHERE tr.id = NEW.request_id
           AND e.user_id = fixed_assigned_user
         LIMIT 1;
+
+        NEW.current_assigned_user_id := fixed_assigned_user;
+        NEW.current_assigned_employee_id := fixed_employee_id;
         NEW.current_assignment_source := 'definition';
         NEW.current_assignment_metadata := jsonb_build_object(
           'definitionStepId', fixed_step_id,
@@ -134,29 +137,35 @@ WHERE wi.status = 'active'
 
 -- Backfill Driver Acknowledgement for already-active instances where the driver
 -- is known from the latest confirmed allocation.
+WITH driver_assignments AS (
+  SELECT DISTINCT ON (wi.id)
+    wi.id AS instance_id,
+    e.user_id,
+    e.id AS employee_id
+  FROM workflow_instances wi
+  INNER JOIN workflow_steps ws
+    ON ws.definition_id = wi.definition_id
+   AND ws.step_order = wi.current_step_order
+  INNER JOIN vehicle_allocations va
+    ON va.request_id = wi.request_id
+   AND va.state = 'confirmed'
+  INNER JOIN employees e
+    ON e.id = va.driver_employee_id
+  WHERE wi.status = 'active'
+    AND wi.current_assigned_user_id IS NULL
+    AND ws.action_type = 'acknowledge'
+    AND e.user_id IS NOT NULL
+    AND e.employment_status = 'active'
+  ORDER BY wi.id, va.created_at DESC
+)
 UPDATE workflow_instances wi
-SET current_assigned_user_id = e.user_id,
-    current_assigned_employee_id = e.id,
+SET current_assigned_user_id = da.user_id,
+    current_assigned_employee_id = da.employee_id,
     current_assignment_source = 'driver_allocation',
     current_assignment_metadata = jsonb_build_object(
       'stepOrder', wi.current_step_order,
       'actionType', 'acknowledge',
       'backfilled', true
     )
-FROM workflow_steps ws,
-LATERAL (
-  SELECT va.driver_employee_id
-  FROM vehicle_allocations va
-  WHERE va.request_id = wi.request_id
-    AND va.state = 'confirmed'
-  ORDER BY va.created_at DESC
-  LIMIT 1
-) va_latest
-INNER JOIN employees e ON e.id = va_latest.driver_employee_id
-WHERE wi.status = 'active'
-  AND ws.definition_id = wi.definition_id
-  AND ws.step_order = wi.current_step_order
-  AND ws.action_type = 'acknowledge'
-  AND e.user_id IS NOT NULL
-  AND e.employment_status = 'active'
-  AND wi.current_assigned_user_id IS NULL;
+FROM driver_assignments da
+WHERE wi.id = da.instance_id;
