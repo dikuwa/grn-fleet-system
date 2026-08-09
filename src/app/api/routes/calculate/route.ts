@@ -10,10 +10,12 @@ import {
 import { getDb } from '@/db';
 import { requestRoutes, transportRequests } from '@/db/schema/requests';
 import { rateLimit } from '@/lib/rate-limit';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, inArray } from 'drizzle-orm';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 // Upper bound on legs per request — each leg is a paid Google API call.
 const MAX_LEGS = 10;
+const ROUTE_EDITABLE_STATUSES = ['draft', 'returned', 'rejected', 'supervisor_rejected'] as const;
 
 /**
  * POST /api/routes/calculate
@@ -134,43 +136,59 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // If a requestId was provided, save the results to the database
+    // If a requestId was provided, save the results to the database. Persisted
+    // route edits are requester-owned mutations, not tenant-wide REQUEST_VIEW
+    // operations: a passenger or unrelated tenant user must never be able to
+    // replace another requester's itinerary by guessing an ID.
     if (requestId && result.routes.length > 0) {
       const db = getDb();
 
-      // Verify the transport request belongs to this tenant before modifying routes
       const [transportReq] = await db
-        .select({ id: transportRequests.id })
+        .select({ id: transportRequests.id, status: transportRequests.status })
         .from(transportRequests)
-        .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, session.tenantId)))
+        .where(
+          and(
+            eq(transportRequests.id, requestId),
+            eq(transportRequests.tenantId, session.tenantId),
+            or(
+              eq(transportRequests.requesterUserId, session.user.id),
+              eq(transportRequests.enteredByUserId, session.user.id),
+            )!,
+            inArray(transportRequests.status, [...ROUTE_EDITABLE_STATUSES]),
+          ),
+        )
         .limit(1);
 
       if (!transportReq) {
-        return NextResponse.json({ error: 'Transport request not found or access denied' }, { status: 404 });
+        return NextResponse.json(
+          { error: 'Transport request is not editable by this user.' },
+          { status: 404 },
+        );
       }
 
-      // Remove old routes for this request (so we can replace them)
-      await db.delete(requestRoutes).where(eq(requestRoutes.requestId, requestId));
-
-      // Insert the calculated routes
-      await db.insert(requestRoutes).values(
-        result.routes.map((r) => ({
-          requestId,
-          originName: r.originName as string,
-          destinationName: r.destinationName as string,
-          originPlaceId: (r.originPlaceId as string) || null,
-          destinationPlaceId: (r.destinationPlaceId as string) || null,
-          originCoordinates: { lat: r.originLat as number, lng: r.originLng as number },
-          destinationCoordinates: { lat: r.destLat as number, lng: r.destLng as number },
-          mappedDistanceKm: r.distanceKm,
-          mappedDurationMinutes: r.durationMinutes,
-          routePolyline: (r.routePolyline as string) || null,
-          totalKilometres: r.distanceKm,
-          additionalKilometres: 0,
-          isVerified: false,
-          calculationTimestamp: new Date(),
-        })),
-      );
+      // Replace the route set as one transaction so a failed insert cannot
+      // leave an otherwise valid editable request with its itinerary erased.
+      await runAtomicMutations((tx) => [
+        tx.delete(requestRoutes).where(eq(requestRoutes.requestId, requestId)),
+        tx.insert(requestRoutes).values(
+          result.routes.map((r) => ({
+            requestId,
+            originName: r.originName as string,
+            destinationName: r.destinationName as string,
+            originPlaceId: (r.originPlaceId as string) || null,
+            destinationPlaceId: (r.destinationPlaceId as string) || null,
+            originCoordinates: { lat: r.originLat as number, lng: r.originLng as number },
+            destinationCoordinates: { lat: r.destLat as number, lng: r.destLng as number },
+            mappedDistanceKm: r.distanceKm,
+            mappedDurationMinutes: r.durationMinutes,
+            routePolyline: (r.routePolyline as string) || null,
+            totalKilometres: r.distanceKm,
+            additionalKilometres: 0,
+            isVerified: false,
+            calculationTimestamp: new Date(),
+          })),
+        ),
+      ]);
     }
 
     return NextResponse.json({
