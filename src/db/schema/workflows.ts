@@ -1,4 +1,13 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, jsonb } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  boolean,
+  integer,
+  jsonb,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { transportRequests } from './requests';
 
@@ -65,24 +74,35 @@ export const workflowInstances = pgTable('workflow_instances', {
 
 /**
  * Workflow actions (approve, reject, return, release, authorise, etc.)
+ *
+ * Migration 0011 already enforces one durable decision per workflow step at
+ * the database level. Declare the same constraint here so Drizzle's schema is
+ * an accurate model of the production database and concurrent action logic can
+ * rely on the invariant explicitly.
  */
-export const workflowActions = pgTable('workflow_actions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  instanceId: uuid('instance_id')
-    .notNull()
-    .references(() => workflowInstances.id, { onDelete: 'cascade' }),
-  stepOrder: integer('step_order').notNull(),
-  actionType: text('action_type').notNull(),
-  result: text('result').notNull(), // approved, rejected, returned, released, authorised, acknowledged, overridden
-  actorUserId: text('actor_user_id').notNull(),
-  actorEmployeeId: uuid('actor_employee_id'),
-  roleAssignmentId: uuid('role_assignment_id'),
-  isActing: boolean('is_acting').notNull().default(false),
-  comment: text('comment'),
-  signatureRef: text('signature_ref'),
-  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const workflowActions = pgTable(
+  'workflow_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    instanceId: uuid('instance_id')
+      .notNull()
+      .references(() => workflowInstances.id, { onDelete: 'cascade' }),
+    stepOrder: integer('step_order').notNull(),
+    actionType: text('action_type').notNull(),
+    result: text('result').notNull(), // approved, rejected, returned, released, authorised, acknowledged, overridden
+    actorUserId: text('actor_user_id').notNull(),
+    actorEmployeeId: uuid('actor_employee_id'),
+    roleAssignmentId: uuid('role_assignment_id'),
+    isActing: boolean('is_acting').notNull().default(false),
+    comment: text('comment'),
+    signatureRef: text('signature_ref'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('workflow_actions_instance_step_unique').on(table.instanceId, table.stepOrder),
+  ],
+);
 
 /**
  * Emergency overrides
