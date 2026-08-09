@@ -51,6 +51,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
   const [drivers, setDrivers] = useState<DriverInfo[]>([]);
   const [selectedDriverId, setSelectedDriverId] = useState(currentDriverId || '');
   const [replacementReason, setReplacementReason] = useState('');
+  const [unassignmentReason, setUnassignmentReason] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -99,6 +100,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to assign driver');
       setReplacementReason('');
+      setUnassignmentReason('');
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to assign driver');
@@ -108,23 +110,31 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
   }, [allocationId, currentDriverId, replacementReason, selectedDriverId, router]);
 
   const handleUnassign = useCallback(async () => {
+    if (!unassignmentReason.trim()) {
+      setError('Enter a reason before removing the assigned driver.');
+      return;
+    }
+
     setIsSaving(true);
     setError('');
     try {
       const res = await fetch(`/api/allocations/${allocationId}/driver`, {
         method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: unassignmentReason.trim() }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || 'Failed to unassign driver');
       setSelectedDriverId('');
       setReplacementReason('');
+      setUnassignmentReason('');
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to unassign driver');
     } finally {
       setIsSaving(false);
     }
-  }, [allocationId, router]);
+  }, [allocationId, router, unassignmentReason]);
 
   const selectedDriver = drivers.find((d) => d.id === selectedDriverId);
   const currentDriver = drivers.find((d) => d.id === currentDriverId);
@@ -171,8 +181,8 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       </div>
 
       {currentDriverId && currentDriver && (
-        <div className="rounded-[8px] border border-status-success-border bg-status-success-bg/30 p-3">
-          <div className="flex items-start justify-between gap-3">
+        <div className="space-y-3 rounded-[8px] border border-status-success-border bg-status-success-bg/30 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-status-success-bg text-status-success-text">
                 <User className="h-4 w-4" />
@@ -196,9 +206,36 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
                 )}
               </div>
             </div>
-            <Button variant="secondary" size="sm" loading={isSaving} onClick={handleUnassign}>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={isSaving}
+              disabled={!unassignmentReason.trim()}
+              onClick={handleUnassign}
+              className="self-start"
+            >
               Remove
             </Button>
+          </div>
+          <div className="space-y-1.5 border-t border-status-success-border/70 pt-3">
+            <label htmlFor={`driver-unassignment-reason-${allocationId}`} className="text-xs font-medium text-ink-700">
+              Removal reason <span className="text-status-error-text">*</span>
+            </label>
+            <textarea
+              id={`driver-unassignment-reason-${allocationId}`}
+              value={unassignmentReason}
+              onChange={(event) => {
+                setUnassignmentReason(event.target.value);
+                setError('');
+              }}
+              rows={2}
+              maxLength={500}
+              placeholder="Record why this driver assignment is being removed…"
+              className="w-full resize-y rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-ink-950 outline-none transition-colors placeholder:text-ink-400 focus:border-ink-400 focus:ring-2 focus:ring-ink-200"
+            />
+            <p className="text-xs text-ink-500">
+              The reason is saved to the audit trail and shared with the affected driver.
+            </p>
           </div>
         </div>
       )}

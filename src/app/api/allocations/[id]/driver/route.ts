@@ -25,6 +25,7 @@ import { requestDrivers, transportRequests } from '@/db/schema/requests';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { createScopedNotifications } from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 
@@ -82,6 +83,9 @@ export async function PATCH(
     }
     if (allocation.driverEmployeeId && !cleanReason) {
       return NextResponse.json({ error: 'A reason is required when replacing an assigned driver' }, { status: 400 });
+    }
+    if (cleanReason.length > 500) {
+      return NextResponse.json({ error: 'Driver replacement reason must be 500 characters or fewer' }, { status: 422 });
     }
 
     const [driver] = await db
@@ -242,21 +246,21 @@ export async function PATCH(
           entityType: 'allocation',
           entityId: id,
           actionUrl: '/dashboard/trips',
-          workspace: 'driver',
+          workspace: WorkspaceIds.DRIVER,
         });
       }
       if (previousDriver?.userId) {
         await createScopedNotifications({
           tenantId: session.tenantId,
           recipientUserIds: [previousDriver.userId],
-          category: 'status_update',
+          category: 'awareness',
           eventType: 'driver.assignment_removed',
           title: 'Driver assignment changed',
           body: `You are no longer assigned to request ${allocation.requestReference ?? ''}.${cleanReason ? ` Reason: ${cleanReason}` : ''}`,
           entityType: 'allocation',
           entityId: id,
           actionUrl: '/dashboard/trips',
-          workspace: 'driver',
+          workspace: WorkspaceIds.DRIVER,
         });
       }
 
@@ -307,6 +311,15 @@ export async function DELETE(
     const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
+    const body = (await request.json().catch(() => ({}))) as { reason?: string };
+    const cleanReason = typeof body.reason === 'string' ? body.reason.trim() : '';
+    if (!cleanReason) {
+      return NextResponse.json({ error: 'A reason is required when removing an assigned driver' }, { status: 400 });
+    }
+    if (cleanReason.length > 500) {
+      return NextResponse.json({ error: 'Driver removal reason must be 500 characters or fewer' }, { status: 422 });
+    }
+
     const db = getDb();
     const [allocation] = await db
       .select({
@@ -314,6 +327,7 @@ export async function DELETE(
         state: vehicleAllocations.state,
         requestId: vehicleAllocations.requestId,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        requestReference: transportRequests.reference,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
@@ -329,7 +343,11 @@ export async function DELETE(
     if (!LIVE_ALLOCATION_STATES.includes(allocation.state as typeof LIVE_ALLOCATION_STATES[number])) {
       return NextResponse.json({ error: 'Driver can only be unassigned before physical issue/closure' }, { status: 409 });
     }
+    if (!allocation.driverEmployeeId) {
+      return NextResponse.json({ error: 'This allocation has no assigned driver to remove' }, { status: 409 });
+    }
 
+    const removedDriverId = allocation.driverEmployeeId;
     const now = new Date();
     await runAtomicMutations((tx) => [
       tx.update(vehicleAllocations)
@@ -350,12 +368,56 @@ export async function DELETE(
         action: 'driver.unassigned',
         entityType: 'allocation',
         entityId: id,
-        summary: 'Driver removed from allocation',
-        before: { driverEmployeeId: allocation.driverEmployeeId },
-        after: { driverEmployeeId: null },
+        summary: `Driver removed from allocation. Reason: ${cleanReason}`,
+        before: { driverEmployeeId: removedDriverId },
+        after: { driverEmployeeId: null, removalReason: cleanReason },
+      });
+      await recordTenantRequestActivity({
+        tenantId: session.tenantId,
+        requestId: allocation.requestId,
+        reference: allocation.requestReference,
+        stage: 'driver_unassigned',
+        officeLabel: 'Transport office',
       });
     } catch (auditError) {
-      console.warn('[Allocation Driver] Post-commit audit failed:', auditError);
+      console.warn('[Allocation Driver] Post-commit audit/activity failed:', auditError);
+    }
+
+    try {
+      const [removedDriver] = await db
+        .select({ userId: employees.userId, email: employees.email, firstName: employees.firstName })
+        .from(employees)
+        .where(and(eq(employees.id, removedDriverId), eq(employees.tenantId, session.tenantId)))
+        .limit(1);
+
+      if (removedDriver?.userId) {
+        await createScopedNotifications({
+          tenantId: session.tenantId,
+          recipientUserIds: [removedDriver.userId],
+          category: 'awareness',
+          eventType: 'driver.assignment_removed',
+          title: 'Driver assignment removed',
+          body: `You are no longer assigned to request ${allocation.requestReference}. Reason: ${cleanReason}`,
+          entityType: 'allocation',
+          entityId: id,
+          actionUrl: '/dashboard/trips',
+          workspace: WorkspaceIds.DRIVER,
+        });
+      }
+
+      if (removedDriver?.email) {
+        const { sendNotificationEmail } = await import('@/lib/email');
+        await sendNotificationEmail({
+          to: removedDriver.email,
+          type: 'allocation_created',
+          title: 'Driver assignment removed',
+          body: `You are no longer assigned to request ${allocation.requestReference}. Reason: ${cleanReason}`,
+          actionUrl: '/dashboard/trips',
+          recipientName: removedDriver.firstName || 'Driver',
+        });
+      }
+    } catch (notifyError) {
+      console.warn('[Allocation Driver] Unassignment notification failed:', notifyError);
     }
 
     return NextResponse.json({ success: true });
