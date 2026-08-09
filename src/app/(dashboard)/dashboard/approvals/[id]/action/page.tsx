@@ -26,6 +26,14 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
     redirect(`/dashboard/approvals/${id}`);
   }
 
+  // Driver acknowledgement is intentionally completed from the assigned trip,
+  // where the driver must verify vehicle, authority, route, passenger manifest,
+  // licence validity, responsibility and special conditions. Do not expose a
+  // second generic approval writer for the same lifecycle transition.
+  if (detail.currentStep.actionType === 'acknowledge') {
+    redirect('/dashboard/trips');
+  }
+
   const title = buildApprovalRequestTitle({
     purpose: detail.instance.requestPurpose,
     routes: detail.routes.map((route) => ({

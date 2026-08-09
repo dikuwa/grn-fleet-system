@@ -20,14 +20,20 @@ import { WorkspaceIds } from '@/lib/workspaces';
  * not another approval decision. The workflow action, trip acknowledgement,
  * authority acceptance, request status and workflow completion are committed
  * together so the driver can never acknowledge only half of the trip state.
+ *
+ * `acceptanceData` contains the stronger Driver Console evidence (vehicle,
+ * route, manifest, licence and responsibility confirmations plus optional
+ * device/location metadata). The canonical HTTP endpoint validates that data
+ * before calling this transaction helper.
  */
 export async function processDriverAcknowledgement(input: {
   instanceId: string;
   result: WorkflowActionResult;
   comment?: string;
+  acceptanceData?: Record<string, unknown>;
   session: AuthSession;
 }): Promise<EngineResult> {
-  const { instanceId, result, comment, session } = input;
+  const { instanceId, result, comment, acceptanceData, session } = input;
   if (result !== 'acknowledged') {
     return {
       ok: false,
@@ -104,6 +110,12 @@ export async function processDriverAcknowledgement(input: {
   const auditId = randomUUID();
   const now = new Date();
   const completedStatus = workflowCompletedStatus();
+  const acceptanceDataJson = JSON.stringify({
+    ...(acceptanceData ?? {}),
+    acceptedAt: now.toISOString(),
+    acceptedByUserId: session.user.id,
+    source: 'driver_console',
+  });
 
   let commit;
   try {
@@ -137,6 +149,7 @@ export async function processDriverAcknowledgement(input: {
         SET status = 'driver_accepted',
             accepted_at = ${now},
             accepted_by_employee_id = ${context.driverEmployeeId}::uuid,
+            acceptance_data = ${acceptanceDataJson}::jsonb,
             updated_at = ${now}
         FROM claimed c
         WHERE ta.id = ${context.authorityId}::uuid
@@ -157,11 +170,12 @@ export async function processDriverAcknowledgement(input: {
       action_inserted AS (
         INSERT INTO workflow_actions (
           id, instance_id, step_order, action_type, result,
-          actor_user_id, actor_employee_id, comment, created_at
+          actor_user_id, actor_employee_id, comment, metadata, created_at
         )
         SELECT
           ${actionId}::uuid, c.id, ${currentStep.stepOrder}, 'acknowledge', 'acknowledged',
-          ${session.user.id}, ${context.driverEmployeeId}::uuid, ${comment?.trim() || null}, ${now}
+          ${session.user.id}, ${context.driverEmployeeId}::uuid, ${comment?.trim() || null},
+          ${acceptanceDataJson}::jsonb, ${now}
         FROM claimed c
         INNER JOIN trip_updated tu ON true
         INNER JOIN authority_updated au ON true
@@ -172,13 +186,14 @@ export async function processDriverAcknowledgement(input: {
         INSERT INTO audit_events (
           id, tenant_id, tenant_sequence, event_type, actor_user_id,
           actor_employee_id, action, entity_type, entity_id,
-          source_channel, summary, reason, created_at
+          source_channel, summary, reason, after, created_at
         )
         SELECT
           ${auditId}::uuid, ${session.tenantId}::uuid, ${Date.now()}, 'workflow_acknowledged',
           ${session.user.id}, ${context.driverEmployeeId}::uuid, 'workflow.acknowledged',
           'workflow_action', ${instanceId}::uuid, 'web',
-          'Assigned driver acknowledged the authorised trip', ${comment?.trim() || null}, ${now}
+          'Assigned driver acknowledged the authorised trip', ${comment?.trim() || null},
+          ${acceptanceDataJson}::jsonb, ${now}
         FROM action_inserted
         RETURNING id
       )
@@ -195,9 +210,6 @@ export async function processDriverAcknowledgement(input: {
       ) AS committed
     `);
   } catch (error) {
-    // The deliberately non-numeric ELSE branch above aborts the whole SQL
-    // statement when any compare-and-set precondition fails. Convert that
-    // expected rollback into a conflict rather than leaking an internal 500.
     console.warn('[driver-acknowledgement] Atomic acknowledgement rolled back:', error);
     const latest = await engine.getWorkflowStatus(instanceId).catch(() => null);
     if (

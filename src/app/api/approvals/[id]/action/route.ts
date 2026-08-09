@@ -12,7 +12,6 @@ import {
 import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 import { processAuthorisationDecision } from '@/lib/authorisation-decision';
-import { processDriverAcknowledgement } from '@/lib/driver-acknowledgement';
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
@@ -103,6 +102,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     const stepActionType = status.currentStep.actionType;
+    if (stepActionType === 'acknowledge') {
+      return NextResponse.json(
+        {
+          error:
+            'Driver acknowledgement must be completed from the assigned trip in Driver Console so the vehicle, route, passenger manifest and driver licence can be verified.',
+          actionUrl: '/dashboard/trips',
+        },
+        { status: 409 },
+      );
+    }
+
     const semanticResult: WorkflowActionResult =
       actionType === 'approved'
         ? semanticPositiveResult(stepActionType)
@@ -126,13 +136,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       });
     } else if (stepActionType === 'authorise') {
       result = await processAuthorisationDecision({
-        instanceId: id,
-        result: semanticResult,
-        comment: typeof comment === 'string' ? comment : undefined,
-        session,
-      });
-    } else if (stepActionType === 'acknowledge') {
-      result = await processDriverAcknowledgement({
         instanceId: id,
         result: semanticResult,
         comment: typeof comment === 'string' ? comment : undefined,

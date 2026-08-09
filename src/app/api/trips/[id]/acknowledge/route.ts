@@ -1,14 +1,20 @@
 /**
- * Driver Acknowledgement API
- * POST /api/trips/[id]/acknowledge — primary assigned driver accepts the Trip Authority.
+ * Driver Trip-Authority Acknowledgement API
+ * POST /api/trips/[id]/acknowledge
+ *
+ * This is the one canonical driver-acceptance entry point. It validates the
+ * driver's seven explicit confirmations and operational licence, then delegates
+ * the durable cross-entity transition to processDriverAcknowledgement().
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { trips, tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { processDriverAcknowledgement } from '@/lib/driver-acknowledgement';
+import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 
 export async function POST(
   req: NextRequest,
@@ -28,6 +34,7 @@ export async function POST(
       latitude?: number;
       longitude?: number;
       device?: string;
+      comment?: string;
     };
 
     const auth = await requireRequestAuth(req);
@@ -74,7 +81,10 @@ export async function POST(
         status: trips.status,
         driverAcknowledgedAt: trips.driverAcknowledgedAt,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        requestId: transportRequests.id,
+        requestReference: transportRequests.reference,
         requestStatus: transportRequests.status,
+        workflowInstanceId: transportRequests.workflowInstanceId,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
         validUntil: tripAuthorities.validUntil,
@@ -110,12 +120,26 @@ export async function POST(
         { status: 409 },
       );
     }
-    if (!['authorised', 'approved', 'approved_emergency', 'ready_for_issue'].includes(trip.requestStatus)) {
+    if (
+      ![
+        'driver_acknowledgement_pending',
+        'authorised',
+        'approved',
+        'approved_emergency',
+        'ready_for_issue',
+      ].includes(trip.requestStatus)
+    ) {
       return NextResponse.json({ error: 'Final authorisation is required before driver acceptance' }, { status: 409 });
     }
     if (trip.authorityStatus !== 'awaiting_driver_acceptance') {
       return NextResponse.json(
         { error: `Trip Authority cannot be accepted from "${trip.authorityStatus}"` },
+        { status: 409 },
+      );
+    }
+    if (!trip.workflowInstanceId) {
+      return NextResponse.json(
+        { error: 'The authorised request has no workflow instance to acknowledge. Ask Transport Administration to review the request.' },
         { status: 409 },
       );
     }
@@ -152,81 +176,53 @@ export async function POST(
       );
     }
 
-    const acceptedAt = new Date();
-    const acceptanceData = JSON.stringify({
-      ...body,
-      signature: body.signature?.trim() || `confirmed:${session.user.id}`,
-      acceptedAt: acceptedAt.toISOString(),
+    const result = await processDriverAcknowledgement({
+      instanceId: trip.workflowInstanceId,
+      result: 'acknowledged',
+      comment: body.comment?.trim() || undefined,
+      acceptanceData: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+        conditionsReviewed: true,
+        signature: body.signature?.trim() || `confirmed:${session.user.id}`,
+        latitude: body.latitude ?? null,
+        longitude: body.longitude ?? null,
+        device: body.device?.trim() || null,
+        tripId: trip.id,
+        authorityId: trip.authorityId,
+      },
+      session,
     });
-    const auditSequence = Date.now();
+    if (!result.ok) return result.error;
 
-    // The deliberate invalid integer cast makes the whole SQL statement fail
-    // and roll back if either the authority or trip claim loses a race.
-    await db.execute(sql`
-      WITH authority_claim AS (
-        UPDATE trip_authorities
-        SET status = 'driver_accepted',
-            accepted_at = ${acceptedAt},
-            accepted_by_employee_id = ${employee.id}::uuid,
-            acceptance_data = ${acceptanceData}::jsonb,
-            updated_at = ${acceptedAt}
-        WHERE id = ${trip.authorityId}::uuid
-          AND tenant_id = ${session.tenantId}::uuid
-          AND status = 'awaiting_driver_acceptance'
-        RETURNING id
-      ),
-      trip_claim AS (
-        UPDATE trips
-        SET driver_acknowledged_by_employee_id = ${employee.id}::uuid,
-            driver_acknowledged_at = ${acceptedAt},
-            updated_at = ${acceptedAt}
-        WHERE id = ${trip.id}::uuid
-          AND tenant_id = ${session.tenantId}::uuid
-          AND status = 'pending'
-          AND driver_acknowledged_at IS NULL
-          AND EXISTS (SELECT 1 FROM authority_claim)
-        RETURNING id
-      ),
-      audit_insert AS (
-        INSERT INTO audit_events (
-          tenant_id, tenant_sequence, event_type, actor_user_id, actor_employee_id,
-          action, entity_type, entity_id, summary, after, source_channel
-        )
-        SELECT
-          ${session.tenantId}::uuid,
-          ${auditSequence},
-          'driver_acknowledged',
-          ${session.user.id},
-          ${employee.id}::uuid,
-          'acknowledge',
-          'trip',
-          ${trip.id}::uuid,
-          'Driver accepted Trip Authority after completing all required confirmations',
-          jsonb_build_object('authorityId', ${trip.authorityId}::text, 'status', 'driver_accepted'),
-          'web'
-        FROM trip_claim
-        RETURNING id
-      )
-      SELECT CASE
-        WHEN (SELECT count(*) FROM authority_claim) = 1
-         AND (SELECT count(*) FROM trip_claim) = 1
-         AND (SELECT count(*) FROM audit_insert) = 1
-        THEN 1
-        ELSE CAST('atomic_driver_acknowledgement_failed' AS integer)
-      END AS committed
-    `);
+    await sendWorkflowOutcomeEmailBestEffort({
+      requestId: trip.requestId,
+      result: 'acknowledged',
+      stepLabel: 'Driver Acknowledgement',
+    });
 
     const [updatedTrip] = await db
       .select()
       .from(trips)
       .where(and(eq(trips.id, trip.id), eq(trips.tenantId, session.tenantId)))
       .limit(1);
-    return NextResponse.json({ success: true, trip: updatedTrip });
+
+    return NextResponse.json({
+      success: true,
+      alreadyAcknowledged: false,
+      message: result.message,
+      trip: updatedTrip,
+      workflowInstance: result.instance,
+    });
   } catch (error) {
     console.error('[trips/acknowledge] POST failed:', error);
     return NextResponse.json(
-      { error: 'Trip acceptance changed concurrently or could not be saved. Refresh and try again.' },
-      { status: 409 },
+      { error: 'Trip acceptance could not be saved. Refresh and try again.' },
+      { status: 500 },
     );
   }
 }
