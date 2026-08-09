@@ -19,10 +19,10 @@ function isLocalPostgresUrl(value: string): boolean {
   }
 }
 
-// Neon HTTP is ideal for production serverless connections, but it cannot
-// connect to a standard local PostgreSQL server. Use postgres.js only for an
-// explicitly local hostname so local development and CI can migrate/seed a
-// disposable database without changing the production driver.
+// Neon HTTP remains the default production driver because it is efficient for
+// serverless one-shot queries. Interactive transaction callbacks need a
+// session-capable connection, so production transaction() calls are delegated
+// lazily to postgres.js while all ordinary reads/writes stay on Neon HTTP.
 const connection = databaseUrl
   ? isLocalPostgresUrl(databaseUrl)
     ? postgres(databaseUrl, { max: 10 })
@@ -33,16 +33,54 @@ function createNeonDb(client: ReturnType<typeof neon>) {
   return drizzleNeon(client, { schema, casing: 'snake_case' });
 }
 
+function createPostgresDb(client: ReturnType<typeof postgres>) {
+  return drizzlePostgres(client, { schema, casing: 'snake_case' });
+}
+
 type Database = ReturnType<typeof createNeonDb>;
+type PostgresDatabase = ReturnType<typeof createPostgresDb>;
+
+let interactiveConnection: ReturnType<typeof postgres> | null = null;
+let interactiveDb: PostgresDatabase | null = null;
+
+function getInteractiveDb(): PostgresDatabase {
+  if (!databaseUrl) {
+    throw new Error('Database not configured. Set DATABASE_URL in your environment.');
+  }
+
+  if (isLocalPostgresUrl(databaseUrl)) {
+    if (!connection || typeof connection === 'function') {
+      return createPostgresDb(connection as ReturnType<typeof postgres>);
+    }
+    throw new Error('Local PostgreSQL transaction connection is unavailable.');
+  }
+
+  if (!interactiveConnection) {
+    interactiveConnection = postgres(databaseUrl, {
+      max: 1,
+      idle_timeout: 20,
+      connect_timeout: 10,
+      prepare: false,
+    });
+    interactiveDb = createPostgresDb(interactiveConnection);
+  }
+
+  return interactiveDb!;
+}
+
+function attachInteractiveTransactions(client: Database): Database {
+  type Transaction = PostgresDatabase['transaction'];
+  const target = client as unknown as { transaction: Transaction };
+  target.transaction = ((...args: Parameters<Transaction>) =>
+    getInteractiveDb().transaction(...args)) as Transaction;
+  return client;
+}
 
 export const db: Database | null =
   databaseUrl && connection
     ? isLocalPostgresUrl(databaseUrl)
-      ? (drizzlePostgres(connection as ReturnType<typeof postgres>, {
-          schema,
-          casing: 'snake_case',
-        }) as unknown as Database)
-      : createNeonDb(connection as ReturnType<typeof neon>)
+      ? (createPostgresDb(connection as ReturnType<typeof postgres>) as unknown as Database)
+      : attachInteractiveTransactions(createNeonDb(connection as ReturnType<typeof neon>))
     : null;
 
 /**
