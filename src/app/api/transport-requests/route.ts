@@ -22,6 +22,7 @@ import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/no
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { ensureRequestWorkflow } from '@/lib/request-workflow';
+import { validateRequesterDriverNominations } from '@/lib/request-driver-eligibility';
 
 export async function POST(req: NextRequest) {
   try {
@@ -62,19 +63,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Purpose is required' }, { status: 400 });
     }
     if (purpose.trim().length > 2000) {
-      return NextResponse.json(
-        { error: 'Purpose must be 2,000 characters or fewer' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Purpose must be 2,000 characters or fewer' }, { status: 400 });
     }
     if (scope !== 'regional' && scope !== 'national') {
       return NextResponse.json({ error: 'Scope must be regional or national' }, { status: 400 });
     }
     if (specialAuthorityRequired && !String(specialAuthorityReason || '').trim()) {
-      return NextResponse.json(
-        { error: 'Explain why special authority is required.' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Explain why special authority is required.' }, { status: 400 });
     }
     if (programmeId != null && typeof programmeId !== 'string') {
       return NextResponse.json({ error: 'Programme must be a valid identifier' }, { status: 400 });
@@ -93,12 +88,7 @@ export async function POST(req: NextRequest) {
     }
     if (
       (activities || []).some(
-        (activity: {
-          title?: string;
-          startDate?: string;
-          endDate?: string;
-          estimatedKilometres?: number;
-        }) => {
+        (activity: { title?: string; startDate?: string; endDate?: string; estimatedKilometres?: number }) => {
           const start = activity.startDate ? new Date(activity.startDate) : null;
           const end = activity.endDate ? new Date(activity.endDate) : null;
           return (
@@ -234,11 +224,7 @@ export async function POST(req: NextRequest) {
     const selectedPersonIds = Array.from(new Set([...passengerEmployeeIds, ...driverEmployeeIds]));
     if (selectedPersonIds.length > 0) {
       const selectedPeople = await db
-        .select({
-          id: employees.id,
-          isDriver: employees.isDriver,
-          driverStatus: driverProfiles.driverStatus,
-        })
+        .select({ id: employees.id, isDriver: employees.isDriver, driverStatus: driverProfiles.driverStatus })
         .from(employees)
         .leftJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
         .where(
@@ -263,6 +249,30 @@ export async function POST(req: NextRequest) {
       ) {
         return NextResponse.json(
           { error: 'One or more nominated drivers are not authorised drivers.' },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (driverEmployeeIds.length > 0) {
+      const tripEndAt = (activities || []).reduce(
+        (latest: Date, activity: { endDate?: string }) => {
+          const end = activity.endDate ? new Date(activity.endDate) : null;
+          return end && end > latest ? end : latest;
+        },
+        new Date(),
+      );
+      const eligibility = await validateRequesterDriverNominations({
+        tenantId,
+        employeeIds: driverEmployeeIds,
+        tripEndAt,
+      });
+      if (!eligibility.ok) {
+        const reasons = Array.from(new Set(eligibility.failures.flatMap((failure) => failure.reasons)));
+        return NextResponse.json(
+          {
+            error: `One or more nominated drivers are not eligible for the requested trip: ${reasons.join('; ')}`,
+          },
           { status: 400 },
         );
       }
@@ -299,10 +309,7 @@ export async function POST(req: NextRequest) {
         )
         .limit(1);
       if (!found) {
-        return NextResponse.json(
-          { error: 'Requester employee not found in your organisation' },
-          { status: 404 },
-        );
+        return NextResponse.json({ error: 'Requester employee not found in your organisation' }, { status: 404 });
       }
       requesterEmployee = found;
       if (found.userId !== userId) {
@@ -408,15 +415,10 @@ export async function POST(req: NextRequest) {
       .values({ tenantId, sequenceYear, currentValue: 1, updatedAt: now })
       .onConflictDoUpdate({
         target: [requestReferenceSequences.tenantId, requestReferenceSequences.sequenceYear],
-        set: {
-          currentValue: sql`${requestReferenceSequences.currentValue} + 1`,
-          updatedAt: now,
-        },
+        set: { currentValue: sql`${requestReferenceSequences.currentValue} + 1`, updatedAt: now },
       })
       .returning({ currentValue: requestReferenceSequences.currentValue });
-    if (!sequence?.currentValue) {
-      throw new Error('Unable to allocate a transport request reference');
-    }
+    if (!sequence?.currentValue) throw new Error('Unable to allocate a transport request reference');
     const reference = `GRN/TR/${sequenceYear}/${String(sequence.currentValue).padStart(6, '0')}`;
 
     const routeKm = (routes || []).reduce(
@@ -424,8 +426,7 @@ export async function POST(req: NextRequest) {
       0,
     );
     const activityKm = (activities || []).reduce(
-      (sum: number, activity: { estimatedKilometres?: number }) =>
-        sum + (activity.estimatedKilometres || 0),
+      (sum: number, activity: { estimatedKilometres?: number }) => sum + (activity.estimatedKilometres || 0),
       0,
     );
     const totalKm = Math.max(routeKm, activityKm);
@@ -434,8 +435,6 @@ export async function POST(req: NextRequest) {
     const requestId = randomUUID();
     const submittedAt = new Date();
 
-    // The request and all dependent itinerary/people rows are one atomic unit.
-    // A failed child insert can no longer leave a partially populated submitted request.
     try {
       await runAtomicMutations((tx) => {
         const mutations: any[] = [
@@ -457,8 +456,7 @@ export async function POST(req: NextRequest) {
             confirmationMethod: isAssisted ? confirmationMethod || null : 'authenticated_submission',
             employeeConfirmationStatus: isAssisted ? 'pending' : 'confirmed',
             preferredDriverEmployeeId: preferredDriverId,
-            driverPreference:
-              driverPreference || (preferredDriverId ? 'preferred_driver' : 'transport_admin_assign'),
+            driverPreference: driverPreference || (preferredDriverId ? 'preferred_driver' : 'transport_admin_assign'),
             travellerEmployeeId: travellerEmployeeId || requesterEmployee.id,
             urgency: urgency || 'normal',
             overnight: overnight || false,
@@ -481,14 +479,7 @@ export async function POST(req: NextRequest) {
           mutations.push(
             tx.insert(requestActivities).values(
               activities.map(
-                (activity: {
-                  title: string;
-                  description?: string;
-                  venue?: string;
-                  startDate: string;
-                  endDate: string;
-                  estimatedKilometres?: number;
-                }) => ({
+                (activity: { title: string; description?: string; venue?: string; startDate: string; endDate: string; estimatedKilometres?: number }) => ({
                   requestId,
                   title: activity.title.trim(),
                   description: activity.description?.trim() || null,
@@ -501,41 +492,18 @@ export async function POST(req: NextRequest) {
             ),
           );
         }
-
         if (passengers?.length > 0) {
           mutations.push(
             tx.insert(requestPassengers).values(
               passengers.map(
-                (passenger: {
-                  type: string;
-                  employeeId?: string;
-                  externalName?: string;
-                  externalIdReference?: string;
-                  externalOrganisation?: string;
-                  externalPhone?: string;
-                  externalEmail?: string;
-                  travellerRole?: string;
-                  reasonForTravel?: string;
-                }) => ({
+                (passenger: { type: string; employeeId?: string; externalName?: string; externalIdReference?: string; externalOrganisation?: string; externalPhone?: string; externalEmail?: string; travellerRole?: string; reasonForTravel?: string }) => ({
                   requestId,
-                  employeeId:
-                    passenger.type === 'employee' && passenger.employeeId
-                      ? passenger.employeeId
-                      : null,
-                  externalName:
-                    passenger.type === 'external' ? passenger.externalName?.trim() || null : null,
-                  externalIdReference:
-                    passenger.type === 'external'
-                      ? passenger.externalIdReference?.trim() || null
-                      : null,
-                  externalOrganisation:
-                    passenger.type === 'external'
-                      ? passenger.externalOrganisation?.trim() || null
-                      : null,
-                  externalPhone:
-                    passenger.type === 'external' ? passenger.externalPhone?.trim() || null : null,
-                  externalEmail:
-                    passenger.type === 'external' ? passenger.externalEmail?.trim() || null : null,
+                  employeeId: passenger.type === 'employee' && passenger.employeeId ? passenger.employeeId : null,
+                  externalName: passenger.type === 'external' ? passenger.externalName?.trim() || null : null,
+                  externalIdReference: passenger.type === 'external' ? passenger.externalIdReference?.trim() || null : null,
+                  externalOrganisation: passenger.type === 'external' ? passenger.externalOrganisation?.trim() || null : null,
+                  externalPhone: passenger.type === 'external' ? passenger.externalPhone?.trim() || null : null,
+                  externalEmail: passenger.type === 'external' ? passenger.externalEmail?.trim() || null : null,
                   travellerRole: passenger.travellerRole?.trim() || 'passenger',
                   reasonForTravel: passenger.reasonForTravel?.trim() || purpose.trim(),
                   status: 'confirmed',
@@ -544,35 +512,23 @@ export async function POST(req: NextRequest) {
             ),
           );
         }
-
         if (drivers?.length > 0) {
           mutations.push(
             tx.insert(requestDrivers).values(
-              drivers.map(
-                (driver: { employeeId: string; sortOrder?: number }, index: number) => ({
-                  requestId,
-                  employeeId: driver.employeeId,
-                  driverType: 'nominated',
-                  sortOrder: driver.sortOrder || index + 1,
-                }),
-              ),
+              drivers.map((driver: { employeeId: string; sortOrder?: number }, index: number) => ({
+                requestId,
+                employeeId: driver.employeeId,
+                driverType: 'nominated',
+                sortOrder: driver.sortOrder || index + 1,
+              })),
             ),
           );
         }
-
         if (routes?.length > 0) {
           mutations.push(
             tx.insert(requestRoutes).values(
               routes.map(
-                (route: {
-                  originName: string;
-                  destinationName: string;
-                  estimatedKm?: number;
-                  originPlaceId?: string;
-                  destinationPlaceId?: string;
-                  originCoordinates?: { lat: number; lng: number };
-                  destinationCoordinates?: { lat: number; lng: number };
-                }) => ({
+                (route: { originName: string; destinationName: string; estimatedKm?: number; originPlaceId?: string; destinationPlaceId?: string; originCoordinates?: { lat: number; lng: number }; destinationCoordinates?: { lat: number; lng: number } }) => ({
                   requestId,
                   originName: route.originName.trim(),
                   destinationName: route.destinationName.trim(),
@@ -588,13 +544,9 @@ export async function POST(req: NextRequest) {
             ),
           );
         }
-
         return mutations;
       });
     } catch (creationError) {
-      // Database uniqueness is the final idempotency guard. If another
-      // identical submission committed after the pre-insert lookup, return
-      // that durable request instead of surfacing the losing insert as a 500.
       if (clientSubmissionId) {
         const [existingRequest] = await db
           .select()
@@ -626,9 +578,6 @@ export async function POST(req: NextRequest) {
       throw creationError;
     }
 
-    // A submitted request without an active workflow is not operationally valid.
-    // Initialise/recover the workflow before returning success; if it cannot be
-    // started, delete the newly-created request (children/workflow cascade).
     let workflow;
     try {
       workflow = await ensureRequestWorkflow(requestId, tenantId);
@@ -663,9 +612,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Documents and awareness/audit side effects happen only after the core
-    // request + workflow state is durable. Their failure must never make a
-    // successful submission look rolled back to the user.
     let doc: Awaited<ReturnType<typeof onRequestSubmitted>> | null = null;
     try {
       doc = await onRequestSubmitted(requestId, tenantId, userId);
