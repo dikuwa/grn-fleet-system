@@ -23,22 +23,28 @@ async function validateParent(
   tenantId: string,
   parentId: string | null,
   currentId?: string,
+  requireActiveParent = true,
 ) {
   if (!parentId) return null;
   if (parentId === currentId) return 'An office cannot be its own parent.';
   let cursor: string | null = parentId;
   const visited = new Set<string>();
+  let firstParent = true;
   while (cursor) {
     if (visited.has(cursor) || cursor === currentId) {
       return 'The selected parent would create a circular office hierarchy.';
     }
     visited.add(cursor);
     const [parent] = await db
-      .select({ parentId: offices.parentId })
+      .select({ parentId: offices.parentId, isActive: offices.isActive })
       .from(offices)
       .where(and(eq(offices.id, cursor), eq(offices.tenantId, tenantId)))
       .limit(1);
     if (!parent) return 'The selected parent office does not belong to this tenant.';
+    if (firstParent && requireActiveParent && !parent.isActive) {
+      return 'The selected parent office is archived. Choose an active office.';
+    }
+    firstParent = false;
     cursor = parent.parentId;
   }
   return null;
@@ -107,9 +113,6 @@ export async function POST(request: NextRequest) {
     const parentError = await validateParent(db, auth.session.tenantId, parentId);
     if (parentError) return NextResponse.json({ error: parentError }, { status: 400 });
 
-    // Creation uses a non-duplicate tenant code automatically. This applies to
-    // both the suggested UI code and API callers that omit one, so a collision
-    // never forces a user to invent a code manually during onboarding/setup.
     const requestedCode =
       typeof body.code === 'string' && body.code.trim()
         ? body.code
@@ -186,6 +189,7 @@ export async function PATCH(request: NextRequest) {
       auth.session.tenantId,
       parentId,
       existing.id,
+      body.parentId !== undefined,
     );
     if (parentError) return NextResponse.json({ error: parentError }, { status: 400 });
 
