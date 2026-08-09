@@ -134,6 +134,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if ((action === 'progress' || action === 'incident') && !activeForJourney) {
       return NextResponse.json({ error: 'This trip is no longer active for journey updates' }, { status: 409 });
     }
+    if (action === 'progress' && context.authorityStatus === 'incident_reported') {
+      return NextResponse.json(
+        {
+          error:
+            'Journey progress is on hold after a critical safety incident. Report further safety information if needed, record emergency expenses, or return/recover the vehicle for Transport and technical review.',
+        },
+        { status: 409 },
+      );
+    }
     if (action === 'expense' && !['in_progress', 'return_due', 'closure_review'].includes(context.tripStatus)) {
       return NextResponse.json({ error: 'Expenses are unavailable for this trip status' }, { status: 409 });
     }
