@@ -29,7 +29,7 @@ import { calculateDriverCompliance } from '@/lib/employee-lifecycle';
 import { licenceCoversClass } from '@/lib/licence-classes';
 
 const DEFAULT_TRIP_END_OFFSET_MS = 7 * 24 * 60 * 60 * 1000;
-const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed', 'released'] as const;
+const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 
 function parseOptionalDate(value: string | null) {
   if (!value) return null;
