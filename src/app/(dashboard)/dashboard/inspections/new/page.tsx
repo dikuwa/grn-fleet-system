@@ -1,74 +1,64 @@
 'use client';
-/* eslint-disable react-hooks/set-state-in-effect, react-hooks/immutability */
 
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { StyledSelect } from '@/components/ui/styled-select';
-import { ClipboardCheck, ChevronLeft, CheckCircle2, XCircle, Loader2, Camera, Trash2 } from 'lucide-react';
-import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
+import { StyledSelect } from '@/components/ui/styled-select';
+import { Camera, CheckCircle2, ChevronLeft, ClipboardCheck, Loader2, Trash2, XCircle } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 import { saveDraft } from '@/lib/offline-drafts';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
-interface Vehicle {
-  id: string;
-  licenceNumber: string;
-  make: string;
-  model: string;
-}
+type InspectionType = 'departure' | 'return';
+type Result = 'pass' | 'fail' | 'not_applicable';
 
-interface Trip {
+type ContextTrip = {
   id: string;
+  status: string;
   vehicleId: string;
+  requestReference: string;
   make: string;
   model: string;
   licenceNumber: string;
-}
+  currentOdometer: number;
+};
 
-interface ChecklistItem {
+type ContextVehicle = {
   id: string;
+  licenceNumber: string;
+  make: string;
+  model: string;
+  currentOdometer: number;
+};
+
+type ChecklistItem = {
+  id: string;
+  sortOrder: number;
   category: string;
   label: string;
-  result: 'pass' | 'fail' | 'not_applicable';
-  comment: string;
+  requiresPhoto: boolean;
   isCritical: boolean;
-}
+  result: Result;
+  comment: string;
+};
 
-const DEFAULT_DEPARTURE_CHECKLIST: Omit<ChecklistItem, 'id'>[] = [
-  { category: 'exterior', label: 'Body panels and paint condition', result: 'pass', comment: '', isCritical: false },
-  { category: 'exterior', label: 'Windshield and windows (no cracks)', result: 'pass', comment: '', isCritical: true },
-  { category: 'exterior', label: 'Mirrors (both sides, rearview)', result: 'pass', comment: '', isCritical: false },
-  { category: 'tyres', label: 'Tyre tread depth and pressure', result: 'pass', comment: '', isCritical: true },
-  { category: 'tyres', label: 'Spare tyre present and secure', result: 'pass', comment: '', isCritical: false },
-  { category: 'lights', label: 'Headlights (high/low beam)', result: 'pass', comment: '', isCritical: true },
-  { category: 'lights', label: 'Tail lights and brake lights', result: 'pass', comment: '', isCritical: true },
-  { category: 'lights', label: 'Indicators and hazard lights', result: 'pass', comment: '', isCritical: true },
-  { category: 'interior', label: 'Seat belts (all positions)', result: 'pass', comment: '', isCritical: true },
-  { category: 'interior', label: 'Horn working', result: 'pass', comment: '', isCritical: false },
-  { category: 'interior', label: 'Wipers and washer fluid', result: 'pass', comment: '', isCritical: false },
-  { category: 'safety', label: 'Fire extinguisher present', result: 'pass', comment: '', isCritical: true },
-  { category: 'safety', label: 'First aid kit present', result: 'pass', comment: '', isCritical: false },
-  { category: 'safety', label: 'Warning triangle/reflectors', result: 'pass', comment: '', isCritical: false },
-  { category: 'documents', label: 'Vehicle licence disc valid', result: 'pass', comment: '', isCritical: true },
-  { category: 'documents', label: 'Roadworthy certificate valid', result: 'pass', comment: '', isCritical: true },
-];
-
-const DEFAULT_RETURN_CHECKLIST: Omit<ChecklistItem, 'id'>[] = [
-  { category: 'exterior', label: 'Body panels and paint condition', result: 'pass', comment: '', isCritical: false },
-  { category: 'exterior', label: 'Windshield and windows intact', result: 'pass', comment: '', isCritical: true },
-  { category: 'tyres', label: 'Tyre condition (no damage)', result: 'pass', comment: '', isCritical: true },
-  { category: 'lights', label: 'All lights functional', result: 'pass', comment: '', isCritical: false },
-  { category: 'interior', label: 'Interior clean and undamaged', result: 'pass', comment: '', isCritical: false },
-  { category: 'interior', label: 'Tool kit and jack present', result: 'pass', comment: '', isCritical: false },
-  { category: 'safety', label: 'Fire extinguisher still present', result: 'pass', comment: '', isCritical: true },
-  { category: 'safety', label: 'First aid kit present', result: 'pass', comment: '', isCritical: false },
-  { category: 'fuel', label: 'Fuel level matches trip records', result: 'pass', comment: '', isCritical: false },
-];
+type InspectionContext = {
+  type: InspectionType;
+  template: {
+    id: string;
+    name: string;
+    version: number;
+    items: Array<Omit<ChecklistItem, 'result' | 'comment'>>;
+  };
+  requiredPhotoCount: number;
+  trips: ContextTrip[];
+  vehicles: ContextVehicle[];
+};
 
 const CATEGORY_LABELS: Record<string, string> = {
   exterior: 'Exterior',
@@ -78,6 +68,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   documents: 'Documents & Compliance',
   safety: 'Safety Equipment',
   fuel: 'Fuel',
+  equipment: 'Equipment',
 };
 
 export default function NewInspectionPage() {
@@ -87,512 +78,313 @@ export default function NewInspectionPage() {
     queryKey: userProfileQueryKey,
     queryFn: ({ signal }) => fetchUserProfile(signal),
   });
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [trips, setTrips] = useState<Trip[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  // Form state
+  const [type, setType] = useState<InspectionType>('departure');
+  const [context, setContext] = useState<InspectionContext | null>(null);
+  const [contextLoading, setContextLoading] = useState(true);
   const [vehicleId, setVehicleId] = useState('');
   const [tripId, setTripId] = useState('');
-  const [type, setType] = useState<'departure' | 'return'>('departure');
   const [odometerReading, setOdometerReading] = useState('');
   const [fuelLevel, setFuelLevel] = useState('');
   const [notes, setNotes] = useState('');
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
-  const [photos, setPhotos] = useState<Array<{ file: File; preview: string; key?: string; uploading: boolean }>>([]);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<Array<{ file: File; preview: string }>>([]);
   const [inspectorAcknowledged, setInspectorAcknowledged] = useState(false);
   const [driverAcknowledged, setDriverAcknowledged] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const t = params.get('type');
-    if (t === 'departure' || t === 'return') setType(t);
-    const vid = params.get('vehicleId');
-    if (vid) setVehicleId(vid);
-    const tid = params.get('tripId');
-    if (tid) setTripId(tid);
+    const requestedType = params.get('type');
+    if (requestedType === 'departure' || requestedType === 'return') setType(requestedType);
+    const requestedTrip = params.get('tripId');
+    if (requestedTrip) setTripId(requestedTrip);
+    const requestedVehicle = params.get('vehicleId');
+    if (requestedVehicle) setVehicleId(requestedVehicle);
   }, []);
 
   useEffect(() => {
-    const selectedTrip = trips.find((trip) => trip.id === tripId);
-    if (selectedTrip?.vehicleId) setVehicleId(selectedTrip.vehicleId);
-  }, [tripId, trips]);
-
-  useEffect(() => {
-    Promise.all([fetchVehicles(), fetchTrips()]).finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    // Reset checklist when type changes
-    const items = (type === 'departure' ? DEFAULT_DEPARTURE_CHECKLIST : DEFAULT_RETURN_CHECKLIST);
-    setChecklist(items.map((item, i) => ({ ...item, id: `item-${i}` })));
+    let cancelled = false;
+    setContextLoading(true);
+    setError(null);
+    fetch(`/api/inspections/context?type=${type}`, { cache: 'no-store' })
+      .then(async (response) => {
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(json.error || 'Unable to load inspection context');
+        return json as InspectionContext;
+      })
+      .then((json) => {
+        if (cancelled) return;
+        setContext(json);
+        setChecklist(
+          json.template.items.map((item) => ({
+            ...item,
+            result: 'not_applicable' as const,
+            comment: '',
+          })),
+        );
+        setPhotos((current) => {
+          current.forEach((photo) => URL.revokeObjectURL(photo.preview));
+          return [];
+        });
+        setInspectorAcknowledged(false);
+        setDriverAcknowledged(false);
+      })
+      .catch((reason) => {
+        if (!cancelled) {
+          setContext(null);
+          setChecklist([]);
+          setError(reason instanceof Error ? reason.message : 'Unable to load inspection context');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setContextLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [type]);
 
-  async function fetchVehicles() {
-    try {
-      const res = await fetch('/api/fleet');
-      if (!res.ok) throw new Error('Failed to load vehicles');
-      const json = await res.json();
-      const list = Array.isArray(json) ? json : (json.rows ?? []);
-      setVehicles(list);
-    } catch { /* silent */ }
+  useEffect(() => {
+    const trip = context?.trips.find((candidate) => candidate.id === tripId);
+    if (!trip) return;
+    setVehicleId(trip.vehicleId);
+    setOdometerReading((current) => current || String(trip.currentOdometer));
+  }, [context, tripId]);
+
+  useEffect(() => () => photos.forEach((photo) => URL.revokeObjectURL(photo.preview)), [photos]);
+
+  const groupedItems = useMemo(() => {
+    return checklist.reduce<Record<string, ChecklistItem[]>>((groups, item) => {
+      (groups[item.category] ??= []).push(item);
+      return groups;
+    }, {});
+  }, [checklist]);
+
+  const failedCount = checklist.filter((item) => item.result === 'fail').length;
+  const criticalFailed = checklist.some((item) => item.isCritical && item.result === 'fail');
+  const requiredPhotoCount = context?.requiredPhotoCount ?? 0;
+
+  function updateResult(id: string, result: Result) {
+    setChecklist((items) => items.map((item) => (
+      item.id === id ? { ...item, result, comment: result === 'fail' ? item.comment : '' } : item
+    )));
   }
 
-  async function fetchTrips() {
-    try {
-      const res = await fetch('/api/trips?limit=100');
-      if (!res.ok) return;
-      const json = await res.json();
-      const list = Array.isArray(json) ? json : (json.rows ?? []);
-      setTrips(list.filter((trip: { status?: string }) => ['pending', 'in_progress', 'return_due', 'return_inspection'].includes(trip.status || '')));
-    } catch { /* silent */ }
+  function updateComment(id: string, comment: string) {
+    setChecklist((items) => items.map((item) => item.id === id ? { ...item, comment } : item));
   }
 
-  function handleChecklistResult(id: string, result: 'pass' | 'fail' | 'not_applicable') {
-    setChecklist((prev) => prev.map((item) => (item.id === id ? { ...item, result } : item)));
-  }
-
-  function handleChecklistComment(id: string, comment: string) {
-    setChecklist((prev) => prev.map((item) => (item.id === id ? { ...item, comment } : item)));
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setSubmitting(true);
-    setUploadError(null);
+    setError(null);
+
+    const draftData = {
+      vehicleId,
+      tripRef: tripId,
+      odometerReading,
+      fuelLevel,
+      checklist: checklist.map(({ label, result, comment }) => ({ label, result, comment })),
+      notes,
+      photos: photos.map((photo) => photo.file),
+      inspectorAcknowledged,
+      driverAcknowledged,
+    };
 
     try {
-      // Upload photos first (best-effort), collect keys
+      if (!context) throw new Error('Inspection context is not available');
+      if (!tripId || !vehicleId) throw new Error('Select an eligible trip before submitting');
+      if (photos.length < requiredPhotoCount) {
+        throw new Error(`At least ${requiredPhotoCount} evidence photo${requiredPhotoCount === 1 ? '' : 's'} required`);
+      }
+      const failedWithoutComment = checklist.find((item) => item.result === 'fail' && !item.comment.trim());
+      if (failedWithoutComment) throw new Error(`Describe the defect for “${failedWithoutComment.label}”`);
+
       const photoKeys: string[] = [];
       for (const photo of photos) {
-        if (photo.uploading) continue;
-        try {
-          const formData = new FormData();
-          formData.append('file', photo.file);
-          formData.append('category', 'inspection');
-          const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
-          if (uploadRes.ok) {
-            const uploadJson = await uploadRes.json();
-            if (uploadJson.data?.key) photoKeys.push(uploadJson.data.key);
-          }
-        } catch {
-          // Photo upload is best-effort
+        const form = new FormData();
+        form.append('file', photo.file);
+        form.append('category', 'inspection');
+        const upload = await fetch('/api/upload', { method: 'POST', body: form });
+        const uploaded = await upload.json().catch(() => ({}));
+        if (!upload.ok || !uploaded.data?.key) {
+          throw new Error(uploaded.error || 'An inspection photo could not be uploaded');
         }
+        photoKeys.push(uploaded.data.key);
       }
 
-      const body: Record<string, unknown> = {
-        vehicleId,
-        type,
-        odometerReading: Number(odometerReading),
-        checklist: checklist.map((item) => ({
-          label: item.label,
-          result: item.result,
-          comment: item.comment || null,
-          isCritical: item.isCritical,
-        })),
-        photoKeys: photoKeys.length > 0 ? photoKeys : undefined,
-        inspectorAcknowledged,
-        driverAcknowledged,
-      };
-
-      if (tripId) body.tripId = tripId;
-      if (fuelLevel) body.fuelLevel = fuelLevel;
-      if (notes) body.notes = notes;
-
-      const res = await fetch('/api/inspections', {
+      const response = await fetch('/api/inspections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          vehicleId,
+          tripId,
+          type,
+          odometerReading: Number(odometerReading),
+          fuelLevel: fuelLevel || null,
+          checklist: checklist.map(({ label, result, comment }) => ({
+            label,
+            result,
+            comment: comment.trim() || null,
+          })),
+          notes: notes.trim() || null,
+          photoKeys,
+          inspectorAcknowledged,
+          driverAcknowledged,
+        }),
       });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(json.error || 'Failed to submit inspection');
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to submit inspection');
-      }
-
-      toast({ title: 'Inspection submitted', description: `${checklist.filter(i => i.result === 'pass').length} passed, ${checklist.filter(i => i.result === 'fail').length} failed`, variant: checklist.some(i => i.isCritical && i.result === 'fail') ? 'error' : 'success' });
+      toast({
+        title: 'Inspection submitted',
+        description: `${checklist.length - failedCount} clear · ${failedCount} failed`,
+        variant: criticalFailed ? 'error' : 'success',
+      });
       router.push('/dashboard/inspections');
-    } catch (err) {
-      const isNetworkFailure = !navigator.onLine || err instanceof TypeError;
-      if (isNetworkFailure) {
+    } catch (reason) {
+      const networkFailure = !navigator.onLine || reason instanceof TypeError;
+      if (networkFailure) {
         await saveDraft({
           draftType: type === 'departure' ? 'inspection_departure' : 'inspection_return',
-          formData: { vehicleId, tripRef: tripId, odometerReading, fuelLevel, checklist, notes, photos: photos.map((photo) => photo.file), inspectorAcknowledged, driverAcknowledged },
+          formData: draftData,
           userId: profile?.id || null,
           tenantId: profile?.tenantId || null,
           syncStatus: 'pending',
         });
-        toast({ title: 'Inspection saved offline', description: 'It will sync automatically when connectivity returns.', variant: 'success' });
+        toast({
+          title: 'Inspection saved offline',
+          description: 'It will sync automatically when connectivity returns.',
+          variant: 'success',
+        });
         router.push('/dashboard/offline');
       } else {
-        setError(err instanceof Error ? err.message : 'An unexpected error occurred');
-        toast({ title: 'Inspection failed', description: err instanceof Error ? err.message : 'Could not submit inspection', variant: 'error' });
+        const message = reason instanceof Error ? reason.message : 'Could not submit inspection';
+        setError(message);
+        toast({ title: 'Inspection failed', description: message, variant: 'error' });
       }
     } finally {
       setSubmitting(false);
     }
   }
 
-  const groupedItems = checklist.reduce(
-    (acc, item) => {
-      (acc[item.category] ??= []).push(item);
-      return acc;
-    },
-    {} as Record<string, ChecklistItem[]>,
-  );
-
-  const hasFailedItems = checklist.some((item) => item.result === 'fail');
-  const hasCriticalFails = checklist.some((item) => item.isCritical && item.result === 'fail');
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Inspections', href: '/dashboard/inspections' },
-          { label: 'New Inspection' },
-        ]} />
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-ink-400" />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Inspections', href: '/dashboard/inspections' },
-          { label: 'New Inspection' },
-        ]}
-      />
+      <Breadcrumbs items={[
+        { label: 'Dashboard', href: '/dashboard' },
+        { label: 'Inspections', href: '/dashboard/inspections' },
+        { label: 'Perform Inspection' },
+      ]} />
       <PageHeader
         title={type === 'departure' ? 'Departure Inspection' : 'Return Inspection'}
-        description={`${type === 'departure' ? 'Pre-trip' : 'Post-trip'} vehicle inspection checklist`}
+        description={context ? `${context.template.name} · version ${context.template.version}` : 'Official vehicle inspection'}
       >
         <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/inspections">
-            <ChevronLeft className="h-4 w-4" />
-            Back to Inspections
-          </Link>
+          <Link href="/dashboard/inspections"><ChevronLeft className="h-4 w-4" /> Back to Inspections</Link>
         </Button>
       </PageHeader>
 
-      {error && (
-        <div className="rounded-[10px] border border-status-error-bg bg-status-error-bg/20 px-4 py-3 text-sm text-status-error-text">
-          {error}
-        </div>
-      )}
+      {error && <div className="rounded-[10px] border border-status-error-bg bg-status-error-bg/20 px-4 py-3 text-sm text-status-error-text">{error}</div>}
 
-      <form onSubmit={handleSubmit}>
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Vehicle & Trip Selection */}
+      {contextLoading ? (
+        <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-ink-400" /></div>
+      ) : !context ? (
+        <Card><CardContent className="py-10 text-center text-sm text-ink-500">Inspection setup is unavailable. Ask the Transport Administrator to verify the active inspection template.</CardContent></Card>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-6">
           <Card>
-            <CardHeader><CardTitle>Vehicle</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
+            <CardHeader><CardTitle>Inspection Assignment</CardTitle></CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="block text-xs font-medium text-ink-500 mb-1.5">
-                  Vehicle <span className="text-status-error-text">*</span>
-                </label>
-                <StyledSelect
-                  value={vehicleId}
-                  onChange={(e) => setVehicleId(e.target.value)}
-                  required
-                  placeholder="Select vehicle..."
-                >
-                  {vehicles.map((v) => (
-                    <option key={v.id} value={v.id}>{v.licenceNumber} — {v.make} {v.model}</option>
+                <label className="mb-1.5 block text-xs font-medium text-ink-500">Inspection Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['departure', 'return'] as const).map((value) => (
+                    <button key={value} type="button" onClick={() => { setType(value); setTripId(''); setVehicleId(''); setOdometerReading(''); }} className={`focus-ring rounded-[8px] border px-3 py-2 text-sm font-medium capitalize transition-colors ${type === value ? 'border-brand-700 bg-brand-50 text-brand-700 dark:bg-brand-950/30' : 'border-border bg-surface text-ink-600 hover:bg-muted'}`}>{value}</button>
                   ))}
-                </StyledSelect>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-ink-500 mb-1.5">
-                  Trip <span className="text-status-error-text">*</span>
-                </label>
-                <StyledSelect
-                  value={tripId}
-                  onChange={(e) => setTripId(e.target.value)}
-                  required
-                  placeholder="Select trip..."
-                >
-                  {trips.map((t) => (
-                    <option key={t.id} value={t.id}>{t.make} {t.model} ({t.licenceNumber})</option>
-                  ))}
-                </StyledSelect>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Inspection Details */}
-          <Card>
-            <CardHeader><CardTitle>Inspection Details</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-ink-500 mb-1.5">
-                  Inspection Type <span className="text-status-error-text">*</span>
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setType('departure')}
-                    className={`flex-1 rounded-[8px] border px-3 py-2 text-sm font-medium transition-colors ${
-                      type === 'departure'
-                        ? 'border-brand-600 bg-brand-50 text-brand-700'
-                        : 'border-border bg-surface text-ink-600 hover:bg-muted'
-                    }`}
-                  >
-                    Departure
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setType('return')}
-                    className={`flex-1 rounded-[8px] border px-3 py-2 text-sm font-medium transition-colors ${
-                      type === 'return'
-                        ? 'border-brand-600 bg-brand-50 text-brand-700'
-                        : 'border-border bg-surface text-ink-600 hover:bg-muted'
-                    }`}
-                  >
-                    Return
-                  </button>
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-ink-500 mb-1.5">
-                  Odometer Reading (km) <span className="text-status-error-text">*</span>
-                </label>
-                <input
-                  type="number"
-                  value={odometerReading}
-                  onChange={(e) => setOdometerReading(e.target.value)}
-                  placeholder="e.g. 45000"
-                  required
-                  min="0"
-                  className="h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                />
+                <label className="mb-1.5 block text-xs font-medium text-ink-500">Eligible Trip <span className="text-status-error-text">*</span></label>
+                <StyledSelect value={tripId} onChange={(event) => setTripId(event.target.value)} required placeholder="Select an eligible trip…">
+                  {context.trips.map((trip) => <option key={trip.id} value={trip.id}>{trip.requestReference} — {trip.licenceNumber} — {trip.make} {trip.model}</option>)}
+                </StyledSelect>
+                {context.trips.length === 0 && <p className="mt-1.5 text-xs text-ink-500">No trips currently satisfy the {type} inspection lifecycle.</p>}
               </div>
               <div>
-                <label className="block text-xs font-medium text-ink-500 mb-1.5">
-                  Fuel Level
-                </label>
-                <StyledSelect
-                  value={fuelLevel}
-                  onChange={(e) => setFuelLevel(e.target.value)}
-                  placeholder="Select level..."
-                >
-                  <option value="full">Full</option>
-                  <option value="three_quarters">¾</option>
-                  <option value="half">½</option>
-                  <option value="quarter">¼</option>
-                  <option value="empty">Empty</option>
+                <label className="mb-1.5 block text-xs font-medium text-ink-500">Vehicle</label>
+                <StyledSelect value={vehicleId} disabled placeholder="Selected from trip">
+                  {context.vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.licenceNumber} — {vehicle.make} {vehicle.model}</option>)}
                 </StyledSelect>
               </div>
               <div>
-                <label className="block text-xs font-medium text-ink-500 mb-1.5">
-                  Notes
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Additional observations..."
-                  rows={3}
-                  className="h-20 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none"
-                />
+                <label className="mb-1.5 block text-xs font-medium text-ink-500">Odometer (km) <span className="text-status-error-text">*</span></label>
+                <input type="number" min="0" required value={odometerReading} onChange={(event) => setOdometerReading(event.target.value)} className="focus-ring h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950" />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-ink-500">Fuel Level</label>
+                <StyledSelect value={fuelLevel} onChange={(event) => setFuelLevel(event.target.value)} placeholder="Select level…">
+                  <option value="full">Full</option><option value="three_quarters">¾</option><option value="half">½</option><option value="quarter">¼</option><option value="empty">Empty</option>
+                </StyledSelect>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-ink-500">Notes</label>
+                <textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} className="focus-ring min-h-20 w-full resize-y rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950" placeholder="Additional observations…" />
               </div>
             </CardContent>
           </Card>
 
-          {/* Photos */}
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle>Photos</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {photos.length > 0 && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {photos.map((photo, idx) => (
-                    <div key={idx} className="relative rounded-[8px] border border-border overflow-hidden group">
-                      {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
-                      <img src={photo.preview} alt={`Photo ${idx + 1}`} className="h-24 w-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
-                        className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                      {photo.uploading && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                          <Loader2 className="h-5 w-5 animate-spin text-white" />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  const newPhotos = files.map((file) => ({
-                    file,
-                    preview: URL.createObjectURL(file),
-                    uploading: false,
-                  }));
-                  setPhotos((prev) => [...prev, ...newPhotos]);
-                  if (fileInputRef.current) fileInputRef.current.value = '';
-                }}
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Camera className="h-4 w-4" />
-                  {photos.length > 0 ? 'Add More Photos' : 'Take / Upload Photos'}
-                </Button>
-                {photos.length > 0 && (
-                  <span className="text-xs text-ink-500">{photos.length} photo{photos.length !== 1 ? 's' : ''} selected</span>
-                )}
-              </div>
-              {uploadError && <p className="text-xs text-status-error-text">{uploadError}</p>}
-            </CardContent>
-          </Card>
-
-          {/* Checklist */}
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <span>Inspection Checklist</span>
-                {hasFailedItems && (
-                  <Badge variant={hasCriticalFails ? 'emergency' : 'error'} size="sm">
-                    {hasCriticalFails ? 'Critical items failed' : `${checklist.filter((i) => i.result === 'fail').length} failed`}
-                  </Badge>
-                )}
-              </CardTitle>
-            </CardHeader>
+          <Card>
+            <CardHeader><CardTitle className="flex flex-wrap items-center justify-between gap-2"><span>Checklist</span>{failedCount > 0 && <Badge variant={criticalFailed ? 'emergency' : 'error'} size="sm">{failedCount} failed</Badge>}</CardTitle></CardHeader>
             <CardContent className="space-y-6">
               {Object.entries(groupedItems).map(([category, items]) => (
-                <div key={category}>
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
-                    {CATEGORY_LABELS[category] ?? category}
-                  </h4>
+                <section key={category}>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">{CATEGORY_LABELS[category] ?? category}</h3>
                   <div className="space-y-2">
                     {items.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`rounded-[8px] border p-3 transition-colors ${
-                          item.result === 'fail'
-                            ? 'border-status-error-bg bg-status-error-bg/20'
-                            : item.result === 'pass'
-                              ? 'border-status-success-bg/50 bg-status-success-bg/10'
-                              : 'border-border bg-surface'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-medium text-ink-950">{item.label}</p>
-                              {item.isCritical && (
-                                <Badge variant="emergency" size="sm">Critical</Badge>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleChecklistResult(item.id, 'pass')}
-                              className={`flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                                item.result === 'pass'
-                                  ? 'bg-status-success-bg text-status-success-text'
-                                  : 'bg-muted text-ink-500 hover:bg-status-success-bg/50'
-                              }`}
-                            >
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              Pass
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleChecklistResult(item.id, 'fail')}
-                              className={`flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                                item.result === 'fail'
-                                  ? 'bg-status-error-bg text-status-error-text'
-                                  : 'bg-muted text-ink-500 hover:bg-status-error-bg/50'
-                              }`}
-                            >
-                              <XCircle className="h-3.5 w-3.5" />
-                              Fail
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleChecklistResult(item.id, 'not_applicable')}
-                              className={`rounded-[6px] px-2 py-1.5 text-xs font-medium transition-colors ${
-                                item.result === 'not_applicable'
-                                  ? 'bg-muted text-ink-950'
-                                  : 'bg-muted text-ink-500 hover:bg-muted/80'
-                              }`}
-                            >
-                              N/A
-                            </button>
+                      <div key={item.id} className={`rounded-[8px] border p-3 ${item.result === 'fail' ? 'border-status-error-bg bg-status-error-bg/10' : 'border-border bg-surface'}`}>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0"><p className="text-sm font-medium text-ink-950">{item.label}</p><div className="mt-1 flex gap-1.5">{item.isCritical && <Badge variant="emergency" size="sm">Critical</Badge>}{item.requiresPhoto && <Badge variant="info" size="sm">Photo evidence</Badge>}</div></div>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button type="button" onClick={() => updateResult(item.id, 'pass')} className={`focus-ring inline-flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'pass' ? 'bg-status-success-bg text-status-success-text' : 'bg-muted text-ink-500'}`}><CheckCircle2 className="h-3.5 w-3.5" /> Pass</button>
+                            <button type="button" onClick={() => updateResult(item.id, 'fail')} className={`focus-ring inline-flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'fail' ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}><XCircle className="h-3.5 w-3.5" /> Fail</button>
+                            <button type="button" onClick={() => updateResult(item.id, 'not_applicable')} className={`focus-ring rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'not_applicable' ? 'bg-muted text-ink-950' : 'bg-muted/60 text-ink-500'}`}>N/A</button>
                           </div>
                         </div>
-                        {item.result === 'fail' && (
-                          <input
-                            type="text"
-                            value={item.comment}
-                            onChange={(e) => handleChecklistComment(item.id, e.target.value)}
-                            placeholder="Describe the defect..."
-                            className="mt-2 h-8 w-full max-w-md rounded-[6px] border border-border bg-surface px-2.5 text-xs text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
-                          />
-                        )}
+                        {item.result === 'fail' && <input value={item.comment} onChange={(event) => updateComment(item.id, event.target.value)} required placeholder="Describe the defect…" className="focus-ring mt-3 h-9 w-full rounded-[6px] border border-border bg-surface px-2.5 text-xs text-ink-950" />}
                       </div>
                     ))}
                   </div>
-                </div>
+                </section>
               ))}
             </CardContent>
           </Card>
-        </div>
 
-        {/* Submit */}
-        <Card className="mt-6">
-          <CardContent className="space-y-3 pt-4">
-            <p className="text-sm font-medium text-ink-950">Required acknowledgements</p>
-            <label className="flex items-start gap-2 text-sm text-ink-700"><input className="mt-1" type="checkbox" checked={inspectorAcknowledged} onChange={(event) => setInspectorAcknowledged(event.target.checked)} /><span>I confirm that I performed this inspection and the saved results are accurate.</span></label>
-            <label className="flex items-start gap-2 text-sm text-ink-700"><input className="mt-1" type="checkbox" checked={driverAcknowledged} onChange={(event) => setDriverAcknowledged(event.target.checked)} /><span>The assigned driver has reviewed and acknowledged the recorded vehicle condition.</span></label>
-            <p className="text-xs text-ink-500">Three evidence photos are required for this checklist.</p>
-          </CardContent>
-        </Card>
-        <div className="mt-6 flex items-center justify-between gap-3">
-          <div className="text-xs text-ink-500">
-            {checklist.filter((i) => i.result === 'pass').length} passed ·{' '}
-            {checklist.filter((i) => i.result === 'fail').length} failed ·{' '}
-            {checklist.filter((i) => i.result === 'not_applicable').length} N/A
+          <Card>
+            <CardHeader><CardTitle>Evidence Photos</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {photos.length > 0 && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{photos.map((photo, index) => <div key={`${photo.file.name}-${index}`} className="group relative overflow-hidden rounded-[8px] border border-border"><img src={photo.preview} alt={`Inspection evidence ${index + 1}`} className="h-24 w-full object-cover" /><button type="button" aria-label={`Remove photo ${index + 1}`} onClick={() => setPhotos((items) => { const target = items[index]; if (target) URL.revokeObjectURL(target.preview); return items.filter((_, itemIndex) => itemIndex !== index); })} className="focus-ring absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white"><Trash2 className="h-3.5 w-3.5" /></button></div>)}</div>}
+              <input ref={fileInputRef} type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={(event) => { const files = Array.from(event.target.files || []); setPhotos((items) => [...items, ...files.map((file) => ({ file, preview: URL.createObjectURL(file) }))]); if (fileInputRef.current) fileInputRef.current.value = ''; }} />
+              <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}><Camera className="h-4 w-4" /> {photos.length ? 'Add Photos' : 'Take / Upload Photos'}</Button><span className="text-xs text-ink-500">{photos.length} selected · minimum {requiredPhotoCount}</span></div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="space-y-3 pt-4">
+              <p className="text-sm font-medium text-ink-950">Required acknowledgements</p>
+              <label className="flex items-start gap-2 text-sm text-ink-700"><input className="mt-1" type="checkbox" checked={inspectorAcknowledged} onChange={(event) => setInspectorAcknowledged(event.target.checked)} /><span>I confirm that I performed this inspection and the recorded results are accurate.</span></label>
+              <label className="flex items-start gap-2 text-sm text-ink-700"><input className="mt-1" type="checkbox" checked={driverAcknowledged} onChange={(event) => setDriverAcknowledged(event.target.checked)} /><span>The assigned driver is present and has reviewed the recorded vehicle condition. This is witnessed by the Inspector and is not an authenticated Driver signature.</span></label>
+            </CardContent>
+          </Card>
+
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-ink-500">{checklist.filter((item) => item.result === 'pass').length} passed · {failedCount} failed · {checklist.filter((item) => item.result === 'not_applicable').length} N/A</p>
+            <div className="flex items-center gap-2"><Button variant="secondary" size="sm" asChild><Link href="/dashboard/inspections">Cancel</Link></Button><Button variant="primary" size="sm" type="submit" loading={submitting} disabled={submitting || !tripId || !inspectorAcknowledged || !driverAcknowledged || photos.length < requiredPhotoCount}><ClipboardCheck className="h-4 w-4" /> Submit Inspection</Button></div>
           </div>
-          <div className="flex items-center gap-3">
-            <Button variant="secondary" size="sm" asChild>
-              <Link href="/dashboard/inspections">Cancel</Link>
-            </Button>
-            <Button variant="primary" size="sm" type="submit" loading={submitting} disabled={!inspectorAcknowledged || !driverAcknowledged || photos.length < 3}>
-              <ClipboardCheck className="h-4 w-4" />
-              {submitting ? 'Submitting...' : 'Submit Inspection'}
-            </Button>
-          </div>
-        </div>
-      </form>
+        </form>
+      )}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { fuelTransactions, trips, vehicleAllocations } from '@/db/schema/trips';
@@ -5,35 +6,34 @@ import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
   getSessionRoleNames,
+  getSessionWorkspace,
   requireDashboardAction,
   requireRequestAuth,
   requirePermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
-import { fuelScopeCondition } from '@/lib/record-scope';
+import { fuelScopeCondition, tripScopeCondition } from '@/lib/record-scope';
 import { createScopedNotifications } from '@/lib/notification-service';
-import { getSessionWorkspace } from '@/lib/auth-helpers';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
-/**
- * GET /api/fuel
- * List fuel transactions for the authenticated tenant.
- */
+/** GET /api/fuel — list fuel transactions within the active record scope. */
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
-
     const { session } = auth;
+
     const viewCheck = await requireDashboardAction(session, '/dashboard/fuel', 'view');
     if (viewCheck instanceof NextResponse) return viewCheck;
+
     const { searchParams } = new URL(request.url);
-    const limit = parseInt(searchParams.get('limit') || '50', 10);
-    const offset = parseInt(searchParams.get('offset') || '0', 10);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '50', 10)));
+    const offset = Math.max(0, parseInt(searchParams.get('offset') || '0', 10));
 
     const db = getDb();
     const roleNames = await getSessionRoleNames(session);
@@ -49,43 +49,44 @@ export async function GET(request: NextRequest) {
     const driverEmp = alias(employees, 'fuel_driver');
     const recorderEmp = alias(employees, 'fuel_recorder');
 
-    const rows = await db
-      .select({
-        id: fuelTransactions.id,
-        transactionAt: fuelTransactions.transactionAt,
-        stationName: fuelTransactions.stationName,
-        fuelType: fuelTransactions.fuelType,
-        litres: fuelTransactions.litres,
-        amount: fuelTransactions.amount,
-        paymentMethod: fuelTransactions.paymentMethod,
-        anomalyState: fuelTransactions.anomalyState,
-        isVerified: fuelTransactions.isVerified,
-        vehicleId: fuelTransactions.vehicleId,
-        driverEmployeeId: fuelTransactions.driverEmployeeId,
-        driverName: sql<string>`concat_ws(' ', ${driverEmp.firstName}, ${driverEmp.lastName})`,
-        recordedByName: sql<string>`concat_ws(' ', ${recorderEmp.firstName}, ${recorderEmp.lastName})`,
-        make: vehicles.make,
-        model: vehicles.model,
-        licenceNumber: vehicles.licenceNumber,
-      })
-      .from(fuelTransactions)
-      .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .leftJoin(driverEmp, eq(fuelTransactions.driverEmployeeId, driverEmp.id))
-      .leftJoin(recorderEmp, eq(fuelTransactions.recordedByUserId, recorderEmp.userId))
-      .where(and(...conditions))
-      .orderBy(desc(fuelTransactions.transactionAt))
-      .limit(limit)
-      .offset(offset);
-
-    const [totalResult] = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(fuelTransactions)
-      .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .where(and(...conditions));
+    const [rows, totalRows] = await Promise.all([
+      db
+        .select({
+          id: fuelTransactions.id,
+          transactionAt: fuelTransactions.transactionAt,
+          stationName: fuelTransactions.stationName,
+          fuelType: fuelTransactions.fuelType,
+          litres: fuelTransactions.litres,
+          amount: fuelTransactions.amount,
+          paymentMethod: fuelTransactions.paymentMethod,
+          anomalyState: fuelTransactions.anomalyState,
+          isVerified: fuelTransactions.isVerified,
+          vehicleId: fuelTransactions.vehicleId,
+          driverEmployeeId: fuelTransactions.driverEmployeeId,
+          driverName: sql<string>`concat_ws(' ', ${driverEmp.firstName}, ${driverEmp.lastName})`,
+          recordedByName: sql<string>`concat_ws(' ', ${recorderEmp.firstName}, ${recorderEmp.lastName})`,
+          make: vehicles.make,
+          model: vehicles.model,
+          licenceNumber: vehicles.licenceNumber,
+        })
+        .from(fuelTransactions)
+        .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+        .leftJoin(driverEmp, eq(fuelTransactions.driverEmployeeId, driverEmp.id))
+        .leftJoin(recorderEmp, eq(fuelTransactions.recordedByUserId, recorderEmp.userId))
+        .where(and(...conditions))
+        .orderBy(desc(fuelTransactions.transactionAt))
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(fuelTransactions)
+        .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+        .where(and(...conditions)),
+    ]);
 
     return NextResponse.json({
       success: true,
-      data: { transactions: rows, total: Number(totalResult?.count ?? 0) },
+      data: { transactions: rows, total: Number(totalRows[0]?.count ?? 0) },
     });
   } catch (error) {
     console.error('[fuel] GET failed:', error);
@@ -93,21 +94,16 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/**
- * POST /api/fuel
- * Create a fuel transaction.
- * Requires fuel:manage or driver:fuel-create permission.
- */
+/** POST /api/fuel — create a durable, scoped fuel transaction. */
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
-
     const { session } = auth;
+
     const roleCheck = await requireDashboardAction(session, '/dashboard/fuel/new', 'create');
     if (roleCheck instanceof NextResponse) return roleCheck;
 
-    // Check permission — either fuel manager or driver recording fuel
     const managerCheck = await requirePermission(session, Permissions.FUEL_MANAGE);
     const isManager = !(managerCheck instanceof NextResponse);
     if (!isManager) {
@@ -142,9 +138,9 @@ export async function POST(req: NextRequest) {
     }
 
     const db = getDb();
-
     let resolvedVehicleId = vehicleId as string | undefined;
     let resolvedTripId = tripId as string | undefined;
+
     if (!resolvedVehicleId && vehicleGrn) {
       const [byGrn] = await db
         .select({ id: vehicles.id })
@@ -158,6 +154,7 @@ export async function POST(req: NextRequest) {
         .limit(1);
       resolvedVehicleId = byGrn?.id;
     }
+
     if (!resolvedTripId && tripRef) {
       const [byReference] = await db
         .select({ id: trips.id })
@@ -173,7 +170,6 @@ export async function POST(req: NextRequest) {
       resolvedTripId = byReference?.id;
     }
 
-    // Verify the vehicle belongs to this tenant
     const [vehicle] = await db
       .select({ id: vehicles.id, currentOdometer: vehicles.currentOdometer })
       .from(vehicles)
@@ -184,10 +180,7 @@ export async function POST(req: NextRequest) {
         ),
       )
       .limit(1);
-
-    if (!vehicle) {
-      return NextResponse.json({ error: 'Vehicle not found in your tenant' }, { status: 404 });
-    }
+    if (!vehicle) return NextResponse.json({ error: 'Vehicle not found in your tenant' }, { status: 404 });
 
     const litresNumber = Number(litres);
     const amountNumber = Number(amount);
@@ -195,33 +188,49 @@ export async function POST(req: NextRequest) {
       odometerReading === null || odometerReading === undefined || odometerReading === ''
         ? null
         : Number(odometerReading);
-    if (
-      !Number.isFinite(litresNumber) ||
-      litresNumber <= 0 ||
-      !Number.isFinite(amountNumber) ||
-      amountNumber <= 0
-    ) {
-      return NextResponse.json(
-        { error: 'Litres and amount must be positive numbers' },
-        { status: 422 },
-      );
+    const eventAt = transactionAt ? new Date(transactionAt) : new Date();
+
+    if (!Number.isFinite(litresNumber) || litresNumber <= 0 || !Number.isFinite(amountNumber) || amountNumber <= 0) {
+      return NextResponse.json({ error: 'Litres and amount must be positive numbers' }, { status: 422 });
     }
-    if (
-      odometerNumber !== null &&
-      (!Number.isInteger(odometerNumber) || odometerNumber < vehicle.currentOdometer)
-    ) {
+    if (Number.isNaN(eventAt.getTime()) || eventAt.getTime() > Date.now() + 5 * 60 * 1000) {
+      return NextResponse.json({ error: 'A valid fuel transaction time is required' }, { status: 422 });
+    }
+    if (odometerNumber !== null && (!Number.isInteger(odometerNumber) || odometerNumber < vehicle.currentOdometer)) {
       return NextResponse.json(
         { error: `Odometer cannot be lower than the current reading (${vehicle.currentOdometer})` },
         { status: 422 },
       );
     }
 
+    const syncId = typeof clientSyncId === 'string' && clientSyncId.trim() ? clientSyncId.trim() : null;
+    if (syncId) {
+      const [existing] = await db
+        .select()
+        .from(fuelTransactions)
+        .where(eq(fuelTransactions.clientSyncId, syncId))
+        .limit(1);
+      if (existing) {
+        const [existingVehicle] = await db
+          .select({ tenantId: vehicles.tenantId })
+          .from(vehicles)
+          .where(eq(vehicles.id, existing.vehicleId))
+          .limit(1);
+        if (existingVehicle?.tenantId === session.tenantId) {
+          return NextResponse.json({ success: true, data: existing, idempotent: true });
+        }
+        return NextResponse.json({ error: 'Fuel sync key is already in use' }, { status: 409 });
+      }
+    }
+
+    let currentEmployeeId: string | null = null;
     if (!isManager) {
-      if (!resolvedTripId)
+      if (!resolvedTripId) {
         return NextResponse.json(
           { error: 'Drivers must record fuel against an assigned active trip' },
           { status: 422 },
         );
+      }
       const [employee] = await db
         .select({ id: employees.id })
         .from(employees)
@@ -233,30 +242,36 @@ export async function POST(req: NextRequest) {
           ),
         )
         .limit(1);
-      if (!employee)
+      if (!employee) {
         return NextResponse.json(
           { error: 'Your login is not linked to an active employee record' },
           { status: 403 },
         );
+      }
+      currentEmployeeId = employee.id;
+
       const [assignedTrip] = await db
         .select({ id: trips.id })
         .from(trips)
-        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
         .where(
           and(
             eq(trips.id, resolvedTripId),
-            eq(trips.tenantId, session.tenantId),
             eq(trips.vehicleId, resolvedVehicleId!),
-            eq(vehicleAllocations.driverEmployeeId, employee.id),
-            inArray(trips.status, ['in_progress', 'return_due']),
+            sql`${trips.status} in ('in_progress', 'return_due')`,
+            tripScopeCondition({
+              tenantId: session.tenantId,
+              userId: session.user.id,
+              recordScope: 'assigned',
+            }),
           ),
         )
         .limit(1);
-      if (!assignedTrip)
+      if (!assignedTrip) {
         return NextResponse.json(
           { error: 'Trip is not active and assigned to this driver and vehicle' },
-          { status: 403 },
+          { status: 404 },
         );
+      }
     } else if (resolvedTripId) {
       const [tenantTrip] = await db
         .select({ id: trips.id })
@@ -269,152 +284,137 @@ export async function POST(req: NextRequest) {
           ),
         )
         .limit(1);
-      if (!tenantTrip)
-        return NextResponse.json(
-          { error: 'Trip does not match this tenant and vehicle' },
-          { status: 422 },
-        );
+      if (!tenantTrip) {
+        return NextResponse.json({ error: 'Trip does not match this tenant and vehicle' }, { status: 422 });
+      }
     }
 
-    if (clientSyncId && resolvedTripId) {
-      const [existing] = await db
-        .select()
-        .from(fuelTransactions)
-        .where(
-          and(
-            eq(fuelTransactions.tripId, resolvedTripId),
-            eq(fuelTransactions.clientSyncId, clientSyncId),
-          ),
-        )
-        .limit(1);
-      if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
-    }
-
-    // ── On-behalf-of attribution ───────────────────────────────────────────
-    // Resolve the driver this entry is attributed to. An explicit selection wins;
-    // otherwise fall back to the trip's allocated driver (so officers recording
-    // fuel for a trip still attribute it to the correct driver).
-    let resolvedDriverId: string | null = null;
-    if (driverEmployeeId) {
+    let resolvedDriverId: string | null = currentEmployeeId;
+    if (isManager && driverEmployeeId) {
       const [driverEmp] = await db
-        .select({
-          id: employees.id,
-          isDriver: employees.isDriver,
-          employmentStatus: employees.employmentStatus,
-        })
+        .select({ id: employees.id, isDriver: employees.isDriver, employmentStatus: employees.employmentStatus })
         .from(employees)
         .where(
-          and(
-            eq(employees.id, String(driverEmployeeId)),
-            eq(employees.tenantId, session.tenantId),
-          ),
+          and(eq(employees.id, String(driverEmployeeId)), eq(employees.tenantId, session.tenantId)),
         )
         .limit(1);
-      if (!driverEmp) {
-        return NextResponse.json(
-          { error: 'Driver not found in your tenant' },
-          { status: 404 },
-        );
-      }
+      if (!driverEmp) return NextResponse.json({ error: 'Driver not found in your tenant' }, { status: 404 });
       if (driverEmp.isDriver !== true || driverEmp.employmentStatus !== 'active') {
-        return NextResponse.json(
-          { error: 'Selected driver is not an active driver' },
-          { status: 422 },
-        );
+        return NextResponse.json({ error: 'Selected driver is not an active driver' }, { status: 422 });
       }
       resolvedDriverId = driverEmp.id;
-    } else if (resolvedTripId) {
+    } else if (isManager && resolvedTripId) {
       const [tripDriver] = await db
         .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
         .from(trips)
         .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-        .where(eq(trips.id, resolvedTripId))
+        .where(and(eq(trips.id, resolvedTripId), eq(trips.tenantId, session.tenantId)))
         .limit(1);
       resolvedDriverId = tripDriver?.driverEmployeeId ?? null;
     }
 
-    const [transaction] = await db
-      .insert(fuelTransactions)
-      .values({
-        tripId: resolvedTripId || null,
-        clientSyncId: clientSyncId || null,
-        vehicleId: resolvedVehicleId!,
-        transactionAt: transactionAt ? new Date(transactionAt) : new Date(),
-        stationName: stationName || null,
-        fuelType,
-        litres: String(litresNumber),
-        amount: String(amountNumber),
-        odometerReading: odometerNumber,
-        referenceNumber: referenceNumber || null,
-        paymentMethod,
-        fillType: fillType || 'full',
-        driverEmployeeId: resolvedDriverId,
-        recordedByUserId: session.user.id,
-      })
-      .returning();
+    const transactionId = randomUUID();
+    const now = new Date();
+    const auditSequence = Date.now();
 
-    if (odometerNumber !== null) {
-      await db.insert(vehicleOdometerEvents).values({
-        vehicleId: resolvedVehicleId!,
-        odometerValue: odometerNumber,
-        source: 'fuel',
-        sourceEntityType: 'fuel_transaction',
-        sourceEntityId: transaction.id,
-        recordedByUserId: session.user.id,
-      });
-      await db
-        .update(vehicles)
-        .set({ currentOdometer: odometerNumber, updatedAt: new Date() })
-        .where(and(eq(vehicles.id, resolvedVehicleId!), eq(vehicles.tenantId, session.tenantId)));
-    }
+    await runAtomicMutations((executor) => {
+      const queries = [
+        executor.insert(fuelTransactions).values({
+          id: transactionId,
+          tripId: resolvedTripId || null,
+          clientSyncId: syncId,
+          vehicleId: resolvedVehicleId!,
+          transactionAt: eventAt,
+          stationName: stationName || null,
+          fuelType,
+          litres: String(litresNumber),
+          amount: String(amountNumber),
+          odometerReading: odometerNumber,
+          referenceNumber: referenceNumber || null,
+          paymentMethod,
+          fillType: fillType || 'full',
+          driverEmployeeId: resolvedDriverId,
+          recordedByUserId: session.user.id,
+        }),
+        executor.insert(auditEvents).values({
+          tenantId: session.tenantId,
+          tenantSequence: auditSequence,
+          eventType: 'fuel_created',
+          actorUserId: session.user.id,
+          action: 'create',
+          entityType: 'fuel_transaction',
+          entityId: transactionId,
+          summary: `Fuel: ${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — ${amountNumber}`,
+          sourceChannel: syncId ? 'offline_sync' : 'web',
+        }),
+      ];
 
-    // Audit log
-    await db.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: 0,
-      eventType: 'fuel_created',
-      actorUserId: session.user.id,
-      action: 'create',
-      entityType: 'fuel_transaction',
-      entityId: transaction.id,
-      summary: `Fuel: ${litres}L of ${fuelType} at ${stationName || 'unknown station'} — ${amount}`,
-      sourceChannel: clientSyncId ? 'offline_sync' : 'web',
+      if (odometerNumber !== null) {
+        queries.push(
+          executor.insert(vehicleOdometerEvents).values({
+            vehicleId: resolvedVehicleId!,
+            odometerValue: odometerNumber,
+            source: 'fuel',
+            sourceEntityType: 'fuel_transaction',
+            sourceEntityId: transactionId,
+            recordedByUserId: session.user.id,
+          }),
+          executor
+            .update(vehicles)
+            .set({
+              currentOdometer: sql`GREATEST(${vehicles.currentOdometer}, ${odometerNumber})`,
+              updatedAt: now,
+            })
+            .where(and(eq(vehicles.id, resolvedVehicleId!), eq(vehicles.tenantId, session.tenantId))),
+        );
+      }
+      return queries;
     });
+
+    const [transaction] = await db
+      .select()
+      .from(fuelTransactions)
+      .where(eq(fuelTransactions.id, transactionId))
+      .limit(1);
+    if (!transaction) throw new Error('Fuel transaction committed but could not be reloaded');
 
     const { activeWorkspace } = await getSessionWorkspace(session);
-    await createScopedNotifications({
-      tenantId: session.tenantId,
-      recipientUserIds: [session.user.id],
-      category: 'outcome',
-      eventType: 'fuel_entry_recorded',
-      title: `Fuel Entry Recorded — ${litres}L`,
-      body: `${litres}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amount}.`,
-      entityType: 'fuel_transaction',
-      entityId: transaction.id,
-      actionUrl: '/dashboard/fuel',
-      workspace: activeWorkspace,
-      priority: 'normal',
-    });
+    await Promise.allSettled([
+      createScopedNotifications({
+        tenantId: session.tenantId,
+        recipientUserIds: [session.user.id],
+        category: 'outcome',
+        eventType: 'fuel_entry_recorded',
+        title: `Fuel Entry Recorded — ${litresNumber}L`,
+        body: `${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amountNumber}.`,
+        entityType: 'fuel_transaction',
+        entityId: transaction.id,
+        actionUrl: '/dashboard/fuel',
+        workspace: activeWorkspace,
+        priority: 'normal',
+      }),
+    ]);
 
-    return NextResponse.json({ success: true, data: transaction });
+    return NextResponse.json({ success: true, data: transaction }, { status: 201 });
   } catch (error) {
+    const code = (error as { code?: string })?.code;
+    if (code === '23505') {
+      return NextResponse.json({ error: 'This fuel entry was already submitted' }, { status: 409 });
+    }
     console.error('[fuel] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create fuel transaction' }, { status: 500 });
   }
 }
 
-/**
- * PATCH /api/fuel
- * Verify or reject a tenant-scoped fuel transaction.
- */
+/** PATCH /api/fuel — verify or reject a tenant-scoped fuel transaction atomically. */
 export async function PATCH(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
     const roleCheck = await requireDashboardAction(session, '/dashboard/fuel', 'update');
     if (roleCheck instanceof NextResponse) return roleCheck;
-
     const permission = await requirePermission(session, Permissions.FUEL_VERIFY);
     if (permission instanceof NextResponse) return permission;
 
@@ -436,54 +436,48 @@ export async function PATCH(req: NextRequest) {
 
     const db = getDb();
     const [transaction] = await db
-      .select({
-        id: fuelTransactions.id,
-        isVerified: fuelTransactions.isVerified,
-        anomalyState: fuelTransactions.anomalyState,
-      })
+      .select({ id: fuelTransactions.id, isVerified: fuelTransactions.isVerified, anomalyState: fuelTransactions.anomalyState })
       .from(fuelTransactions)
       .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .where(
-        and(eq(fuelTransactions.id, body.transactionId), eq(vehicles.tenantId, session.tenantId)),
-      )
+      .where(and(eq(fuelTransactions.id, body.transactionId), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
-    if (!transaction) {
-      return NextResponse.json({ error: 'Fuel transaction not found' }, { status: 404 });
-    }
+    if (!transaction) return NextResponse.json({ error: 'Fuel transaction not found' }, { status: 404 });
 
     const isVerified = action === 'verify';
+    const nextState = isVerified ? 'verified' : 'rejected';
+    const reason = body.reason?.trim() || null;
+
+    await runAtomicMutations((executor) => [
+      executor
+        .update(fuelTransactions)
+        .set({
+          isVerified,
+          verifiedByUserId: session.user.id,
+          anomalyState: nextState,
+          anomalyNotes: reason,
+          updatedAt: new Date(),
+        })
+        .where(eq(fuelTransactions.id, transaction.id)),
+      executor.insert(auditEvents).values({
+        tenantId: session.tenantId,
+        tenantSequence: Date.now(),
+        eventType: `fuel_${action}`,
+        actorUserId: session.user.id,
+        action,
+        entityType: 'fuel_transaction',
+        entityId: transaction.id,
+        before: { isVerified: transaction.isVerified, anomalyState: transaction.anomalyState },
+        after: { isVerified, anomalyState: nextState },
+        reason,
+        sourceChannel: 'web',
+      }),
+    ]);
+
     const [updated] = await db
-      .update(fuelTransactions)
-      .set({
-        isVerified,
-        verifiedByUserId: session.user.id,
-        anomalyState: isVerified ? 'verified' : 'rejected',
-        anomalyNotes: body.reason?.trim() || null,
-        updatedAt: new Date(),
-      })
+      .select()
+      .from(fuelTransactions)
       .where(eq(fuelTransactions.id, transaction.id))
-      .returning();
-
-    await db.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: `fuel_${action}`,
-      actorUserId: session.user.id,
-      action,
-      entityType: 'fuel_transaction',
-      entityId: transaction.id,
-      before: {
-        isVerified: transaction.isVerified,
-        anomalyState: transaction.anomalyState,
-      },
-      after: {
-        isVerified: updated.isVerified,
-        anomalyState: updated.anomalyState,
-      },
-      reason: body.reason?.trim() || null,
-      sourceChannel: 'web',
-    });
-
+      .limit(1);
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     console.error('[fuel] PATCH failed:', error);

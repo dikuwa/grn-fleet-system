@@ -12,7 +12,6 @@ import {
 import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 import { processAuthorisationDecision } from '@/lib/authorisation-decision';
-import { processDriverAcknowledgement } from '@/lib/driver-acknowledgement';
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
@@ -26,6 +25,11 @@ function semanticPositiveResult(actionType: string): WorkflowActionResult {
     default:
       return 'approved';
   }
+}
+
+function isExpectedAtomicRollback(error: unknown) {
+  const candidate = error as { code?: string; message?: string };
+  return candidate?.code === '22P02' && String(candidate.message || '').includes('atomic_');
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -98,6 +102,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     const stepActionType = status.currentStep.actionType;
+    if (stepActionType === 'acknowledge') {
+      return NextResponse.json(
+        {
+          error:
+            'Driver acknowledgement must be completed from the assigned trip in Driver Console so the vehicle, route, passenger manifest and driver licence can be verified.',
+          actionUrl: '/dashboard/trips',
+        },
+        { status: 409 },
+      );
+    }
+
     const semanticResult: WorkflowActionResult =
       actionType === 'approved'
         ? semanticPositiveResult(stepActionType)
@@ -121,13 +136,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       });
     } else if (stepActionType === 'authorise') {
       result = await processAuthorisationDecision({
-        instanceId: id,
-        result: semanticResult,
-        comment: typeof comment === 'string' ? comment : undefined,
-        session,
-      });
-    } else if (stepActionType === 'acknowledge') {
-      result = await processDriverAcknowledgement({
         instanceId: id,
         result: semanticResult,
         comment: typeof comment === 'string' ? comment : undefined,
@@ -159,6 +167,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       },
     });
   } catch (error) {
+    if (isExpectedAtomicRollback(error)) {
+      console.warn('Approval action rolled back because the workflow changed concurrently:', error);
+      return NextResponse.json(
+        { error: 'This workflow changed while the decision was being recorded. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
     console.error('Approval action failed:', error);
     return NextResponse.json({ error: 'Failed to process approval action' }, { status: 500 });
   }
