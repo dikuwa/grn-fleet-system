@@ -1,7 +1,7 @@
 /**
  * Driver eligibility picker for the Vehicle Allocation flow.
  *
- * GET /api/allocations/drivers?requestId=&vehicleId=&q=&page=&limit=
+ * GET /api/allocations/drivers?requestId=&vehicleId=&startDate=&endDate=&q=&page=&limit=
  *
  * Returns every tenant driver with a real-time compliance verdict for the
  * selected request + vehicle, so the Transport Officer can see why a known
@@ -22,13 +22,20 @@ import {
 import { requestActivities, transportRequests } from '@/db/schema/requests';
 import { vehicleCategories, vehicles } from '@/db/schema/fleet';
 import { vehicleAllocations } from '@/db/schema/trips';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lt } from 'drizzle-orm';
 import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { calculateDriverCompliance } from '@/lib/employee-lifecycle';
 import { licenceCoversClass } from '@/lib/licence-classes';
 
 const DEFAULT_TRIP_END_OFFSET_MS = 7 * 24 * 60 * 60 * 1000;
+const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed', 'released'] as const;
+
+function parseOptionalDate(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -46,10 +53,18 @@ export async function GET(request: NextRequest) {
     const vehicleId = searchParams.get('vehicleId')?.trim() || null;
     const q = searchParams.get('q')?.trim() || '';
     const page = Math.max(1, Number(searchParams.get('page') || '1') || 1);
-    const limit = Math.min(50, Math.max(1, Number(searchParams.get('limit') || '10') || 10));
+    const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') || '25') || 25));
+    const requestedStart = parseOptionalDate(searchParams.get('startDate'));
+    const requestedEnd = parseOptionalDate(searchParams.get('endDate'));
 
     if (!requestId) {
       return NextResponse.json({ error: 'requestId is required' }, { status: 400 });
+    }
+    if (searchParams.get('startDate') && !requestedStart) {
+      return NextResponse.json({ error: 'startDate is invalid' }, { status: 400 });
+    }
+    if (searchParams.get('endDate') && !requestedEnd) {
+      return NextResponse.json({ error: 'endDate is invalid' }, { status: 400 });
     }
 
     const db = getDb();
@@ -64,14 +79,31 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Transport request not found' }, { status: 404 });
     }
 
-    // Trip window from the request's programme of activities.
+    // Derive the request's full activity window. Explicit allocation dates from
+    // the UI take precedence so eligibility always reflects the period the
+    // officer is actually about to submit.
     const activities = await db
       .select({ startDate: requestActivities.startDate, endDate: requestActivities.endDate })
       .from(requestActivities)
       .where(eq(requestActivities.requestId, requestId));
-    let tripEndAt: Date | null = null;
+
+    let activityStart: Date | null = null;
+    let activityEnd: Date | null = null;
     if (activities.length > 0) {
-      tripEndAt = activities.reduce((max, a) => (a.endDate > max ? a.endDate : max), activities[0].endDate);
+      activityStart = activities.reduce(
+        (min, activity) => (activity.startDate < min ? activity.startDate : min),
+        activities[0].startDate,
+      );
+      activityEnd = activities.reduce(
+        (max, activity) => (activity.endDate > max ? activity.endDate : max),
+        activities[0].endDate,
+      );
+    }
+
+    const tripStart = requestedStart ?? activityStart ?? new Date();
+    const tripEnd = requestedEnd ?? activityEnd ?? new Date(tripStart.getTime() + DEFAULT_TRIP_END_OFFSET_MS);
+    if (tripEnd <= tripStart) {
+      return NextResponse.json({ error: 'Allocation end date must be after the start date' }, { status: 422 });
     }
 
     // Vehicle requirements (class + professional authorisation) when one is chosen.
@@ -89,11 +121,12 @@ export async function GET(request: NextRequest) {
         .leftJoin(vehicleCategories, eq(vehicles.categoryId, vehicleCategories.id))
         .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, tenantId)))
         .limit(1);
-      if (vehicle) {
-        requiredLicenceClass = vehicle.requiredLicenceClass;
-        professionalAuthorisationRequired = vehicle.professionalAuthorisationRequired;
-        vehicleCategoryName = vehicle.categoryName;
+      if (!vehicle) {
+        return NextResponse.json({ error: 'Vehicle not found in your organisation' }, { status: 404 });
       }
+      requiredLicenceClass = vehicle.requiredLicenceClass;
+      professionalAuthorisationRequired = vehicle.professionalAuthorisationRequired;
+      vehicleCategoryName = vehicle.categoryName;
     }
 
     // Every tenant driver — including currently-ineligible ones, so officers
@@ -115,19 +148,19 @@ export async function GET(request: NextRequest) {
       .leftJoin(departments, eq(employees.departmentId, departments.id))
       .leftJoin(offices, eq(employees.officeId, offices.id))
       .where(and(eq(employees.tenantId, tenantId), eq(employees.isDriver, true)))
-      .orderBy(asc(employees.lastName));
+      .orderBy(asc(employees.lastName), asc(employees.firstName));
 
     if (driverEmployees.length === 0) {
       return NextResponse.json({ success: true, data: [], total: 0, page, limit, totalPages: 1 });
     }
 
-    const employeeIds = driverEmployees.map((e) => e.id);
+    const employeeIds = driverEmployees.map((employee) => employee.id);
     const profiles = await db
       .select()
       .from(driverProfiles)
       .where(inArray(driverProfiles.employeeId, employeeIds));
-    const profileMap = new Map(profiles.map((p) => [p.employeeId, p]));
-    const profileIds = profiles.map((p) => p.id);
+    const profileMap = new Map(profiles.map((profile) => [profile.employeeId, profile]));
+    const profileIds = profiles.map((profile) => profile.id);
 
     // Fetch active licences first so we can scope codes to exactly those licence rows.
     const licences =
@@ -144,7 +177,7 @@ export async function GET(request: NextRequest) {
         ? db
             .select({ licenceId: driverLicenceCodes.licenceId, code: driverLicenceCodes.code })
             .from(driverLicenceCodes)
-            .where(inArray(driverLicenceCodes.licenceId, licenceIds))
+            .where(and(inArray(driverLicenceCodes.licenceId, licenceIds), eq(driverLicenceCodes.isActive, true)))
         : Promise.resolve([]),
       profileIds.length > 0
         ? db
@@ -158,12 +191,16 @@ export async function GET(request: NextRequest) {
         .where(
           and(
             inArray(vehicleAllocations.driverEmployeeId, employeeIds),
-            inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+            inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
+            lt(vehicleAllocations.startAt, tripEnd),
+            gt(vehicleAllocations.endAt, tripStart),
           ),
         ),
     ]);
 
-    // Highest-version active licence per profile.
+    // Highest-version active licence per profile. Eligibility below additionally
+    // requires verificationStatus=verified, so a provisional active record cannot
+    // accidentally make a driver selectable.
     const licencesByProfile = new Map<string, (typeof licences)[number]>();
     for (const licence of licences) {
       const current = licencesByProfile.get(licence.driverProfileId);
@@ -187,8 +224,6 @@ export async function GET(request: NextRequest) {
     const conflictedDrivers = new Set(
       driverAllocations.map((row) => row.driverEmployeeId).filter((value): value is string => Boolean(value)),
     );
-
-    const tripEnd = tripEndAt ?? new Date(Date.now() + DEFAULT_TRIP_END_OFFSET_MS);
 
     const drivers = driverEmployees.map((employee) => {
       const profile = profileMap.get(employee.id);
@@ -234,10 +269,13 @@ export async function GET(request: NextRequest) {
         departmentName: employee.departmentName,
         officeName: employee.officeName,
         employmentStatus: employee.employmentStatus,
+        availabilityStatus: employee.availabilityStatus,
         driverStatus: profile?.driverStatus ?? 'unauthorised',
+        profileAvailabilityStatus: profile?.availabilityStatus ?? null,
         licenceNumber: licence?.licenceNumber ?? null,
         licenceClass: licence?.licenceClass ?? null,
         licenceExpiry: licence?.expiryDate ?? null,
+        licenceVerificationStatus: licence?.verificationStatus ?? null,
         licenceClassCompatible: licenceCoversClass(licence?.licenceClass, requiredLicenceClass),
         eligible,
         compliance,
@@ -258,18 +296,21 @@ export async function GET(request: NextRequest) {
     }
 
     const total = filtered.length;
-    const pageRows = filtered.slice((page - 1) * limit, (page - 1) * limit + limit);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(page, totalPages);
+    const pageRows = filtered.slice((safePage - 1) * limit, (safePage - 1) * limit + limit);
 
     return NextResponse.json({
       success: true,
       data: pageRows,
       total,
-      page,
+      page: safePage,
       limit,
-      totalPages: Math.max(1, Math.ceil(total / limit)),
+      totalPages,
       requestId,
       requiredLicenceClass,
       vehicleCategoryName,
+      tripStartAt: tripStart.toISOString(),
       tripEndAt: tripEnd.toISOString(),
     });
   } catch (error) {

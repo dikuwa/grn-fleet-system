@@ -1,25 +1,57 @@
 'use client';
 
-import { useState, use } from 'react';
+import { use, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input, Label } from '@/components/ui/input';
+import { Input, Label, Textarea } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { SearchableEntitySelect } from '@/components/ui/searchable-entity-select';
 import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
-  User, Mail, Shield, CalendarDays, Loader2, ChevronLeft, ChevronRight, CheckCircle2, XCircle,
-  Plus, Trash2, Database, KeyRound, Copy, CheckCheck, UserPlus,
-  Clock, Lock, Ban, AlertTriangle, RotateCcw,
+  AlertTriangle,
+  Ban,
+  CalendarDays,
+  CheckCheck,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Copy,
+  Database,
+  KeyRound,
+  Loader2,
+  Lock,
+  Mail,
+  Plus,
+  RotateCcw,
+  Shield,
+  Trash2,
+  User,
+  UserPlus,
+  XCircle,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 import { getEmployeeStatusDisplay } from '@/lib/employee-status';
+
+interface RoleAssignment {
+  id: string;
+  roleId: string;
+  roleName: string;
+  startDate: string;
+  endDate: string | null;
+  isActive: boolean;
+  isActing: boolean;
+  delegatedByUserId: string | null;
+  reason: string | null;
+}
 
 interface UserDetail {
   id: string;
@@ -29,16 +61,7 @@ interface UserDetail {
   emailVerified: boolean;
   tenantStatus: string;
   joinedAt: string | null;
-  roleAssignments: Array<{
-    id: string;
-    roleId: string;
-    roleName: string;
-    startDate: string;
-    endDate: string | null;
-    isActing: boolean;
-    delegatedByUserId: string | null;
-    reason: string | null;
-  }>;
+  roleAssignments: RoleAssignment[];
   availableRoles: Array<{
     id: string;
     name: string;
@@ -72,50 +95,57 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-const STATUS_CONFIG: Record<string, { label: string; variant: 'success' | 'error' | 'pending' | 'cancelled' | 'info'; icon: React.ReactNode; description: string }> = {
+const STATUS_CONFIG: Record<string, {
+  label: string;
+  variant: 'success' | 'error' | 'pending' | 'cancelled' | 'info';
+  icon: React.ReactNode;
+  description: string;
+}> = {
   active: {
     label: 'Active',
     variant: 'success',
     icon: <CheckCircle2 className="h-4 w-4" />,
-    description: 'User can log in and access the system.',
+    description: 'User can sign in and use the permissions granted by their active roles.',
   },
   pending_activation: {
     label: 'Pending Activation',
     variant: 'pending',
     icon: <Clock className="h-4 w-4" />,
-    description: 'User has been created but has not yet activated their account.',
+    description: 'The account exists but activation has not been completed.',
   },
   suspended: {
     label: 'Suspended',
     variant: 'error',
     icon: <Ban className="h-4 w-4" />,
-    description: 'User is suspended and cannot log in.',
+    description: 'User access is suspended.',
   },
   disabled: {
     label: 'Disabled',
     variant: 'cancelled',
     icon: <XCircle className="h-4 w-4" />,
-    description: 'User account has been disabled by an administrator.',
+    description: 'The account is disabled by the security/profile layer and cannot be changed from tenant membership status.',
   },
   locked: {
     label: 'Locked',
     variant: 'error',
     icon: <Lock className="h-4 w-4" />,
-    description: 'Account locked due to security policy (e.g. too many failed attempts).',
+    description: 'The account is locked by the security policy and cannot be changed from tenant membership status.',
   },
   access_removed: {
     label: 'Removed',
     variant: 'cancelled',
     icon: <XCircle className="h-4 w-4" />,
-    description: 'The user has been removed from the organisation. Their staff record is preserved and access can be restored.',
+    description: 'Login access was removed. The staff record is preserved and access can be restored.',
   },
 };
 
-const STATUS_OPTIONS = ['active', 'suspended', 'pending_activation', 'disabled', 'locked'] as const;
+const STATUS_OPTIONS = ['active', 'suspended', 'pending_activation'] as const;
 
 export default function AdminUserDetailPage({ params }: PageProps) {
   const { id } = use(params);
+  const router = useRouter();
   const { toast } = useToast();
+
   const [editName, setEditName] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -124,16 +154,9 @@ export default function AdminUserDetailPage({ params }: PageProps) {
   const [roleEndDate, setRoleEndDate] = useState('');
   const [resetResult, setResetResult] = useState<{ tempPassword: string; message: string } | null>(null);
   const [showResetResult, setShowResetResult] = useState(false);
-
-  // Remove-user flow (role-less / pending accounts only)
+  const [copiedPassword, setCopiedPassword] = useState(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
-  const [isRemoving, setIsRemoving] = useState(false);
-  // Restore-user flow (access_removed accounts)
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
-  const [isRestoring, setIsRestoring] = useState(false);
-  const router = useRouter();
-
-  // Delegation dialog
   const [showDelegate, setShowDelegate] = useState(false);
   const [delegateUserId, setDelegateUserId] = useState('');
   const [delegateRoleId, setDelegateRoleId] = useState('');
@@ -141,16 +164,15 @@ export default function AdminUserDetailPage({ params }: PageProps) {
   const [delegateEndDate, setDelegateEndDate] = useState('');
   const [delegateReason, setDelegateReason] = useState('');
 
-  // Fetch available users for delegation
   const { data: delegateUsers } = useQuery({
-    queryKey: ['admin-users-delegate'],
+    queryKey: ['admin-users-delegate', id],
     queryFn: async () => {
       const res = await fetch('/api/admin/users?limit=100');
       const json = await res.json();
-      if (!res.ok) return [];
-      // Filter out the current user and include active + pending users
+      if (!res.ok) throw new Error(json.error || 'Unable to load tenant users');
       return (json.data?.users || []).filter(
-        (u: { id: string; tenantStatus: string }) => u.id !== id && ['active', 'pending_activation'].includes(u.tenantStatus),
+        (candidate: { id: string; tenantStatus: string }) =>
+          candidate.id !== id && ['active', 'pending_activation'].includes(candidate.tenantStatus),
       ) as TenantUser[];
     },
     enabled: showDelegate,
@@ -167,13 +189,11 @@ export default function AdminUserDetailPage({ params }: PageProps) {
     },
   });
 
-  // Sync editName & selectedStatus from loaded data
-  if (userData && !editName && userData.name) {
-    setEditName(userData.name);
-  }
-  if (userData && !selectedStatus) {
+  useEffect(() => {
+    if (!userData) return;
+    setEditName(userData.name || '');
     setSelectedStatus(userData.tenantStatus);
-  }
+  }, [userData]);
 
   const handlePasswordReset = async () => {
     setIsSaving(true);
@@ -187,21 +207,24 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to reset password');
       setResetResult(json.data);
+      setCopiedPassword(false);
       setShowResetResult(true);
-      toast({ title: 'Password Reset', description: 'Temporary password generated.', variant: 'success' });
+      toast({ title: 'Password reset', description: 'A temporary password was generated.', variant: 'success' });
     } catch (err) {
-      toast({ title: 'Reset Failed', description: err instanceof Error ? err.message : 'Failed to reset password', variant: 'error' });
+      toast({ title: 'Reset failed', description: err instanceof Error ? err.message : 'Failed to reset password', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const copyToClipboard = async (text: string) => {
+  const copyPassword = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      toast({ title: 'Copied', description: 'Copied to clipboard.', variant: 'success' });
+      setCopiedPassword(true);
+      window.setTimeout(() => setCopiedPassword(false), 1800);
+      toast({ title: 'Copied', description: 'Temporary password copied.', variant: 'success' });
     } catch {
-      toast({ title: 'Copy Failed', description: 'Unable to copy to clipboard.', variant: 'error' });
+      toast({ title: 'Copy failed', description: 'Clipboard access is unavailable.', variant: 'error' });
     }
   };
 
@@ -216,7 +239,8 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update');
-      toast({ title: 'Name updated', description: 'User name saved successfully', variant: 'success' });
+      await refetch();
+      toast({ title: 'Name updated', description: 'User name saved.', variant: 'success' });
     } catch (err) {
       toast({ title: 'Update failed', description: err instanceof Error ? err.message : 'Failed to update', variant: 'error' });
     } finally {
@@ -235,9 +259,12 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update status');
-      setSelectedStatus(newStatus);
       await refetch();
-      toast({ title: 'Status Updated', description: `Status changed to ${STATUS_CONFIG[newStatus]?.label || newStatus}.`, variant: 'success' });
+      toast({
+        title: 'Status updated',
+        description: `Status changed to ${STATUS_CONFIG[newStatus]?.label || newStatus}.`,
+        variant: 'success',
+      });
     } catch (err) {
       toast({ title: 'Status update failed', description: err instanceof Error ? err.message : 'Failed to update status', variant: 'error' });
     } finally {
@@ -263,61 +290,45 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       setSelectedRoleId('');
       setRoleStartDate('');
       setRoleEndDate('');
-      toast({ title: 'Role assigned', description: 'Role added to user', variant: 'success' });
-      refetch();
+      await refetch();
+      toast({ title: 'Role assigned', description: 'Role added to this user.', variant: 'success' });
     } catch (err) {
-      toast({ title: 'Failed to add role', description: err instanceof Error ? err.message : 'Failed to add role', variant: 'error' });
+      toast({ title: 'Role assignment failed', description: err instanceof Error ? err.message : 'Failed to add role', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleRemoveFromOrganisation = async () => {
-    setIsRemoving(true);
-    try {
-      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to remove user');
-      toast({
-        title: 'User removed',
-        description: `${userData?.name || userData?.email || 'User'} removed from the organisation. Staff record preserved.`,
-        variant: 'success',
-      });
-      setShowRemoveConfirm(false);
-      router.push('/dashboard/admin/users');
-    } catch (err) {
-      toast({
-        title: 'Failed to remove user',
-        description: err instanceof Error ? err.message : 'Failed to remove user',
-        variant: 'error',
-      });
-    } finally {
-      setIsRemoving(false);
+    const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+    const json = await res.json();
+    if (!res.ok) {
+      const message = json.error || 'Failed to remove user';
+      toast({ title: 'Remove failed', description: message, variant: 'error' });
+      throw new Error(message);
     }
+    toast({
+      title: 'User access removed',
+      description: `${userData?.name || userData?.email || 'User'} was removed from User Management. The staff record is preserved.`,
+      variant: 'success',
+    });
+    router.push('/dashboard/admin/users');
   };
 
   const handleRestoreUser = async () => {
-    setIsRestoring(true);
-    try {
-      const res = await fetch(`/api/admin/users/${id}/restore`, { method: 'POST' });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to restore user');
-      toast({
-        title: 'User access restored',
-        description: `${userData?.name || userData?.email || 'User'} can sign in again. The staff record was preserved.`,
-        variant: 'success',
-      });
-      setShowRestoreConfirm(false);
-      await refetch();
-    } catch (err) {
-      toast({
-        title: 'Failed to restore user',
-        description: err instanceof Error ? err.message : 'Failed to restore user',
-        variant: 'error',
-      });
-    } finally {
-      setIsRestoring(false);
+    const res = await fetch(`/api/admin/users/${id}/restore`, { method: 'POST' });
+    const json = await res.json();
+    if (!res.ok) {
+      const message = json.error || 'Failed to restore user';
+      toast({ title: 'Restore failed', description: message, variant: 'error' });
+      throw new Error(message);
     }
+    toast({
+      title: 'User access restored',
+      description: `${userData?.name || userData?.email || 'User'} can sign in again. The staff record is unchanged.`,
+      variant: 'success',
+    });
+    await refetch();
   };
 
   const handleRemoveRole = async (assignmentId: string) => {
@@ -330,16 +341,15 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to remove role');
-      toast({ title: 'Role removed', description: 'Assignment deleted', variant: 'success' });
-      refetch();
+      await refetch();
+      toast({ title: 'Role removed', description: 'The role assignment ended successfully.', variant: 'success' });
     } catch (err) {
-      toast({ title: 'Failed to remove role', description: err instanceof Error ? err.message : 'Failed to remove role', variant: 'error' });
+      toast({ title: 'Role removal failed', description: err instanceof Error ? err.message : 'Failed to remove role', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Delegation handlers
   const handleDelegate = async () => {
     if (!delegateUserId || !delegateRoleId || !userData) return;
     setIsSaving(true);
@@ -363,10 +373,10 @@ export default function AdminUserDetailPage({ params }: PageProps) {
       setDelegateStartDate('');
       setDelegateEndDate('');
       setDelegateReason('');
-      toast({ title: 'Delegation Created', description: 'Acting role assigned successfully.', variant: 'success' });
-      refetch();
+      await refetch();
+      toast({ title: 'Delegation created', description: 'The acting role assignment was created.', variant: 'success' });
     } catch (err) {
-      toast({ title: 'Delegation Failed', description: err instanceof Error ? err.message : 'Failed to create delegation', variant: 'error' });
+      toast({ title: 'Delegation failed', description: err instanceof Error ? err.message : 'Failed to create delegation', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -374,540 +384,318 @@ export default function AdminUserDetailPage({ params }: PageProps) {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
+      <div className="text-ink-500 flex items-center justify-center gap-2 py-16 text-sm" role="status">
+        <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading user details…
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5 sm:space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'User Management', href: '/dashboard/admin/users' }, { label: 'User' }]} />
         <PageHeader title="User Detail" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title={error instanceof Error ? error.message : 'Failed to load user'} />
-        <Button variant="secondary" size="sm" onClick={() => refetch()}>Retry</Button>
+        <EmptyState icon={<Database className="h-6 w-6" />} title={error instanceof Error ? error.message : 'Failed to load user'} action={{ label: 'Retry', onClick: () => void refetch() }} />
       </div>
     );
   }
 
   if (!userData) return null;
 
+  const activeRoleAssignments = userData.roleAssignments.filter((assignment) => assignment.isActive);
+  const permanentActiveRoles = activeRoleAssignments.filter((assignment) => !assignment.isActing);
   const rolesNotAssigned = userData.availableRoles.filter(
-    (r) => !userData.roleAssignments.some((a) => a.roleId === r.id),
+    (role) => !activeRoleAssignments.some((assignment) => assignment.roleId === role.id),
   );
-
   const statusConf = STATUS_CONFIG[userData.tenantStatus] || STATUS_CONFIG.active;
+  const employeeDisplay = userData.linkedEmployee
+    ? getEmployeeStatusDisplay(userData.linkedEmployee.employmentStatus)
+    : null;
+  const membershipStatusEditable = STATUS_OPTIONS.includes(userData.tenantStatus as (typeof STATUS_OPTIONS)[number]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <Breadcrumbs items={[
         { label: 'Dashboard', href: '/dashboard' },
         { label: 'User Management', href: '/dashboard/admin/users' },
         { label: userData.name || userData.email },
       ]} />
-      <PageHeader
-        title={userData.name || 'Unnamed User'}
-        description={userData.email}
-      >
-        <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/admin/users"><ChevronLeft className="h-4 w-4" /> Back</Link>
+      <PageHeader title={userData.name || 'Unnamed User'} description={userData.email}>
+        <Button variant="secondary" size="sm" asChild className="w-full sm:w-auto">
+          <Link href="/dashboard/admin/users"><ChevronLeft className="h-4 w-4" /> Back to Users</Link>
         </Button>
       </PageHeader>
 
-      {/* Status Card */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="flex items-center gap-4">
-            <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-[10px] ${
-              userData.tenantStatus === 'active' ? 'bg-status-success-bg text-status-success-text' :
-              userData.tenantStatus === 'suspended' ? 'bg-status-error-bg text-status-error-text' :
-              userData.tenantStatus === 'locked' ? 'bg-red-100 text-red-700' :
-              userData.tenantStatus === 'pending_activation' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' :
-              'bg-muted text-ink-400'
-            }`}>
-              {statusConf.icon}
+      <div className="border-border bg-surface rounded-[10px] border p-4 sm:p-5">
+        <div className="flex items-start gap-3 sm:gap-4">
+          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] ${
+            statusConf.variant === 'success'
+              ? 'bg-status-success-bg text-status-success-text'
+              : statusConf.variant === 'pending'
+                ? 'bg-status-pending-bg text-status-pending-text'
+                : statusConf.variant === 'error'
+                  ? 'bg-status-error-bg text-status-error-text'
+                  : 'bg-muted text-ink-500'
+          }`}>
+            {statusConf.icon}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h2 className="text-ink-950 min-w-0 break-words text-base font-semibold sm:text-lg">{userData.name || 'Unnamed user'}</h2>
+              <Badge variant={statusConf.variant} size="sm">{statusConf.label}</Badge>
+              {userData.emailVerified && <Badge variant="info" size="sm">Email verified</Badge>}
             </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg font-semibold text-ink-950">{userData.name || 'Unnamed'}</h2>
-                <Badge variant={statusConf.variant} size="sm">{statusConf.label}</Badge>
-                {userData.emailVerified && <Badge variant="info" size="sm">Verified</Badge>}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
-                <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{userData.email}</span>
-                {userData.username && (
-                  <span className="flex items-center gap-1"><User className="h-3.5 w-3.5" />{userData.username}</span>
-                )}
-                {userData.joinedAt && (
-                  <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />Joined {formatDate(userData.joinedAt)}</span>
-                )}
-                <span className="flex items-center gap-1"><Shield className="h-3.5 w-3.5" />{userData.roleAssignments.length} role{userData.roleAssignments.length !== 1 ? 's' : ''}</span>
-              </div>
+            <div className="text-ink-500 mt-2 grid gap-1.5 text-xs sm:grid-cols-2 xl:grid-cols-4">
+              <span className="flex min-w-0 items-start gap-1.5"><Mail className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0 break-all">{userData.email}</span></span>
+              {userData.username && <span className="flex min-w-0 items-start gap-1.5"><User className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0 break-all">{userData.username}</span></span>}
+              {userData.joinedAt && <span className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />Joined {formatDate(userData.joinedAt)}</span>}
+              <span className="flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" />{activeRoleAssignments.length} active role{activeRoleAssignments.length === 1 ? '' : 's'}</span>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      {/* Linked Employee summary — account and staff records stay separate */}
-      {userData.linkedEmployee && (
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="bg-brand-50 text-brand-800 flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] text-sm font-semibold">
-                  {userData.linkedEmployee.firstName.charAt(0)}{userData.linkedEmployee.lastName.charAt(0)}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-ink-950 truncate text-sm font-medium">
-                    Linked employee: {userData.linkedEmployee.firstName} {userData.linkedEmployee.lastName}
-                  </p>
-                  <p className="text-ink-500 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
-                    <span>Employee number: {userData.linkedEmployee.employeeNumber}</span>
-                    <span>Staff status: <span className="text-status-success-text font-medium">{getEmployeeStatusDisplay(userData.linkedEmployee.employmentStatus).label}</span></span>
-                    {userData.linkedEmployee.officeName && <span>Office: {userData.linkedEmployee.officeName}</span>}
-                    {userData.linkedEmployee.departmentName && <span>Department: {userData.linkedEmployee.departmentName}</span>}
-                  </p>
-                </div>
+      {userData.linkedEmployee && employeeDisplay && (
+        <div className="border-border bg-surface rounded-[10px] border p-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="bg-brand-50 text-brand-800 flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] text-sm font-semibold dark:bg-brand-950/30 dark:text-brand-300">
+                {userData.linkedEmployee.firstName.charAt(0)}{userData.linkedEmployee.lastName.charAt(0)}
               </div>
-              <Button variant="secondary" size="sm" asChild className="shrink-0">
-                <Link href={`/dashboard/staff/${userData.linkedEmployee.id}`}>
-                  View Employee Profile <ChevronRight className="h-4 w-4" />
-                </Link>
-              </Button>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-ink-950 text-sm font-medium">{userData.linkedEmployee.firstName} {userData.linkedEmployee.lastName}</p>
+                  <Badge variant={employeeDisplay.variant} size="sm">{employeeDisplay.label}</Badge>
+                </div>
+                <div className="text-ink-500 mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                  <span>{userData.linkedEmployee.employeeNumber}</span>
+                  {userData.linkedEmployee.officeName && <span>{userData.linkedEmployee.officeName}</span>}
+                  {userData.linkedEmployee.departmentName && <span>{userData.linkedEmployee.departmentName}</span>}
+                </div>
+                <p className="text-ink-400 mt-1 text-xs">User access and Staff Management remain separate records.</p>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+            <Button variant="secondary" size="sm" asChild className="w-full shrink-0 sm:w-auto">
+              <Link href={`/dashboard/staff/${userData.linkedEmployee.id}`}>View Employee <ChevronRight className="h-4 w-4" /></Link>
+            </Button>
+          </div>
+        </div>
       )}
 
-      {/* Details Grid */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Profile */}
+      <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>Profile</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle>Profile</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <Label>Full Name</Label>
-              <div className="flex gap-2">
-                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
-                <Button variant="primary" size="sm" onClick={handleUpdateName} loading={isSaving}>
-                  Save
-                </Button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input value={editName} onChange={(event) => setEditName(event.target.value)} className="min-w-0 flex-1" />
+                <Button variant="primary" size="sm" onClick={() => void handleUpdateName()} loading={isSaving} className="w-full sm:w-auto">Save Name</Button>
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <p className="text-sm text-ink-700">{userData.email}</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="min-w-0"><Label>Email</Label><p className="text-ink-700 mt-1 break-all text-sm">{userData.email}</p></div>
+              <div className="min-w-0"><Label>Username</Label><p className="text-ink-700 mt-1 break-all text-sm">{userData.username || 'Not set'}</p></div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Username</Label>
-              <p className="text-sm text-ink-700">{userData.username || 'Not set'}</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>User ID</Label>
-              <p className="text-xs font-mono text-ink-500">{userData.id}</p>
-            </div>
+            <div className="min-w-0"><Label>User ID</Label><p className="text-ink-500 mt-1 break-all font-mono text-xs">{userData.id}</p></div>
           </CardContent>
         </Card>
 
-        {/* Account Status */}
         <Card>
-          <CardHeader><CardTitle>Account Status</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle>Account Access</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label>Status</Label>
-              <div className="flex gap-2">
-                <StyledSelect
-                  value={selectedStatus}
-                  onChange={(e) => setSelectedStatus(e.target.value)}
-                  disabled={userData.tenantStatus === 'access_removed'}
-                >
-                  {STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
-                  ))}
-                </StyledSelect>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => handleUpdateStatus(selectedStatus)}
-                  loading={isSaving}
-                  disabled={
-                    selectedStatus === userData.tenantStatus ||
-                    userData.tenantStatus === 'access_removed'
-                  }
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Apply
-                </Button>
-              </div>
-              <p className="text-xs text-ink-500">{statusConf.description}</p>
-            </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-border">
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handlePasswordReset}
-                  loading={isSaving}
-                >
-                  <KeyRound className="h-4 w-4" /> Reset Password
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setShowDelegate(true)}
-                >
-                  <UserPlus className="h-4 w-4" /> Delegate
-                </Button>
-              </div>
-            </div>
-            {userData.joinedAt && (
-              <div className="text-xs text-ink-500">
-                Joined: {formatDate(userData.joinedAt)}
-              </div>
-            )}
-
-            {/* Danger zone: remove from organisation (role-less / pending only) */}
-            <div className="border-border mt-3 pt-3 border-t">
-              {userData.tenantStatus === 'access_removed' ? (
-                <>
+              {membershipStatusEditable ? (
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <StyledSelect value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)} aria-label="Account status">
+                    {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{STATUS_CONFIG[status].label}</option>)}
+                  </StyledSelect>
                   <Button
                     variant="primary"
                     size="sm"
-                    onClick={() => setShowRestoreConfirm(true)}
-                    loading={isRestoring}
+                    onClick={() => void handleUpdateStatus(selectedStatus)}
+                    loading={isSaving}
+                    disabled={selectedStatus === userData.tenantStatus}
+                    className="w-full sm:w-auto"
                   >
-                    <RotateCcw className="h-4 w-4" /> Restore User Access
+                    <CheckCircle2 className="h-4 w-4" /> Apply Status
                   </Button>
-                  <p className="text-ink-400 mt-2 text-xs">
-                    This account was removed from the organisation. Restoring re-activates the
-                    login account and returns the person to User Management. Their staff record
-                    is untouched; role assignments may need to be re-added.
-                  </p>
-                </>
-              ) : userData.roleAssignments.length === 0 ? (
+                </div>
+              ) : (
+                <div className="border-border bg-muted/30 rounded-[8px] border px-3 py-2.5 text-sm text-ink-600">
+                  {statusConf.label} is controlled by the account security/profile layer, not tenant membership status.
+                </div>
+              )}
+              <p className="text-ink-500 text-xs leading-5">{statusConf.description}</p>
+            </div>
+
+            <div className="border-border flex flex-col gap-2 border-t pt-4 sm:flex-row sm:flex-wrap">
+              <Button variant="secondary" size="sm" onClick={() => void handlePasswordReset()} loading={isSaving} className="w-full sm:w-auto"><KeyRound className="h-4 w-4" /> Reset Password</Button>
+              <Button variant="secondary" size="sm" onClick={() => setShowDelegate(true)} disabled={permanentActiveRoles.length === 0} className="w-full sm:w-auto"><UserPlus className="h-4 w-4" /> Delegate Role</Button>
+            </div>
+
+            <div className="border-border border-t pt-4">
+              {userData.tenantStatus === 'access_removed' ? (
                 <>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setShowRemoveConfirm(true)}
-                    className="text-status-error-text hover:text-status-error-text"
-                  >
-                    <Trash2 className="h-4 w-4" /> Remove from Organisation
-                  </Button>
-                  <p className="text-ink-400 mt-2 text-xs">
-                    Removes this user&apos;s login access and any pending invitation. The linked
-                    staff/employee record is preserved and they will still appear in the Staff
-                    Directory.
-                  </p>
+                  <Button variant="primary" size="sm" onClick={() => setShowRestoreConfirm(true)} className="w-full sm:w-auto"><RotateCcw className="h-4 w-4" /> Restore User Access</Button>
+                  <p className="text-ink-500 mt-2 text-xs leading-5">Restoring login access does not change the Staff Directory record. Roles may need to be assigned again.</p>
+                </>
+              ) : activeRoleAssignments.length === 0 ? (
+                <>
+                  <Button variant="destructive" size="sm" onClick={() => setShowRemoveConfirm(true)} className="w-full sm:w-auto"><Trash2 className="h-4 w-4" /> Remove User Access</Button>
+                  <p className="text-ink-500 mt-2 text-xs leading-5">Login access and pending invitations are removed. Historical and future role records are preserved with the staff record.</p>
                 </>
               ) : (
-                <p className="text-ink-400 flex items-start gap-1.5 text-xs">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  Remove this user&apos;s role assignments first — then they can be removed from the
-                  organisation.
-                </p>
+                <p className="text-ink-500 flex items-start gap-2 text-xs leading-5"><AlertTriangle className="text-status-warning-text mt-0.5 h-3.5 w-3.5 shrink-0" />Remove the {activeRoleAssignments.length} active role assignment{activeRoleAssignments.length === 1 ? '' : 's'} first. Historical and future-dated role records do not block removal.</p>
               )}
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Role Assignments */}
       <Card>
-        <CardHeader>
-          <CardTitle>Role Assignments</CardTitle>
-        </CardHeader>
+        <CardHeader className="pb-3"><CardTitle>Role Assignments</CardTitle></CardHeader>
         <CardContent>
           {userData.roleAssignments.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
-              <Shield className="h-8 w-8 text-ink-300 mb-2" />
-              <p className="text-sm text-ink-500">No roles assigned</p>
-              <p className="text-xs text-ink-400 mt-1">Assign a role to grant this user system permissions.</p>
+              <Shield className="text-ink-300 mb-2 h-8 w-8" />
+              <p className="text-ink-700 text-sm font-medium">No role history</p>
+              <p className="text-ink-500 mt-1 text-xs">Assign a role to grant workspace responsibilities.</p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="border-border overflow-hidden rounded-[8px] border">
               {userData.roleAssignments.map((assignment) => (
-                <div
-                  key={assignment.id}
-                  className={`flex items-center justify-between rounded-[8px] border p-3 ${
-                    assignment.isActing ? 'border-amber-200 bg-amber-50/50 dark:border-amber-800/50 dark:bg-amber-950/20' : 'border-border'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    {assignment.isActing ? (
-                      <UserPlus className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                    ) : (
-                      <Shield className="h-4 w-4 text-brand-600" />
-                    )}
-                    <div>
-                      <span className="text-sm font-medium text-ink-950">{assignment.roleName}</span>
-                      {assignment.isActing && (
-                        <Badge variant="pending" size="sm" className="ml-2">Acting</Badge>
-                      )}
-                      {assignment.reason && (
-                        <p className="text-xs text-ink-500 mt-0.5">Reason: {assignment.reason}</p>
-                      )}
-                      {assignment.endDate && (
-                        <p className="text-xs text-ink-500">Expires {formatDate(assignment.endDate)}</p>
-                      )}
-                      {assignment.startDate && (
-                        <p className="text-xs text-ink-400">Started {formatDate(assignment.startDate)}</p>
-                      )}
+                <div key={assignment.id} className={`border-border flex flex-col gap-3 border-b p-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:p-4 ${assignment.isActing && assignment.isActive ? 'bg-status-pending-bg/40' : !assignment.isActive ? 'bg-muted/20' : ''}`}>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] ${assignment.isActing && assignment.isActive ? 'bg-status-pending-bg text-status-pending-text' : assignment.isActive ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/30 dark:text-brand-300' : 'bg-muted text-ink-400'}`}>
+                      {assignment.isActing ? <UserPlus className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-ink-950 text-sm font-medium">{assignment.roleName}</span>
+                        {assignment.isActing && <Badge variant="pending" size="sm">Acting</Badge>}
+                        <Badge variant={assignment.isActive ? 'success' : 'default'} size="sm">{assignment.isActive ? 'Active' : 'Historical / scheduled'}</Badge>
+                      </div>
+                      <div className="text-ink-500 mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                        <span>Starts {formatDate(assignment.startDate)}</span>
+                        {assignment.endDate && <span>Ends {formatDate(assignment.endDate)}</span>}
+                      </div>
+                      {assignment.reason && <p className="text-ink-500 mt-1 break-words text-xs">{assignment.reason}</p>}
                     </div>
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="text-status-error-text"
-                    onClick={() => handleRemoveRole(assignment.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  {assignment.isActive && (
+                    <Button variant="ghost" size="sm" className="text-status-error-text w-full sm:w-auto" onClick={() => void handleRemoveRole(assignment.id)} disabled={isSaving}><Trash2 className="h-4 w-4" /> End Role</Button>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
-          {/* Add Role */}
-          {rolesNotAssigned.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-border space-y-3">
-              <p className="text-xs font-medium text-ink-500 uppercase tracking-wider">Assign New Role</p>
-              <div className="flex items-center gap-2">
-                <StyledSelect
-                  value={selectedRoleId}
-                  onChange={(e) => setSelectedRoleId(e.target.value)}
-                >
-                  <option value="">Select a role...</option>
-                  {rolesNotAssigned.map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </StyledSelect>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-ink-500 mb-1">Start Date</label>
-                  <StyledDateInput
-                    type="date"
-                    value={roleStartDate}
-                    onChange={(e) => setRoleStartDate(e.target.value)}
-                  />
+          {rolesNotAssigned.length > 0 && userData.tenantStatus !== 'access_removed' && (
+            <div className="border-border mt-5 space-y-4 border-t pt-4">
+              <p className="text-ink-500 text-xs font-medium uppercase tracking-wider">Assign New Role</p>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_11rem_11rem_auto] lg:items-end">
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
+                  <Label>Role</Label>
+                  <StyledSelect value={selectedRoleId} onChange={(event) => setSelectedRoleId(event.target.value)} aria-label="Role to assign">
+                    <option value="">Select a role…</option>
+                    {rolesNotAssigned.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                  </StyledSelect>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-500 mb-1">End Date <span className="text-ink-400 font-normal">(optional)</span></label>
-                  <StyledDateInput
-                    type="date"
-                    value={roleEndDate}
-                    onChange={(e) => setRoleEndDate(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleAddRole}
-                  loading={isSaving}
-                  disabled={!selectedRoleId}
-                >
-                  <Plus className="h-4 w-4" /> Assign Role
-                </Button>
+                <div className="space-y-1.5"><Label>Start Date</Label><StyledDateInput type="date" value={roleStartDate} onChange={(event) => setRoleStartDate(event.target.value)} /></div>
+                <div className="space-y-1.5"><Label>End Date <span className="text-ink-400 font-normal">(optional)</span></Label><StyledDateInput type="date" value={roleEndDate} onChange={(event) => setRoleEndDate(event.target.value)} /></div>
+                <Button variant="primary" size="sm" onClick={() => void handleAddRole()} loading={isSaving} disabled={!selectedRoleId} className="w-full lg:w-auto"><Plus className="h-4 w-4" /> Assign Role</Button>
               </div>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Restore User Access Confirmation Dialog */}
-      <Dialog open={showRestoreConfirm} onOpenChange={setShowRestoreConfirm}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Restore User Access</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-ink-700 text-sm">
-              Restore login access for{' '}
-              <strong>{userData.name || userData.email || 'this user'}</strong>? They will be able
-              to sign in again and will reappear in User Management.
-            </p>
-            <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
-              Their <strong>staff/employee record is unchanged</strong>. Role assignments may need
-              to be re-added after restoration.
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="secondary" size="sm" onClick={() => setShowRestoreConfirm(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleRestoreUser}
-                loading={isRestoring}
-              >
-                <RotateCcw className="h-4 w-4" /> Restore Access
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={showRestoreConfirm}
+        onOpenChange={setShowRestoreConfirm}
+        title="Restore user access?"
+        description={`Restore login access for ${userData.name || userData.email}? The staff record remains unchanged; roles may need to be assigned again.`}
+        confirmLabel="Restore access"
+        onConfirm={handleRestoreUser}
+      />
 
-      {/* Remove from Organisation Confirmation Dialog */}
-      <Dialog open={showRemoveConfirm} onOpenChange={setShowRemoveConfirm}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Remove User from Organisation</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-ink-700 text-sm">
-              Are you sure you want to remove{' '}
-              <strong>{userData.name || userData.email || 'this user'}</strong> from the
-              organisation? This removes their login access and any pending invitation.
-            </p>
-            <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-300">
-              Their <strong>staff/employee record is preserved</strong> — the person will still
-              appear in the Staff Directory and can be re-invited later.
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="secondary" size="sm" onClick={() => setShowRemoveConfirm(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleRemoveFromOrganisation}
-                loading={isRemoving}
-                className="bg-status-error-text hover:bg-red-700"
-              >
-                <Trash2 className="h-4 w-4" /> Remove User
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={showRemoveConfirm}
+        onOpenChange={setShowRemoveConfirm}
+        title="Remove user access?"
+        description={`Remove ${userData.name || userData.email} from User Management? Login access and pending invitations are removed, while the Staff Directory employee record and role history are preserved.`}
+        confirmLabel="Remove access"
+        variant="destructive"
+        onConfirm={handleRemoveFromOrganisation}
+      />
 
-      {/* Delegation Dialog */}
       <Dialog open={showDelegate} onOpenChange={setShowDelegate}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Delegate Role</DialogTitle>
-            <DialogDescription>
-              Temporarily assign one of {userData.name || 'this user'}&apos;s roles to another user.
-              The delegation will appear as an &quot;Acting&quot; assignment.
-            </DialogDescription>
+            <DialogDescription>Temporarily assign one of this user&apos;s active permanent roles to another active or pending tenant user. The substantive role remains unchanged.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label required>Target User</Label>
-              <StyledSelect
+              <SearchableEntitySelect
                 value={delegateUserId}
-                onChange={(e) => setDelegateUserId(e.target.value)}
-              >
-                <option value="">{delegateUsers ? 'Select a user...' : 'Loading users...'}</option>
-                {(delegateUsers || []).map((du) => (
-                  <option key={du.id} value={du.id}>
-                    {du.name || du.email} ({du.tenantStatus === 'pending_activation' ? 'Pending' : 'Active'})
-                  </option>
-                ))}
-              </StyledSelect>
-              <p className="text-xs text-ink-500">Select the user who will temporarily act in this role.</p>
+                ariaLabel="Search tenant user for delegation"
+                placeholder="Search user name or email…"
+                emptyLabel="No eligible tenant user matches this search."
+                options={(delegateUsers || []).map((candidate) => ({
+                  id: candidate.id,
+                  label: candidate.name || candidate.email,
+                  description: candidate.email,
+                  searchText: `${candidate.name || ''} ${candidate.email}`,
+                  status: candidate.tenantStatus === 'pending_activation' ? 'Pending activation' : 'Active',
+                }))}
+                onChange={(option) => setDelegateUserId(option?.id || '')}
+              />
             </div>
             <div className="space-y-1.5">
               <Label required>Role to Delegate</Label>
-              <StyledSelect
-                value={delegateRoleId}
-                onChange={(e) => setDelegateRoleId(e.target.value)}
-              >
-                <option value="">Select a role...</option>
-                {userData.roleAssignments
-                  .filter((a) => !a.isActing)
-                  .map((a) => (
-                    <option key={a.id} value={a.roleId}>{a.roleName}</option>
-                  ))}
+              <StyledSelect value={delegateRoleId} onChange={(event) => setDelegateRoleId(event.target.value)} aria-label="Role to delegate">
+                <option value="">Select an active permanent role…</option>
+                {permanentActiveRoles.map((assignment) => <option key={assignment.id} value={assignment.roleId}>{assignment.roleName}</option>)}
               </StyledSelect>
-              <p className="text-xs text-ink-500">Only this user&apos;s permanent roles can be delegated.</p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Start Date</Label>
-                <StyledDateInput
-                  type="date"
-                  value={delegateStartDate}
-                  onChange={(e) => setDelegateStartDate(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>End Date <span className="text-ink-400 font-normal">(optional)</span></Label>
-                <StyledDateInput
-                  type="date"
-                  value={delegateEndDate}
-                  onChange={(e) => setDelegateEndDate(e.target.value)}
-                />
-              </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5"><Label>Start Date</Label><StyledDateInput type="date" value={delegateStartDate} onChange={(event) => setDelegateStartDate(event.target.value)} /></div>
+              <div className="space-y-1.5"><Label>End Date <span className="text-ink-400 font-normal">(optional)</span></Label><StyledDateInput type="date" value={delegateEndDate} onChange={(event) => setDelegateEndDate(event.target.value)} /></div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Reason <span className="text-ink-400 font-normal">(optional)</span></Label>
-              <textarea
-                value={delegateReason}
-                onChange={(e) => setDelegateReason(e.target.value)}
-                placeholder="e.g. On annual leave from 15–30 August 2026"
-                className="h-20 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none"
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <Button variant="secondary" size="sm" onClick={() => setShowDelegate(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleDelegate}
-                loading={isSaving}
-                disabled={!delegateUserId || !delegateRoleId}
-              >
-                <UserPlus className="h-4 w-4" /> Create Delegation
-              </Button>
+            <div className="space-y-1.5"><Label>Reason <span className="text-ink-400 font-normal">(optional)</span></Label><Textarea value={delegateReason} onChange={(event) => setDelegateReason(event.target.value)} placeholder="e.g. Annual leave cover" rows={3} /></div>
+            <div className="mobile-action-bar border-border flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+              <Button variant="secondary" size="sm" onClick={() => setShowDelegate(false)} className="w-full sm:w-auto">Cancel</Button>
+              <Button variant="primary" size="sm" onClick={() => void handleDelegate()} loading={isSaving} disabled={!delegateUserId || !delegateRoleId} className="w-full sm:w-auto"><UserPlus className="h-4 w-4" /> Create Delegation</Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Password Reset Result Dialog */}
       <Dialog open={showResetResult} onOpenChange={setShowResetResult}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Password Reset Successful</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Password Reset Successful</DialogTitle></DialogHeader>
           <div className="space-y-4">
-            <div className="rounded-[8px] border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800/40 dark:bg-green-950/20 dark:text-green-300">
-              <p className="font-medium">Temporary Password Generated</p>
-              <p className="mt-1 text-xs">Share this temporary password with the user. They will be required to change it on next login.</p>
+            <div className="border-status-success-text/20 bg-status-success-bg text-status-success-text rounded-[8px] border p-3 text-sm">
+              <p className="font-medium">Temporary password generated</p>
+              <p className="mt-1 text-xs leading-5">Share it securely. The user must change it on the next sign-in.</p>
             </div>
-
             {resetResult && (
-              <div className="space-y-2">
-                <div className="rounded-[8px] border border-border bg-muted p-3">
-                  <p className="text-xs font-medium text-ink-500 mb-1">Temporary Password</p>
-                  <div className="flex items-center justify-between gap-2">
-                    <code className="text-lg font-mono font-bold tracking-wider text-ink-950">
-                      {resetResult.tempPassword}
-                    </code>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => copyToClipboard(resetResult.tempPassword)}
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  </div>
+              <div className="border-border bg-muted/30 rounded-[8px] border p-3">
+                <p className="text-ink-500 mb-1 text-xs font-medium">Temporary Password</p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <code className="text-ink-950 min-w-0 break-all font-mono text-base font-bold tracking-wider">{resetResult.tempPassword}</code>
+                  <Button variant="secondary" size="sm" onClick={() => void copyPassword(resetResult.tempPassword)} className="w-full shrink-0 sm:w-auto">
+                    {copiedPassword ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    {copiedPassword ? 'Copied' : 'Copy'}
+                  </Button>
                 </div>
               </div>
             )}
-
-            <div className="flex justify-end">
-              <Button variant="primary" size="sm" onClick={() => setShowResetResult(false)}>
-                <CheckCheck className="h-4 w-4" /> Done
-              </Button>
-            </div>
+            <div className="mobile-action-bar flex justify-end"><Button variant="primary" size="sm" onClick={() => setShowResetResult(false)} className="w-full sm:w-auto"><CheckCheck className="h-4 w-4" /> Done</Button></div>
           </div>
         </DialogContent>
       </Dialog>

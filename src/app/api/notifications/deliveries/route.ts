@@ -4,16 +4,15 @@
  * Returns notification delivery records enriched with notification details.
  * Supports filtering by status and channel.
  *
- * Access: Authenticated users with TENANT_MANAGE or AUDIT_READ permissions.
+ * Access: Tenant administrators, transport administrators and tenant auditors.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { notificationDeliveries, notifications } from '@/db/schema/notifications';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { requireAnyPermission } from '@/lib/auth-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +24,7 @@ export async function GET(request: NextRequest) {
 
     const permCheck = await requireAnyPermission(session, [
       Permissions.TENANT_MANAGE,
+      Permissions.DRIVER_MANAGE,
       Permissions.AUDIT_READ,
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -33,7 +33,8 @@ export async function GET(request: NextRequest) {
     const statusFilter = searchParams.get('status'); // sent, failed, pending, skipped
     const channelFilter = searchParams.get('channel'); // email, sms, in_app
     const typeFilter = searchParams.get('type'); // notification type filter
-    const limit = Math.min(parseInt(searchParams.get('limit') || '100', 10), 200);
+    const parsedLimit = Number.parseInt(searchParams.get('limit') || '100', 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 100;
 
     const db = getDb();
     const tenantWhere = eq(notifications.tenantId, session.tenantId);

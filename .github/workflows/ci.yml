@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 env:
   NODE_VERSION: '22'
@@ -112,6 +112,7 @@ jobs:
           SEED_ADMIN_PASSWORD: ${{ env.SEED_ADMIN_PASSWORD }}
 
       - name: Stop dev server
+        if: always()
         run: kill $(lsof -ti :3000) 2>/dev/null || true
 
   # e2e:
@@ -125,13 +126,6 @@ jobs:
   #       with:
   #         node-version: ${{ env.NODE_VERSION }}
   #         cache: 'pnpm'
-  #     - run: pnpm install --frozen-lockfile
   #     - run: pnpm exec playwright install chromium
   #     - run: pnpm build
   #     - run: pnpm test:e2e
-  #       env:
-  #         DATABASE_URL: ${{ secrets.DATABASE_URL }}
-  #         BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
-  #         BETTER_AUTH_URL: ${{ secrets.BETTER_AUTH_URL }}
-  #         NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
-  #         NEXT_PUBLIC_APP_NAME: ${{ secrets.NEXT_PUBLIC_APP_NAME }}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { employees, roleDelegations, roles, offices, departments } from '@/db/schema';
+import { employees, roleDelegations, roles, offices, departments, tenantMemberships } from '@/db/schema';
 import { regions } from '@/db/schema/fleet';
 import { and, asc, eq, gt, inArray, lt, or } from 'drizzle-orm';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
@@ -84,8 +84,14 @@ export async function POST(request: NextRequest) {
   if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
     return NextResponse.json({ error: 'Valid start and end dates are required' }, { status: 400 });
   }
+  // A reversed/zero appointment window is a structural validation failure,
+  // never a conflict that may be bypassed with an override reason.
+  if (endAt <= startAt) {
+    return NextResponse.json({ error: 'Delegation end date must be after the start date' }, { status: 422 });
+  }
+
   const db = getDb();
-  const [[employee], [role], existing, [office], [department], [region]] = await Promise.all([
+  const [[employee], [role], existing, [office], [department], [region], [substantiveHolder]] = await Promise.all([
     db.select().from(employees).where(and(eq(employees.id, body.actingEmployeeId), eq(employees.tenantId, auth.session.tenantId))).limit(1),
     db.select().from(roles).where(and(eq(roles.id, body.roleId), eq(roles.tenantId, auth.session.tenantId))).limit(1),
     db.select({
@@ -112,14 +118,40 @@ export async function POST(request: NextRequest) {
       ? db.select({ id: regions.id }).from(regions)
           .where(and(eq(regions.id, body.regionId), eq(regions.tenantId, auth.session.tenantId))).limit(1)
       : Promise.resolve([undefined] as const),
+    body.substantiveHolderEmployeeId
+      ? db.select({ id: employees.id }).from(employees)
+          .where(and(eq(employees.id, body.substantiveHolderEmployeeId), eq(employees.tenantId, auth.session.tenantId))).limit(1)
+      : Promise.resolve([undefined] as const),
   ]);
   if (!employee || !role) return NextResponse.json({ error: 'Employee or role was not found in your organisation' }, { status: 404 });
   if (body.officeId && !office) return NextResponse.json({ error: 'Office scope was not found in your organisation' }, { status: 404 });
   if (body.departmentId && !department) return NextResponse.json({ error: 'Department scope was not found in your organisation' }, { status: 404 });
   if (body.regionId && !region) return NextResponse.json({ error: 'Region scope was not found in your organisation' }, { status: 404 });
-  if (!employee.userId && (body.canApprove || body.canSign)) {
-    return NextResponse.json({ error: 'An acting approver or signatory must have an active user account' }, { status: 400 });
+  if (body.substantiveHolderEmployeeId && !substantiveHolder) {
+    return NextResponse.json({ error: 'Substantive role holder was not found in your organisation' }, { status: 404 });
   }
+
+  const requiresLoginAccount = Boolean(
+    body.canApprove || body.canSign || body.canAllocateVehicles || body.canAssignDrivers || body.canReconcileTrips || body.canDelegateFurther,
+  );
+  if (requiresLoginAccount) {
+    if (!employee.userId) {
+      return NextResponse.json({ error: 'An acting user with delegated system capabilities must have an active user account' }, { status: 400 });
+    }
+    const [activeMembership] = await db
+      .select({ id: tenantMemberships.id })
+      .from(tenantMemberships)
+      .where(and(
+        eq(tenantMemberships.tenantId, auth.session.tenantId),
+        eq(tenantMemberships.userId, employee.userId),
+        eq(tenantMemberships.status, 'active'),
+      ))
+      .limit(1);
+    if (!activeMembership) {
+      return NextResponse.json({ error: 'The acting employee does not have active login access to this organisation' }, { status: 409 });
+    }
+  }
+
   const conflicts = findDelegationConflicts({
     actingEmployeeId: employee.id,
     roleId: role.id,
@@ -157,7 +189,7 @@ export async function POST(request: NextRequest) {
     createdByUserId: auth.session.user.id,
     authorisedByUserId: auth.session.user.id,
     status: startAt <= now && endAt > now ? 'active' : 'scheduled',
-    overrideReason: body.overrideReason || null,
+    overrideReason: body.overrideReason?.trim() || null,
   }).returning();
   await recordAuditEvent({
     tenantId: auth.session.tenantId,
@@ -182,18 +214,34 @@ export async function PATCH(request: NextRequest) {
   if (permission instanceof NextResponse) return permission;
   const body = await request.json() as { id: string; action: 'revoke' | 'cancel'; reason: string };
   if (!body.id || !body.reason?.trim()) return NextResponse.json({ error: 'Delegation and reason are required' }, { status: 400 });
+  if (!['revoke', 'cancel'].includes(body.action)) {
+    return NextResponse.json({ error: 'Unsupported delegation action' }, { status: 400 });
+  }
   const db = getDb();
   const [existing] = await db.select().from(roleDelegations)
     .where(and(eq(roleDelegations.id, body.id), eq(roleDelegations.tenantId, auth.session.tenantId))).limit(1);
   if (!existing) return NextResponse.json({ error: 'Delegation not found' }, { status: 404 });
+  if (['revoked', 'cancelled', 'expired'].includes(existing.status)) {
+    return NextResponse.json(
+      { error: `This delegation is already ${existing.status} and cannot be changed.` },
+      { status: 409 },
+    );
+  }
+  if (body.action === 'cancel' && existing.status === 'active') {
+    return NextResponse.json({ error: 'An active delegation must be revoked rather than cancelled.' }, { status: 409 });
+  }
+  if (body.action === 'revoke' && existing.status === 'scheduled') {
+    return NextResponse.json({ error: 'A scheduled delegation must be cancelled rather than revoked.' }, { status: 409 });
+  }
+
   const status = body.action === 'cancel' ? 'cancelled' : 'revoked';
   await db.update(roleDelegations).set({
     status,
     revokedAt: new Date(),
     revokedByUserId: auth.session.user.id,
-    revocationReason: body.reason,
+    revocationReason: body.reason.trim(),
     updatedAt: new Date(),
-  }).where(eq(roleDelegations.id, body.id));
+  }).where(and(eq(roleDelegations.id, body.id), eq(roleDelegations.tenantId, auth.session.tenantId)));
   await recordAuditEvent({
     tenantId: auth.session.tenantId,
     actorUserId: auth.session.user.id,
@@ -202,7 +250,7 @@ export async function PATCH(request: NextRequest) {
     entityId: body.id,
     before: existing,
     after: { status },
-    reason: body.reason,
+    reason: body.reason.trim(),
   });
   return NextResponse.json({ success: true });
 }

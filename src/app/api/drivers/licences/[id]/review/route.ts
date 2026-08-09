@@ -6,9 +6,9 @@
  *      corrections, OCR output and signed image URLs.
  *
  * POST /api/drivers/licences/[id]/review — perform a review action
- *      (verify / request_upload / reject) with a reason. Approval uses the
- *      existing PATCH /api/drivers/[id]/licences verify path via the page,
- *      which preserves corrections + audit + notifications consistently.
+ *      (request_upload / reject) with a reason. Approval uses the existing
+ *      PATCH /api/drivers/[id]/licences verify path via the page, which
+ *      preserves corrections + audit + notifications consistently.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -23,14 +23,27 @@ import {
   offices,
 } from '@/db/schema/people';
 import { and, desc, eq } from 'drizzle-orm';
-import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  getSessionWorkspace,
+  hasPermission,
+  requireAnyPermission,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { WorkspaceIds } from '@/lib/workspaces';
 import { getSignedFileUrl } from '@/lib/storage';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { createScopedNotifications } from '@/lib/notification-service';
-import { licenceCoversClass } from '@/lib/licence-classes';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REVIEWABLE_STATUSES = new Set(['awaiting_review', 'needs_correction', 'uploaded', 'pending']);
+
+async function canReviewLicence(session: Parameters<typeof getSessionWorkspace>[0]) {
+  const workspace = await getSessionWorkspace(session);
+  if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) return false;
+  return hasPermission(session, Permissions.DRIVER_REVIEW_LICENCE);
+}
 
 export async function GET(
   request: NextRequest,
@@ -46,8 +59,13 @@ export async function GET(
     const permCheck = await requireAnyPermission(auth.session, [
       Permissions.LICENCE_VERIFY,
       Permissions.DRIVER_MANAGE,
+      Permissions.DRIVER_REVIEW_LICENCE,
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
+
+    // Tenant Administration has tenant-wide oversight, while review decisions
+    // are performed only from the Transport Administration workspace.
+    const canReview = await canReviewLicence(auth.session);
 
     const db = getDb();
     const [licence] = await db
@@ -83,8 +101,6 @@ export async function GET(
     }
 
     const profileId = licence.profileId;
-
-    // Signed URLs for the source documents (best-effort).
     const [frontUrl, backUrl, pdfUrl] = await Promise.all([
       licence.licence.frontImageKey
         ? getSignedFileUrl(licence.licence.frontImageKey, 3600).catch(() => null)
@@ -134,8 +150,6 @@ export async function GET(
         .orderBy(desc(driverLicences.version)),
     ]);
 
-    // Current verified licence is the previous version of this review target
-    // when this one is still awaiting review.
     const currentVerified = previous[0] ?? null;
     const currentVerifiedUrl = currentVerified?.frontImageKey
       ? await getSignedFileUrl(currentVerified.frontImageKey, 3600).catch(() => null)
@@ -147,10 +161,9 @@ export async function GET(
       qualityWarnings?: string[];
     };
 
-    // Warnings compared against the current verified licence.
     const warnings: string[] = [];
     if (rawOcr.qualityWarnings?.length) warnings.push(...rawOcr.qualityWarnings);
-    if (currentVerified) {
+    if (currentVerified && currentVerified.id !== licence.licence.id) {
       if (
         licence.licence.licenceNumber !== currentVerified.licenceNumber &&
         !licence.licence.licenceNumber.startsWith('PENDING-')
@@ -174,6 +187,8 @@ export async function GET(
     return NextResponse.json({
       success: true,
       data: {
+        canReview,
+        reviewable: REVIEWABLE_STATUSES.has(licence.licence.verificationStatus),
         licence: {
           ...licence.licence,
           ocrText: rawOcr.text ?? null,
@@ -199,16 +214,8 @@ export async function GET(
             }
           : null,
         previousVersions: allVersions,
-        files: {
-          frontUrl,
-          backUrl,
-          pdfUrl,
-        },
+        files: { frontUrl, backUrl, pdfUrl },
         warnings,
-        licenceCoversVehicleClass: (requiredClass?: string | null) =>
-          requiredClass
-            ? licenceCoversClass(licence.licence.licenceClass, requiredClass)
-            : true,
       },
     });
   } catch (error) {
@@ -217,22 +224,26 @@ export async function GET(
   }
 }
 
-/**
- * POST — request changes / reject with a reason; verify is handled by the
- * existing PATCH verify action (keeps corrections + audit in one place).
- */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Invalid licence identifier' }, { status: 400 });
+    }
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
-    const permCheck = await requireAnyPermission(auth.session, [
-      Permissions.LICENCE_VERIFY,
-      Permissions.DRIVER_MANAGE,
-    ]);
+
+    const workspace = await getSessionWorkspace(auth.session);
+    if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
+      return NextResponse.json(
+        { error: 'Licence review decisions are available only in the Transport Administration workspace.' },
+        { status: 403 },
+      );
+    }
+    const permCheck = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = (await request.json()) as {
@@ -269,14 +280,21 @@ export async function POST(
     if (!licence) {
       return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
     }
+    if (!REVIEWABLE_STATUSES.has(licence.verificationStatus)) {
+      return NextResponse.json(
+        { error: `This licence is ${licence.verificationStatus.replaceAll('_', ' ')} and can no longer receive a review decision.` },
+        { status: 409 },
+      );
+    }
 
     const newStatus = body.action === 'reject' ? 'rejected' : 'needs_correction';
     await db
       .update(driverLicences)
       .set({
         verificationStatus: newStatus,
+        isActive: false,
         isVerified: false,
-        rejectionReason: body.reason,
+        rejectionReason: body.reason.trim(),
         updatedAt: new Date(),
       })
       .where(eq(driverLicences.id, licence.id));
@@ -295,8 +313,8 @@ export async function POST(
       entityType: 'driver_licence',
       entityId: licence.id,
       before: { verificationStatus: licence.verificationStatus },
-      after: { verificationStatus: newStatus },
-      reason: body.reason,
+      after: { verificationStatus: newStatus, isActive: false },
+      reason: body.reason.trim(),
       summary: `Driver licence ${body.action === 'reject' ? 'rejected' : 'changes requested'} (${licence.licenceClass})`,
     });
 

@@ -130,8 +130,10 @@ async function getWorkspaceMetrics(
             .where(
               and(
                 eq(tenantMemberships.tenantId, tenantId),
+                eq(tenantMemberships.status, 'active'),
                 eq(roleAssignments.isActing, true),
-                or(isNull(roleAssignments.endDate), sql`${roleAssignments.endDate} >= now()`),
+                sql`${roleAssignments.startDate} <= now()`,
+                or(isNull(roleAssignments.endDate), sql`${roleAssignments.endDate} > now()`),
               ),
             ),
         ),

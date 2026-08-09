@@ -1,37 +1,26 @@
 'use client';
 
-import { Fragment, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import {Card, CardContent} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
-import {Shield, Plus, Loader2, Save, Pencil, LayoutGrid, Table2} from 'lucide-react';
+import { Shield, Plus, Loader2, Save, Pencil, LayoutGrid, Table2, LockKeyhole } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface PermissionGroup {
-  group: string;
-  label: string;
-  permissions: Array<{
-    code: string;
-    name: string;
-    description: string | null;
-  }>;
-}
+import { Permissions, isPermissionAvailableInWorkspace, type PermissionCode } from '@/lib/permissions';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 interface Role {
   id: string;
@@ -40,234 +29,122 @@ interface Role {
   isSystem: boolean;
   permissionCodes: string[];
   memberCount?: number;
+  editable?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Permission groups (hardcoded from Permissions.ts)
-// ---------------------------------------------------------------------------
+type PermissionItem = { code: PermissionCode; label: string; group: string };
 
-const PERMISSION_GROUPS: PermissionGroup[] = [
-  {
-    group: 'requests',
-    label: 'Transport Requests',
-    permissions: [
-      {
-        code: 'request:create',
-        name: 'Create Requests',
-        description: 'Create new transport requests',
-      },
-      { code: 'request:view', name: 'View Requests', description: 'View transport requests' },
-      {
-        code: 'request:approve-supervisor',
-        name: 'Supervisor Approve',
-        description: 'Approve as immediate supervisor',
-      },
-      {
-        code: 'request:review-transport',
-        name: 'Transport Review',
-        description: 'Review requests at transport office',
-      },
-      { code: 'request:withdraw', name: 'Withdraw Requests', description: 'Withdraw own requests' },
-      { code: 'request:cancel', name: 'Cancel Requests', description: 'Cancel any request' },
-    ],
-  },
-  {
-    group: 'allocations',
-    label: 'Vehicle Allocation',
-    permissions: [
-      {
-        code: 'allocation:manage',
-        name: 'Manage Allocations',
-        description: 'Manage vehicle allocations',
-      },
-      {
-        code: 'allocation:create',
-        name: 'Create Allocations',
-        description: 'Create new allocations',
-      },
-      {
-        code: 'allocation:override',
-        name: 'Override Allocation',
-        description: 'Override vehicle recommendation',
-      },
-    ],
-  },
-  {
-    group: 'vehicles',
-    label: 'Fleet Management',
-    permissions: [
-      { code: 'vehicle:manage', name: 'Manage Fleet', description: 'Full fleet management' },
-      { code: 'vehicle:view', name: 'View Fleet', description: 'View fleet records' },
-      { code: 'vehicle:create', name: 'Add Vehicles', description: 'Add new vehicles' },
-      { code: 'vehicle:update', name: 'Update Vehicles', description: 'Edit vehicle details' },
-    ],
-  },
-  {
-    group: 'release',
-    label: 'Vehicle Release',
-    permissions: [
-      {
-        code: 'vehicle:release-regional',
-        name: 'Regional Release',
-        description: 'Release vehicles for regional trips',
-      },
-      {
-        code: 'vehicle:release-national',
-        name: 'National Release',
-        description: 'Release vehicles for national trips',
-      },
-      {
-        code: 'vehicle:release-override',
-        name: 'Release Override',
-        description: 'Override vehicle release restrictions',
-      },
-    ],
-  },
-  {
-    group: 'authorisation',
-    label: 'Trip Authorisation',
-    permissions: [
-      {
-        code: 'trip:authorize-regional',
-        name: 'Regional Authorisation',
-        description: 'Authorise regional trips',
-      },
-      {
-        code: 'trip:authorize-national',
-        name: 'National Authorisation',
-        description: 'Authorise national trips',
-      },
-      {
-        code: 'trip:authorize-emergency',
-        name: 'Emergency Authorisation',
-        description: 'Authorise emergency trips',
-      },
-    ],
-  },
-  {
-    group: 'inspections',
-    label: 'Inspections',
-    permissions: [
-      {
-        code: 'inspection:perform',
-        name: 'Perform Inspections',
-        description: 'Conduct vehicle inspections',
-      },
-      { code: 'inspection:view', name: 'View Inspections', description: 'View inspection records' },
-    ],
-  },
-  {
-    group: 'trips',
-    label: 'Trip Management',
-    permissions: [
-      { code: 'trip:close', name: 'Close Trips', description: 'Close completed trips' },
-      { code: 'trip:view', name: 'View Trips', description: 'View trip records' },
-      { code: 'trip:manage', name: 'Manage Trips', description: 'Full trip management' },
-    ],
-  },
-  {
-    group: 'drivers',
-    label: 'Driver Operations',
-    permissions: [
-      { code: 'driver:log-create', name: 'Create Logs', description: 'Create daily log entries' },
-      { code: 'driver:log-view', name: 'View Logs', description: 'View daily log entries' },
-      { code: 'driver:fuel-create', name: 'Fuel Entries', description: 'Create fuel entries' },
-    ],
-  },
-  {
-    group: 'fuel',
-    label: 'Fuel Management',
-    permissions: [
-      { code: 'fuel:manage', name: 'Manage Fuel', description: 'Full fuel management' },
-      { code: 'fuel:verify', name: 'Verify Fuel', description: 'Verify fuel transactions' },
-      { code: 'fuel:view', name: 'View Fuel', description: 'View fuel records' },
-    ],
-  },
-  {
-    group: 'staff',
-    label: 'Staff Management',
-    permissions: [
-      { code: 'staff:import', name: 'Import Staff', description: 'Import staff from CSV/Excel' },
-      { code: 'staff:manage', name: 'Manage Staff', description: 'Full staff management' },
-      { code: 'staff:view', name: 'View Staff', description: 'View staff directory' },
-    ],
-  },
-  {
-    group: 'audit',
-    label: 'Audit',
-    permissions: [
-      { code: 'audit:read', name: 'Read Audit', description: 'View audit log' },
-      { code: 'audit:export', name: 'Export Audit', description: 'Export audit data' },
-    ],
-  },
-  {
-    group: 'platform',
-    label: 'Platform Administration',
-    permissions: [
-      { code: 'tenant:manage', name: 'Manage Tenants', description: 'Create and manage tenants' },
-      { code: 'tenant:view', name: 'View Tenants', description: 'View tenant information' },
-      {
-        code: 'platform:admin',
-        name: 'Platform Admin',
-        description: 'Full platform administration',
-      },
-      {
-        code: 'platform:support',
-        name: 'Platform Support',
-        description: 'Platform support access',
-      },
-    ],
-  },
-  {
-    group: 'reports',
-    label: 'Reports',
-    permissions: [
-      { code: 'report:view', name: 'View Reports', description: 'View reports and analytics' },
-      { code: 'report:export', name: 'Export Reports', description: 'Export report data' },
-    ],
-  },
-  {
-    group: 'files',
-    label: 'File Storage',
-    permissions: [
-      { code: 'file:upload', name: 'Upload Files', description: 'Upload files and documents' },
-      { code: 'file:view', name: 'View Files', description: 'View uploaded files' },
-    ],
-  },
-];
+const GROUP_LABELS: Record<string, string> = {
+  request: 'Transport Requests',
+  programme: 'Programmes',
+  staff: 'Staff & Organisation',
+  user: 'User Accounts',
+  driver: 'Driver Administration',
+  incident: 'Incidents',
+  tripIncident: 'Trip Incidents',
+  emergencyContacts: 'Emergency Contacts',
+  delegation: 'Delegations',
+  audit: 'Audit',
+  report: 'Reports',
+  file: 'Files',
+  tenant: 'Tenant Administration',
+};
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+function permissionLabel(code: string) {
+  const [, action = code] = code.split(':');
+  return action
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function permissionGroup(code: string) {
+  const prefix = code.split(':')[0];
+  if (prefix === 'tripIncident') return 'tripIncident';
+  if (prefix === 'emergencyContacts') return 'emergencyContacts';
+  return prefix;
+}
+
+const TENANT_PERMISSION_ITEMS: PermissionItem[] = (Object.values(Permissions) as PermissionCode[])
+  .filter((permission) => isPermissionAvailableInWorkspace(permission, WorkspaceIds.TENANT_ADMIN))
+  .map((code) => ({ code, label: permissionLabel(code), group: permissionGroup(code) }))
+  .sort((a, b) => {
+    const groupCompare = (GROUP_LABELS[a.group] || a.group).localeCompare(GROUP_LABELS[b.group] || b.group);
+    return groupCompare || a.label.localeCompare(b.label);
+  });
+
+function PermissionSelector({
+  selected,
+  onChange,
+  disabled = false,
+}: {
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+  disabled?: boolean;
+}) {
+  const grouped = useMemo(() => {
+    const map = new Map<string, PermissionItem[]>();
+    for (const item of TENANT_PERMISSION_ITEMS) {
+      const current = map.get(item.group) ?? [];
+      current.push(item);
+      map.set(item.group, current);
+    }
+    return [...map.entries()];
+  }, []);
+
+  return (
+    <div className="max-h-[48dvh] space-y-5 overflow-y-auto pr-1">
+      {grouped.map(([group, items]) => (
+        <section key={group} className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-400">{GROUP_LABELS[group] || permissionLabel(group)}</h3>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {items.map((item) => {
+              const checked = selected.has(item.code);
+              return (
+                <label key={item.code} className={`flex items-start gap-3 rounded-[8px] border border-border p-3 ${disabled ? 'cursor-default bg-muted/30' : 'cursor-pointer hover:bg-muted/40'}`}>
+                  <Checkbox
+                    checked={checked}
+                    disabled={disabled}
+                    onCheckedChange={(value) => {
+                      const next = new Set(selected);
+                      if (value === true) next.add(item.code);
+                      else next.delete(item.code);
+                      onChange(next);
+                    }}
+                    aria-label={`${checked ? 'Remove' : 'Grant'} ${item.label}`}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-ink-800">{item.label}</span>
+                    <span className="mt-0.5 block break-all font-mono text-[10px] text-ink-400">{item.code}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
 
 export default function AdminRolesPage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [view, setView] = useState<'cards' | 'matrix'>('cards');
-  const [savingCell, setSavingCell] = useState<string | null>(null);
-
-  // Edit role dialog
   const [editRole, setEditRole] = useState<Role | null>(null);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editPermissions, setEditPermissions] = useState<Set<string>>(new Set());
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  // Create role dialog
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newPermissions, setNewPermissions] = useState<Set<string>>(new Set());
-  const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['admin-roles', searchQuery],
+    queryKey: ['admin-roles'],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (searchQuery) params.set('q', searchQuery);
-      const res = await fetch(`/api/admin/roles?${params}`);
+      const res = await fetch('/api/admin/roles', { cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to load roles');
       return json.data as { roles: Role[] };
@@ -275,539 +152,170 @@ export default function AdminRolesPage() {
   });
 
   const roles = data?.roles ?? [];
-
-  const togglePermission = (code: string, set: Set<string>, update: (s: Set<string>) => void) => {
-    const next = new Set(set);
-    if (next.has(code)) {
-      next.delete(code);
-    } else {
-      next.add(code);
-    }
-    update(next);
-  };
+  const visibleRoles = roles.filter((role) => {
+    const needle = searchQuery.trim().toLowerCase();
+    return !needle || role.name.toLowerCase().includes(needle) || role.description?.toLowerCase().includes(needle);
+  });
 
   const openEdit = (role: Role) => {
+    if (role.isSystem) return;
     setEditRole(role);
     setEditName(role.name);
     setEditDescription(role.description || '');
     setEditPermissions(new Set(role.permissionCodes));
-    setSaveError(null);
   };
 
-  const handleSaveRole = async () => {
+  const saveRole = async () => {
     if (!editRole || !editName.trim()) return;
     setIsSaving(true);
-    setSaveError(null);
     try {
-      const res = await fetch(`/api/admin/roles`, {
+      const res = await fetch('/api/admin/roles', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roleId: editRole.id,
           name: editName.trim(),
-          description: editDescription.trim() || null,
-          permissionCodes: Array.from(editPermissions),
+          description: editDescription.trim(),
+          permissionCodes: [...editPermissions],
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update role');
+      toast({ title: 'Role updated', description: editName.trim(), variant: 'success' });
       setEditRole(null);
-      toast({
-        title: 'Role updated',
-        description: `Permissions saved for ${editName}`,
-        variant: 'success',
-      });
-      refetch();
+      await refetch();
     } catch (err) {
-      toast({
-        title: 'Failed to update role',
-        description: err instanceof Error ? err.message : 'Failed to update role',
-        variant: 'error',
-      });
-      setSaveError(err instanceof Error ? err.message : 'Failed to update role');
+      toast({ title: 'Failed to update role', description: err instanceof Error ? err.message : 'Update failed', variant: 'error' });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const toggleMatrixPermission = async (role: Role, code: string) => {
-    const has = role.permissionCodes.includes(code);
-    const nextCodes = has
-      ? role.permissionCodes.filter((c) => c !== code)
-      : [...role.permissionCodes, code];
-    const cellKey = `${role.id}:${code}`;
-    setSavingCell(cellKey);
-    try {
-      const res = await fetch('/api/admin/roles', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roleId: role.id, permissionCodes: nextCodes }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to update role');
-      toast({
-        title: has ? 'Permission removed' : 'Permission granted',
-        description: `${code} ${has ? 'removed from' : 'granted to'} ${role.name}`,
-        variant: 'success',
-      });
-      // Wait for the refetch to land before unlocking the cell, so the
-      // checkbox never shows the pre-toggle state after a successful save.
-      await refetch();
-    } catch (err) {
-      toast({
-        title: 'Failed to update permission',
-        description: err instanceof Error ? err.message : 'Failed to update permission',
-        variant: 'error',
-      });
-    } finally {
-      setSavingCell(null);
-    }
-  };
-
-  const handleCreateRole = async () => {
+  const createRole = async () => {
     if (!newName.trim()) return;
-    setIsCreating(true);
-    setCreateError(null);
+    setIsSaving(true);
     try {
       const res = await fetch('/api/admin/roles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: newName.trim(),
-          description: newDescription.trim() || null,
-          permissionCodes: Array.from(newPermissions),
+          description: newDescription.trim(),
+          permissionCodes: [...newPermissions],
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to create role');
+      toast({ title: 'Custom role created', description: newName.trim(), variant: 'success' });
       setShowCreate(false);
       setNewName('');
       setNewDescription('');
       setNewPermissions(new Set());
-      toast({ title: 'Role created', description: newName, variant: 'success' });
-      refetch();
+      await refetch();
     } catch (err) {
-      toast({
-        title: 'Failed to create role',
-        description: err instanceof Error ? err.message : 'Failed to create role',
-        variant: 'error',
-      });
-      setCreateError(err instanceof Error ? err.message : 'Failed to create role');
+      toast({ title: 'Failed to create role', description: err instanceof Error ? err.message : 'Create failed', variant: 'error' });
     } finally {
-      setIsCreating(false);
+      setIsSaving(false);
     }
   };
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Administration', href: '/dashboard' },
-          { label: 'Roles & Permissions' },
-        ]}
-      />
-      <PageHeader
-        title="Roles & Permissions"
-        description={`${roles.length} role${roles.length !== 1 ? 's' : ''} configured`}
-      >
-        <Dialog open={showCreate} onOpenChange={setShowCreate}>
-          <DialogTrigger asChild>
-            <Button variant="primary" size="sm">
-              <Plus className="h-4 w-4" /> Create Role
-            </Button>
-          </DialogTrigger>
-        </Dialog>
+      <Breadcrumbs items={[
+        { label: 'Dashboard', href: '/dashboard' },
+        { label: 'Administration' },
+        { label: 'Roles & Permissions' },
+      ]} />
+      <PageHeader title="Roles & Permissions" description={`${roles.length} tenant role${roles.length === 1 ? '' : 's'} configured. Built-in GovFleet roles are protected; custom roles are tenant-editable.`}>
+        <Button size="sm" onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" aria-hidden="true" /> Create custom role</Button>
       </PageHeader>
 
-      {/* Search */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-sm">
-          <input
-            placeholder="Search roles..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border pr-3 pl-3 text-sm focus:ring-2 focus:outline-none"
-          />
+      <section className="rounded-[10px] border border-brand-200 bg-brand-50/40 p-4 dark:border-brand-800/50 dark:bg-brand-950/20">
+        <div className="flex items-start gap-3">
+          <LockKeyhole className="mt-0.5 h-5 w-5 shrink-0 text-brand-700 dark:text-brand-300" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold text-ink-950">System roles are protected contracts</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-600">Assign or remove built-in roles from users in User Management. Their permission definitions cannot be edited by a tenant, preventing accidental loss of core workflow access.</p>
+          </div>
         </div>
-        <ClientFilterReset isFiltered={Boolean(searchQuery)} onClear={() => setSearchQuery('')} />
+      </section>
 
-        {/* View toggle */}
-        <div className="border-border bg-muted/40 ml-auto flex items-center gap-1 rounded-[8px] border p-1">
-          <button
-            type="button"
-            onClick={() => setView('cards')}
-            className={`flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
-              view === 'cards'
-                ? 'bg-surface text-ink-950 shadow-sm'
-                : 'text-ink-500 hover:text-ink-800'
-            }`}
-          >
-            <LayoutGrid className="h-3.5 w-3.5" /> Cards
-          </button>
-          <button
-            type="button"
-            onClick={() => setView('matrix')}
-            className={`flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
-              view === 'matrix'
-                ? 'bg-surface text-ink-950 shadow-sm'
-                : 'text-ink-500 hover:text-ink-800'
-            }`}
-          >
-            <Table2 className="h-3.5 w-3.5" /> Matrix
-          </button>
+      <div className="flex flex-col gap-3 border-y border-border py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search roles…" aria-label="Search roles" className="max-w-sm" />
+          <ClientFilterReset isFiltered={Boolean(searchQuery)} onClear={() => setSearchQuery('')} />
+        </div>
+        <div className="flex gap-1 rounded-[8px] border border-border p-1" aria-label="Role view">
+          <Button variant={view === 'cards' ? 'primary' : 'ghost'} size="compact" onClick={() => setView('cards')} aria-pressed={view === 'cards'}><LayoutGrid className="h-4 w-4" aria-hidden="true" /> Cards</Button>
+          <Button variant={view === 'matrix' ? 'primary' : 'ghost'} size="compact" onClick={() => setView('matrix')} aria-pressed={view === 'matrix'}><Table2 className="h-4 w-4" aria-hidden="true" /> Matrix</Button>
         </div>
       </div>
 
-      {/* Loading */}
-      {isLoading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="text-ink-400 h-6 w-6 animate-spin" />
-        </div>
-      )}
-
-      {/* Error */}
-      {error && (
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-status-error-text text-sm">
-              {error instanceof Error ? error.message : 'Failed to load roles'}
-            </p>
-            <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Empty */}
-      {!isLoading && !error && roles.length === 0 && (
-        <EmptyState
-          icon={<Shield className="h-6 w-6" />}
-          title="No roles found"
-          description="Roles define what users can do in the system. Create your first role to get started."
-        />
-      )}
-
-      {/* Permission Matrix */}
-      {!isLoading && !error && view === 'matrix' && roles.length > 0 && (
-        <div className="border-border overflow-hidden rounded-[8px] border">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-sm">
-              <thead>
-                <tr className="bg-muted border-border border-b">
-                  <th className="text-ink-700 px-4 py-2.5 text-left text-xs font-semibold uppercase">
-                    Permission
-                  </th>
-                  {roles.map((role) => (
-                    <th key={role.id} className="px-3 py-2.5 text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <span className="text-ink-950 text-xs font-semibold">{role.name}</span>
-                        <span className="text-ink-400 text-[10px] font-normal">
-                          {role.memberCount ?? 0} member{(role.memberCount ?? 0) !== 1 ? 's' : ''}
-                        </span>
-                        {role.isSystem && <Badge variant="info" size="sm">System</Badge>}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {PERMISSION_GROUPS.map((group) => (
-                  <Fragment key={group.group}>
-                    <tr className="bg-muted/60 border-border border-b">
-                      <td colSpan={roles.length + 1} className="px-4 py-1.5">
-                        <p className="text-ink-700 text-[11px] font-semibold uppercase tracking-wide">
-                          {group.label}
-                        </p>
-                      </td>
-                    </tr>
-                    {group.permissions.map((perm) => (
-                      <tr
-                        key={perm.code}
-                        className="border-border hover:bg-muted/40 border-b transition-colors"
-                      >
-                        <td className="px-4 py-2">
-                          <p className="text-ink-950 text-[13px] font-medium">{perm.name}</p>
-                          <p className="text-ink-400 text-xs">{perm.description}</p>
-                          <code className="text-ink-400 mt-0.5 block font-mono text-[10px]">
-                            {perm.code}
-                          </code>
-                        </td>
-                        {roles.map((role) => {
-                          const checked = role.permissionCodes.includes(perm.code);
-                          const isSaving = savingCell === `${role.id}:${perm.code}`;
-                          return (
-                            <td
-                              key={role.id}
-                              className={`px-3 py-2 text-center transition-opacity ${
-                                savingCell && !isSaving ? 'opacity-50' : ''
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                aria-label={`${perm.name} for ${role.name}`}
-                                checked={checked}
-                                disabled={!!savingCell}
-                                onChange={() => toggleMatrixPermission(role, perm.code)}
-                                className="border-border text-brand-800 focus:ring-brand-600 h-4 w-4 cursor-pointer rounded disabled:cursor-not-allowed"
-                              />
-                              {isSaving && <Loader2 className="text-ink-400 mt-1 h-3 w-3 animate-spin" />}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="bg-muted/50 border-border border-t px-4 py-2">
-            <p className="text-ink-500 text-xs">
-              Toggle any cell to grant or revoke a permission. Changes save immediately.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Role Cards */}
-      {!isLoading && !error && view === 'cards' && roles.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {roles.map((role) => (
-            <Card
-              key={role.id}
-              className="cursor-pointer transition-all hover:shadow-md"
-              onClick={() => openEdit(role)}
-            >
-              <CardContent className="pt-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="bg-brand-50 text-brand-700 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
-                      <Shield className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-ink-950 text-sm font-semibold">{role.name}</p>
-                      {role.isSystem && (
-                        <Badge variant="info" size="sm">
-                          System
-                        </Badge>
-                      )}
-                    </div>
+      {isLoading ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-ink-500" role="status"><Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading roles…</div>
+      ) : error ? (
+        <EmptyState icon={<Shield className="h-6 w-6" />} title="Unable to load roles" description={error instanceof Error ? error.message : 'Role data could not be loaded.'} action={{ label: 'Retry', onClick: () => void refetch() }} />
+      ) : visibleRoles.length === 0 ? (
+        <EmptyState icon={<Shield className="h-6 w-6" />} title="No roles found" description={searchQuery ? 'No matching roles. Clear the search to view all roles.' : 'Create a custom tenant role when a responsibility does not fit a built-in role.'} />
+      ) : view === 'cards' ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {visibleRoles.map((role) => (
+            <article key={role.id} className="rounded-[10px] border border-border bg-surface p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold text-ink-950">{role.name}</h2>
+                    <Badge variant={role.isSystem ? 'info' : 'default'} size="sm">{role.isSystem ? 'System' : 'Custom'}</Badge>
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openEdit(role);
-                    }}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-500">{role.description || (role.isSystem ? 'GovFleet managed role.' : 'Tenant custom role.')}</p>
                 </div>
-                {role.description && (
-                  <p className="text-ink-500 mt-2 line-clamp-2 text-xs">{role.description}</p>
-                )}
-                <div className="text-ink-400 mt-3 flex items-center gap-2 text-xs">
-                  <Shield className="h-3 w-3" />
-                  <span>
-                    {role.permissionCodes.length} permission
-                    {role.permissionCodes.length !== 1 ? 's' : ''}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
+                {role.isSystem ? <LockKeyhole className="h-4 w-4 shrink-0 text-ink-400" aria-label="System role locked" /> : <Button variant="ghost" size="compact" onClick={() => openEdit(role)} aria-label={`Edit ${role.name}`}><Pencil className="h-4 w-4" /></Button>}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-3 text-xs">
+                <div><p className="text-ink-400">Active members</p><p className="mt-1 font-semibold tabular-nums text-ink-800">{role.memberCount ?? 0}</p></div>
+                <div><p className="text-ink-400">Permissions</p><p className="mt-1 font-semibold tabular-nums text-ink-800">{role.permissionCodes.length}</p></div>
+              </div>
+            </article>
           ))}
         </div>
+      ) : (
+        <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
+          <table className="min-w-[760px] w-full text-sm">
+            <thead><tr className="border-b border-border bg-muted/40"><th className="px-4 py-3 text-left text-xs font-medium text-ink-500">Role</th><th className="px-4 py-3 text-left text-xs font-medium text-ink-500">Type</th><th className="px-4 py-3 text-right text-xs font-medium text-ink-500">Active members</th><th className="px-4 py-3 text-right text-xs font-medium text-ink-500">Permissions</th><th className="px-4 py-3 text-right text-xs font-medium text-ink-500">Action</th></tr></thead>
+            <tbody className="divide-y divide-border">
+              {visibleRoles.map((role) => (
+                <tr key={role.id}>
+                  <td className="px-4 py-3"><p className="font-medium text-ink-900">{role.name}</p><p className="mt-0.5 max-w-xl text-xs text-ink-400">{role.description || '—'}</p></td>
+                  <td className="px-4 py-3"><Badge variant={role.isSystem ? 'info' : 'default'} size="sm">{role.isSystem ? 'System' : 'Custom'}</Badge></td>
+                  <td className="px-4 py-3 text-right tabular-nums text-ink-600">{role.memberCount ?? 0}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-ink-600">{role.permissionCodes.length}</td>
+                  <td className="px-4 py-3 text-right">{role.isSystem ? <span className="inline-flex items-center gap-1 text-xs text-ink-400"><LockKeyhole className="h-3.5 w-3.5" /> Locked</span> : <Button variant="secondary" size="compact" onClick={() => openEdit(role)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
-      {/* Edit Role Dialog */}
-      <Dialog
-        open={!!editRole}
-        onOpenChange={(open) => {
-          if (!open) setEditRole(null);
-        }}
-      >
-        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Edit Role: {editRole?.name}</DialogTitle>
-          </DialogHeader>
-          {editRole && (
-            <div className="space-y-6">
-              {/* Role Details */}
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label required>Role Name</Label>
-                  <Input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    disabled={editRole.isSystem}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Description</Label>
-                  <textarea
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    disabled={editRole.isSystem}
-                    className="border-border bg-surface focus:ring-brand-600 min-h-[60px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                    placeholder="What this role can do..."
-                  />
-                </div>
-              </div>
-
-              {/* Permission Matrix */}
-              <div>
-                <h3 className="text-ink-950 mb-3 text-sm font-semibold">Permissions</h3>
-                <div className="space-y-4">
-                  {PERMISSION_GROUPS.map((group) => (
-                    <div
-                      key={group.group}
-                      className="border-border overflow-hidden rounded-[8px] border"
-                    >
-                      <div className="bg-muted px-4 py-2">
-                        <p className="text-ink-700 text-xs font-semibold uppercase">
-                          {group.label}
-                        </p>
-                      </div>
-                      <div className="divide-border divide-y">
-                        {group.permissions.map((perm) => (
-                          <label
-                            key={perm.code}
-                            className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={editPermissions.has(perm.code)}
-                              onChange={() =>
-                                togglePermission(perm.code, editPermissions, setEditPermissions)
-                              }
-                              className="border-border text-brand-800 focus:ring-brand-600 h-4 w-4 rounded"
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className="text-ink-950 text-sm font-medium">{perm.name}</p>
-                              {perm.description && (
-                                <p className="text-ink-500 text-xs">{perm.description}</p>
-                              )}
-                            </div>
-                            <code className="text-ink-400 hidden font-mono text-[10px] sm:block">
-                              {perm.code}
-                            </code>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {saveError && <p className="text-status-error-text text-xs">{saveError}</p>}
-
-              <div className="border-border flex justify-end gap-2 border-t pt-2">
-                <Button variant="secondary" size="sm" onClick={() => setEditRole(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleSaveRole}
-                  loading={isSaving}
-                  disabled={!editName.trim()}
-                >
-                  <Save className="h-4 w-4" /> Save Changes
-                </Button>
-              </div>
-            </div>
-          )}
+      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+        <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader><DialogTitle>Create custom role</DialogTitle><DialogDescription>Choose only the tenant capabilities needed for this responsibility. Platform-level capabilities are never available here.</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-1.5"><Label required>Role name</Label><Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="e.g. Programme Reviewer" /></div><div className="space-y-1.5"><Label>Description</Label><Input value={newDescription} onChange={(event) => setNewDescription(event.target.value)} placeholder="What this role is responsible for" /></div></div>
+            <PermissionSelector selected={newPermissions} onChange={setNewPermissions} />
+          </div>
+          <DialogFooter><Button variant="secondary" onClick={() => setShowCreate(false)}>Cancel</Button><Button onClick={() => void createRole()} loading={isSaving} disabled={!newName.trim()}><Plus className="h-4 w-4" /> Create role</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Create Role Dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Create New Role</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-6">
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label required>Role Name</Label>
-                <Input
-                  placeholder="e.g. Fleet Manager"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Description</Label>
-                <textarea
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  className="border-border bg-surface focus:ring-brand-600 min-h-[60px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                  placeholder="What this role can do..."
-                />
-              </div>
-            </div>
-
-            {/* Permission Matrix */}
-            <div>
-              <h3 className="text-ink-950 mb-3 text-sm font-semibold">Assign Permissions</h3>
-              <div className="space-y-4">
-                {PERMISSION_GROUPS.map((group) => (
-                  <div
-                    key={group.group}
-                    className="border-border overflow-hidden rounded-[8px] border"
-                  >
-                    <div className="bg-muted px-4 py-2">
-                      <p className="text-ink-700 text-xs font-semibold uppercase">{group.label}</p>
-                    </div>
-                    <div className="divide-border divide-y">
-                      {group.permissions.map((perm) => (
-                        <label
-                          key={perm.code}
-                          className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={newPermissions.has(perm.code)}
-                            onChange={() =>
-                              togglePermission(perm.code, newPermissions, setNewPermissions)
-                            }
-                            className="border-border text-brand-800 focus:ring-brand-600 h-4 w-4 rounded"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-ink-950 text-sm font-medium">{perm.name}</p>
-                            {perm.description && (
-                              <p className="text-ink-500 text-xs">{perm.description}</p>
-                            )}
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {createError && <p className="text-status-error-text text-xs">{createError}</p>}
-
-            <div className="border-border flex justify-end gap-2 border-t pt-2">
-              <Button variant="secondary" size="sm" onClick={() => setShowCreate(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleCreateRole}
-                loading={isCreating}
-                disabled={!newName.trim()}
-              >
-                <Plus className="h-4 w-4" /> Create Role
-              </Button>
-            </div>
+      <Dialog open={Boolean(editRole)} onOpenChange={(open) => !open && setEditRole(null)}>
+        <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader><DialogTitle>Edit custom role</DialogTitle><DialogDescription>Changes apply to every active member who holds this custom role.</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-1.5"><Label required>Role name</Label><Input value={editName} onChange={(event) => setEditName(event.target.value)} /></div><div className="space-y-1.5"><Label>Description</Label><Input value={editDescription} onChange={(event) => setEditDescription(event.target.value)} /></div></div>
+            <PermissionSelector selected={editPermissions} onChange={setEditPermissions} />
           </div>
+          <DialogFooter><Button variant="secondary" onClick={() => setEditRole(null)}>Cancel</Button><Button onClick={() => void saveRole()} loading={isSaving} disabled={!editName.trim()}><Save className="h-4 w-4" /> Save role</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

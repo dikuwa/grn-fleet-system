@@ -12,11 +12,43 @@ import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { account } from '@/db/schema/better-auth';
 import { userProfiles } from '@/db/schema/auth';
-import { eq, and, like, desc, count, or, inArray, ne } from 'drizzle-orm';
+import { eq, and, like, desc, count, or, inArray, ne, isNull, type SQL } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import bcrypt from 'bcryptjs';
-import { employees, departments, offices } from '@/db/schema/people';
+import { employees, departments, offices, driverProfiles } from '@/db/schema/people';
+import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
+import { recordAuditEvent } from '@/lib/audit-event';
+
+function assignmentIsActive(
+  assignment: { startDate: Date | string | null; endDate: Date | string | null },
+  now = new Date(),
+) {
+  const startsAt = assignment.startDate ? new Date(assignment.startDate) : null;
+  const endsAt = assignment.endDate ? new Date(assignment.endDate) : null;
+  return (!startsAt || startsAt <= now) && (!endsAt || endsAt > now);
+}
+
+function normalizeUsername(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '.')
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 64);
+}
+
+function databaseCode(error: unknown) {
+  if (!error || typeof error !== 'object') return null;
+  const value = error as { code?: unknown; cause?: { code?: unknown } };
+  return typeof value.code === 'string'
+    ? value.code
+    : typeof value.cause?.code === 'string'
+      ? value.cause.code
+      : null;
+}
 
 // ---------------------------------------------------------------------------
 // GET — List users
@@ -28,138 +60,97 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // Require platform-level or tenant-level user management
     const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { searchParams } = new URL(request.url);
-    const q = searchParams.get('q') || '';
+    const q = (searchParams.get('q') || '').trim();
     const status = searchParams.get('status') || '';
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '25', 10);
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10) || 25));
     const offset = (page - 1) * limit;
-
     const db = getDb();
 
-    // Get all users in this tenant via memberships. Accounts whose access was
-    // removed (status `access_removed`) are hidden from the default view and
-    // only surfaced through the explicit `status=removed` filter so admins can
-    // restore them.
-    const conditions = [eq(tenantMemberships.tenantId, session.tenantId)];
+    const conditions: SQL[] = [eq(tenantMemberships.tenantId, session.tenantId)];
+    if (status === 'active') conditions.push(eq(tenantMemberships.status, 'active'));
+    else if (status === 'suspended') conditions.push(eq(tenantMemberships.status, 'suspended'));
+    else if (status === 'removed') conditions.push(eq(tenantMemberships.status, 'access_removed'));
+    else if (status === 'pending') conditions.push(eq(tenantMemberships.status, 'pending_activation'));
+    else conditions.push(ne(tenantMemberships.status, 'access_removed'));
 
-    if (status === 'active') {
-      conditions.push(eq(tenantMemberships.status, 'active'));
-    } else if (status === 'suspended') {
-      conditions.push(eq(tenantMemberships.status, 'suspended'));
-    } else if (status === 'removed') {
-      conditions.push(eq(tenantMemberships.status, 'access_removed'));
-    } else if (status === 'pending') {
-      conditions.push(eq(tenantMemberships.status, 'pending_activation'));
-    } else {
-      conditions.push(ne(tenantMemberships.status, 'access_removed'));
-    }
-
-    // Count total matching users
-    const [totalResult] = await db
-      .select({ count: count() })
-      .from(tenantMemberships)
-      .where(and(...conditions));
-
-    const total = totalResult?.count || 0;
-
-    // Fetch users with their membership info
-    const memberships = await db
-      .select({
-        userId: tenantMemberships.userId,
-        membershipId: tenantMemberships.id,
-        status: tenantMemberships.status,
-        joinedAt: tenantMemberships.joinedAt,
-      })
-      .from(tenantMemberships)
-      .where(and(...conditions))
-      .orderBy(desc(tenantMemberships.joinedAt))
-      .limit(limit)
-      .offset(offset);
-
-    if (memberships.length === 0) {
-      return NextResponse.json({
-        success: true,
-        data: { users: [], total, page, limit, totalPages: Math.ceil(total / limit) },
-      });
-    }
-
-    // Fetch user details
-    const userConditions = [inArray(user.id, memberships.map((m) => m.userId))];
     if (q) {
-      userConditions.push(
+      conditions.push(
         or(
           like(user.email, `%${q}%`),
           like(user.name, `%${q}%`),
+          like(user.username, `%${q}%`),
         )!,
       );
     }
+    const where = and(...conditions);
 
-    const users = await db
-      .select({
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        emailVerified: user.emailVerified,
-        createdAt: user.createdAt,
-      })
-      .from(user)
-      .where(and(...userConditions.map((c) => c!)))
-      .limit(limit);
+    const [[totalResult], userRows] = await Promise.all([
+      db
+        .select({ count: count() })
+        .from(tenantMemberships)
+        .innerJoin(user, eq(tenantMemberships.userId, user.id))
+        .where(where),
+      db
+        .select({
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          name: user.name,
+          emailVerified: user.emailVerified,
+          createdAt: user.createdAt,
+          membershipId: tenantMemberships.id,
+          tenantStatus: tenantMemberships.status,
+          joinedAt: tenantMemberships.joinedAt,
+        })
+        .from(tenantMemberships)
+        .innerJoin(user, eq(tenantMemberships.userId, user.id))
+        .where(where)
+        .orderBy(desc(tenantMemberships.joinedAt))
+        .limit(limit)
+        .offset(offset),
+    ]);
 
-    // Fetch role assignments for each user
-    const userIds = users.map((u) => u.id);
-    const allAssignments = await db
-      .select({
-        id: roleAssignments.id,
-        userId: tenantMemberships.userId,
-        roleId: roleAssignments.roleId,
-        roleName: roles.name,
-        endDate: roleAssignments.endDate,
-        isActing: roleAssignments.isActing,
-      })
-      .from(roleAssignments)
-      .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
-      .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
-      .where(
-        and(
-          inArray(tenantMemberships.userId, userIds)!,
-          eq(tenantMemberships.tenantId, session.tenantId)!,
-        ),
-      );
+    const total = Number(totalResult?.count || 0);
+    const userIds = userRows.map((row) => row.id);
 
-    // Map roles to users
+    const allAssignments = userIds.length
+      ? await db
+          .select({
+            id: roleAssignments.id,
+            userId: tenantMemberships.userId,
+            roleId: roleAssignments.roleId,
+            roleName: roles.name,
+            startDate: roleAssignments.startDate,
+            endDate: roleAssignments.endDate,
+            isActing: roleAssignments.isActing,
+          })
+          .from(roleAssignments)
+          .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+          .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
+          .where(
+            and(
+              inArray(tenantMemberships.userId, userIds),
+              eq(tenantMemberships.tenantId, session.tenantId),
+            ),
+          )
+      : [];
+
+    const now = new Date();
     const rolesByUser: Record<string, Array<{ id: string; roleName: string; isActing: boolean }>> = {};
     for (const assignment of allAssignments) {
-      if (!rolesByUser[assignment.userId]) rolesByUser[assignment.userId] = [];
-      if (!assignment.endDate || new Date(assignment.endDate) > new Date()) {
-        rolesByUser[assignment.userId].push({
-          id: assignment.id,
-          roleName: assignment.roleName,
-          isActing: assignment.isActing,
-        });
-      }
+      if (!assignmentIsActive(assignment, now)) continue;
+      (rolesByUser[assignment.userId] ??= []).push({
+        id: assignment.id,
+        roleName: assignment.roleName,
+        isActing: assignment.isActing,
+      });
     }
 
-    // Merge membership status into users
-    const membershipMap = new Map(memberships.map((m) => [m.userId, m]));
-    const enrichedUsers = users.map((u) => {
-      const membership = membershipMap.get(u.id);
-      return {
-        ...u,
-        tenantStatus: membership?.status || 'unknown',
-        joinedAt: membership?.joinedAt || null,
-        roles: rolesByUser[u.id] || [],
-      };
-    });
-
-    // All employees in this tenant (used for the linked-staff summary on each
-    // user row) regardless of employment status — an account may stay linked to
-    // an inactive or archived employee.
     const employeeRows = await db
       .select({
         id: employees.id,
@@ -177,15 +168,25 @@ export async function GET(request: NextRequest) {
       .leftJoin(offices, eq(employees.officeId, offices.id))
       .where(eq(employees.tenantId, session.tenantId));
 
-    const employeeByUser = new Map(employeeRows.filter((employee) => employee.userId).map((employee) => [employee.userId, employee]));
-    const usersWithEmployees = enrichedUsers.map((tenantUser) => ({
-      ...tenantUser,
-      employee: employeeByUser.get(tenantUser.id) || null,
+    const employeeByUser = new Map(
+      employeeRows
+        .filter((employee): employee is typeof employee & { userId: string } => Boolean(employee.userId))
+        .map((employee) => [employee.userId, employee]),
+    );
+
+    const users = userRows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      username: row.username,
+      name: row.name,
+      emailVerified: row.emailVerified,
+      createdAt: row.createdAt,
+      tenantStatus: row.tenantStatus,
+      joinedAt: row.joinedAt,
+      roles: rolesByUser[row.id] || [],
+      employee: employeeByUser.get(row.id) || null,
     }));
 
-    // The invite picker only offers staff who are currently ACTIVE and do not
-    // already have a login account (creating an account requires an active
-    // employee record — enforced server-side in POST too).
     const availableEmployees = employeeRows.filter(
       (employee) => !employee.userId && employee.employmentStatus === 'active',
     );
@@ -193,12 +194,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        users: usersWithEmployees,
+        users,
         availableEmployees,
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     });
   } catch (error) {
@@ -225,122 +226,210 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { email, name, password, roleId, employeeId, username: inputUsername } = body;
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
-    if (!email?.trim()) {
-      return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return NextResponse.json({ error: 'A valid email address is required' }, { status: 400 });
     }
-    if (!password?.trim() || password.length < 6) {
-      return NextResponse.json({ error: 'Password is required (min 6 characters)' }, { status: 400 });
+    if (typeof password !== 'string' || password.length < 8) {
+      return NextResponse.json({ error: 'Password is required (minimum 8 characters)' }, { status: 400 });
     }
     if (!employeeId) {
       return NextResponse.json({ error: 'An employee record is required' }, { status: 400 });
     }
 
     const db = getDb();
-
-    const [employee] = await db.select({ id: employees.id, userId: employees.userId })
+    const [employee] = await db
+      .select({
+        id: employees.id,
+        userId: employees.userId,
+        firstName: employees.firstName,
+        lastName: employees.lastName,
+      })
       .from(employees)
-      .where(and(eq(employees.id, employeeId), eq(employees.tenantId, session.tenantId), eq(employees.employmentStatus, 'active')))
+      .where(
+        and(
+          eq(employees.id, employeeId),
+          eq(employees.tenantId, session.tenantId),
+          eq(employees.employmentStatus, 'active'),
+        ),
+      )
       .limit(1);
-    if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+    if (!employee) return NextResponse.json({ error: 'Active employee not found' }, { status: 404 });
     if (employee.userId) return NextResponse.json({ error: 'Employee already has an account' }, { status: 409 });
 
-    // Check for duplicate email
-    const [existingUser] = await db
-      .select()
-      .from(user)
-      .where(eq(user.email, email.trim().toLowerCase()))
-      .limit(1);
-
-    if (existingUser) {
-      return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 });
+    const displayName = typeof name === 'string' && name.trim()
+      ? name.trim()
+      : `${employee.firstName} ${employee.lastName}`.trim() || normalizedEmail.split('@')[0];
+    const username = normalizeUsername(
+      typeof inputUsername === 'string' && inputUsername.trim()
+        ? inputUsername
+        : displayName || normalizedEmail.split('@')[0],
+    );
+    if (username.length < 3) {
+      return NextResponse.json({ error: 'Username must contain at least 3 valid characters' }, { status: 422 });
     }
 
-    const userId = crypto.randomUUID?.() || `user-${Date.now()}`;
-    const now = new Date();
+    const [existingUser] = await db
+      .select({ id: user.id, email: user.email, username: user.username })
+      .from(user)
+      .where(or(eq(user.email, normalizedEmail), eq(user.username, username)))
+      .limit(1);
+    if (existingUser) {
+      return NextResponse.json(
+        { error: existingUser.email === normalizedEmail ? 'A user with this email already exists' : `Username "${username}" is already in use` },
+        { status: 409 },
+      );
+    }
 
-    // Derive username if not provided. Email is guaranteed unique (checked
-    // above), so its local part is a collision-safe base — deriving from the
-    // display name instead would 500 on `user_username_key` whenever two
-    // accounts share a name (e.g. after a soft-remove keeps the user row).
-    const username = (inputUsername || email.split('@')[0] || name)
-      .toLowerCase()
-      .replace(/\s+/g, '.')
-      .replace(/[^a-z0-9._-]/g, '');
-
-    // Create the user
-    await db.insert(user).values({
-      id: userId,
-      email: email.trim().toLowerCase(),
-      name: name || email.split('@')[0],
-      username,
-      emailVerified: true,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // Create account with password hash
-    const passwordHash = await bcrypt.hash(password, 10);
-    await db.insert(account).values({
-      id: crypto.randomUUID?.() || `acct-${Date.now()}`,
-      accountId: userId,
-      providerId: 'email',
-      userId,
-      password: passwordHash,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // Add to tenant
-    const [membership] = await db
-      .insert(tenantMemberships)
-      .values({
-        tenantId: session.tenantId,
-        userId,
-        status: 'active',
-        joinedAt: now,
-      })
-      .returning();
-
-    // Assign role if specified
-    if (roleId) {
-      const [role] = await db
-        .select()
-        .from(roles)
-        .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
-        .limit(1);
-
-      if (role) {
-        await db.insert(roleAssignments).values({
-          tenantMembershipId: membership.id,
-          roleId: role.id,
-          startDate: now,
-        });
+    const entitlements = await getTenantEntitlements(session.tenantId);
+    if (entitlements) {
+      const [countRow] = await db
+        .select({ total: count() })
+        .from(tenantMemberships)
+        .where(
+          and(
+            eq(tenantMemberships.tenantId, session.tenantId),
+            inArray(tenantMemberships.status, ['active', 'pending', 'pending_activation', 'suspended']),
+          ),
+        );
+      const userCheck = checkEntitlement(entitlements, 'users', countRow?.total ?? 0, 1);
+      if (!userCheck.ok) {
+        return NextResponse.json({ error: userCheck.message || 'User limit reached' }, { status: 409 });
       }
     }
 
-    // Create user profile record
-    const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
-    await db.insert(userProfiles).values({
-      id: userId,
-      userId,
-      displayName: name || email.split('@')[0],
-      requiresPasswordChange: forcePasswordChange,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-    }).onConflictDoNothing();
+    const selectedRole = roleId
+      ? (await db
+          .select({ id: roles.id, name: roles.name })
+          .from(roles)
+          .where(and(eq(roles.id, String(roleId)), eq(roles.tenantId, session.tenantId)))
+          .limit(1))[0]
+      : null;
+    if (roleId && !selectedRole) {
+      return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
+    }
 
-    await db.update(employees).set({ userId, updatedAt: now }).where(eq(employees.id, employeeId));
+    const userId = crypto.randomUUID();
+    const now = new Date();
+    const passwordHash = await bcrypt.hash(password, 10);
+    const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
+
+    await db.transaction(async (tx) => {
+      await tx.insert(user).values({
+        id: userId,
+        email: normalizedEmail,
+        name: displayName,
+        username,
+        emailVerified: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await tx.insert(account).values({
+        id: crypto.randomUUID(),
+        accountId: userId,
+        providerId: 'email',
+        userId,
+        password: passwordHash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await tx.insert(userProfiles).values({
+        id: userId,
+        userId,
+        displayName,
+        requiresPasswordChange: forcePasswordChange,
+        passwordStatus: 'temporary',
+        status: 'active',
+        accountEnabled: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const [membership] = await tx
+        .insert(tenantMemberships)
+        .values({
+          tenantId: session.tenantId,
+          userId,
+          status: 'active',
+          joinedAt: now,
+        })
+        .returning();
+
+      const [linkedEmployee] = await tx
+        .update(employees)
+        .set({ userId, updatedAt: now })
+        .where(
+          and(
+            eq(employees.id, employeeId),
+            eq(employees.tenantId, session.tenantId),
+            eq(employees.employmentStatus, 'active'),
+            isNull(employees.userId),
+          ),
+        )
+        .returning({ id: employees.id });
+      if (!linkedEmployee) throw new Error('STAFF_ACCOUNT_ALREADY_LINKED');
+
+      if (selectedRole) {
+        await tx.insert(roleAssignments).values({
+          tenantMembershipId: membership.id,
+          roleId: selectedRole.id,
+          startDate: now,
+        });
+
+        if (selectedRole.name === 'Assigned Driver') {
+          const [existingProfile] = await tx
+            .select({ id: driverProfiles.id })
+            .from(driverProfiles)
+            .where(eq(driverProfiles.employeeId, employee.id))
+            .limit(1);
+          if (!existingProfile) {
+            await tx.insert(driverProfiles).values({
+              employeeId: employee.id,
+              driverStatus: 'pending_verification',
+              availabilityStatus: 'unavailable',
+              notes: 'Auto-provisioned from Assigned Driver role. Licence verification is required before operational assignment.',
+            });
+          }
+          await tx.update(employees).set({ isDriver: true, updatedAt: now }).where(eq(employees.id, employee.id));
+        }
+      }
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        eventType: 'user_account_created',
+        action: 'create',
+        entityType: 'user',
+        entityId: userId,
+        summary: `Login account created for ${displayName}`,
+        after: {
+          userId,
+          employeeId,
+          username,
+          roleId: selectedRole?.id ?? null,
+          roleName: selectedRole?.name ?? null,
+          source: 'admin_users_api',
+        },
+      }, tx);
+    });
 
     return NextResponse.json({
       success: true,
-      data: { id: userId, email: email.trim().toLowerCase(), name: name || email.split('@')[0] },
-    });
+      data: { id: userId, email: normalizedEmail, name: displayName, username },
+    }, { status: 201 });
   } catch (error) {
     console.error('[Admin Users] POST failed:', error);
+    if (error instanceof Error && error.message === 'STAFF_ACCOUNT_ALREADY_LINKED') {
+      return NextResponse.json({ error: 'Employee already has an account' }, { status: 409 });
+    }
+    if (databaseCode(error) === '23505') {
+      return NextResponse.json({ error: 'A user with this email or username already exists' }, { status: 409 });
+    }
     return NextResponse.json(
-      { error: 'Failed to create user: ' + String(error) },
+      { error: 'Failed to create user account' },
       { status: 500 },
     );
   }

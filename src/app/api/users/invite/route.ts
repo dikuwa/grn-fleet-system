@@ -1,19 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { user } from '@/db/schema/better-auth';
-import { account } from '@/db/schema/better-auth';
-import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
-import { employees } from '@/db/schema/people';
+import { user, account } from '@/db/schema/better-auth';
+import { tenantMemberships, roleAssignments, roles, tenants } from '@/db/schema/tenants';
+import { employees, driverProfiles } from '@/db/schema/people';
 import { userProfiles } from '@/db/schema/auth';
-import { auditEvents } from '@/db/schema/audit';
-import { eq, and, inArray, count } from 'drizzle-orm';
+import { eq, and, inArray, count, or, isNull } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { sendReactEmail } from '@/lib/email';
 import { UserInviteEmail } from '@/emails/user-invite';
+import { recordAuditEvent } from '@/lib/audit-event';
 import { createElement } from 'react';
 import bcrypt from 'bcryptjs';
+
+function normalizeUsername(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '.')
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 64);
+}
+
+function databaseCode(error: unknown) {
+  if (!error || typeof error !== 'object') return null;
+  const value = error as { code?: unknown; cause?: { code?: unknown } };
+  return typeof value.code === 'string'
+    ? value.code
+    : typeof value.cause?.code === 'string'
+      ? value.cause.code
+      : null;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -25,10 +45,20 @@ export async function POST(req: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await req.json();
-    const { email, name, username: inputUsername, roleId, roleIds, employeeId, sendInvite, deliveryMode } = body;
+    const {
+      email,
+      name,
+      username: inputUsername,
+      roleId,
+      roleIds,
+      employeeId,
+      sendInvite,
+      deliveryMode,
+    } = body;
 
-    if (!email?.trim()) {
-      return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return NextResponse.json({ error: 'A valid email address is required' }, { status: 400 });
     }
     if (!employeeId) {
       return NextResponse.json({ error: 'Select the staff member this account belongs to' }, { status: 400 });
@@ -36,9 +66,14 @@ export async function POST(req: NextRequest) {
 
     const db = getDb();
     const now = new Date();
-
     const [employee] = await db
-      .select({ id: employees.id, userId: employees.userId, employmentStatus: employees.employmentStatus })
+      .select({
+        id: employees.id,
+        userId: employees.userId,
+        employmentStatus: employees.employmentStatus,
+        firstName: employees.firstName,
+        lastName: employees.lastName,
+      })
       .from(employees)
       .where(and(eq(employees.id, employeeId), eq(employees.tenantId, session.tenantId)))
       .limit(1);
@@ -49,33 +84,54 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'This staff member already has a login account' }, { status: 409 });
     }
 
-    // Enforce the tenant's subscription user limit before creating the account.
+    const displayName = typeof name === 'string' && name.trim()
+      ? name.trim()
+      : `${employee.firstName} ${employee.lastName}`.trim() || normalizedEmail.split('@')[0];
+    const username = normalizeUsername(
+      typeof inputUsername === 'string' && inputUsername.trim()
+        ? inputUsername
+        : displayName || normalizedEmail.split('@')[0],
+    );
+    if (username.length < 3) {
+      return NextResponse.json({ error: 'Username must contain at least 3 valid characters' }, { status: 422 });
+    }
+
+    const [duplicateAccount] = await db
+      .select({ id: user.id, email: user.email, username: user.username })
+      .from(user)
+      .where(or(eq(user.email, normalizedEmail), eq(user.username, username)))
+      .limit(1);
+    if (duplicateAccount) {
+      return NextResponse.json(
+        {
+          error: duplicateAccount.email === normalizedEmail
+            ? 'A user with this email already exists'
+            : `Username "${username}" is already in use. Choose another username.`,
+        },
+        { status: 409 },
+      );
+    }
+
     const entitlements = await getTenantEntitlements(session.tenantId);
     if (entitlements) {
       const [countRow] = await db
         .select({ total: count() })
         .from(tenantMemberships)
-        .where(eq(tenantMemberships.tenantId, session.tenantId));
-      const userCheck = checkEntitlement(
-        entitlements,
-        'users',
-        countRow?.total ?? 0,
-        1,
-      );
+        .where(and(
+          eq(tenantMemberships.tenantId, session.tenantId),
+          inArray(tenantMemberships.status, ['active', 'pending', 'suspended']),
+        ));
+      const userCheck = checkEntitlement(entitlements, 'users', countRow?.total ?? 0, 1);
       if (!userCheck.ok) {
-        return NextResponse.json(
-          { error: userCheck.message || 'User limit reached' },
-          { status: 409 },
-        );
+        return NextResponse.json({ error: userCheck.message || 'User limit reached' }, { status: 409 });
       }
     }
 
-    // Multi-role support: accept roleIds[] (preferred) with roleId kept for
-    // backward compatibility. All roles must belong to this tenant.
     const requestedRoleIds = Array.isArray(roleIds) && roleIds.length > 0
       ? [...new Set(roleIds.map(String))]
-      : (roleId ? [String(roleId)] : []);
-
+      : roleId
+        ? [String(roleId)]
+        : [];
     const selectedRoles = requestedRoleIds.length > 0
       ? await db
           .select({ id: roles.id, name: roles.name })
@@ -86,165 +142,190 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'One or more roles were not found in your organisation' }, { status: 404 });
     }
 
-    // Check for duplicate email
-    const [existingUser] = await db
-      .select()
-      .from(user)
-      .where(eq(user.email, email.trim().toLowerCase()))
-      .limit(1);
-
-    if (existingUser) {
-      return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 });
-    }
-
-    // Generate a secure temporary password
-    const tempPassword = crypto.randomUUID?.()?.replace(/-/g, '').slice(0, 12) || `Fleet${Date.now()}`;
-
-    const userId = crypto.randomUUID?.() || `user-${Date.now()}`;
+    const tempPassword = `Gf!${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const userId = crypto.randomUUID();
     const passwordHash = await bcrypt.hash(tempPassword, 10);
-
-    // Create the user
-    await db.insert(user).values({
-      id: userId,
-      email: email.trim().toLowerCase(),
-      name: name || email.split('@')[0],
-      emailVerified: false,
-      createdAt: now,
-      updatedAt: now,
-    });
-
     const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
-    await db.insert(userProfiles).values({
-      id: userId,
-      userId,
-      displayName: name || email.split('@')[0],
-      requiresPasswordChange: forcePasswordChange,
-      status: 'active',
-    });
+    const resolvedDeliveryMode = deliveryMode === 'manual' || sendInvite === false ? 'manual' : 'email';
 
-    // Create account with password
-    await db.insert(account).values({
-      id: crypto.randomUUID?.() || `acct-${Date.now()}`,
-      accountId: userId,
-      providerId: 'email',
-      userId,
-      password: passwordHash,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // Add to tenant membership
-    const [membership] = await db
-      .insert(tenantMemberships)
-      .values({
-        tenantId: session.tenantId,
+    await db.transaction(async (tx) => {
+      await tx.insert(user).values({
+        id: userId,
+        email: normalizedEmail,
+        username,
+        name: displayName,
+        emailVerified: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await tx.insert(userProfiles).values({
+        id: userId,
         userId,
+        displayName,
+        requiresPasswordChange: forcePasswordChange,
+        passwordStatus: 'temporary',
         status: 'active',
-        joinedAt: now,
-      })
-      .returning();
+        accountEnabled: true,
+      });
+      await tx.insert(account).values({
+        id: crypto.randomUUID(),
+        accountId: userId,
+        providerId: 'email',
+        userId,
+        password: passwordHash,
+        createdAt: now,
+        updatedAt: now,
+      });
 
-    // Link to employee if specified
-    await db
-      .update(employees)
-      .set({ userId, updatedAt: now })
-      .where(and(eq(employees.id, employeeId), eq(employees.tenantId, session.tenantId)));
+      const [membership] = await tx
+        .insert(tenantMemberships)
+        .values({ tenantId: session.tenantId, userId, status: 'active', joinedAt: now })
+        .returning();
 
-    // Assign all selected roles
-    if (selectedRoles.length > 0) {
-      await db.insert(roleAssignments).values(
-        selectedRoles.map((r) => ({
-          tenantMembershipId: membership.id,
-          roleId: r.id,
-          startDate: now,
-        })),
-      );
-    }
+      const [linkedEmployee] = await tx
+        .update(employees)
+        .set({ userId, updatedAt: now })
+        .where(and(
+          eq(employees.id, employeeId),
+          eq(employees.tenantId, session.tenantId),
+          eq(employees.employmentStatus, 'active'),
+          isNull(employees.userId),
+        ))
+        .returning({ id: employees.id });
+      if (!linkedEmployee) {
+        throw new Error('STAFF_ACCOUNT_ALREADY_LINKED');
+      }
 
-    await db.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'user_account_created',
-      actorUserId: session.user.id,
-      action: 'create',
-      entityType: 'user',
-      entityId: employeeId,
-      summary: `Login account created for staff member ${employeeId}`,
-      after: { userId, employeeId, roleIds: selectedRoles.map((r) => r.id) },
+      if (selectedRoles.length > 0) {
+        await tx.insert(roleAssignments).values(
+          selectedRoles.map((role) => ({
+            tenantMembershipId: membership.id,
+            roleId: role.id,
+            startDate: now,
+          })),
+        );
+      }
+
+      if (selectedRoles.some((role) => role.name === 'Assigned Driver')) {
+        const [existingProfile] = await tx
+          .select({ id: driverProfiles.id })
+          .from(driverProfiles)
+          .where(eq(driverProfiles.employeeId, employee.id))
+          .limit(1);
+
+        if (!existingProfile) {
+          const [profile] = await tx
+            .insert(driverProfiles)
+            .values({
+              employeeId: employee.id,
+              driverStatus: 'pending_verification',
+              availabilityStatus: 'unavailable',
+              notes: 'Auto-provisioned when the Assigned Driver role was granted. Licence verification is required before operational assignment.',
+            })
+            .returning({ id: driverProfiles.id });
+
+          await recordAuditEvent({
+            tenantId: session.tenantId,
+            actorUserId: session.user.id,
+            action: 'driver_profile.auto_provisioned',
+            entityType: 'driver_profile',
+            entityId: profile.id,
+            summary: `Pending driver profile created for ${displayName} during account setup`,
+            after: {
+              driverStatus: 'pending_verification',
+              availabilityStatus: 'unavailable',
+              roleAssigned: 'Assigned Driver',
+              licenceVerificationRequired: true,
+            },
+          }, tx);
+        }
+
+        await tx
+          .update(employees)
+          .set({ isDriver: true, updatedAt: now })
+          .where(and(eq(employees.id, employee.id), eq(employees.tenantId, session.tenantId)));
+      }
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        eventType: 'user_account_created',
+        action: 'create',
+        entityType: 'user',
+        entityId: userId,
+        summary: `Login account created for ${displayName}`,
+        after: {
+          userId,
+          employeeId,
+          username,
+          roleIds: selectedRoles.map((role) => role.id),
+          deliveryMode: resolvedDeliveryMode,
+        },
+      }, tx);
     });
 
-    // Send invitation email unless the admin chose to hand over credentials
-    // manually. deliveryMode 'manual' means the admin will share the temp
-    // password themselves; any other value (or the legacy sendInvite flag)
-    // triggers the email.
-    let emailResult: { success: boolean; error?: string; deliveredManually?: boolean } = { success: false, error: 'Email not sent' };
-    if (deliveryMode === 'manual' || sendInvite === false) {
+    const [tenant] = await db
+      .select({ name: tenants.name })
+      .from(tenants)
+      .where(eq(tenants.id, session.tenantId))
+      .limit(1);
+    const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`;
+
+    let emailResult: { success: boolean; error?: string; deliveredManually?: boolean } = {
+      success: false,
+      error: 'Email not sent',
+    };
+    if (resolvedDeliveryMode === 'manual') {
       emailResult = { success: false, deliveredManually: true };
     } else {
-      const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`;
-
       try {
         const element = createElement(UserInviteEmail, {
-          tenantName: 'GovFleet Namibia',
-          recipientName: name || email.split('@')[0],
-          recipientEmail: email.trim().toLowerCase(),
+          tenantName: tenant?.name || 'GovFleet Namibia',
+          recipientName: displayName,
+          recipientEmail: normalizedEmail,
           tempPassword,
           loginUrl,
-          invitedByName: session.user.name || 'A system administrator',
+          invitedByName: session.user.name || 'A tenant administrator',
         });
-
-        const result = await sendReactEmail(
-          email.trim().toLowerCase(),
-          '🎉 Your Account Has Been Created — GovFleet Namibia',
+        emailResult = await sendReactEmail(
+          normalizedEmail,
+          `Your ${tenant?.name || 'GovFleet'} account is ready`,
           element,
         );
-        emailResult = result;
-      } catch (err) {
-        console.warn('[User Invite] Email send failed (non-fatal):', err);
-        emailResult = { success: false, error: String(err) };
+      } catch (error) {
+        console.warn('[User Invite] Email send failed (non-fatal):', error);
+        emailResult = { success: false, error: error instanceof Error ? error.message : 'Email delivery failed' };
       }
     }
-
-    // Derive username from the form or auto-generate from name/email
-    const username = (inputUsername || name || email.split('@')[0])
-      .toLowerCase()
-      .replace(/\s+/g, '.')
-      .replace(/[^a-z0-9._-]/g, '');
-
-    // Store username in the user record
-    await db
-      .update(user)
-      .set({ username, updatedAt: now })
-      .where(eq(user.id, userId));
-
-    // Build the credential response (always return it regardless of sendInvite)
-    const credentialResponse = {
-      fullName: name || email.split('@')[0],
-      username,
-      email: email.trim().toLowerCase(),
-      tempPassword,
-      roleName: selectedRoles.map((r) => r.name).join(', ') || 'No role assigned',
-      loginUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`,
-    };
 
     return NextResponse.json({
       success: true,
       data: {
         id: userId,
-        email: email.trim().toLowerCase(),
-        name: name || email.split('@')[0],
+        email: normalizedEmail,
+        name: displayName,
         username,
-        tempPassword, // Always return the temp password
-        credentials: credentialResponse, // Always return credentials
+        tempPassword,
+        credentials: {
+          fullName: displayName,
+          username,
+          email: normalizedEmail,
+          tempPassword,
+          roleName: selectedRoles.map((role) => role.name).join(', ') || 'No role assigned',
+          loginUrl,
+        },
       },
       emailSent: emailResult.success,
       emailError: emailResult.error ?? null,
     });
   } catch (error) {
     console.error('[User Invite] POST failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to invite user: ' + String(error) },
-      { status: 500 },
-    );
+    if (error instanceof Error && error.message === 'STAFF_ACCOUNT_ALREADY_LINKED') {
+      return NextResponse.json({ error: 'This staff member already has a login account' }, { status: 409 });
+    }
+    if (databaseCode(error) === '23505') {
+      return NextResponse.json({ error: 'A user with this email or username already exists' }, { status: 409 });
+    }
+    return NextResponse.json({ error: 'Failed to create user account' }, { status: 500 });
   }
 }

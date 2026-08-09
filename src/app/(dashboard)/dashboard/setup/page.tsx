@@ -1,970 +1,535 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { StyledSelect } from '@/components/ui/styled-select';
 import {
-  Building2, Users, MapPin, CarFront, ShieldCheck, Fuel,
-  ClipboardCheck, Bell, KeyRound, Palette, CheckCircle2,
-  ChevronLeft, ChevronRight, Loader2, Save, Plus, X,
+  Building2,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  MapPin,
+  Palette,
+  Plus,
+  Save,
+  ShieldCheck,
   Sparkles,
+  Users,
+  X,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const TOTAL_STEPS = 11;
-
 const STEPS = [
-  { label: 'Organisation', icon: Building2, description: 'Organisation profile' },
-  { label: 'Departments', icon: Users, description: 'Departments & units' },
-  { label: 'Offices', icon: MapPin, description: 'Offices & depots' },
-  { label: 'Vehicle Defaults', icon: CarFront, description: 'Fleet defaults' },
-  { label: 'Driver Setup', icon: ShieldCheck, description: 'Driver management' },
-  { label: 'Fuel & Odometer', icon: Fuel, description: 'Fuel tracking defaults' },
-  { label: 'Inspection Rules', icon: ClipboardCheck, description: 'Inspection policies' },
-  { label: 'Notifications', icon: Bell, description: 'Notification preferences' },
-  { label: 'Roles', icon: KeyRound, description: 'Default role assignments' },
-  { label: 'Branding', icon: Palette, description: 'Workspace appearance' },
-  { label: 'Review', icon: CheckCircle2, description: 'Review & complete' },
-];
+  { label: 'Organisation', description: 'Confirm the tenant identity created during onboarding.', icon: Building2 },
+  { label: 'Departments', description: 'Add the organisation units staff already work within.', icon: Users },
+  { label: 'Offices', description: 'Add offices, depots and workshops used for operations.', icon: MapPin },
+  { label: 'Branding', description: 'Set tenant colours and contact details used by the workspace.', icon: Palette },
+  { label: 'Review', description: 'Review the persisted configuration and submit it for platform review.', icon: ShieldCheck },
+] as const;
 
-const ORG_TYPES = [
-  { value: 'regional_council', label: 'Regional Council' },
-  { value: 'ministry', label: 'Ministry / National Office' },
-  { value: 'agency', label: 'Government Agency' },
-];
+const TOTAL_STEPS = STEPS.length;
+const REQUIRED_STEPS = [0, 1, 2, 3];
+const LOCKED_LIFECYCLES = new Set(['READY_FOR_ACTIVATION', 'ACTIVE', 'SUSPENDED', 'RESTRICTED', 'ARCHIVED']);
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+const ORG_TYPES: Record<string, string> = {
+  regional_council: 'Regional Council',
+  ministry: 'Ministry / National Office',
+  agency: 'Government Agency',
+};
+
+interface TenantInfo {
+  id: string;
+  name: string;
+  code: string;
+  slug: string;
+  type: string;
+  timezone: string;
+  locale: string;
+  lifecycleStatus: string;
+}
+
+interface DepartmentInput {
+  id?: string;
+  name: string;
+  code: string;
+}
 
 interface OfficeInput {
+  id?: string;
   name: string;
   code: string;
   type: string;
   address: string;
 }
 
-interface DepartmentInput {
-  name: string;
-  code: string;
+interface BrandingInput {
+  primaryColor: string;
+  accentColor: string;
+  contactEmail: string;
+  contactPhone: string;
 }
 
-interface StepData {
-  [key: string]: unknown;
+async function readJson(response: Response) {
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(json.error || 'The request could not be completed.');
+  return json;
 }
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export default function SetupWizardPage() {
   const router = useRouter();
   const { toast } = useToast();
-
-  // Loading state
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Wizard state
+  const [tenant, setTenant] = useState<TenantInfo | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
-  const [stepData, setStepData] = useState<StepData>({});
-  const [saving, setSaving] = useState(false);
-
-  // Form state
-  const [tenantInfo, setTenantInfo] = useState<{
-    id: string;
-    name: string;
-    code: string;
-    slug: string;
-    type: string;
-    timezone: string;
-    locale: string;
-    lifecycleStatus: string;
-  } | null>(null);
-
-  // Offices & Departments
-  const [offices, setOffices] = useState<OfficeInput[]>([]);
   const [departments, setDepartments] = useState<DepartmentInput[]>([]);
-
-  // Step-specific settings
-  const [vehicleDefaults, setVehicleDefaults] = useState({
-    defaultFuelType: 'diesel',
-    odometerUnit: 'km',
-    defaultServiceIntervalKm: '10000',
-    requirePreTripInspection: true,
-  });
-  const [driverSetup, setDriverSetup] = useState({
-    requireLicenceVerification: true,
-    autoAssignOnAllocation: true,
-    maxConcurrentTrips: 1,
-  });
-  const [fuelSettings, setFuelSettings] = useState({
-    trackFuelEntries: true,
-    fuelLimitWarningPct: 80,
-    requireFuelReceipt: true,
-  });
-  const [inspectionRules, setInspectionRules] = useState({
-    departureInspectionRequired: true,
-    returnInspectionRequired: true,
-    periodicInspectionDays: 30,
-  });
-  const [notificationPrefs, setNotificationPrefs] = useState({
-    emailNotifications: true,
-    smsNotifications: false,
-    digestFrequency: 'immediate',
-  });
-  const [roleAssignments, setRoleAssignments] = useState({
-    autoAssignTenantAdmin: true,
-    createDefaultRoles: true,
-    notifyNewUsers: true,
-  });
-  const [branding, setBranding] = useState({
+  const [offices, setOffices] = useState<OfficeInput[]>([]);
+  const [branding, setBranding] = useState<BrandingInput>({
     primaryColor: '#1F4E8C',
     accentColor: '#0F766E',
     contactEmail: '',
     contactPhone: '',
   });
 
-  // -----------------------------------------------------------------------
-  // Load initial state
-  // -----------------------------------------------------------------------
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch('/api/platform/setup');
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Failed to load setup');
-        if (cancelled) return;
-
-        const data = json.data;
-        setTenantInfo(data.tenant);
-        setOffices(data.offices?.map((o: { name: string; code: string | null; type: string; address: string | null }) => ({
-          name: o.name,
-          code: o.code ?? '',
-          type: o.type,
-          address: o.address ?? '',
-        })) ?? []);
-        setDepartments(data.departments?.map((d: { name: string; code: string | null }) => ({
-          name: d.name,
-          code: d.code ?? '',
-        })) ?? []);
-
-        // Restore progress
-        if (data.progress) {
-          setCurrentStep(data.progress.currentStep ?? 0);
-          setCompletedSteps(Array.isArray(data.progress.completedSteps) ? data.progress.completedSteps : []);
-          const saved = data.progress.stepData ?? {};
-          setStepData(saved);
-          if (saved.vehicleDefaults) setVehicleDefaults(saved.vehicleDefaults as typeof vehicleDefaults);
-          if (saved.driverSetup) setDriverSetup(saved.driverSetup as typeof driverSetup);
-          if (saved.fuelSettings) setFuelSettings(saved.fuelSettings as typeof fuelSettings);
-          if (saved.inspectionRules) setInspectionRules(saved.inspectionRules as typeof inspectionRules);
-          if (saved.notificationPrefs) setNotificationPrefs(saved.notificationPrefs as typeof notificationPrefs);
-          if (saved.roleAssignments) setRoleAssignments(saved.roleAssignments as typeof roleAssignments);
-          if (saved.branding) setBranding(saved.branding as typeof branding);
-        }
-
-        // Seed default offices if none
-        if ((data.offices?.length ?? 0) === 0) {
-          setOffices([{ name: 'Head Office', code: 'HO', type: 'head_office', address: '' }]);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load setup');
-          toast({ title: 'Failed to Load', description: 'Could not load setup progress.', variant: 'error' });
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const json = await readJson(await fetch('/api/platform/setup', { cache: 'no-store' }));
+      const data = json.data;
+      setTenant(data.tenant);
+      setCurrentStep(Math.min(Math.max(Number(data.progress?.currentStep ?? 0), 0), TOTAL_STEPS - 1));
+      setCompletedSteps(
+        Array.isArray(data.progress?.completedSteps)
+          ? data.progress.completedSteps.filter((step: unknown): step is number => Number.isInteger(step) && Number(step) >= 0 && Number(step) < TOTAL_STEPS)
+          : [],
+      );
+      setDepartments(
+        (data.departments ?? []).map((department: { id: string; name: string; code: string | null }) => ({
+          id: department.id,
+          name: department.name,
+          code: department.code ?? '',
+        })),
+      );
+      const loadedOffices = (data.offices ?? []).map((office: {
+        id: string;
+        name: string;
+        code: string | null;
+        type: string;
+        address: string | null;
+      }) => ({
+        id: office.id,
+        name: office.name,
+        code: office.code ?? '',
+        type: office.type,
+        address: office.address ?? '',
+      }));
+      setOffices(
+        loadedOffices.length
+          ? loadedOffices
+          : [{ name: 'Head Office', code: 'HO', type: 'head_office', address: '' }],
+      );
+      if (data.branding) {
+        setBranding({
+          primaryColor: data.branding.primaryColor || '#1F4E8C',
+          accentColor: data.branding.accentColor || '#0F766E',
+          contactEmail: data.branding.contactEmail || '',
+          contactPhone: data.branding.contactPhone || '',
+        });
       }
-    };
-    load();
-    return () => { cancelled = true; };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not load workspace setup.';
+      setError(message);
+      toast({ title: 'Setup could not be loaded', description: message, variant: 'error' });
+    } finally {
+      setLoading(false);
+    }
   }, [toast]);
 
-  // -----------------------------------------------------------------------
-  // Save progress
-  // -----------------------------------------------------------------------
+  useEffect(() => { void load(); }, [load]);
 
-  const saveProgress = useCallback(async (data: {
-    currentStep: number;
-    completedSteps: number[];
-    stepData: StepData;
-  }) => {
-    setSaving(true);
-    try {
-      const res = await fetch('/api/platform/setup', {
-        method: 'POST',
+  const persistDepartments = useCallback(async () => {
+    const next: DepartmentInput[] = [];
+    for (const department of departments) {
+      const name = department.name.trim();
+      if (!name) continue;
+      const body = {
+        ...(department.id ? { id: department.id } : {}),
+        name,
+        ...(department.code.trim() ? { code: department.code.trim() } : {}),
+        type: 'department',
+      };
+      const json = await readJson(await fetch('/api/departments', {
+        method: department.id ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify(body),
+      }));
+      next.push({
+        id: json.data.id,
+        name: json.data.name,
+        code: json.data.code ?? '',
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to save');
-      return true;
+    }
+    setDepartments(next);
+  }, [departments]);
+
+  const persistOffices = useCallback(async () => {
+    const candidates = offices.filter((office) => office.name.trim());
+    if (!candidates.length) throw new Error('Add at least one office or depot before continuing.');
+
+    const next: OfficeInput[] = [];
+    for (const office of candidates) {
+      const body = {
+        ...(office.id ? { id: office.id } : {}),
+        name: office.name.trim(),
+        ...(office.code.trim() ? { code: office.code.trim() } : {}),
+        type: office.type,
+        address: office.address.trim(),
+      };
+      const json = await readJson(await fetch('/api/offices', {
+        method: office.id ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }));
+      next.push({
+        id: json.data.id,
+        name: json.data.name,
+        code: json.data.code ?? '',
+        type: json.data.type,
+        address: json.data.address ?? '',
+      });
+    }
+    setOffices(next);
+  }, [offices]);
+
+  const persistBranding = useCallback(async () => {
+    await readJson(await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branding }),
+    }));
+  }, [branding]);
+
+  const persistCurrentConfiguration = useCallback(async (step: number) => {
+    if (step === 1) await persistDepartments();
+    if (step === 2) await persistOffices();
+    if (step === 3) await persistBranding();
+  }, [persistBranding, persistDepartments, persistOffices]);
+
+  const saveProgress = useCallback(async (step: number, completed: number[]) => {
+    await readJson(await fetch('/api/platform/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        currentStep: step,
+        completedSteps: [...new Set(completed)].sort((a, b) => a - b),
+        stepData: { setupVersion: 2 },
+      }),
+    }));
+  }, []);
+
+  const saveStep = useCallback(async (advance: boolean) => {
+    if (!tenant) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await persistCurrentConfiguration(currentStep);
+      const nextCompleted = completedSteps.includes(currentStep)
+        ? completedSteps
+        : [...completedSteps, currentStep];
+      const nextStep = advance ? Math.min(currentStep + 1, TOTAL_STEPS - 1) : currentStep;
+      await saveProgress(nextStep, nextCompleted);
+      setCompletedSteps([...new Set(nextCompleted)].sort((a, b) => a - b));
+      if (advance) setCurrentStep(nextStep);
+      toast({
+        title: advance ? 'Step saved' : 'Progress saved',
+        description: currentStep === 1 || currentStep === 2 || currentStep === 3
+          ? 'Changes were saved to the live tenant configuration.'
+          : 'Workspace setup progress was saved.',
+        variant: 'success',
+      });
     } catch (err) {
-      toast({ title: 'Save Failed', description: err instanceof Error ? err.message : 'Could not save progress.', variant: 'error' });
-      return false;
+      const message = err instanceof Error ? err.message : 'Could not save this setup step.';
+      setError(message);
+      toast({ title: 'Save failed', description: message, variant: 'error' });
     } finally {
       setSaving(false);
     }
-  }, [toast]);
+  }, [completedSteps, currentStep, persistCurrentConfiguration, saveProgress, tenant, toast]);
 
-  // -----------------------------------------------------------------------
-  // Step completion / navigation
-  // -----------------------------------------------------------------------
-
-  const gatherStepData = useCallback((): StepData => {
-    return {
-      ...stepData,
-      vehicleDefaults,
-      driverSetup,
-      fuelSettings,
-      inspectionRules,
-      notificationPrefs,
-      roleAssignments,
-      branding,
-      offices: offices.filter((o) => o.name.trim()),
-      departments: departments.filter((d) => d.name.trim()),
-    };
-  }, [stepData, vehicleDefaults, driverSetup, fuelSettings, inspectionRules, notificationPrefs, roleAssignments, branding, offices, departments]);
-
-  const completeStep = useCallback(async (step: number) => {
-    const updated = completedSteps.includes(step)
-      ? completedSteps
-      : [...completedSteps, step].sort((a, b) => a - b);
-    const data = {
-      currentStep: step,
-      completedSteps: updated,
-      stepData: gatherStepData(),
-    };
-    const ok = await saveProgress(data);
-    setCompletedSteps(updated);
-    setStepData(data.stepData);
-    return ok;
-  }, [completedSteps, gatherStepData, saveProgress]);
-
-  const goNext = useCallback(async () => {
-    const ok = await completeStep(currentStep);
-    if (ok && currentStep < TOTAL_STEPS - 1) {
-      setCurrentStep(currentStep + 1);
-      setError(null);
-    }
-  }, [completeStep, currentStep]);
-
-  const goBack = useCallback(() => {
-    if (currentStep > 0) {
-      setCurrentStep(currentStep - 1);
-      setError(null);
-    }
-  }, [currentStep]);
-
-  const jumpToStep = useCallback(async (target: number) => {
-    if (target === currentStep) return;
-    // Save progress of current step before jumping
-    const data = {
-      currentStep: target,
-      completedSteps,
-      stepData: gatherStepData(),
-    };
-    await saveProgress(data);
-    setStepData(data.stepData);
-    setCurrentStep(target);
-    setError(null);
-  }, [currentStep, completedSteps, gatherStepData, saveProgress]);
-
-  // -----------------------------------------------------------------------
-  // Handlers
-  // -----------------------------------------------------------------------
-
-  const handleComplete = useCallback(async () => {
-    const data = {
-      currentStep: TOTAL_STEPS - 1,
-      completedSteps: Array.from({ length: TOTAL_STEPS - 1 }, (_, i) => i),
-      stepData: gatherStepData(),
-    };
-    // Save final progress, then signal completion so the tenant lifecycle
-    // flips to PENDING_PLATFORM_REVIEW.
-    const ok = await saveProgress(data);
-    if (!ok) return;
+  const submitSetup = useCallback(async () => {
+    if (!tenant) return;
     setSaving(true);
+    setError(null);
     try {
-      const res = await fetch('/api/platform/setup', {
+      await persistBranding();
+      const completed = [...new Set([...completedSteps, ...REQUIRED_STEPS])].sort((a, b) => a - b);
+      const json = await readJson(await fetch('/api/platform/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...data, action: 'complete' }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to finalise setup');
+        body: JSON.stringify({
+          currentStep: TOTAL_STEPS - 1,
+          completedSteps: completed,
+          stepData: { setupVersion: 2 },
+          action: 'complete',
+        }),
+      }));
+      setTenant((current) => current ? { ...current, lifecycleStatus: json.data.lifecycleStatus } : current);
+      setCompletedSteps([...REQUIRED_STEPS, TOTAL_STEPS - 1]);
       toast({
-        title: 'Setup Complete',
-        description: 'Your workspace has been submitted for platform review.',
+        title: 'Workspace submitted',
+        description: 'The tenant setup is now waiting for platform review.',
         variant: 'success',
       });
       router.push('/dashboard');
     } catch (err) {
-      toast({
-        title: 'Finalise Failed',
-        description: err instanceof Error ? err.message : 'Could not finalise setup.',
-        variant: 'error',
-      });
+      const message = err instanceof Error ? err.message : 'Could not submit workspace setup.';
+      setError(message);
+      toast({ title: 'Submission failed', description: message, variant: 'error' });
     } finally {
       setSaving(false);
     }
-  }, [gatherStepData, saveProgress, router, toast]);
+  }, [branding, completedSteps, persistBranding, router, tenant, toast]);
 
-  // Office handlers
-  const updateOffice = useCallback((index: number, field: keyof OfficeInput, value: string) => {
-    setOffices((prev) => {
-      const next = [...prev];
-      next[index] = { ...next[index], [field]: value };
-      return next;
-    });
-  }, []);
+  const canContinue = useMemo(() => {
+    if (!tenant) return false;
+    if (currentStep === 2) return offices.some((office) => office.name.trim());
+    return currentStep < TOTAL_STEPS - 1;
+  }, [currentStep, offices, tenant]);
 
-  const addOffice = useCallback(() => {
-    setOffices((prev) => [...prev, { name: '', code: '', type: 'constituency_office', address: '' }]);
-  }, []);
-
-  const removeOffice = useCallback((index: number) => {
-    setOffices((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  // Department handlers
-  const updateDept = useCallback((index: number, field: keyof DepartmentInput, value: string) => {
-    setDepartments((prev) => {
-      const next = [...prev];
-      next[index] = { ...next[index], [field]: value };
-      return next;
-    });
-  }, []);
-
-  const addDept = useCallback(() => {
-    setDepartments((prev) => [...prev, { name: '', code: '' }]);
-  }, []);
-
-  const removeDept = useCallback((index: number) => {
-    setDepartments((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  // Generic field updater
-  const updateSetting = useCallback(
-    <T,>(setter: React.Dispatch<React.SetStateAction<T>>) =>
-      (key: keyof T, value: T[keyof T]) => {
-        setter((prev) => ({ ...prev, [key]: value }));
-      },
-    [],
-  );
-
-  // -----------------------------------------------------------------------
-  // Validation
-  // -----------------------------------------------------------------------
-
-  const canProceed = useCallback((): boolean => {
-    switch (currentStep) {
-      case 0: return !!tenantInfo;
-      case 1: return true; // Departments optional
-      case 2: return offices.some((o) => o.name.trim());
-      case 3: return true;
-      case 4: return true;
-      case 5: return true;
-      case 6: return true;
-      case 7: return true;
-      case 8: return true;
-      case 9: return true;
-      case 10: return true;
-      default: return false;
-    }
-  }, [currentStep, tenantInfo, offices]);
-
-  // -----------------------------------------------------------------------
-  // Render helpers
-  // -----------------------------------------------------------------------
-
-  const SectionIntro = ({ title, subtitle }: { title: string; subtitle: string }) => (
-    <div className="mb-4">
-      <h3 className="text-sm font-semibold text-ink-900">{title}</h3>
-      <p className="text-xs text-ink-500">{subtitle}</p>
-    </div>
-  );
-
-  const ToggleRow = ({ label, description, checked, onChange }: {
-    label: string;
-    description: string;
-    checked: boolean;
-    onChange: (v: boolean) => void;
-  }) => (
-    <label className="flex items-start justify-between gap-4 rounded-[8px] border border-border bg-surface p-4 cursor-pointer transition-colors hover:border-ink-300">
-      <div>
-        <p className="text-sm font-medium text-ink-900">{label}</p>
-        <p className="text-xs text-ink-500 mt-0.5">{description}</p>
-      </div>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600"
-      />
-    </label>
-  );
-
-  // -----------------------------------------------------------------------
-  // Render step
-  // -----------------------------------------------------------------------
-
-  const renderStep = () => {
-    switch (currentStep) {
-      // --- Step 0: Organisation Profile ---
-      case 0:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Organisation Profile" subtitle="This information was collected during onboarding. Review and adjust as needed." />
-            <div className="rounded-[8px] border border-border bg-surface divide-y divide-border">
-              <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-ink-500">Organisation Name</span>
-                <span className="font-medium text-ink-900">{tenantInfo?.name}</span>
-              </div>
-              <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-ink-500">Code</span>
-                <span className="font-medium text-ink-900">{tenantInfo?.code}</span>
-              </div>
-              <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-ink-500">Slug</span>
-                <span className="font-medium text-ink-900 font-mono">{tenantInfo?.slug}</span>
-              </div>
-              <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-ink-500">Type</span>
-                <span className="font-medium text-ink-900">
-                  {ORG_TYPES.find((t) => t.value === tenantInfo?.type)?.label ?? tenantInfo?.type}
-                </span>
-              </div>
-              <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-ink-500">Timezone</span>
-                <span className="font-medium text-ink-900">{tenantInfo?.timezone}</span>
-              </div>
-              <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-ink-500">Lifecycle Status</span>
-                <span>
-                  <Badge variant="info" size="sm">{tenantInfo?.lifecycleStatus?.replace(/_/g, ' ')}</Badge>
-                </span>
-              </div>
-            </div>
-          </div>
-        );
-
-      // --- Step 1: Departments ---
-      case 1:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Departments & Units" subtitle="Optional — add departments to structure your organisation. Can be managed later." />
-            {departments.map((dept, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <Input
-                  placeholder="Department name"
-                  value={dept.name}
-                  onChange={(e) => updateDept(i, 'name', e.target.value)}
-                  className="h-10 flex-1"
-                />
-                <Input
-                  placeholder="Code"
-                  value={dept.code}
-                  onChange={(e) => updateDept(i, 'code', e.target.value.toUpperCase())}
-                  className="h-10 w-24 font-mono"
-                />
-                <button onClick={() => removeDept(i)} className="text-ink-400 hover:text-status-error-text transition-colors shrink-0" aria-label="Remove department">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-            <Button variant="secondary" size="compact" onClick={addDept} className="w-full">
-              <Plus className="h-4 w-4" /> Add Department
-            </Button>
-          </div>
-        );
-
-      // --- Step 2: Offices ---
-      case 2:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Offices & Depots" subtitle="Add your organisation's offices, depots and workshops." />
-            {offices.map((office, i) => (
-              <div key={i} className="rounded-[8px] border border-border p-3 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-ink-500 uppercase">Office {i + 1}</span>
-                  {offices.length > 1 && (
-                    <button onClick={() => removeOffice(i)} className="text-ink-400 hover:text-status-error-text transition-colors" aria-label="Remove office">
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input placeholder="Office name" value={office.name} onChange={(e) => updateOffice(i, 'name', e.target.value)} className="h-10" />
-                  <Input placeholder="Code" value={office.code} onChange={(e) => updateOffice(i, 'code', e.target.value.toUpperCase())} className="h-10 font-mono" />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <StyledSelect value={office.type} onChange={(e) => updateOffice(i, 'type', e.target.value)}>
-                    <option value="head_office">Head Office</option>
-                    <option value="constituency_office">Constituency Office</option>
-                    <option value="settlement_office">Settlement Office</option>
-                    <option value="depot">Depot / Workshop</option>
-                  </StyledSelect>
-                  <Input placeholder="Address (optional)" value={office.address} onChange={(e) => updateOffice(i, 'address', e.target.value)} className="h-10" />
-                </div>
-              </div>
-            ))}
-            <Button variant="secondary" size="compact" onClick={addOffice} className="w-full">
-              <Plus className="h-4 w-4" /> Add Office
-            </Button>
-          </div>
-        );
-
-      // --- Step 3: Vehicle Defaults ---
-      case 3:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Fleet Defaults" subtitle="Configure default settings for fleet vehicles." />
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Default Fuel Type</Label>
-                <StyledSelect value={vehicleDefaults.defaultFuelType} onChange={(e) => updateSetting(setVehicleDefaults)('defaultFuelType', e.target.value)}>
-                  <option value="diesel">Diesel</option>
-                  <option value="petrol">Petrol</option>
-                  <option value="hybrid">Hybrid</option>
-                  <option value="electric">Electric</option>
-                </StyledSelect>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Odometer Unit</Label>
-                <StyledSelect value={vehicleDefaults.odometerUnit} onChange={(e) => updateSetting(setVehicleDefaults)('odometerUnit', e.target.value)}>
-                  <option value="km">Kilometres (km)</option>
-                  <option value="mi">Miles (mi)</option>
-                </StyledSelect>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Default Service Interval</Label>
-              <Input
-                type="number"
-                value={vehicleDefaults.defaultServiceIntervalKm}
-                onChange={(e) => updateSetting(setVehicleDefaults)('defaultServiceIntervalKm', e.target.value)}
-                className="h-11"
-              />
-              <p className="text-xs text-ink-400">Kilometres between scheduled services</p>
-            </div>
-            <ToggleRow
-              label="Require Pre-Trip Inspection"
-              description="Vehicles must pass an inspection before being released for a trip"
-              checked={vehicleDefaults.requirePreTripInspection}
-              onChange={(v) => updateSetting(setVehicleDefaults)('requirePreTripInspection', v)}
-            />
-          </div>
-        );
-
-      // --- Step 4: Driver Setup ---
-      case 4:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Driver Management" subtitle="Configure how drivers are managed in your workspace." />
-            <ToggleRow
-              label="Require Licence Verification"
-              description="Driver licences must be uploaded and verified before they can be assigned"
-              checked={driverSetup.requireLicenceVerification}
-              onChange={(v) => updateSetting(setDriverSetup)('requireLicenceVerification', v)}
-            />
-            <ToggleRow
-              label="Auto-Assign on Allocation"
-              description="Assign the primary driver automatically when a vehicle is allocated"
-              checked={driverSetup.autoAssignOnAllocation}
-              onChange={(v) => updateSetting(setDriverSetup)('autoAssignOnAllocation', v)}
-            />
-            <div className="space-y-1.5">
-              <Label>Max Concurrent Trips per Driver</Label>
-              <StyledSelect value={String(driverSetup.maxConcurrentTrips)} onChange={(e) => updateSetting(setDriverSetup)('maxConcurrentTrips', Number(e.target.value))}>
-                <option value="1">1 trip</option>
-                <option value="2">2 trips</option>
-                <option value="3">3 trips</option>
-              </StyledSelect>
-            </div>
-          </div>
-        );
-
-      // --- Step 5: Fuel & Odometer ---
-      case 5:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Fuel Tracking" subtitle="Configure fuel entry tracking and warnings." />
-            <ToggleRow
-              label="Track Fuel Entries"
-              description="Allow drivers and administrators to record fuel purchases"
-              checked={fuelSettings.trackFuelEntries}
-              onChange={(v) => updateSetting(setFuelSettings)('trackFuelEntries', v)}
-            />
-            <ToggleRow
-              label="Require Fuel Receipt"
-              description="Fuel entries require a receipt or proof of purchase"
-              checked={fuelSettings.requireFuelReceipt}
-              onChange={(v) => updateSetting(setFuelSettings)('requireFuelReceipt', v)}
-            />
-            <div className="space-y-1.5">
-              <Label>Fuel Limit Warning (%)</Label>
-              <Input
-                type="number"
-                min={1}
-                max={100}
-                value={String(fuelSettings.fuelLimitWarningPct)}
-                onChange={(e) => updateSetting(setFuelSettings)('fuelLimitWarningPct', Number(e.target.value))}
-                className="h-11"
-              />
-              <p className="text-xs text-ink-400">Warn when fuel level drops below this percentage</p>
-            </div>
-          </div>
-        );
-
-      // --- Step 6: Inspection Rules ---
-      case 6:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Inspection Policies" subtitle="Configure when inspections are required." />
-            <ToggleRow
-              label="Departure Inspection Required"
-              description="Vehicles must be inspected before departure"
-              checked={inspectionRules.departureInspectionRequired}
-              onChange={(v) => updateSetting(setInspectionRules)('departureInspectionRequired', v)}
-            />
-            <ToggleRow
-              label="Return Inspection Required"
-              description="Vehicles must be inspected upon return"
-              checked={inspectionRules.returnInspectionRequired}
-              onChange={(v) => updateSetting(setInspectionRules)('returnInspectionRequired', v)}
-            />
-            <div className="space-y-1.5">
-              <Label>Periodic Inspection Interval</Label>
-              <StyledSelect value={String(inspectionRules.periodicInspectionDays)} onChange={(e) => updateSetting(setInspectionRules)('periodicInspectionDays', Number(e.target.value))}>
-                <option value="14">Every 14 days</option>
-                <option value="30">Every 30 days</option>
-                <option value="60">Every 60 days</option>
-                <option value="90">Every 90 days</option>
-              </StyledSelect>
-            </div>
-          </div>
-        );
-
-      // --- Step 7: Notifications ---
-      case 7:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Notification Preferences" subtitle="Choose how your team receives notifications." />
-            <ToggleRow
-              label="Email Notifications"
-              description="Send email notifications for approvals, trips and updates"
-              checked={notificationPrefs.emailNotifications}
-              onChange={(v) => updateSetting(setNotificationPrefs)('emailNotifications', v)}
-            />
-            <ToggleRow
-              label="SMS Notifications"
-              description="Send SMS notifications for critical alerts"
-              checked={notificationPrefs.smsNotifications}
-              onChange={(v) => updateSetting(setNotificationPrefs)('smsNotifications', v)}
-            />
-            <div className="space-y-1.5">
-              <Label>Digest Frequency</Label>
-              <StyledSelect value={notificationPrefs.digestFrequency} onChange={(e) => updateSetting(setNotificationPrefs)('digestFrequency', e.target.value)}>
-                <option value="immediate">Immediate</option>
-                <option value="daily">Daily digest</option>
-                <option value="weekly">Weekly digest</option>
-              </StyledSelect>
-            </div>
-          </div>
-        );
-
-      // --- Step 8: Roles ---
-      case 8:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Role Assignments" subtitle="Configure default roles and user management settings." />
-            <ToggleRow
-              label="Auto-Assign Tenant Administrator"
-              description="Grant the Tenant Administrator role to the account owner"
-              checked={roleAssignments.autoAssignTenantAdmin}
-              onChange={(v) => updateSetting(setRoleAssignments)('autoAssignTenantAdmin', v)}
-            />
-            <ToggleRow
-              label="Create Default Roles"
-              description="Provision the standard set of roles (Requester, Supervisor, Driver, etc.)"
-              checked={roleAssignments.createDefaultRoles}
-              onChange={(v) => updateSetting(setRoleAssignments)('createDefaultRoles', v)}
-            />
-            <ToggleRow
-              label="Notify New Users"
-              description="Send an email notification when new users are created"
-              checked={roleAssignments.notifyNewUsers}
-              onChange={(v) => updateSetting(setRoleAssignments)('notifyNewUsers', v)}
-            />
-          </div>
-        );
-
-      // --- Step 9: Branding ---
-      case 9:
-        return (
-          <div className="space-y-4">
-            <SectionIntro title="Workspace Branding" subtitle="Customise the appearance of your workspace." />
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Primary Colour</Label>
-                <div className="flex items-center gap-2">
-                  <div className="h-10 w-10 rounded-[6px] border border-border shrink-0" style={{ backgroundColor: branding.primaryColor }} />
-                  <Input
-                    type="text"
-                    value={branding.primaryColor}
-                    onChange={(e) => updateSetting(setBranding)('primaryColor', e.target.value)}
-                    className="h-11 font-mono flex-1"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Accent Colour</Label>
-                <div className="flex items-center gap-2">
-                  <div className="h-10 w-10 rounded-[6px] border border-border shrink-0" style={{ backgroundColor: branding.accentColor }} />
-                  <Input
-                    type="text"
-                    value={branding.accentColor}
-                    onChange={(e) => updateSetting(setBranding)('accentColor', e.target.value)}
-                    className="h-11 font-mono flex-1"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Contact Email</Label>
-                <Input
-                  type="email"
-                  placeholder="transport@council.gov.na"
-                  value={branding.contactEmail}
-                  onChange={(e) => updateSetting(setBranding)('contactEmail', e.target.value)}
-                  className="h-11"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Contact Phone</Label>
-                <Input
-                  placeholder="+264 61 123 456"
-                  value={branding.contactPhone}
-                  onChange={(e) => updateSetting(setBranding)('contactPhone', e.target.value)}
-                  className="h-11"
-                />
-              </div>
-            </div>
-          </div>
-        );
-
-      // --- Step 10: Review & Complete ---
-      case 10:
-        return (
-          <div className="space-y-6">
-            <div className="text-center pb-2">
-              <div className="mx-auto h-14 w-14 rounded-full bg-brand-50 flex items-center justify-center mb-3">
-                <Sparkles className="h-7 w-7 text-brand-600" />
-              </div>
-              <h3 className="text-lg font-medium text-ink-900">You&apos;re almost done!</h3>
-              <p className="text-sm text-ink-500">Review your configuration and complete setup.</p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Card>
-                <CardContent className="pt-6 text-center">
-                  <p className="text-2xl font-semibold text-brand-600">{offices.filter((o) => o.name.trim()).length}</p>
-                  <p className="text-xs text-ink-500 mt-1">Offices</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6 text-center">
-                  <p className="text-2xl font-semibold text-brand-600">{departments.filter((d) => d.name.trim()).length}</p>
-                  <p className="text-xs text-ink-500 mt-1">Departments</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6 text-center">
-                  <p className="text-2xl font-semibold text-brand-600">{completedSteps.length}/{TOTAL_STEPS - 1}</p>
-                  <p className="text-xs text-ink-500 mt-1">Steps Completed</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card>
-              <CardHeader><CardTitle className="text-sm">Configuration Summary</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <p><span className="text-ink-500">Fuel Type:</span> {vehicleDefaults.defaultFuelType}</p>
-                <p><span className="text-ink-500">Odometer:</span> {vehicleDefaults.odometerUnit}</p>
-                <p><span className="text-ink-500">Inspection Interval:</span> {inspectionRules.periodicInspectionDays} days</p>
-                <p><span className="text-ink-500">Email Notifications:</span> {notificationPrefs.emailNotifications ? 'Enabled' : 'Disabled'}</p>
-                <p><span className="text-ink-500">Licence Verification:</span> {driverSetup.requireLicenceVerification ? 'Required' : 'Not required'}</p>
-                <p><span className="text-ink-500">Branding:</span> <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-full border border-border" style={{ backgroundColor: branding.primaryColor }} />{branding.primaryColor}</span></p>
-              </CardContent>
-            </Card>
-
-            <div className="rounded-[8px] bg-brand-50 border border-brand-200 p-4 text-sm">
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="h-5 w-5 text-brand-600 mt-0.5" />
-                <div>
-                  <p className="font-medium text-brand-800">Ready to launch</p>
-                  <p className="text-brand-700 mt-1">
-                    Completing setup will finalise your workspace configuration. You can
-                    adjust any of these settings later from the Administration area.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-
-      default:
-        return null;
-    }
-  };
-
-  // -----------------------------------------------------------------------
-  // Main render
-  // -----------------------------------------------------------------------
+  const progress = Math.round((completedSteps.filter((step) => step < TOTAL_STEPS - 1).length / (TOTAL_STEPS - 1)) * 100);
+  const activeStep = STEPS[currentStep];
+  const setupClosed = Boolean(tenant && LOCKED_LIFECYCLES.has(tenant.lifecycleStatus));
+  const alreadySubmitted = tenant?.lifecycleStatus === 'PENDING_PLATFORM_REVIEW';
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="flex items-center gap-3">
-          <Loader2 className="h-6 w-6 animate-spin text-brand-600" />
-          <span className="text-sm text-ink-500">Loading workspace setup…</span>
-        </div>
+      <div className="text-ink-500 flex min-h-[55dvh] items-center justify-center gap-2 text-sm" role="status">
+        <Loader2 className="text-brand-700 h-5 w-5 animate-spin motion-reduce:animate-none" />
+        Loading workspace setup…
       </div>
     );
   }
 
+  if (!tenant) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-5">
+        <PageHeader title="Workspace Setup" />
+        <Card><CardContent className="py-10 text-center"><p className="text-status-error-text text-sm">{error || 'Tenant context could not be loaded.'}</p><Button variant="secondary" size="sm" className="mt-4" onClick={() => void load()}>Retry</Button></CardContent></Card>
+      </div>
+    );
+  }
+
+  if (setupClosed || alreadySubmitted) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-5 sm:space-y-6">
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Workspace Setup' }]} />
+        <PageHeader title="Workspace Setup" description="Initial tenant configuration" />
+        <Card>
+          <CardContent className="py-8 sm:py-10">
+            <div className="mx-auto max-w-lg text-center">
+              <div className="bg-brand-50 text-brand-700 mx-auto flex h-12 w-12 items-center justify-center rounded-full dark:bg-brand-950/30 dark:text-brand-300"><CheckCircle2 className="h-6 w-6" /></div>
+              <h2 className="text-ink-950 mt-4 text-lg font-semibold">{alreadySubmitted ? 'Setup submitted for platform review' : 'Initial setup is closed'}</h2>
+              <p className="text-ink-500 mt-2 text-sm leading-6">
+                {alreadySubmitted
+                  ? 'The initial workspace configuration has been submitted. Further onboarding lifecycle changes are controlled by the platform review process.'
+                  : 'This tenant has moved beyond initial onboarding. Use the Administration and Settings pages for normal configuration changes.'}
+              </p>
+              <Badge variant={alreadySubmitted ? 'pending' : 'info'} size="sm" className="mt-4">{tenant.lifecycleStatus.replaceAll('_', ' ')}</Badge>
+              <div className="mt-6 flex flex-col justify-center gap-2 sm:flex-row">
+                <Button variant="primary" size="sm" onClick={() => router.push('/dashboard')}>Return to Dashboard</Button>
+                {!alreadySubmitted && <Button variant="secondary" size="sm" onClick={() => router.push('/dashboard/settings')}>Open Tenant Settings</Button>}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const renderStep = () => {
+    if (currentStep === 0) {
+      const rows = [
+        ['Organisation', tenant.name],
+        ['Code', tenant.code],
+        ['Slug', tenant.slug],
+        ['Type', ORG_TYPES[tenant.type] ?? tenant.type],
+        ['Timezone', tenant.timezone],
+        ['Locale', tenant.locale],
+      ];
+      return (
+        <div className="space-y-4">
+          <p className="text-ink-500 text-sm leading-6">The platform created this identity during tenant onboarding. Confirm it before configuring the organisation structure.</p>
+          <div className="border-border divide-border overflow-hidden rounded-[8px] border divide-y">
+            {rows.map(([label, value]) => (
+              <div key={label} className="grid gap-1 px-4 py-3 text-sm sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center">
+                <span className="text-ink-500">{label}</span>
+                <span className={`text-ink-950 min-w-0 break-words font-medium ${label === 'Slug' || label === 'Code' ? 'font-mono text-xs' : ''}`}>{value || '—'}</span>
+              </div>
+            ))}
+          </div>
+          <div className="border-brand-200 bg-brand-50/50 rounded-[8px] border px-4 py-3 dark:border-brand-900/60 dark:bg-brand-950/20">
+            <p className="text-ink-700 text-xs leading-5">Organisation identity changes that affect tenant codes, slugs or onboarding ownership remain platform-controlled. Normal contact and branding details are configured later in this setup.</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (currentStep === 1) {
+      return (
+        <div className="space-y-4">
+          <p className="text-ink-500 text-sm leading-6">Departments are optional. Saved units immediately become available to Staff Management and workflow selectors.</p>
+          <div className="space-y-3">
+            {departments.map((department, index) => (
+              <div key={department.id ?? `new-${index}`} className="border-border grid gap-2 rounded-[8px] border p-3 sm:grid-cols-[minmax(0,1fr)_8rem_auto] sm:items-center">
+                <Input value={department.name} placeholder="Department name" onChange={(event) => setDepartments((rows) => rows.map((row, i) => i === index ? { ...row, name: event.target.value } : row))} />
+                <Input value={department.code} placeholder="Auto code" className="font-mono" onChange={(event) => setDepartments((rows) => rows.map((row, i) => i === index ? { ...row, code: event.target.value.toUpperCase() } : row))} />
+                {department.id ? (
+                  <Badge variant="success" size="sm" className="justify-self-start sm:justify-self-end">Saved</Badge>
+                ) : (
+                  <Button type="button" variant="ghost" size="icon-sm" className="text-status-error-text justify-self-end" aria-label="Remove unsaved department" onClick={() => setDepartments((rows) => rows.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button>
+                )}
+              </div>
+            ))}
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setDepartments((rows) => [...rows, { name: '', code: '' }])}><Plus className="h-4 w-4" /> Add Department</Button>
+          <p className="text-ink-400 text-xs">Existing saved departments are not deleted from setup. Archive or restructure them later from Organisation Management so linked staff records remain safe.</p>
+        </div>
+      );
+    }
+
+    if (currentStep === 2) {
+      return (
+        <div className="space-y-4">
+          <p className="text-ink-500 text-sm leading-6">At least one active office or depot is required. Saved locations immediately become available to tenant operations.</p>
+          <div className="space-y-3">
+            {offices.map((office, index) => (
+              <div key={office.id ?? `new-${index}`} className="border-border space-y-3 rounded-[8px] border p-3 sm:p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-ink-500 text-xs font-semibold uppercase tracking-wider">Location {index + 1}</span>
+                  {office.id ? <Badge variant="success" size="sm">Saved</Badge> : offices.length > 1 ? <Button type="button" variant="ghost" size="icon-sm" className="text-status-error-text" aria-label="Remove unsaved office" onClick={() => setOffices((rows) => rows.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button> : null}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
+                  <Input value={office.name} placeholder="Office or depot name" onChange={(event) => setOffices((rows) => rows.map((row, i) => i === index ? { ...row, name: event.target.value } : row))} />
+                  <Input value={office.code} placeholder="Auto code" className="font-mono" onChange={(event) => setOffices((rows) => rows.map((row, i) => i === index ? { ...row, code: event.target.value.toUpperCase() } : row))} />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <StyledSelect value={office.type} aria-label={`Location ${index + 1} type`} onChange={(event) => setOffices((rows) => rows.map((row, i) => i === index ? { ...row, type: event.target.value } : row))}>
+                    <option value="head_office">Head Office</option>
+                    <option value="regional_office">Regional Office</option>
+                    <option value="constituency_office">Constituency Office</option>
+                    <option value="settlement_office">Settlement Office</option>
+                    <option value="depot">Depot</option>
+                    <option value="workshop">Workshop</option>
+                    <option value="other">Other</option>
+                  </StyledSelect>
+                  <Input value={office.address} placeholder="Address (optional)" onChange={(event) => setOffices((rows) => rows.map((row, i) => i === index ? { ...row, address: event.target.value } : row))} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setOffices((rows) => [...rows, { name: '', code: '', type: 'constituency_office', address: '' }])}><Plus className="h-4 w-4" /> Add Office or Depot</Button>
+          <p className="text-ink-400 text-xs">Existing saved locations are preserved here. Archive them later from Organisation Management to protect staff and workflow references.</p>
+        </div>
+      );
+    }
+
+    if (currentStep === 3) {
+      return (
+        <div className="space-y-5">
+          <p className="text-ink-500 text-sm leading-6">These values are written to the same tenant branding record used by Settings and generated documents.</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5"><Label>Primary Colour</Label><div className="flex items-center gap-2"><span className="border-border h-10 w-10 shrink-0 rounded-[7px] border" style={{ backgroundColor: branding.primaryColor }} /><Input value={branding.primaryColor} className="font-mono" onChange={(event) => setBranding((value) => ({ ...value, primaryColor: event.target.value }))} /></div></div>
+            <div className="space-y-1.5"><Label>Accent Colour</Label><div className="flex items-center gap-2"><span className="border-border h-10 w-10 shrink-0 rounded-[7px] border" style={{ backgroundColor: branding.accentColor }} /><Input value={branding.accentColor} className="font-mono" onChange={(event) => setBranding((value) => ({ ...value, accentColor: event.target.value }))} /></div></div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5"><Label>Contact Email</Label><Input type="email" value={branding.contactEmail} placeholder="transport@organisation.gov.na" onChange={(event) => setBranding((value) => ({ ...value, contactEmail: event.target.value }))} /></div>
+            <div className="space-y-1.5"><Label>Contact Phone</Label><Input value={branding.contactPhone} placeholder="+264 …" onChange={(event) => setBranding((value) => ({ ...value, contactPhone: event.target.value }))} /></div>
+          </div>
+          <div className="border-border bg-muted/20 rounded-[8px] border px-4 py-3">
+            <p className="text-ink-700 text-xs leading-5">Driver licence verification, trip conflict protection, inspection requirements and system role contracts are operational safety rules. They remain enforced by GovFleet and are intentionally not presented as setup switches.</p>
+          </div>
+        </div>
+      );
+    }
+
+    const savedDepartments = departments.filter((department) => department.id).length;
+    const savedOffices = offices.filter((office) => office.id).length;
+    return (
+      <div className="space-y-5">
+        <div className="text-center">
+          <div className="bg-brand-50 text-brand-700 mx-auto flex h-12 w-12 items-center justify-center rounded-full dark:bg-brand-950/30 dark:text-brand-300"><Sparkles className="h-6 w-6" /></div>
+          <h3 className="text-ink-950 mt-3 text-lg font-semibold">Ready for platform review</h3>
+          <p className="text-ink-500 mt-1 text-sm">Only persisted tenant configuration is included in this readiness check.</p>
+        </div>
+        <section className="border-border grid grid-cols-3 gap-px overflow-hidden rounded-[10px] border bg-border" aria-label="Setup summary">
+          {[
+            ['Departments', savedDepartments],
+            ['Offices', savedOffices],
+            ['Required steps', `${REQUIRED_STEPS.filter((step) => completedSteps.includes(step)).length}/4`],
+          ].map(([label, value]) => (
+            <div key={String(label)} className="bg-surface px-2 py-4 text-center sm:px-4">
+              <p className="text-brand-700 text-xl font-semibold tabular-nums">{value}</p>
+              <p className="text-ink-500 mt-1 text-[11px]">{label}</p>
+            </div>
+          ))}
+        </section>
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">Configuration summary</CardTitle></CardHeader>
+          <CardContent><dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2"><div><dt className="text-ink-500 text-xs">Organisation</dt><dd className="text-ink-950 mt-0.5 font-medium">{tenant.name}</dd></div><div><dt className="text-ink-500 text-xs">Primary colour</dt><dd className="text-ink-950 mt-0.5 flex items-center gap-2"><span className="border-border inline-block h-3 w-3 rounded-full border" style={{ backgroundColor: branding.primaryColor }} />{branding.primaryColor}</dd></div><div><dt className="text-ink-500 text-xs">Contact email</dt><dd className="text-ink-950 mt-0.5 break-all">{branding.contactEmail || 'Not set'}</dd></div><div><dt className="text-ink-500 text-xs">Lifecycle after submit</dt><dd className="text-ink-950 mt-0.5">Pending platform review</dd></div></dl></CardContent>
+        </Card>
+        <div className="border-brand-200 bg-brand-50/50 rounded-[8px] border p-4 dark:border-brand-900/60 dark:bg-brand-950/20"><div className="flex items-start gap-3"><CheckCircle2 className="text-brand-700 mt-0.5 h-5 w-5 shrink-0" /><div><p className="text-ink-950 text-sm font-medium">Submission is a lifecycle action</p><p className="text-ink-600 mt-1 text-xs leading-5">After submission, initial setup is locked and the Platform Administrator reviews the tenant before activation. Normal organisation and branding management remains available later through Administration.</p></div></div></div>
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Workspace Setup' },
-      ]} />
-      <PageHeader
-        title="Workspace Setup"
-        description="Complete the setup of your organisation's fleet management workspace"
-      />
+    <div className="mx-auto max-w-3xl space-y-5 sm:space-y-6">
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Workspace Setup' }]} />
+      <PageHeader title="Workspace Setup" description="Configure the real tenant data required before operational use" />
 
-      {/* Progress bar */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-medium text-ink-500">Setup Progress</p>
-          <p className="text-xs text-ink-500">{Math.round(((completedSteps.length + (currentStep === TOTAL_STEPS - 1 ? 1 : 0)) / TOTAL_STEPS) * 100)}%</p>
-        </div>
-        <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-          <div
-            className="h-full rounded-full bg-brand-600 transition-all duration-300"
-            style={{ width: `${Math.round(((completedSteps.length + (currentStep === TOTAL_STEPS - 1 ? 1 : 0)) / TOTAL_STEPS) * 100)}%` }}
-          />
+      <section aria-label="Setup progress" className="space-y-2">
+        <div className="flex items-center justify-between gap-3"><p className="text-ink-600 text-xs font-medium">Step {currentStep + 1} of {TOTAL_STEPS} · {activeStep.label}</p><p className="text-ink-500 text-xs tabular-nums">{progress}%</p></div>
+        <div className="bg-muted h-1.5 overflow-hidden rounded-full"><div className="bg-brand-700 h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${progress}%` }} /></div>
+      </section>
+
+      <div className="-mx-1 overflow-x-auto px-1 pb-1" aria-label="Setup steps">
+        <div className="flex min-w-max gap-1.5">
+          {STEPS.map((step, index) => {
+            const completed = completedSteps.includes(index);
+            const active = currentStep === index;
+            const Icon = step.icon;
+            return (
+              <button key={step.label} type="button" disabled={saving || (!completed && !active)} onClick={() => { if (completed && !active) setCurrentStep(index); }} aria-current={active ? 'step' : undefined} className={`focus-ring flex min-h-10 items-center gap-2 rounded-[7px] border px-3 text-xs font-medium transition-colors motion-reduce:transition-none ${active ? 'border-brand-700 bg-brand-700 text-white' : completed ? 'border-brand-200 bg-brand-50/60 text-brand-800 dark:border-brand-900/60 dark:bg-brand-950/20 dark:text-brand-200' : 'border-border bg-surface text-ink-400'} disabled:cursor-default`}>
+                {completed && !active ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}<span>{index + 1}. {step.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Step indicator */}
-      <div className="flex items-center gap-0 overflow-x-auto pb-2">
-        {STEPS.map((step, index) => (
-          <div key={index} className="flex items-center gap-0">
-            <button
-              onClick={() => completedSteps.includes(index) && jumpToStep(index)}
-              className={`flex flex-col items-center gap-1 px-2.5 py-2 rounded-[8px] transition-all min-w-[72px] ${
-                index === currentStep
-                  ? 'bg-brand-600 text-white shadow-sm'
-                  : completedSteps.includes(index)
-                    ? 'bg-brand-100 text-brand-700 hover:bg-brand-200 cursor-pointer'
-                    : index < currentStep
-                      ? 'bg-brand-50 text-brand-400'
-                      : 'bg-muted text-ink-400'
-              }`}
-              aria-label={step.label}
-            >
-              <step.icon className="h-4 w-4" />
-              <span className="text-[10px] font-medium whitespace-nowrap">{step.label}</span>
-            </button>
-            {index < STEPS.length - 1 && (
-              <div className={`h-px w-3 ${index < currentStep || completedSteps.includes(index) ? 'bg-brand-400' : 'bg-muted'}`} />
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Step content */}
       <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            {(() => {
-              const step = STEPS[currentStep];
-              return (
-                <>
-                  <step.icon className="h-5 w-5 text-brand-600" />
-                  <CardTitle>{step.label}</CardTitle>
-                </>
-              );
-            })()}
-          </div>
-          <p className="text-sm text-ink-500 mt-1">{STEPS[currentStep]?.description}</p>
-        </CardHeader>
-
-        <CardContent className="space-y-4">
-          {error && (
-            <div className="rounded-[8px] bg-status-error-bg p-3 text-sm text-status-error-text">
-              {error}
-            </div>
-          )}
-
+        <CardHeader className="pb-4"><div className="flex items-start gap-3"><div className="bg-brand-50 text-brand-700 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] dark:bg-brand-950/30 dark:text-brand-300"><activeStep.icon className="h-4 w-4" /></div><div className="min-w-0"><CardTitle>{activeStep.label}</CardTitle><p className="text-ink-500 mt-1 text-sm">{activeStep.description}</p></div></div></CardHeader>
+        <CardContent className="space-y-5">
+          {error && <div className="border-status-error-border bg-status-error-bg text-status-error-text rounded-[8px] border px-3 py-2.5 text-sm" role="alert">{error}</div>}
           {renderStep()}
-
-          {/* Navigation */}
-          <div className="mt-6 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Button variant="tertiary" size="default" onClick={goBack} disabled={currentStep === 0 || saving}>
-                <ChevronLeft className="h-4 w-4" />
-                Back
-              </Button>
-              <Button
-                variant="secondary"
-                size="default"
-                onClick={() => saveProgress({ currentStep, completedSteps, stepData: gatherStepData() })}
-                disabled={saving}
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Save Progress
-              </Button>
+          <div className="border-border mt-6 flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button type="button" variant="secondary" size="sm" disabled={currentStep === 0 || saving} onClick={() => { setError(null); setCurrentStep((step) => Math.max(0, step - 1)); }} className="w-full sm:w-auto"><ChevronLeft className="h-4 w-4" /> Back</Button>
+              {currentStep < TOTAL_STEPS - 1 && <Button type="button" variant="secondary" size="sm" disabled={saving} onClick={() => void saveStep(false)} className="w-full sm:w-auto">{saving ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Save className="h-4 w-4" />} Save</Button>}
             </div>
-
             {currentStep < TOTAL_STEPS - 1 ? (
-              <Button
-                variant="primary"
-                size="default"
-                onClick={goNext}
-                disabled={!canProceed() || saving}
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Continue
-                <ChevronRight className="h-4 w-4" />
-              </Button>
+              <Button type="button" variant="primary" size="sm" disabled={saving || !canContinue} onClick={() => void saveStep(true)} className="w-full sm:w-auto">{saving && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />} Continue <ChevronRight className="h-4 w-4" /></Button>
             ) : (
-              <Button
-                variant="primary"
-                size="default"
-                onClick={handleComplete}
-                disabled={saving}
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Complete Setup
-              </Button>
+              <Button type="button" variant="primary" size="sm" disabled={saving || !REQUIRED_STEPS.every((step) => completedSteps.includes(step)) || offices.filter((office) => office.id).length < 1} onClick={() => void submitSetup()} className="w-full sm:w-auto">{saving ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <ShieldCheck className="h-4 w-4" />} Submit for Platform Review</Button>
             )}
           </div>
         </CardContent>

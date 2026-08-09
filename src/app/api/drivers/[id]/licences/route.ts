@@ -10,15 +10,24 @@ import {
   employees,
 } from '@/db/schema';
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
-import { hasPermission, requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  getSessionWorkspace,
+  hasPermission,
+  requireAnyPermission,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { WorkspaceIds } from '@/lib/workspaces';
 import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { licenceOcrConfidence, parseNamibianLicenceOcr } from '@/lib/driver-licence-ocr';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 
-/** Roles that receive licence-renewal review notifications. */
-const REVIEW_ROLES = ['Transport Administrator', 'Control Administrative Officer', 'Tenant Administrator'] as const;
+/** The operational role that receives actionable licence-renewal reviews. */
+const REVIEW_ROLES = ['Transport Administrator'] as const;
+const REVIEWABLE_STATUSES = new Set(['awaiting_review', 'needs_correction', 'uploaded', 'pending']);
+const TERMINAL_STATUSES = new Set(['verified', 'expired', 'superseded', 'rejected']);
 
 async function notifyTransportAdmins(tenantId: string, input: {
   title: string;
@@ -90,6 +99,10 @@ const maxBytes = 12 * 1024 * 1024;
 
 function masked(value: string): string {
   return value.length > 4 ? `••••${value.slice(-4)}` : '••••';
+}
+
+function expiresAfterToday(expiryDate: string, now = new Date()) {
+  return new Date(`${expiryDate}T23:59:59Z`) >= now;
 }
 
 async function access(request: NextRequest, employeeId: string) {
@@ -198,8 +211,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const licenceNumber = String(form.get('licenceNumber') || extracted.licenceNumber || `PENDING-${Date.now()}`);
   const issueDate = String(form.get('issueDate') || extracted.validFrom || new Date().toISOString().slice(0, 10));
   const expiryDate = String(form.get('expiryDate') || extracted.validUntil || issueDate);
-  await db.update(driverLicences).set({ isActive: false, verificationStatus: sql`CASE WHEN ${driverLicences.verificationStatus} = 'verified' THEN 'superseded' ELSE ${driverLicences.verificationStatus} END` })
-    .where(and(eq(driverLicences.driverProfileId, profile.id), eq(driverLicences.isActive, true)));
+
+  // A renewal submission is provisional until a Transport Administrator approves it.
+  // Keep the currently verified licence active during review; the approval transition
+  // below is the only place that supersedes the previous operational version.
   const [licence] = await db.insert(driverLicences).values({
     driverProfileId: profile.id,
     licenceNumber,
@@ -220,6 +235,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     entryMethod: rawText ? 'ocr_review' : 'manual',
     version,
     verificationStatus: rawText ? 'awaiting_review' : 'needs_correction',
+    isActive: false,
     isVerified: false,
   }).returning();
   const codes = extracted.licenceCodes.length ? extracted.licenceCodes : String(form.get('licenceClass') || '').split(',').map((code) => code.trim()).filter(Boolean);
@@ -231,15 +247,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     action: 'driver_licence.uploaded',
     entityType: 'driver_licence',
     entityId: licence.id,
-    after: { version, verificationStatus: licence.verificationStatus, qualityWarnings, extractedFields: Object.keys(extracted) },
+    after: {
+      version,
+      verificationStatus: licence.verificationStatus,
+      isActive: false,
+      previousVerifiedLicencePreserved: true,
+      qualityWarnings,
+      extractedFields: Object.keys(extracted),
+    },
     summary: `Driver licence version ${version} uploaded for employee ${id}`,
   });
 
-  // Notify Transport Administration that a renewal is pending review.
   if (licence.verificationStatus === 'awaiting_review' || licence.verificationStatus === 'needs_correction') {
     await notifyTransportAdmins(auth.session.tenantId, {
       title: 'Driver licence renewal pending review',
-      body: `A renewed licence (version ${version}) was submitted for driver ${id.slice(0, 8)} and awaits verification.`, // masked below
+      body: `A renewed licence (version ${version}) was submitted for driver ${id.slice(0, 8)} and awaits verification.`,
       entityType: 'driver_licence',
       entityId: licence.id,
       actionUrl: `/dashboard/drivers/licences/${licence.id}`,
@@ -263,11 +285,35 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .innerJoin(driverProfiles, eq(driverProfiles.id, driverLicences.driverProfileId))
     .where(and(eq(driverLicences.id, body.licenceId), eq(driverProfiles.employeeId, id))).limit(1);
   if (!licence) return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
+  if (!['correct', 'verify', 'approve', 'reject', 'request_upload'].includes(body.action)) {
+    return NextResponse.json({ error: 'Unsupported licence action' }, { status: 400 });
+  }
   if (body.action !== 'correct') {
-    const permission = await requireAnyPermission(auth.session, [Permissions.LICENCE_VERIFY, Permissions.DRIVER_MANAGE]);
+    const workspace = await getSessionWorkspace(auth.session);
+    if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
+      return NextResponse.json(
+        { error: 'Licence review decisions are available only in the Transport Administration workspace.' },
+        { status: 403 },
+      );
+    }
+    const permission = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
     if (permission instanceof NextResponse) return permission;
   }
   const current = licence.driver_licences;
+
+  if (TERMINAL_STATUSES.has(current.verificationStatus)) {
+    return NextResponse.json(
+      { error: `Licence version ${current.version} is ${current.verificationStatus.replaceAll('_', ' ')} and can no longer be changed.` },
+      { status: 409 },
+    );
+  }
+  if (!REVIEWABLE_STATUSES.has(current.verificationStatus)) {
+    return NextResponse.json(
+      { error: `Licence version ${current.version} is not in a reviewable state.` },
+      { status: 409 },
+    );
+  }
+
   if (body.action === 'correct') {
     const allowed = ['licenceNumber', 'licenceClass', 'issueDate', 'expiryDate', 'holderName', 'dateOfBirth', 'nationalIdNumber', 'issueNumber', 'driverRestrictionCode'];
     const corrections = Object.entries(body.corrections || {}).filter(([field]) => allowed.includes(field));
@@ -283,11 +329,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     await db.update(driverLicences).set({
       ...(Object.fromEntries(corrections) as Partial<typeof driverLicences.$inferInsert>),
       verificationStatus: 'awaiting_review',
+      isActive: false,
       updatedAt: new Date(),
     }).where(eq(driverLicences.id, current.id));
   } else if (body.action === 'verify' || body.action === 'approve') {
     if (!current.frontImageKey || !current.backImageKey) return NextResponse.json({ error: 'Front and back images are required before verification.' }, { status: 409 });
-    // Approve may carry final corrected values confirmed by the reviewer.
     if (body.action === 'approve' && body.corrections) {
       const allowed = ['licenceNumber', 'licenceClass', 'issueDate', 'expiryDate', 'holderName', 'dateOfBirth', 'nationalIdNumber', 'issueNumber', 'driverRestrictionCode'];
       const confirmed = Object.entries(body.corrections).filter(([field]) => allowed.includes(field));
@@ -306,32 +352,68 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         }).where(eq(driverLicences.id, current.id));
       }
     }
-    // Supersede any other active licence version for this driver profile so
-    // exactly one licence is the current active verified record.
-    await db.update(driverLicences)
-      .set({
-        isActive: false,
-        verificationStatus: sql`CASE WHEN ${driverLicences.verificationStatus} = 'verified' THEN 'superseded' ELSE ${driverLicences.verificationStatus} END`,
+
+    const [reviewed] = await db
+      .select({ expiryDate: driverLicences.expiryDate })
+      .from(driverLicences)
+      .where(eq(driverLicences.id, current.id))
+      .limit(1);
+    const approvedExpiry = reviewed?.expiryDate ?? current.expiryDate;
+    const isCurrent = expiresAfterToday(approvedExpiry);
+
+    await db.transaction(async (tx) => {
+      if (isCurrent) {
+        await tx.update(driverLicences)
+          .set({
+            isActive: false,
+            verificationStatus: sql`CASE WHEN ${driverLicences.verificationStatus} = 'verified' THEN 'superseded' ELSE ${driverLicences.verificationStatus} END`,
+            updatedAt: new Date(),
+          })
+          .where(and(
+            eq(driverLicences.driverProfileId, current.driverProfileId),
+            eq(driverLicences.isActive, true),
+            ne(driverLicences.id, current.id),
+          ));
+      }
+
+      await tx.update(driverLicences).set({
+        verificationStatus: isCurrent ? 'verified' : 'expired',
+        isActive: isCurrent,
+        isVerified: true,
+        verifiedByUserId: auth.session.user.id,
+        verifiedAt: new Date(),
+        rejectionReason: null,
         updatedAt: new Date(),
-      })
-      .where(and(
-        eq(driverLicences.driverProfileId, current.driverProfileId),
-        eq(driverLicences.isActive, true),
-        ne(driverLicences.id, current.id),
-      ));
-    await db.update(driverLicences).set({
-      verificationStatus: new Date(`${current.expiryDate}T23:59:59Z`) < new Date() ? 'expired' : 'verified',
-      isActive: true,
-      isVerified: true,
-      verifiedByUserId: auth.session.user.id,
-      verifiedAt: new Date(),
-      rejectionReason: null,
-      updatedAt: new Date(),
-    }).where(eq(driverLicences.id, current.id));
+      }).where(eq(driverLicences.id, current.id));
+
+      if (isCurrent) {
+        const [profileState] = await tx
+          .select({
+            driverStatus: driverProfiles.driverStatus,
+            availabilityStatus: driverProfiles.availabilityStatus,
+          })
+          .from(driverProfiles)
+          .where(eq(driverProfiles.id, current.driverProfileId))
+          .limit(1);
+        const wasAwaitingLicence = ['pending_verification', 'incomplete', 'unauthorised'].includes(
+          profileState?.driverStatus || '',
+        );
+        await tx.update(driverProfiles).set({
+          driverStatus: 'authorised',
+          availabilityStatus: wasAwaitingLicence
+            ? 'available'
+            : profileState?.availabilityStatus || 'available',
+          lastVerifiedAt: new Date(),
+          verifiedByUserId: auth.session.user.id,
+          updatedAt: new Date(),
+        }).where(eq(driverProfiles.id, current.driverProfileId));
+      }
+    });
   } else {
     if (!body.reason?.trim()) return NextResponse.json({ error: 'A reason is required' }, { status: 400 });
     await db.update(driverLicences).set({
       verificationStatus: body.action === 'reject' ? 'rejected' : 'needs_correction',
+      isActive: false,
       isVerified: false,
       rejectionReason: body.reason,
       updatedAt: new Date(),
@@ -344,12 +426,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     action: `driver_licence.${body.action}`,
     entityType: 'driver_licence',
     entityId: current.id,
-    before: { verificationStatus: current.verificationStatus },
+    before: { verificationStatus: current.verificationStatus, isActive: current.isActive },
     after: body.corrections || { action: body.action },
     reason: body.reason,
   });
 
-  // Notify the driver of the review outcome (best-effort, never blocks).
   const [driverRow] = await db
     .select({ userId: employees.userId, email: employees.email, firstName: employees.firstName })
     .from(employees)
@@ -358,11 +439,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const outcomeMap: Record<string, { title: string; body: string }> = {
     verify: {
       title: 'Your driving licence has been verified',
-      body: `Licence ${masked(current.licenceNumber)} (${current.licenceClass}) is now verified and active.`,
+      body: `Licence ${masked(current.licenceNumber)} (${current.licenceClass}) has been reviewed.`,
     },
     approve: {
       title: 'Your licence renewal has been approved',
-      body: `Licence ${masked(current.licenceNumber)} (${current.licenceClass}) is now verified and active.`,
+      body: `Licence ${masked(current.licenceNumber)} (${current.licenceClass}) has been reviewed and approved.`,
     },
     reject: {
       title: 'Your licence renewal was rejected',

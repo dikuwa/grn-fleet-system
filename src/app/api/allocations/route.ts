@@ -27,6 +27,7 @@ const ALLOCATABLE_STATUSES = [
   'release_pending',
   'vehicle_allocated',
 ];
+const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed', 'released'] as const;
 
 export async function POST(req: NextRequest) {
   try {
@@ -56,7 +57,6 @@ export async function POST(req: NextRequest) {
     const userId = session.user.id;
     const tenantId = session.tenantId;
 
-    // Resolve request by UUID or human-readable reference.
     let resolvedRequestId = requestId;
     if (!resolvedRequestId && requestReference) {
       const [found] = await db
@@ -67,7 +67,6 @@ export async function POST(req: NextRequest) {
       if (found) resolvedRequestId = found.id;
     }
 
-    // Resolve vehicle by UUID or GRN/registration number.
     let resolvedVehicleId = vehicleId;
     if (!resolvedVehicleId && vehicleGrn) {
       const [found] = await db
@@ -82,7 +81,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Request ID or reference is required' }, { status: 400 });
     }
 
-    // Verify the transport request exists and is in an allocatable state.
     const [foundReq] = await db
       .select({
         id: transportRequests.id,
@@ -102,14 +100,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Request cannot be allocated while status is "${foundReq.status}"` }, { status: 409 });
     }
 
-    // Advisory recommendation (no side effects) — also used by the new-page flow.
     if (recommendOnly) {
       const recommender = new VehicleRecommender({ db });
       const recommendation = await recommender.findBestMatch(resolvedRequestId);
       return NextResponse.json({ recommendation });
     }
 
-    // Recommendation when no explicit vehicle is supplied.
     let recommendation: Awaited<ReturnType<VehicleRecommender['findBestMatch']>> | null = null;
     if (!resolvedVehicleId || recommendAuto) {
       const recommender = new VehicleRecommender({ db });
@@ -130,7 +126,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Start date is required' }, { status: 400 });
     }
 
-    // Verify the vehicle (including eligibility fields used for driver checks).
     const [vehicle] = await db
       .select({
         id: vehicles.id,
@@ -156,12 +151,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Allocation dates are invalid' }, { status: 400 });
     }
 
-    // Vehicle double-booking prevention (full date range).
+    // Vehicle and driver conflicts use the canonical allocation vocabulary from
+    // the schema: provisional, confirmed and released are all live bookings.
     const [vehicleOverlap] = await db.select({ id: vehicleAllocations.id })
       .from(vehicleAllocations)
       .where(and(
         eq(vehicleAllocations.vehicleId, resolvedVehicleId),
-        inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+        inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
         lt(vehicleAllocations.startAt, endAt),
         gt(vehicleAllocations.endAt, startAt),
       ))
@@ -170,7 +166,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Vehicle is already allocated during this period' }, { status: 409 });
     }
 
-    // Driver eligibility — validated again on the server at submission time.
     const resolvedDriverId: string | null = driverEmployeeId || null;
     let driverCompliance: ReturnType<typeof calculateDriverCompliance> | null = null;
     if (resolvedDriverId) {
@@ -215,7 +210,7 @@ export async function POST(req: NextRequest) {
         db.select({ id: vehicleAllocations.id }).from(vehicleAllocations)
           .where(and(
             eq(vehicleAllocations.driverEmployeeId, resolvedDriverId),
-            inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+            inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
             lt(vehicleAllocations.startAt, endAt),
             gt(vehicleAllocations.endAt, startAt),
           ))
@@ -254,7 +249,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Create the allocation (vehicle + optional confirmed driver atomically).
     const [allocation] = await db
       .insert(vehicleAllocations)
       .values({
@@ -269,7 +263,6 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
-    // Create the trip record.
     const [trip] = await db
       .insert(trips)
       .values({
@@ -281,7 +274,6 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
-    // Reflect the confirmation on the authoritative request + driver records.
     await db
       .update(transportRequests)
       .set({
@@ -306,10 +298,8 @@ export async function POST(req: NextRequest) {
         .where(and(eq(requestDrivers.requestId, resolvedRequestId), eq(requestDrivers.employeeId, resolvedDriverId)));
     }
 
-    // Trigger document generation (trip authority).
     const doc = await onTripIssued(allocation.id, tenantId, userId);
 
-    // Audit log (human-readable).
     await recordAuditEvent({
       tenantId,
       actorUserId: userId,
@@ -332,12 +322,11 @@ export async function POST(req: NextRequest) {
       officeLabel: 'Transport office',
     });
 
-    // Notify the confirmed driver (in-app + email, best-effort).
     if (resolvedDriverId) {
       const [driverRow] = await db
         .select({ userId: employees.userId, email: employees.email, firstName: employees.firstName })
         .from(employees)
-        .where(eq(employees.id, resolvedDriverId))
+        .where(and(eq(employees.id, resolvedDriverId), eq(employees.tenantId, tenantId)))
         .limit(1);
       if (driverRow) {
         try {
@@ -372,7 +361,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Notify the requester (best-effort; never blocks the response).
     try {
       const { sendNotificationEmail } = await import('@/lib/email');
       const [requester] = await db
@@ -383,7 +371,7 @@ export async function POST(req: NextRequest) {
         })
         .from(transportRequests)
         .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
-        .where(eq(transportRequests.id, resolvedRequestId))
+        .where(and(eq(transportRequests.id, resolvedRequestId), eq(transportRequests.tenantId, tenantId)))
         .limit(1);
 
       if (requester?.email) {

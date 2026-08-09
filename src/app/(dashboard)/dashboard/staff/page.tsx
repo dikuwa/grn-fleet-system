@@ -122,6 +122,7 @@ async function fetchStaffData(params: SearchParams, tenantId: string): Promise<S
         INNER JOIN ${roles} ON ${roles.id} = ${roleAssignments.roleId}
         WHERE ${tenantMemberships.userId} = ${employees.userId}
           AND ${tenantMemberships.tenantId} = ${employees.tenantId}
+          AND (${roleAssignments.startDate} IS NULL OR ${roleAssignments.startDate} <= now())
           AND (${roleAssignments.endDate} IS NULL OR ${roleAssignments.endDate} > now())
       )`,
       isActing: sql<boolean>`EXISTS (
@@ -144,12 +145,12 @@ async function fetchStaffData(params: SearchParams, tenantId: string): Promise<S
   const allOffices = await dbo
     .select({ id: offices.id, name: offices.name })
     .from(offices)
-    .where(eq(offices.isActive, true))
+    .where(and(eq(offices.tenantId, tenantId), eq(offices.isActive, true)))
     .orderBy(asc(offices.name));
   const allDepartments = await dbo
     .select({ id: departments.id, name: departments.name })
     .from(departments)
-    .where(eq(departments.isActive, true))
+    .where(and(eq(departments.tenantId, tenantId), eq(departments.isActive, true)))
     .orderBy(asc(departments.name));
 
   return { staffList, totalCount, allOffices, allDepartments };
@@ -251,8 +252,6 @@ export default async function StaffDirectoryPage({
   const totalPages = Math.ceil(totalCount / DEFAULT_PAGE_SIZE);
   const offset = (currentPage - 1) * DEFAULT_PAGE_SIZE;
 
-  // Serialized filter state so the row actions / detail links can restore the
-  // exact directory view when the user navigates back.
   const returnQuery = new URLSearchParams();
   if (query) returnQuery.set('q', query);
   if (officeFilter) returnQuery.set('office', officeFilter);

@@ -13,20 +13,9 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
  *
  * POST /api/programmes/[id]/action  { action, note? }
  *
- * Actions: submit | request_changes | approve | reject | publish | archive | complete
- *
- * State machine (server-enforced):
- *   draft / changes_requested --submit--> submitted
- *   submitted --request_changes--> changes_requested   (reviewer, note required)
- *   submitted --approve--> approved                    (programme:approve)
- *   submitted --reject--> rejected                     (programme:reject, note required)
- *   approved  --publish--> published                   (programme:publish)
- *   published --complete--> completed
- *   approved/published/completed --archive--> archived (programme:archive)
- *   draft --archive--> archived                        (admin/archival path)
- *
- * A submitted Programme goes to the Tenant Administrator (or configured
- * Programme reviewer) — it does NOT enter the transport request chain.
+ * Programme review is intentionally separate from the transport-request
+ * approval chain. Creator and reviewer must be different people, including
+ * when the creator also holds Tenant Administrator permissions.
  */
 
 type Action =
@@ -38,17 +27,27 @@ type Action =
   | 'archive'
   | 'complete';
 
-const EDITABLE_DRAFT_ACTIONS: readonly Action[] = ['submit'];
+type PermissionsKey = (typeof Permissions)[keyof typeof Permissions];
 
 const VALID_TRANSITIONS: Record<string, readonly Action[]> = {
-  draft: [...EDITABLE_DRAFT_ACTIONS, 'archive'],
-  changes_requested: [...EDITABLE_DRAFT_ACTIONS, 'archive'],
+  draft: ['submit', 'archive'],
+  changes_requested: ['submit', 'archive'],
   submitted: ['request_changes', 'approve', 'reject'],
   approved: ['publish', 'archive'],
   published: ['complete', 'archive'],
   completed: ['archive'],
   rejected: [],
   archived: [],
+};
+
+const TITLE_BY_ACTION: Record<Action, string> = {
+  submit: 'Programme submitted for review',
+  request_changes: 'Changes requested on your programme',
+  approve: 'Programme approved',
+  reject: 'Programme rejected',
+  publish: 'Programme published',
+  archive: 'Programme archived',
+  complete: 'Programme marked completed',
 };
 
 export async function POST(
@@ -64,7 +63,6 @@ export async function POST(
     const body = await request.json();
     const action = body?.action as Action;
     const note = typeof body?.note === 'string' ? body.note.trim() : '';
-
     const validActions: readonly Action[] = [
       'submit',
       'request_changes',
@@ -75,36 +73,27 @@ export async function POST(
       'complete',
     ];
     if (!validActions.includes(action)) {
-      return NextResponse.json(
-        { error: `Invalid programme action: ${String(action)}` },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: `Invalid programme action: ${String(action)}` }, { status: 400 });
     }
 
     const db = getDb();
     const tenantId = session.tenantId;
     const userId = session.user.id;
-
     const [programme] = await db
       .select()
       .from(programmes)
       .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
       .limit(1);
-    if (!programme) {
-      return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
-    }
+    if (!programme) return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
 
     const allowed = VALID_TRANSITIONS[programme.status] ?? [];
     if (!allowed.includes(action)) {
       return NextResponse.json(
-        {
-          error: `Cannot ${action.replace(/_/g, ' ')} a programme with status "${programme.status}".`,
-        },
+        { error: `Cannot ${action.replace(/_/g, ' ')} a programme with status "${programme.status}".` },
         { status: 409 },
       );
     }
 
-    // --- Permission checks per action (independent of role label) ---
     const permissionForAction: Partial<Record<Action, PermissionsKey>> = {
       submit: Permissions.PROGRAMME_SUBMIT,
       request_changes: Permissions.PROGRAMME_REVIEW,
@@ -115,46 +104,27 @@ export async function POST(
       complete: Permissions.PROGRAMME_PUBLISH,
     };
     const requiredPermission = permissionForAction[action];
-    if (!requiredPermission) {
-      return NextResponse.json({ error: 'Programme action is not permitted' }, { status: 403 });
-    }
+    if (!requiredPermission) return NextResponse.json({ error: 'Programme action is not permitted' }, { status: 403 });
     const permCheck = await requirePermission(session, requiredPermission);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    // Creator may always submit/resubmit their own draft (already covered by
-    // PROGRAMME_SUBMIT, which requesters hold). Reviewers must not be the
-    // creator for review actions unless they are a designated reviewer role
-    // (Tenant Administrator may review/approve — including their own, with audit).
-    if (
-      ['request_changes', 'approve', 'reject'].includes(action) &&
-      programme.createdByUserId === userId
-    ) {
-      const tenantAdminCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
-      if (tenantAdminCheck instanceof NextResponse) {
-        return NextResponse.json(
-          { error: 'You cannot review or approve your own programme.' },
-          { status: 409 },
-        );
-      }
+    if (['request_changes', 'approve', 'reject'].includes(action) && programme.createdByUserId === userId) {
+      return NextResponse.json(
+        { error: 'You cannot review or decide a programme that you created. Another authorised Tenant Administrator must perform the review.' },
+        { status: 409 },
+      );
     }
 
     if (['request_changes', 'reject'].includes(action) && !note) {
       return NextResponse.json(
-        {
-          error:
-            action === 'request_changes'
-              ? 'A note is required when requesting changes.'
-              : 'A rejection reason is required.',
-        },
+        { error: action === 'request_changes' ? 'A note is required when requesting changes.' : 'A rejection reason is required.' },
         { status: 400 },
       );
     }
 
-    // --- Compute next state + timestamps ---
     const now = new Date();
     const patch: Record<string, unknown> = { updatedAt: now };
     let nextStatus: string;
-
     switch (action) {
       case 'submit':
         nextStatus = 'submitted';
@@ -184,8 +154,8 @@ export async function POST(
         nextStatus = 'published';
         patch.publishedByUserId = userId;
         patch.publishedAt = now;
-        patch.approvedByUserId = patch.approvedByUserId ?? userId;
-        patch.approvedAt = patch.approvedAt ?? now;
+        patch.approvedByUserId = programme.approvedByUserId ?? userId;
+        patch.approvedAt = programme.approvedAt ?? now;
         break;
       case 'archive':
         nextStatus = 'archived';
@@ -199,16 +169,28 @@ export async function POST(
         return NextResponse.json({ error: 'Invalid programme action' }, { status: 400 });
     }
 
+    // Status is part of the write predicate so approve/reject or other
+    // simultaneous decisions cannot silently overwrite one another.
     const [updated] = await db
       .update(programmes)
       .set({ ...patch, status: nextStatus })
-      .where(eq(programmes.id, id))
+      .where(and(
+        eq(programmes.id, id),
+        eq(programmes.tenantId, tenantId),
+        eq(programmes.status, programme.status),
+      ))
       .returning();
+    if (!updated) {
+      return NextResponse.json(
+        { error: 'This programme changed while you were reviewing it. Refresh and review the latest status before deciding.' },
+        { status: 409 },
+      );
+    }
 
     await recordAuditEvent({
       tenantId,
       actorUserId: userId,
-      action: `programme.${action.replace(/_/g, '_')}`,
+      action: `programme.${action}`,
       entityType: 'programme',
       entityId: id,
       sourceChannel: 'web',
@@ -218,52 +200,47 @@ export async function POST(
       summary: `Programme ${programme.reference} ${action.replace(/_/g, ' ')} (${programme.status} → ${nextStatus})`,
     });
 
-    // --- Notifications ---
     try {
-      const creatorUserId = programme.createdByUserId || programme.ownerUserId;
-      const recipientUserIds: string[] = [];
-
-      if (['approve', 'reject', 'request_changes', 'publish', 'complete', 'archive'].includes(action) && creatorUserId) {
-        recipientUserIds.push(creatorUserId);
-      }
+      const statusLabel = nextStatus.replace(/_/g, ' ');
+      const notificationBody = `${programme.title} (${programme.reference}) is now ${statusLabel}.`;
       if (action === 'submit') {
-        const reviewers = await resolveActiveRoleRecipients(tenantId, [
-          SystemRoles.TENANT_ADMIN,
-        ]);
-        recipientUserIds.push(...reviewers);
+        const reviewers = await resolveActiveRoleRecipients(tenantId, [SystemRoles.TENANT_ADMIN]);
+        const recipients = reviewers.filter((recipientUserId) => recipientUserId !== userId);
+        if (recipients.length > 0) {
+          await createScopedNotifications({
+            tenantId,
+            recipientUserIds: recipients,
+            category: 'action_required',
+            eventType: 'programme_submit',
+            title: TITLE_BY_ACTION.submit,
+            body: notificationBody,
+            entityType: 'programme',
+            entityId: id,
+            actionUrl: `/dashboard/programmes/${id}`,
+            workspace: WorkspaceIds.TENANT_ADMIN,
+            requiredRole: null,
+          });
+        }
+      } else {
+        const creatorUserId = programme.createdByUserId || programme.ownerUserId;
+        if (creatorUserId) {
+          await createScopedNotifications({
+            tenantId,
+            recipientUserIds: [creatorUserId],
+            category: action === 'reject' || action === 'request_changes' ? 'action_required' : 'outcome',
+            eventType: `programme_${action}`,
+            title: TITLE_BY_ACTION[action],
+            body: notificationBody,
+            entityType: 'programme',
+            entityId: id,
+            actionUrl: `/dashboard/programmes/${id}`,
+            workspace: null,
+            requiredRole: null,
+          });
+        }
       }
-
-      const unique = Array.from(new Set(recipientUserIds.filter(Boolean)));
-      if (unique.length > 0) {
-        const titleMap: Record<string, string> = {
-          submit: 'Programme submitted for review',
-          request_changes: 'Changes requested on your programme',
-          approve: 'Programme approved',
-          reject: 'Programme rejected',
-          publish: 'Programme published',
-          archive: 'Programme archived',
-          complete: 'Programme marked completed',
-        };
-        const statusLabel = nextStatus.replace(/_/g, ' ');
-        await createScopedNotifications({
-          tenantId,
-          recipientUserIds: unique,
-          category:
-            action === 'reject' || action === 'request_changes'
-              ? 'action_required'
-              : 'awareness',
-          eventType: `programme_${action}`,
-          title: titleMap[action] ?? 'Programme update',
-          body: `${programme.title} (${programme.reference}) is now ${statusLabel}.`,
-          entityType: 'programme',
-          entityId: id,
-          actionUrl: `/dashboard/programmes/${id}`,
-          workspace: WorkspaceIds.TENANT_ADMIN,
-          requiredRole: null,
-        });
-      }
-    } catch {
-      // Notifications are best-effort
+    } catch (notificationError) {
+      console.warn('[Programmes] notification delivery failed:', notificationError);
     }
 
     return NextResponse.json({ success: true, data: updated });
@@ -272,5 +249,3 @@ export async function POST(
     return NextResponse.json({ error: 'Failed to process programme action' }, { status: 500 });
   }
 }
-
-type PermissionsKey = (typeof Permissions)[keyof typeof Permissions];

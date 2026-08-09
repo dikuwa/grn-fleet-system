@@ -11,18 +11,19 @@ import { StyledDateInput } from '@/components/ui/styled-select';
 import { Badge, StatusBadge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  Loader2,
   AlertCircle,
-  ShieldCheck,
-  ShieldAlert,
-  FileSearch,
-  ImageIcon,
-  RefreshCw,
-  CheckCircle2,
-  XCircle,
   ArrowLeftRight,
-  History,
   Camera,
+  CheckCircle2,
+  Eye,
+  FileSearch,
+  History,
+  ImageIcon,
+  Loader2,
+  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  XCircle,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
@@ -72,12 +73,25 @@ interface DriverInfo {
 }
 
 interface ReviewPayload {
+  canReview: boolean;
   licence: ReviewLicence;
   codes: string[];
-  corrections: Array<{ fieldName: string; originalValue: string | null; correctedValue: string; source: string }>;
+  corrections: Array<{
+    fieldName: string;
+    originalValue: string | null;
+    correctedValue: string;
+    source: string;
+  }>;
   driver: DriverInfo;
   currentVerified: CurrentVerified | null;
-  previousVersions: Array<{ id: string; version: number; verificationStatus: string; isActive: boolean; licenceClass: string; expiryDate: string }>;
+  previousVersions: Array<{
+    id: string;
+    version: number;
+    verificationStatus: string;
+    isActive: boolean;
+    licenceClass: string;
+    expiryDate: string;
+  }>;
   files: { frontUrl: string | null; backUrl: string | null; pdfUrl: string | null };
   warnings: string[];
 }
@@ -95,6 +109,15 @@ function warningLabel(code: string): string {
   return labels[code] ?? code.replaceAll('_', ' ');
 }
 
+function Detail({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-ink-500 text-xs font-medium">{label}</p>
+      <div className="text-ink-800 mt-1 min-w-0 break-words text-sm">{value}</div>
+    </div>
+  );
+}
+
 export default function LicenceReviewPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
@@ -103,8 +126,6 @@ export default function LicenceReviewPage() {
   const [data, setData] = useState<ReviewPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-
-  // Final verified values (pre-filled from the licence; reviewer may correct).
   const [confirmedValues, setConfirmedValues] = useState({
     licenceNumber: '',
     licenceClass: '',
@@ -116,7 +137,6 @@ export default function LicenceReviewPage() {
   const [busy, setBusy] = useState<'approve' | 'request_upload' | 'reject' | null>(null);
   const [confirmAction, setConfirmAction] = useState<'approve' | 'reject' | null>(null);
   const [zoomImage, setZoomImage] = useState<string | null>(null);
-
   const initialLoadRef = useRef(false);
 
   const fetchReview = useCallback(async () => {
@@ -152,31 +172,53 @@ export default function LicenceReviewPage() {
 
   const runAction = useCallback(
     async (action: 'approve' | 'request_upload' | 'reject') => {
-      if (!data) return;
+      if (!data?.canReview) {
+        toast({
+          title: 'Read-only licence oversight',
+          description: 'Switch to the Transport Administration workspace to review licence submissions.',
+          variant: 'error',
+        });
+        return;
+      }
       if ((action === 'request_upload' || action === 'reject') && !reason.trim()) {
-        toast({ title: 'A reason is required', description: 'Provide a clear reason for this action.', variant: 'error' });
+        toast({
+          title: 'A reason is required',
+          description: 'Provide a clear reason for this action.',
+          variant: 'error',
+        });
         return;
       }
       setBusy(action);
       try {
         if (action === 'approve') {
-          // Approve via PATCH on the driver licence route (atomic: corrections +
-          // supersede previous versions + notify driver).
           const corrections: Record<string, string> = {};
-          if (confirmedValues.licenceNumber && confirmedValues.licenceNumber !== data.licence.licenceNumber) corrections.licenceNumber = confirmedValues.licenceNumber;
-          if (confirmedValues.licenceClass && confirmedValues.licenceClass !== data.licence.licenceClass) corrections.licenceClass = confirmedValues.licenceClass;
-          if (confirmedValues.issueDate && confirmedValues.issueDate !== data.licence.issueDate) corrections.issueDate = confirmedValues.issueDate;
-          if (confirmedValues.expiryDate && confirmedValues.expiryDate !== data.licence.expiryDate) corrections.expiryDate = confirmedValues.expiryDate;
-          if (confirmedValues.holderName && confirmedValues.holderName !== (data.licence.holderName ?? '')) corrections.holderName = confirmedValues.holderName;
+          if (confirmedValues.licenceNumber && confirmedValues.licenceNumber !== data.licence.licenceNumber)
+            corrections.licenceNumber = confirmedValues.licenceNumber;
+          if (confirmedValues.licenceClass && confirmedValues.licenceClass !== data.licence.licenceClass)
+            corrections.licenceClass = confirmedValues.licenceClass;
+          if (confirmedValues.issueDate && confirmedValues.issueDate !== data.licence.issueDate)
+            corrections.issueDate = confirmedValues.issueDate;
+          if (confirmedValues.expiryDate && confirmedValues.expiryDate !== data.licence.expiryDate)
+            corrections.expiryDate = confirmedValues.expiryDate;
+          if (confirmedValues.holderName && confirmedValues.holderName !== (data.licence.holderName ?? ''))
+            corrections.holderName = confirmedValues.holderName;
 
           const res = await fetch(`/api/drivers/${data.driver.employeeId}/licences`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ licenceId: data.licence.id, action: 'approve', corrections: Object.keys(corrections).length ? corrections : undefined }),
+            body: JSON.stringify({
+              licenceId: data.licence.id,
+              action: 'approve',
+              corrections: Object.keys(corrections).length ? corrections : undefined,
+            }),
           });
           const json = await res.json();
           if (!res.ok) throw new Error(json.error || 'Failed to approve licence');
-          toast({ title: 'Licence approved', description: 'The renewal is now the active verified licence.', variant: 'success' });
+          toast({
+            title: 'Licence approved',
+            description: 'The renewal is now the active verified licence.',
+            variant: 'success',
+          });
         } else {
           const res = await fetch(`/api/drivers/licences/${data.licence.id}/review`, {
             method: 'POST',
@@ -209,22 +251,23 @@ export default function LicenceReviewPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 className="text-ink-400 h-7 w-7 animate-spin" />
+      <div className="text-ink-500 flex min-h-56 items-center justify-center gap-2 py-16 text-sm" role="status">
+        <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        Loading licence record…
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5 sm:space-y-6">
         <PageHeader title="Licence Review" />
         <Card>
-          <CardContent className="pt-6">
-            <div className="text-status-error-text flex flex-col items-center gap-3 py-10 text-center">
-              <AlertCircle className="h-8 w-8" />
-              <p className="text-sm">{error || 'Licence record not found'}</p>
-              <div className="flex gap-2">
+          <CardContent className="py-10 sm:py-12">
+            <div className="text-status-error-text flex flex-col items-center gap-3 text-center">
+              <AlertCircle className="h-8 w-8" aria-hidden="true" />
+              <p className="max-w-md text-sm">{error || 'Licence record not found'}</p>
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                 <Button variant="secondary" size="sm" onClick={() => void fetchReview()}>
                   <RefreshCw className="h-4 w-4" /> Retry
                 </Button>
@@ -239,11 +282,20 @@ export default function LicenceReviewPage() {
     );
   }
 
-  const { licence, driver, currentVerified, files, warnings, corrections, previousVersions } = data;
-  const isBlocked = licence.verificationStatus === 'verified' || licence.verificationStatus === 'expired' || licence.verificationStatus === 'superseded';
+  const {
+    canReview,
+    licence,
+    driver,
+    currentVerified,
+    files,
+    warnings,
+    corrections,
+    previousVersions,
+  } = data;
+  const isBlocked = ['verified', 'expired', 'superseded'].includes(licence.verificationStatus);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <Breadcrumbs
         items={[
           { label: 'Dashboard', href: '/dashboard' },
@@ -252,13 +304,22 @@ export default function LicenceReviewPage() {
           { label: `v${licence.version}` },
         ]}
       />
+
       <PageHeader
         title={`Licence Review · v${licence.version}`}
         description={`${driver.name} · ${driver.employeeNumber}`}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           <StatusBadge
-            status={licence.verificationStatus === 'verified' ? 'success' : licence.verificationStatus === 'rejected' || licence.verificationStatus === 'expired' ? 'error' : licence.verificationStatus === 'superseded' ? 'default' : 'pending'}
+            status={
+              licence.verificationStatus === 'verified'
+                ? 'success'
+                : licence.verificationStatus === 'rejected' || licence.verificationStatus === 'expired'
+                  ? 'error'
+                  : licence.verificationStatus === 'superseded'
+                    ? 'default'
+                    : 'pending'
+            }
             label={licence.verificationStatus.replace(/_/g, ' ')}
           />
           <Button variant="secondary" size="sm" asChild>
@@ -267,183 +328,197 @@ export default function LicenceReviewPage() {
         </div>
       </PageHeader>
 
-      {warnings.length > 0 && (
-        <div className="rounded-[10px] border border-status-warning-bg bg-status-warning-bg/10 p-4">
-          <div className="flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 shrink-0 text-status-warning-text" />
-            <p className="text-sm font-medium text-status-warning-text">Review warnings</p>
+      {!canReview && (
+        <div className="border-border bg-muted/30 flex flex-col gap-3 rounded-[10px] border px-4 py-3 sm:flex-row sm:items-start">
+          <Eye className="text-brand-700 mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-ink-950 text-sm font-semibold">Read-only licence oversight</p>
+            <p className="text-ink-500 mt-1 text-xs leading-5">
+              Tenant Administration can inspect licence submissions, expiry risk, OCR output and review history. Approval, rejection and change requests are performed in the Transport Administration workspace.
+            </p>
           </div>
-          <ul className="mt-2 space-y-1">
-            {warnings.map((warning, index) => (
-              <li key={index} className="text-xs text-ink-600">• {warningLabel(warning)}</li>
-            ))}
-          </ul>
         </div>
       )}
 
-      {/* Driver identity */}
+      {warnings.length > 0 && (
+        <div className="border-status-warning-text/20 bg-status-warning-bg rounded-[10px] border px-4 py-3 sm:p-4" role="alert">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="text-status-warning-text mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-status-warning-text text-sm font-semibold">Review warnings</p>
+              <ul className="text-ink-600 mt-2 space-y-1 text-xs leading-5">
+                {warnings.map((warning, index) => (
+                  <li key={`${warning}-${index}`}>• {warningLabel(warning)}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-ink-400" /> Driver
+            <ShieldCheck className="text-ink-400 h-4 w-4" aria-hidden="true" /> Driver identity
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <p className="text-xs text-ink-500">Name</p>
-              <p className="text-sm font-medium text-ink-950">{driver.name}</p>
-            </div>
-            <div>
-              <p className="text-xs text-ink-500">Employee number</p>
-              <p className="text-sm font-medium text-ink-950">{driver.employeeNumber}</p>
-            </div>
-            <div>
-              <p className="text-xs text-ink-500">Staff status</p>
-              <StatusBadge status={driver.employmentStatus === 'active' ? 'success' : 'error'} label={driver.employmentStatus} />
-            </div>
-            <div>
-              <p className="text-xs text-ink-500">Driver status</p>
-              <StatusBadge status={driver.driverStatus === 'authorised' ? 'success' : driver.driverStatus === 'suspended' ? 'pending' : 'error'} label={driver.driverStatus.replace(/_/g, ' ')} />
-            </div>
-            <div>
-              <p className="text-xs text-ink-500">Availability</p>
-              <StatusBadge status={driver.availabilityStatus === 'available' ? 'success' : 'pending'} label={driver.availabilityStatus.replace(/_/g, ' ')} />
-            </div>
-            <div>
-              <p className="text-xs text-ink-500">Department / Office</p>
-              <p className="text-sm text-ink-700">{driver.departmentName ?? '—'} / {driver.officeName ?? '—'}</p>
-            </div>
+          <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
+            <Detail label="Name" value={<span className="font-medium text-ink-950">{driver.name}</span>} />
+            <Detail label="Employee number" value={<span className="font-medium text-ink-950">{driver.employeeNumber}</span>} />
+            <Detail
+              label="Staff status"
+              value={<StatusBadge status={driver.employmentStatus === 'active' ? 'success' : 'error'} label={driver.employmentStatus} />}
+            />
+            <Detail
+              label="Driver status"
+              value={
+                <StatusBadge
+                  status={driver.driverStatus === 'authorised' ? 'success' : driver.driverStatus === 'suspended' ? 'pending' : 'error'}
+                  label={driver.driverStatus.replace(/_/g, ' ')}
+                />
+              }
+            />
+            <Detail
+              label="Availability"
+              value={<StatusBadge status={driver.availabilityStatus === 'available' ? 'success' : 'pending'} label={driver.availabilityStatus.replace(/_/g, ' ')} />}
+            />
+            <Detail label="Department / Office" value={`${driver.departmentName ?? '—'} / ${driver.officeName ?? '—'}`} />
           </div>
         </CardContent>
       </Card>
 
-      {/* Documents */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2">
-            <Camera className="h-4 w-4 text-ink-400" /> Submitted documents
+            <Camera className="text-ink-400 h-4 w-4" aria-hidden="true" /> Submitted documents
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {files.frontUrl ? (
-              <button type="button" onClick={() => setZoomImage(files.frontUrl)} className="focus-ring group relative overflow-hidden rounded-[10px] border border-border">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={files.frontUrl} alt="Licence front" className="h-48 w-full object-cover transition-transform group-hover:scale-[1.02]" />
-                <span className="absolute right-2 bottom-2 rounded-[6px] bg-ink-950/70 px-2 py-0.5 text-[10px] font-medium text-white">Front · click to zoom</span>
-              </button>
-            ) : (
-              <div className="flex h-48 flex-col items-center justify-center rounded-[10px] border border-dashed border-border bg-muted/30 text-ink-400">
-                <ImageIcon className="h-8 w-8" />
-                <p className="mt-2 text-xs">No front image</p>
-              </div>
-            )}
-            {files.backUrl ? (
-              <button type="button" onClick={() => setZoomImage(files.backUrl)} className="focus-ring group relative overflow-hidden rounded-[10px] border border-border">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={files.backUrl} alt="Licence back" className="h-48 w-full object-cover transition-transform group-hover:scale-[1.02]" />
-                <span className="absolute right-2 bottom-2 rounded-[6px] bg-ink-950/70 px-2 py-0.5 text-[10px] font-medium text-white">Back · click to zoom</span>
-              </button>
-            ) : (
-              <div className="flex h-48 flex-col items-center justify-center rounded-[10px] border border-dashed border-border bg-muted/30 text-ink-400">
-                <ImageIcon className="h-8 w-8" />
-                <p className="mt-2 text-xs">No back image</p>
-              </div>
+          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+            {[
+              { url: files.frontUrl, label: 'Licence front' },
+              { url: files.backUrl, label: 'Licence back' },
+            ].map((item) =>
+              item.url ? (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => setZoomImage(item.url)}
+                  className="focus-ring group relative min-h-44 overflow-hidden rounded-[10px] border border-border bg-muted/20 sm:min-h-52"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={item.url} alt={item.label} className="h-44 w-full object-contain p-2 transition-transform group-hover:scale-[1.01] motion-reduce:transition-none sm:h-52" />
+                  <span className="bg-ink-950/75 absolute right-2 bottom-2 rounded-[6px] px-2 py-1 text-[10px] font-medium text-white">
+                    {item.label.replace('Licence ', '')} · view larger
+                  </span>
+                </button>
+              ) : (
+                <div key={item.label} className="text-ink-400 flex min-h-44 flex-col items-center justify-center rounded-[10px] border border-dashed border-border bg-muted/20 sm:min-h-52">
+                  <ImageIcon className="h-8 w-8" aria-hidden="true" />
+                  <p className="mt-2 text-xs">No {item.label.toLowerCase()} image</p>
+                </div>
+              ),
             )}
           </div>
           {files.pdfUrl && (
-            <a href={files.pdfUrl} target="_blank" rel="noreferrer" className="text-brand-700 mt-3 inline-flex items-center gap-1 text-xs font-medium hover:underline">
-              <FileSearch className="h-3.5 w-3.5" /> Open source PDF
-            </a>
+            <Button variant="secondary" size="sm" asChild className="mt-3">
+              <a href={files.pdfUrl} target="_blank" rel="noreferrer">
+                <FileSearch className="h-4 w-4" /> Open source PDF
+              </a>
+            </Button>
           )}
         </CardContent>
       </Card>
 
-      {/* Compare current verified */}
       {currentVerified && (
         <Card>
-          <CardHeader>
+          <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2">
-              <ArrowLeftRight className="h-4 w-4 text-ink-400" /> Current verified licence (v{currentVerified.version})
+              <ArrowLeftRight className="text-ink-400 h-4 w-4" aria-hidden="true" /> Current verified licence · v{currentVerified.version}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <p className="text-xs text-ink-500">Number</p>
-                <p className="text-sm font-medium text-ink-950">{currentVerified.licenceNumber}</p>
-              </div>
-              <div>
-                <p className="text-xs text-ink-500">Class</p>
-                <p className="text-sm font-medium text-ink-950">{currentVerified.licenceClass}</p>
-              </div>
-              <div>
-                <p className="text-xs text-ink-500">Issue date</p>
-                <p className="text-sm text-ink-700">{currentVerified.issueDate}</p>
-              </div>
-              <div>
-                <p className="text-xs text-ink-500">Expiry date</p>
-                <p className="text-sm text-ink-700">{currentVerified.expiryDate}</p>
-              </div>
+            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+              <Detail label="Licence number" value={<span className="font-medium text-ink-950">{currentVerified.licenceNumber}</span>} />
+              <Detail label="Class" value={<span className="font-medium text-ink-950">{currentVerified.licenceClass}</span>} />
+              <Detail label="Issue date" value={currentVerified.issueDate} />
+              <Detail label="Expiry date" value={currentVerified.expiryDate} />
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* OCR + confirmed values */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2">
-            <FileSearch className="h-4 w-4 text-ink-400" /> OCR extraction & final values
+            <FileSearch className="text-ink-400 h-4 w-4" aria-hidden="true" /> OCR extraction & confirmed values
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-[8px] border border-border bg-muted/30 p-3">
+        <CardContent className="space-y-5">
+          <div className="border-border bg-muted/30 rounded-[8px] border p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="info" size="sm">OCR provider: {licence.ocrConfidence ? 'tesseract.js' : 'manual'}</Badge>
+              <Badge variant="info" size="sm">OCR source: {licence.ocrConfidence ? 'tesseract.js' : 'manual'}</Badge>
               {licence.ocrConfidence && (
                 <Badge variant="default" size="sm">
-                  Confidence: {Math.round(Object.values(licence.ocrConfidence).filter((v): v is number => typeof v === 'number').reduce((sum, value) => sum + value, 0) / Math.max(1, Object.values(licence.ocrConfidence).length))}%
+                  Confidence: {Math.round(
+                    Object.values(licence.ocrConfidence)
+                      .filter((value): value is number => typeof value === 'number')
+                      .reduce((sum, value) => sum + value, 0) /
+                      Math.max(1, Object.values(licence.ocrConfidence).length),
+                  )}%
                 </Badge>
               )}
             </div>
-            <p className="text-ink-500 mt-2 text-xs">
-              OCR output is provisional. Confirm or correct the final verified values below before approving.
+            <p className="text-ink-500 mt-2 text-xs leading-5">
+              OCR output is provisional until reviewed. Verified values are shown below.
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label required>Licence number (verified)</Label>
-              <Input value={confirmedValues.licenceNumber} onChange={(e) => setConfirmedValues((v) => ({ ...v, licenceNumber: e.target.value }))} />
+          {canReview ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label required>Licence number</Label>
+                <Input value={confirmedValues.licenceNumber} onChange={(event) => setConfirmedValues((value) => ({ ...value, licenceNumber: event.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label required>Licence class</Label>
+                <Input value={confirmedValues.licenceClass} onChange={(event) => setConfirmedValues((value) => ({ ...value, licenceClass: event.target.value }))} placeholder="B, C1" />
+              </div>
+              <div className="space-y-1.5">
+                <Label required>Issue date</Label>
+                <StyledDateInput type="date" value={confirmedValues.issueDate} onChange={(event) => setConfirmedValues((value) => ({ ...value, issueDate: event.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label required>Expiry date</Label>
+                <StyledDateInput type="date" value={confirmedValues.expiryDate} onChange={(event) => setConfirmedValues((value) => ({ ...value, expiryDate: event.target.value }))} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>Holder name</Label>
+                <Input value={confirmedValues.holderName} onChange={(event) => setConfirmedValues((value) => ({ ...value, holderName: event.target.value }))} />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label required>Licence class (verified)</Label>
-              <Input value={confirmedValues.licenceClass} onChange={(e) => setConfirmedValues((v) => ({ ...v, licenceClass: e.target.value }))} placeholder="B, C1" />
+          ) : (
+            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-5">
+              <Detail label="Licence number" value={<span className="font-medium text-ink-950">{confirmedValues.licenceNumber || '—'}</span>} />
+              <Detail label="Licence class" value={<span className="font-medium text-ink-950">{confirmedValues.licenceClass || '—'}</span>} />
+              <Detail label="Issue date" value={confirmedValues.issueDate || '—'} />
+              <Detail label="Expiry date" value={confirmedValues.expiryDate || '—'} />
+              <Detail label="Holder name" value={confirmedValues.holderName || '—'} />
             </div>
-            <div className="space-y-1.5">
-              <Label required>Issue date</Label>
-              <StyledDateInput type="date" value={confirmedValues.issueDate} onChange={(e) => setConfirmedValues((v) => ({ ...v, issueDate: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label required>Expiry date</Label>
-              <StyledDateInput type="date" value={confirmedValues.expiryDate} onChange={(e) => setConfirmedValues((v) => ({ ...v, expiryDate: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>Holder name</Label>
-              <Input value={confirmedValues.holderName} onChange={(e) => setConfirmedValues((v) => ({ ...v, holderName: e.target.value }))} />
-            </div>
-          </div>
+          )}
 
           {corrections.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-ink-500">Corrections already applied</p>
-              <div className="mt-2 space-y-1">
+            <div className="border-border border-t pt-4">
+              <p className="text-ink-500 text-xs font-semibold">Correction history</p>
+              <div className="mt-2 space-y-2">
                 {corrections.map((correction, index) => (
-                  <p key={index} className="text-xs text-ink-600">
-                    {correction.fieldName}: <span className="line-through opacity-60">{correction.originalValue || '—'}</span> → <span className="font-medium">{correction.correctedValue}</span>
-                  </p>
+                  <div key={`${correction.fieldName}-${index}`} className="text-ink-600 flex flex-col gap-1 text-xs sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-2">
+                    <span className="font-medium">{correction.fieldName.replace(/([a-z])([A-Z])/g, '$1 $2')}:</span>
+                    <span className="line-through opacity-60">{correction.originalValue || '—'}</span>
+                    <span aria-hidden="true">→</span>
+                    <span className="text-ink-800 font-medium">{correction.correctedValue}</span>
+                  </div>
                 ))}
               </div>
             </div>
@@ -451,57 +526,55 @@ export default function LicenceReviewPage() {
         </CardContent>
       </Card>
 
-      {/* History */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2">
-            <History className="h-4 w-4 text-ink-400" /> Version history
+            <History className="text-ink-400 h-4 w-4" aria-hidden="true" /> Version history
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2">
-            {previousVersions.length === 0 ? (
-              <p className="text-xs text-ink-500">No other licence versions on record.</p>
-            ) : (
-              previousVersions.map((version) => (
-                <div key={version.id} className="flex items-center justify-between rounded-[8px] border border-border bg-muted/30 px-3 py-2">
-                  <div className="flex items-center gap-3">
+          {previousVersions.length === 0 ? (
+            <p className="text-ink-500 text-xs">No other licence versions on record.</p>
+          ) : (
+            <div className="border-border overflow-hidden rounded-[8px] border">
+              {previousVersions.map((version) => (
+                <div key={version.id} className="border-border flex flex-col gap-2 border-b px-3 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <Badge variant="default" size="sm">v{version.version}</Badge>
-                    <p className="text-sm text-ink-700">Class {version.licenceClass} · expires {version.expiryDate}</p>
+                    <p className="text-ink-700 min-w-0 text-xs sm:text-sm">Class {version.licenceClass} · expires {version.expiryDate}</p>
                   </div>
                   <StatusBadge
                     status={version.isActive ? 'success' : version.verificationStatus === 'superseded' ? 'default' : 'pending'}
                     label={version.isActive ? 'Active' : version.verificationStatus.replace(/_/g, ' ')}
                   />
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Actions */}
-      {!isBlocked && (
+      {canReview && !isBlocked && (
         <Card>
-          <CardHeader>
-            <CardTitle>Review decision</CardTitle>
-          </CardHeader>
+          <CardHeader className="pb-3"><CardTitle>Review decision</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <Label>Reason / reviewer note</Label>
               <Textarea
-                placeholder="Required for Request Changes and Reject; optional note for approval."
+                placeholder="Required for Request Changes and Reject; optional for approval."
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(event) => setReason(event.target.value)}
+                rows={3}
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="mobile-action-bar flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:items-center">
               <Button
                 variant="primary"
                 size="sm"
                 loading={busy === 'approve'}
                 disabled={!confirmedValues.licenceNumber || !confirmedValues.licenceClass || !confirmedValues.expiryDate}
                 onClick={() => setConfirmAction('approve')}
+                className="w-full sm:w-auto"
               >
                 <CheckCircle2 className="h-4 w-4" /> Approve renewal
               </Button>
@@ -511,6 +584,7 @@ export default function LicenceReviewPage() {
                 loading={busy === 'request_upload'}
                 disabled={!reason.trim()}
                 onClick={() => void runAction('request_upload')}
+                className="w-full sm:w-auto"
               >
                 <RefreshCw className="h-4 w-4" /> Request changes
               </Button>
@@ -520,6 +594,7 @@ export default function LicenceReviewPage() {
                 loading={busy === 'reject'}
                 disabled={!reason.trim()}
                 onClick={() => setConfirmAction('reject')}
+                className="w-full sm:w-auto"
               >
                 <XCircle className="h-4 w-4" /> Reject
               </Button>
@@ -528,37 +603,48 @@ export default function LicenceReviewPage() {
         </Card>
       )}
 
-      <ConfirmDialog
-        open={confirmAction !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirmAction(null);
-        }}
-        title={confirmAction === 'approve' ? 'Approve licence renewal?' : 'Reject licence renewal?'}
-        description={
-          confirmAction === 'approve'
-            ? 'The renewal will become the active verified licence. The previous version will be marked superseded and the driver notified.'
-            : 'The renewal will be rejected and the driver notified. The current verified licence is preserved.'
-        }
-        confirmLabel={confirmAction === 'approve' ? 'Approve' : 'Reject'}
-        variant={confirmAction === 'approve' ? 'default' : 'destructive'}
-        onConfirm={() => {
-          if (confirmAction) void runAction(confirmAction);
-        }}
-      />
+      {canReview && (
+        <ConfirmDialog
+          open={confirmAction !== null}
+          onOpenChange={(open) => {
+            if (!open) setConfirmAction(null);
+          }}
+          title={confirmAction === 'approve' ? 'Approve licence renewal?' : 'Reject licence renewal?'}
+          description={
+            confirmAction === 'approve'
+              ? 'The renewal will become the active verified licence. The previous version will be marked superseded and the driver notified.'
+              : 'The renewal will be rejected and the driver notified. The current verified licence is preserved.'
+          }
+          confirmLabel={confirmAction === 'approve' ? 'Approve' : 'Reject'}
+          variant={confirmAction === 'approve' ? 'default' : 'destructive'}
+          onConfirm={() => {
+            if (confirmAction) void runAction(confirmAction);
+          }}
+        />
+      )}
 
       {zoomImage && (
         <div
-          className="fixed inset-0 z-[120] flex items-center justify-center bg-ink-950/80 p-6"
+          className="bg-ink-950/85 fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-6"
           onClick={() => setZoomImage(null)}
           role="dialog"
           aria-modal="true"
           aria-label="Zoomed licence image"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={zoomImage} alt="Zoomed licence" className="max-h-full max-w-full rounded-[10px] object-contain shadow-2xl" />
-          <button type="button" onClick={() => setZoomImage(null)} className="absolute top-4 right-4 rounded-[8px] bg-white/10 px-3 py-1.5 text-sm text-white hover:bg-white/20">
+          <img src={zoomImage} alt="Zoomed licence" className="max-h-[calc(100dvh-5rem)] max-w-full rounded-[10px] object-contain shadow-2xl" />
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              setZoomImage(null);
+            }}
+            className="absolute top-3 right-3 sm:top-4 sm:right-4"
+          >
             Close
-          </button>
+          </Button>
         </div>
       )}
     </div>

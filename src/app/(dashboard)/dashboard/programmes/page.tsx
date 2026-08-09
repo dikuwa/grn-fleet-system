@@ -1,22 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 import {
+  ArrowRight,
   CalendarDays,
-  MapPin,
   Gauge,
+  Loader2,
+  MapPin,
   Plus,
   Search,
-  Loader2,
-  ArrowRight,
   Users,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -65,9 +64,9 @@ const STATUS_VARIANT: Record<string, 'success' | 'pending' | 'info' | 'error' | 
   completed: 'success',
 };
 
-function formatDateShort(d: string | null) {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-NA', {
+function formatDateShort(value: string | null) {
+  if (!value) return '—';
+  return new Date(value).toLocaleDateString('en-NA', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -75,9 +74,22 @@ function formatDateShort(d: string | null) {
 }
 
 export default function ProgrammesPage() {
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const next = searchInput.trim();
+      setSearch((current) => {
+        if (current === next) return current;
+        setPage(1);
+        return next;
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['programmes', search, status, page],
@@ -88,9 +100,9 @@ export default function ProgrammesPage() {
       params.set('page', String(page));
       params.set('limit', '25');
 
-      const res = await fetch(`/api/programmes?${params}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to load programmes');
+      const response = await fetch(`/api/programmes?${params}`);
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'Failed to load programmes');
       return json;
     },
   });
@@ -98,169 +110,174 @@ export default function ProgrammesPage() {
   const programmes: Programme[] = data?.data || [];
   const total: number = data?.total || 0;
   const totalPages: number = data?.totalPages || 1;
+  const isFiltered = Boolean(searchInput.trim() || status);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Programmes' }]} />
       <PageHeader
         title="Programmes"
-        description={`${total} programme${total !== 1 ? 's' : ''} · reusable activities that can be linked to transport requests`}
+        description={`${total} programme${total !== 1 ? 's' : ''} · reusable activities linked to transport requests`}
       >
-        <Button variant="primary" size="sm" asChild>
+        <Button variant="primary" size="sm" asChild className="w-full sm:w-auto">
           <Link href="/dashboard/programmes/new">
             <Plus className="h-4 w-4" /> New Programme
           </Link>
         </Button>
       </PageHeader>
 
-      {/* Status tabs */}
-      <div className="flex flex-wrap gap-1.5">
-        {STATUS_TABS.map((tab) => {
-          const active = status === tab.value;
-          return (
-            <button
-              key={tab.value}
-              onClick={() => {
-                setStatus(tab.value);
-                setPage(1);
-              }}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                active
-                  ? 'bg-brand-800 text-white'
-                  : 'bg-muted text-ink-700 hover:bg-border'
-              }`}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <section aria-label="Programme filters" className="border-border space-y-3 border-y py-4">
+        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+          <div className="flex min-w-max gap-1.5" role="tablist" aria-label="Programme status">
+            {STATUS_TABS.map((tab) => {
+              const active = status === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => {
+                    setStatus(tab.value);
+                    setPage(1);
+                  }}
+                  className={`focus-ring min-h-10 rounded-[7px] border px-3 py-2 text-xs font-medium transition-colors motion-reduce:transition-none ${
+                    active
+                      ? 'border-brand-800 bg-brand-800 text-white'
+                      : 'border-border bg-surface text-ink-700 hover:bg-muted'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-      {/* Search */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-sm">
-          <Search className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-          <Input
-            placeholder="Search by title, reference, venue, department…"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative min-w-0 flex-1 sm:max-w-md">
+            <Search
+              className="text-ink-400 pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2"
+              aria-hidden="true"
+            />
+            <Input
+              type="search"
+              aria-label="Search programmes"
+              placeholder="Search title, reference, venue or department…"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <ClientFilterReset
+            isFiltered={isFiltered}
+            onClear={() => {
+              setSearchInput('');
+              setSearch('');
+              setStatus('');
               setPage(1);
             }}
-            className="h-10 pl-9"
           />
         </div>
-        <ClientFilterReset
-          isFiltered={Boolean(search || status)}
-          onClear={() => {
-            setSearch('');
-            setStatus('');
-            setPage(1);
-          }}
-        />
-      </div>
+      </section>
 
-      {/* Error state */}
       {error && (
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-status-error-text text-sm">
-              {error instanceof Error ? error.message : 'Failed to load'}
-            </p>
-            <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Loading */}
-      {isLoading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="text-ink-400 h-6 w-6 animate-spin" />
+        <div
+          className="border-status-error-border bg-status-error-bg text-status-error-text flex flex-col gap-3 rounded-[8px] border px-4 py-3 sm:flex-row sm:items-center"
+          role="alert"
+        >
+          <p className="min-w-0 flex-1 text-sm">
+            {error instanceof Error ? error.message : 'Failed to load programmes'}
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => void refetch()} className="w-full sm:w-auto">
+            Retry
+          </Button>
         </div>
       )}
 
-      {/* Empty */}
+      {isLoading && (
+        <div className="text-ink-500 flex items-center justify-center gap-2 py-14 text-sm" role="status">
+          <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          Loading programmes…
+        </div>
+      )}
+
       {!isLoading && !error && programmes.length === 0 && (
         <EmptyState
           icon={<CalendarDays className="h-6 w-6" />}
-          title={search || status ? 'No programmes match your filters' : 'No programmes yet'}
+          title={isFiltered ? 'No programmes match your filters' : 'No programmes yet'}
           description={
-            search || status
-              ? 'No matching records found. Clear filters to view all records.'
-              : 'Create a programme of activities, submit it for review, and publish it so it can be linked to transport requests.'
+            isFiltered
+              ? 'No matching records were found. Clear the filters to view the full programme register.'
+              : 'Create a programme, submit it for review and publish it so requesters can link it to transport requests.'
           }
-          action={
-            search || status ? undefined : { label: 'New Programme', href: '/dashboard/programmes/new' }
-          }
+          action={isFiltered ? undefined : { label: 'New Programme', href: '/dashboard/programmes/new' }}
         />
       )}
 
-      {/* List */}
       {!isLoading && programmes.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {programmes.map((p) => (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {programmes.map((programme) => (
             <Link
-              key={p.id}
-              href={`/dashboard/programmes/${p.id}`}
-              className="group border-border bg-surface hover:border-brand-200 rounded-[12px] border p-5 transition-all hover:shadow-sm"
+              key={programme.id}
+              href={`/dashboard/programmes/${programme.id}`}
+              className="focus-ring border-border bg-surface hover:border-brand-200 group flex min-w-0 flex-col rounded-[10px] border p-4 transition-[border-color,background-color,box-shadow] hover:shadow-sm motion-reduce:transition-none sm:p-5"
             >
-              <div className="mb-3 flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h3 className="text-ink-950 group-hover:text-brand-700 truncate text-sm font-semibold transition-colors">
-                    {p.title}
-                  </h3>
-                  <p className="text-ink-500 mt-0.5 text-xs">{p.reference}</p>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-ink-950 group-hover:text-brand-700 line-clamp-2 text-sm font-semibold transition-colors motion-reduce:transition-none">
+                    {programme.title}
+                  </h2>
+                  <p className="text-ink-500 mt-1 break-all font-mono text-[11px]">{programme.reference}</p>
                 </div>
-                <Badge
-                  variant={STATUS_VARIANT[p.status] ?? 'info'}
-                  size="sm"
-                  className="shrink-0"
-                >
-                  {p.status.replace(/_/g, ' ')}
+                <Badge variant={STATUS_VARIANT[programme.status] ?? 'info'} size="sm" className="shrink-0 capitalize">
+                  {programme.status.replace(/_/g, ' ')}
                 </Badge>
               </div>
 
-              {p.description && (
-                <p className="text-ink-500 mb-3 line-clamp-2 text-xs">{p.description}</p>
+              {programme.description && (
+                <p className="text-ink-500 mt-3 line-clamp-2 text-xs leading-5">{programme.description}</p>
               )}
 
-              <div className="text-ink-500 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
-                <span className="flex items-center gap-1">
-                  <CalendarDays className="text-ink-400 h-3.5 w-3.5" />
-                  {formatDateShort(p.startDate)}
-                  {p.endDate && p.endDate !== p.startDate && (
-                    <> — {formatDateShort(p.endDate)}</>
-                  )}
+              <div className="text-ink-500 mt-3 grid gap-1.5 text-xs">
+                <span className="flex min-w-0 items-start gap-1.5">
+                  <CalendarDays className="text-ink-400 mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>
+                    {formatDateShort(programme.startDate)}
+                    {programme.endDate && programme.endDate !== programme.startDate
+                      ? ` – ${formatDateShort(programme.endDate)}`
+                      : ''}
+                  </span>
                 </span>
-                {p.venue && (
-                  <span className="flex items-center gap-1">
-                    <MapPin className="text-ink-400 h-3.5 w-3.5" />
-                    {p.venue}
+                {programme.venue && (
+                  <span className="flex min-w-0 items-start gap-1.5">
+                    <MapPin className="text-ink-400 mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 break-words">{programme.venue}</span>
                   </span>
                 )}
-                {p.expectedParticipants && (
-                  <span className="flex items-center gap-1">
-                    <Users className="text-ink-400 h-3.5 w-3.5" />
-                    {p.expectedParticipants}
-                  </span>
-                )}
-                {p.estimatedKilometres && (
-                  <span className="flex items-center gap-1">
-                    <Gauge className="text-ink-400 h-3.5 w-3.5" />
-                    {p.estimatedKilometres} km
-                  </span>
-                )}
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {programme.expectedParticipants != null && (
+                    <span className="flex items-center gap-1.5">
+                      <Users className="text-ink-400 h-3.5 w-3.5" aria-hidden="true" />
+                      {programme.expectedParticipants} participant{programme.expectedParticipants === 1 ? '' : 's'}
+                    </span>
+                  )}
+                  {programme.estimatedKilometres != null && (
+                    <span className="flex items-center gap-1.5">
+                      <Gauge className="text-ink-400 h-3.5 w-3.5" aria-hidden="true" />
+                      {programme.estimatedKilometres.toLocaleString()} km
+                    </span>
+                  )}
+                </div>
               </div>
 
-              <div className="border-border mt-4 flex items-center justify-between border-t pt-3">
-                <span className="text-ink-400 text-[11px]">
-                  {p.ownerName || '—'}
-                  {p.departmentName ? ` · ${p.departmentName}` : ''}
+              <div className="border-border mt-auto flex min-w-0 items-center justify-between gap-3 border-t pt-3 text-xs">
+                <span className="text-ink-500 min-w-0 truncate">
+                  {programme.ownerName || 'Owner not recorded'}
+                  {programme.departmentName ? ` · ${programme.departmentName}` : ''}
                 </span>
-                <span className="text-brand-700 flex items-center gap-1 text-xs font-medium opacity-0 transition-opacity group-hover:opacity-100">
-                  Open <ArrowRight className="h-3 w-3" />
+                <span className="text-brand-700 flex shrink-0 items-center gap-1 font-medium">
+                  Open <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </span>
               </div>
             </Link>
@@ -268,18 +285,21 @@ export default function ProgrammesPage() {
         </div>
       )}
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
+      {!isLoading && totalPages > 1 && (
+        <nav
+          aria-label="Programme pagination"
+          className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between"
+        >
           <p className="text-ink-500 text-xs">
-            Page {page} of {totalPages} ({total} total)
+            {total} programme{total === 1 ? '' : 's'} · Page {page} of {totalPages}
           </p>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:flex">
             <Button
               variant="secondary"
               size="sm"
               disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              className="w-full sm:w-auto"
             >
               Previous
             </Button>
@@ -287,12 +307,13 @@ export default function ProgrammesPage() {
               variant="secondary"
               size="sm"
               disabled={page >= totalPages}
-              onClick={() => setPage((p) => p + 1)}
+              onClick={() => setPage((current) => current + 1)}
+              className="w-full sm:w-auto"
             >
               Next
             </Button>
           </div>
-        </div>
+        </nav>
       )}
     </div>
   );
