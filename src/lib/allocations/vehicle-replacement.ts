@@ -1,23 +1,15 @@
-/**
- * Vehicle Replacement Service
- *
- * Replaces the vehicle attached to an allocation/trip without creating a
- * second operational state machine. Allocation state remains confirmed while
- * a trip is live; trip.issuedAt/status determine whether the swap is mid-trip.
- */
-
 import { randomUUID } from 'crypto';
 import { getDb } from '@/db';
 import {
-  vehicleAllocations,
+  tripAmendments,
+  tripAuthorities,
   trips,
-  vehicleInspections,
-  inspectionItemResults,
+  vehicleAllocations,
 } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and, ne, inArray, lt, gt, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { AuthSession } from '@/lib/auth-helpers';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
@@ -66,10 +58,15 @@ export async function replaceVehicle(
       tripId: trips.id,
       tripStatus: trips.status,
       issuedAt: trips.issuedAt,
+      authorityId: tripAuthorities.id,
+      authorityVersion: tripAuthorities.version,
+      authorityData: tripAuthorities.data,
+      authorityStatus: tripAuthorities.status,
     })
     .from(vehicleAllocations)
     .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
     .leftJoin(trips, eq(trips.allocationId, vehicleAllocations.id))
+    .leftJoin(tripAuthorities, eq(tripAuthorities.allocationId, vehicleAllocations.id))
     .where(and(
       eq(vehicleAllocations.id, allocationId),
       eq(transportRequests.tenantId, tenantId),
@@ -77,7 +74,7 @@ export async function replaceVehicle(
     .limit(1);
 
   if (!context) throw new VehicleReplaceError('Allocation not found', 404);
-  if (!LIVE_ALLOCATION_STATES.includes(context.allocationState as typeof LIVE_ALLOCATION_STATES[number])) {
+  if (!LIVE_ALLOCATION_STATES.includes(context.allocationState as (typeof LIVE_ALLOCATION_STATES)[number])) {
     throw new VehicleReplaceError(
       `Vehicle replacement is not allowed from '${context.allocationState}' allocation state`,
       409,
@@ -88,7 +85,7 @@ export async function replaceVehicle(
   }
   if (context.replacedFromVehicleId) {
     throw new VehicleReplaceError(
-      'This allocation already records a vehicle replacement. Use the incident/escalation workflow for an additional swap so vehicle history is not overwritten.',
+      'This allocation already records a vehicle replacement. Use the incident/escalation workflow for another swap so vehicle history is not overwritten.',
       409,
     );
   }
@@ -102,7 +99,19 @@ export async function replaceVehicle(
   }
 
   const [replacement] = await db
-    .select({ id: vehicles.id, status: vehicles.status, currentOdometer: vehicles.currentOdometer })
+    .select({
+      id: vehicles.id,
+      status: vehicles.status,
+      currentOdometer: vehicles.currentOdometer,
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+      make: vehicles.make,
+      model: vehicles.model,
+      colour: vehicles.colour,
+      fuelType: vehicles.fuelType,
+      seatedCapacity: vehicles.seatedCapacity,
+      licenceExpiryDate: vehicles.licenceExpiryDate,
+    })
     .from(vehicles)
     .where(and(eq(vehicles.id, replacementVehicleId), eq(vehicles.tenantId, tenantId)))
     .limit(1);
@@ -126,59 +135,26 @@ export async function replaceVehicle(
     throw new VehicleReplaceError('Replacement vehicle is already allocated during this period', 409);
   }
 
-  // Read dependent inspection data before building the non-interactive Neon
-  // transaction. IDs are pre-generated so the entire mutation set can still be
-  // committed atomically by db.batch().
-  const inspectionCopies: Array<{
-    id: string;
-    templateId: string;
-    templateVersion: number;
-    items: Array<{
-      templateItemId: string;
-      result: string;
-      comment: string | null;
-      defectId: string | null;
-    }>;
-  }> = [];
-
-  if (context.tripId && !midTrip) {
-    const departures = await db
-      .select({
-        id: vehicleInspections.id,
-        templateId: vehicleInspections.templateId,
-        templateVersion: vehicleInspections.templateVersion,
-        status: vehicleInspections.status,
-      })
-      .from(vehicleInspections)
-      .where(and(
-        eq(vehicleInspections.tripId, context.tripId),
-        eq(vehicleInspections.tenantId, tenantId),
-        eq(vehicleInspections.type, 'departure'),
-      ));
-
-    // Only unfinished departure work follows a pre-issue replacement. A passed
-    // inspection belongs to the original vehicle and cannot certify the new one.
-    for (const inspection of departures.filter((row) => row.status !== 'completed')) {
-      const items = await db
-        .select({
-          templateItemId: inspectionItemResults.templateItemId,
-          result: inspectionItemResults.result,
-          comment: inspectionItemResults.comment,
-          defectId: inspectionItemResults.defectId,
-        })
-        .from(inspectionItemResults)
-        .where(eq(inspectionItemResults.inspectionId, inspection.id));
-      inspectionCopies.push({
-        id: randomUUID(),
-        templateId: inspection.templateId,
-        templateVersion: inspection.templateVersion,
-        items,
-      });
-    }
-  }
-
+  const originalAuthorityData = (context.authorityData ?? {}) as Record<string, unknown>;
+  const replacementSnapshot = {
+    id: replacement.id,
+    registration: replacement.licenceNumber,
+    registerNumber: replacement.vehicleRegisterNumber,
+    make: replacement.make,
+    model: replacement.model,
+    colour: replacement.colour,
+    fuelType: replacement.fuelType,
+    seatedCapacity: replacement.seatedCapacity,
+    licenceExpiryDate: replacement.licenceExpiryDate,
+  };
+  const nextAuthorityData = context.authorityId
+    ? { ...originalAuthorityData, vehicle: replacementSnapshot }
+    : null;
+  const amendmentId = context.authorityId ? randomUUID() : null;
   const now = new Date();
+
   await runAtomicMutations((tx) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mutations: any[] = [
       tx.update(vehicleAllocations)
         .set({
@@ -204,31 +180,30 @@ export async function replaceVehicle(
       );
     }
 
-    for (const copy of inspectionCopies) {
+    if (context.authorityId && nextAuthorityData && amendmentId) {
       mutations.push(
-        tx.insert(vehicleInspections).values({
-          id: copy.id,
-          tenantId,
-          vehicleId: replacementVehicleId,
-          tripId: context.tripId,
-          templateId: copy.templateId,
-          templateVersion: copy.templateVersion,
-          type: 'departure',
-          status: 'in_progress',
-          inspectorUserId: session.user.id,
+        tx.insert(tripAmendments).values({
+          id: amendmentId,
+          authorityId: context.authorityId,
+          amendmentType: 'vehicle_replacement',
+          originalValue: { vehicleId: context.originalVehicleId, vehicle: originalAuthorityData.vehicle ?? null },
+          newValue: { vehicleId: replacementVehicleId, vehicle: replacementSnapshot, handoverOdometer: handoverOdometer ?? null },
+          reason: cleanReason,
+          status: 'approved',
+          requestedByUserId: session.user.id,
+          approvedByUserId: session.user.id,
+          approvedAt: now,
+          version: (context.authorityVersion ?? 1) + 1,
         }),
+        tx.update(tripAuthorities)
+          .set({
+            data: nextAuthorityData,
+            version: sql`${tripAuthorities.version} + 1`,
+            documentVersion: sql`${tripAuthorities.documentVersion} + 1`,
+            updatedAt: now,
+          })
+          .where(and(eq(tripAuthorities.id, context.authorityId), eq(tripAuthorities.tenantId, tenantId))),
       );
-      if (copy.items.length) {
-        mutations.push(
-          tx.insert(inspectionItemResults).values(copy.items.map((item) => ({
-            inspectionId: copy.id,
-            templateItemId: item.templateItemId,
-            result: item.result,
-            comment: item.comment,
-            defectId: item.defectId,
-          }))),
-        );
-      }
     }
 
     if (midTrip) {
@@ -276,6 +251,7 @@ export async function replaceVehicle(
           reason: cleanReason,
           handoverOdometer: handoverOdometer ?? null,
           midTrip,
+          authorityAmendmentId: amendmentId,
         },
       }),
     );

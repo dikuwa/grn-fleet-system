@@ -15,28 +15,23 @@ import { eq, and } from 'drizzle-orm';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { randomUUID } from 'crypto';
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
     const roleCheck = await requireDashboardAction(session, '/dashboard/trips', 'update');
     if (roleCheck instanceof NextResponse) return roleCheck;
-
     const permCheck = await requirePermission(session, Permissions.TRIP_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-
     const [trip] = await db
       .select({
         id: trips.id,
         status: trips.status,
+        vehicleId: trips.vehicleId,
         allocationId: trips.allocationId,
         requestId: trips.requestId,
         driverAcknowledgedAt: trips.driverAcknowledgedAt,
@@ -51,70 +46,49 @@ export async function POST(
       .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
-      .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
+      .where(and(
+        eq(trips.id, id),
+        eq(trips.tenantId, session.tenantId),
+        eq(transportRequests.tenantId, session.tenantId),
+        eq(tripAuthorities.tenantId, session.tenantId),
+      ))
       .limit(1);
 
-    if (!trip) {
-      return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
-    }
-
-    if (trip.status !== 'pending') {
-      return NextResponse.json(
-        { error: `Cannot issue vehicle for trip with status "${trip.status}". Only pending trips can be issued.` },
-        { status: 409 },
-      );
-    }
-    if (trip.allocationState !== 'confirmed') {
-      return NextResponse.json(
-        { error: `Allocation must be confirmed before physical issue (current state: ${trip.allocationState})` },
-        { status: 409 },
-      );
-    }
-    if (!trip.allocationId) {
-      return NextResponse.json({ error: 'Trip has no allocation. Cannot issue vehicle.' }, { status: 400 });
-    }
-    if (trip.requestStatus !== 'authorised') {
-      return NextResponse.json({ error: 'Final authorisation is required before issue' }, { status: 409 });
-    }
-    if (trip.authorityStatus !== 'ready_for_departure') {
-      return NextResponse.json({ error: `Trip Authority is not ready for physical issue (${trip.authorityStatus})` }, { status: 409 });
-    }
+    if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+    if (trip.status !== 'pending') return NextResponse.json({ error: `Cannot issue vehicle for trip with status "${trip.status}".` }, { status: 409 });
+    if (trip.allocationState !== 'confirmed') return NextResponse.json({ error: `Allocation must be confirmed before physical issue (${trip.allocationState})` }, { status: 409 });
+    if (trip.requestStatus !== 'authorised') return NextResponse.json({ error: 'Final authorisation is required before issue' }, { status: 409 });
+    if (trip.authorityStatus !== 'ready_for_departure') return NextResponse.json({ error: `Trip Authority is not ready for physical issue (${trip.authorityStatus})` }, { status: 409 });
     if (!trip.driverEmployeeId || !trip.driverAcknowledgedAt || trip.driverAcknowledgedByEmployeeId !== trip.driverEmployeeId) {
       return NextResponse.json({ error: 'The assigned driver must acknowledge the trip before issue' }, { status: 409 });
     }
 
-    const [departureInspection] = await db.select({ id: vehicleInspections.id })
+    const [departureInspection] = await db.select({ id: vehicleInspections.id, odometerReading: vehicleInspections.odometerReading })
       .from(vehicleInspections)
       .where(and(
+        eq(vehicleInspections.tenantId, session.tenantId),
         eq(vehicleInspections.tripId, id),
+        eq(vehicleInspections.vehicleId, trip.vehicleId),
         eq(vehicleInspections.type, 'departure'),
         eq(vehicleInspections.status, 'completed'),
         eq(vehicleInspections.overallPass, true),
       )).limit(1);
     if (!departureInspection) {
-      return NextResponse.json({ error: 'A passed pre-departure inspection is required before issue' }, { status: 409 });
+      return NextResponse.json({ error: 'The currently allocated vehicle requires a passed pre-departure inspection before issue' }, { status: 409 });
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body: any = await req.json().catch(() => ({}));
     const { issueOdometer, keysIssued = true, fuelCardIssued = false, notes } = body;
-    if (!Number.isInteger(Number(issueOdometer)) || Number(issueOdometer) < (trip.authorityBeginningOdometer ?? 0)) {
-      return NextResponse.json({
-        error: `Issue odometer must be a whole number at or above ${trip.authorityBeginningOdometer ?? 0}`,
-      }, { status: 422 });
+    const minimumOdometer = Math.max(trip.authorityBeginningOdometer ?? 0, departureInspection.odometerReading ?? 0);
+    if (!Number.isInteger(Number(issueOdometer)) || Number(issueOdometer) < minimumOdometer) {
+      return NextResponse.json({ error: `Issue odometer must be a whole number at or above ${minimumOdometer}` }, { status: 422 });
     }
-    if (keysIssued !== true) {
-      return NextResponse.json({ error: 'Vehicle keys must be issued before departure' }, { status: 422 });
-    }
+    if (keysIssued !== true) return NextResponse.json({ error: 'Vehicle keys must be issued before departure' }, { status: 422 });
 
-    const [existingIssue] = await db
-      .select({ id: tripIssues.id })
-      .from(tripIssues)
-      .where(eq(tripIssues.allocationId, trip.allocationId))
-      .limit(1);
-    if (existingIssue) {
-      return NextResponse.json({ error: 'Vehicle already issued for this allocation' }, { status: 409 });
-    }
+    const [existingIssue] = await db.select({ id: tripIssues.id }).from(tripIssues)
+      .where(eq(tripIssues.allocationId, trip.allocationId)).limit(1);
+    if (existingIssue) return NextResponse.json({ error: 'Vehicle already issued for this allocation' }, { status: 409 });
 
     const now = new Date();
     const issueId = randomUUID();
@@ -132,12 +106,8 @@ export async function POST(
         acknowledgedAt: trip.driverAcknowledgedAt,
         notes: notes || null,
       }),
-      tx.update(trips)
-        .set({ issuedAt: now, updatedAt: now })
-        .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId))),
-      tx.update(transportRequests)
-        .set({ status: 'vehicle_issued', updatedAt: now })
-        .where(and(eq(transportRequests.id, trip.requestId), eq(transportRequests.tenantId, session.tenantId))),
+      tx.update(trips).set({ issuedAt: now, updatedAt: now }).where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId))),
+      tx.update(transportRequests).set({ status: 'vehicle_issued', updatedAt: now }).where(and(eq(transportRequests.id, trip.requestId), eq(transportRequests.tenantId, session.tenantId))),
       tx.insert(auditEvents).values({
         tenantId: session.tenantId,
         tenantSequence: Date.now(),
@@ -146,7 +116,7 @@ export async function POST(
         action: 'issue',
         entityType: 'trip',
         entityId: id,
-        summary: `Vehicle issued: keys=${keysIssued}, fuelCard=${fuelCardIssued}${issueOdometer ? `, odometer=${issueOdometer}` : ''}`,
+        summary: `Vehicle issued: keys=${keysIssued}, fuelCard=${fuelCardIssued}, odometer=${issueOdometer}`,
         sourceChannel: 'web',
       }),
     ]);
