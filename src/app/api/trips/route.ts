@@ -2,7 +2,7 @@
  * Trips API
  *
  * GET  /api/trips   — List trips
- * POST /api/trips   — Create a trip from an allocation
+ * POST /api/trips   — Legacy trip creation from a confirmed allocation
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -26,11 +26,6 @@ import { tripScopeCondition } from '@/lib/record-scope';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 
-/**
- * GET /api/trips
- * List trips with optional filters.
- * Supports: status, driver_assigned (resolves session user → employee → driver → allocations), search, page, limit
- */
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -59,16 +54,14 @@ export async function GET(request: NextRequest) {
         recordScope: access.recordScope ?? 'assigned',
       }),
     ];
-    if (status) {
-      conditions.push(eq(trips.status, status));
-    }
+    if (status) conditions.push(eq(trips.status, status));
     if (search) {
       conditions.push(
         or(like(vehicles.licenceNumber, `%${search}%`), like(vehicles.make, `%${search}%`))!,
       );
     }
 
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const where = and(...conditions);
 
     const [dbRows, totalResult] = await Promise.all([
       db
@@ -112,8 +105,6 @@ export async function GET(request: NextRequest) {
 
     const totalCount = Number(totalResult[0]?.count ?? 0);
     const totalPages = Math.ceil(totalCount / limit);
-
-    // Map rows to include backward-compatible field names for driver pages
     const data = dbRows.map((row) => ({
       ...row,
       reference: row.requestReference,
@@ -144,85 +135,92 @@ export async function POST(request: NextRequest) {
     const { session } = auth;
     const roleCheck = await requireDashboardAction(session, '/dashboard/allocations', 'create');
     if (roleCheck instanceof NextResponse) return roleCheck;
-
     const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
-    const { allocationId, requestId, vehicleId } = body;
-
-    if (!allocationId || !requestId || !vehicleId) {
-      return NextResponse.json(
-        { error: 'allocationId, requestId, and vehicleId are required' },
-        { status: 400 },
-      );
+    const allocationId = typeof body?.allocationId === 'string' ? body.allocationId.trim() : '';
+    if (!allocationId) {
+      return NextResponse.json({ error: 'allocationId is required' }, { status: 400 });
     }
 
     const db = getDb();
+    const tenantId = session.tenantId;
 
-    // Verify allocation exists and belongs to this tenant (via vehicle join)
     const [allocation] = await db
-      .select({ id: vehicleAllocations.id, state: vehicleAllocations.state })
+      .select({
+        id: vehicleAllocations.id,
+        state: vehicleAllocations.state,
+        requestId: vehicleAllocations.requestId,
+        vehicleId: vehicleAllocations.vehicleId,
+        requestStatus: transportRequests.status,
+      })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
-      .where(and(eq(vehicleAllocations.id, allocationId), eq(vehicles.tenantId, session.tenantId)))
+      .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+      .where(and(
+        eq(vehicleAllocations.id, allocationId),
+        eq(vehicles.tenantId, tenantId),
+        eq(transportRequests.tenantId, tenantId),
+      ))
       .limit(1);
 
     if (!allocation) {
       return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
     }
-
-    // Check if a trip already exists for this allocation
-    const [existingTrip] = await db
-      .select()
-      .from(trips)
-      .where(and(eq(trips.allocationId, allocationId), eq(trips.tenantId, session.tenantId)))
-      .limit(1);
-
-    if (existingTrip) {
+    if (allocation.state !== 'confirmed') {
       return NextResponse.json(
-        { error: 'A trip already exists for this allocation' },
+        { error: `Only confirmed allocations can create trips (current: ${allocation.state})` },
+        { status: 409 },
+      );
+    }
+    if (!['approved', 'approved_emergency', 'authorised', 'ready_for_issue', 'vehicle_allocated'].includes(allocation.requestStatus)) {
+      return NextResponse.json(
+        { error: `Transport request is not ready for trip creation (current: ${allocation.requestStatus})` },
         { status: 409 },
       );
     }
 
-    // Create the trip
+    const [existingTrip] = await db
+      .select({ id: trips.id })
+      .from(trips)
+      .where(and(eq(trips.allocationId, allocationId), eq(trips.tenantId, tenantId)))
+      .limit(1);
+    if (existingTrip) {
+      return NextResponse.json(
+        { error: 'A trip already exists for this allocation', tripId: existingTrip.id },
+        { status: 409 },
+      );
+    }
+
     const [trip] = await db
       .insert(trips)
       .values({
-        tenantId: session.tenantId,
-        requestId,
-        allocationId,
-        vehicleId,
+        tenantId,
+        requestId: allocation.requestId,
+        allocationId: allocation.id,
+        vehicleId: allocation.vehicleId,
         status: 'pending',
       })
       .returning();
 
-    // Auto-confirm the allocation if it was provisional
-    if (allocation.state === 'provisional') {
-      await db
-        .update(vehicleAllocations)
-        .set({ state: 'confirmed', updatedAt: new Date() })
-        .where(eq(vehicleAllocations.id, allocationId));
-    }
-
     try {
       const provisioned = await provisionTripAuthority({
         tripId: trip.id,
-        tenantId: session.tenantId,
-        requestId,
-        allocationId,
+        tenantId,
+        requestId: allocation.requestId,
+        allocationId: allocation.id,
         actorUserId: session.user.id,
       });
       const [driver] = await db
         .select({ userId: employees.userId })
         .from(vehicleAllocations)
         .innerJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
-        .where(eq(vehicleAllocations.id, allocationId))
+        .where(and(eq(vehicleAllocations.id, allocation.id), eq(employees.tenantId, tenantId)))
         .limit(1);
       if (driver?.userId) {
         await createScopedNotifications({
-          tenantId: session.tenantId,
+          tenantId,
           recipientUserIds: [driver.userId],
           category: 'action_required',
           eventType: 'driver_acceptance_required',
@@ -236,7 +234,7 @@ export async function POST(request: NextRequest) {
         });
       }
       await db.insert(auditEvents).values({
-        tenantId: session.tenantId,
+        tenantId,
         tenantSequence: Date.now(),
         eventType: 'trip_authority_issued',
         actorUserId: session.user.id,
@@ -252,7 +250,7 @@ export async function POST(request: NextRequest) {
         { status: 201 },
       );
     } catch (authorityError) {
-      await db.delete(trips).where(eq(trips.id, trip.id));
+      await db.delete(trips).where(and(eq(trips.id, trip.id), eq(trips.tenantId, tenantId)));
       throw authorityError;
     }
   } catch (error) {

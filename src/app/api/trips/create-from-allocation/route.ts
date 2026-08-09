@@ -3,7 +3,12 @@ import { getDb } from '@/db';
 import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  requireDashboardAction,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 import { provisionTripAuthority } from '@/lib/trip-authority';
 import { auditEvents, employees } from '@/db/schema';
@@ -13,7 +18,7 @@ import { WorkspaceIds } from '@/lib/workspaces';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { allocationId } = body;
+    const allocationId = typeof body?.allocationId === 'string' ? body.allocationId.trim() : '';
 
     if (!allocationId) {
       return NextResponse.json({ error: 'Allocation ID is required' }, { status: 400 });
@@ -22,21 +27,30 @@ export async function POST(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const routeCheck = await requireDashboardAction(session, '/dashboard/allocations', 'create');
+    if (routeCheck instanceof NextResponse) return routeCheck;
+    const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
+    const tenantId = session.tenantId;
 
-    // Verify the allocation exists, belongs to this tenant, and is confirmed
     const [allocation] = await db
       .select({
         id: vehicleAllocations.id,
         requestId: vehicleAllocations.requestId,
         vehicleId: vehicleAllocations.vehicleId,
         state: vehicleAllocations.state,
-        tenantId: vehicles.tenantId,
+        requestStatus: transportRequests.status,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
-      .where(and(eq(vehicleAllocations.id, allocationId), eq(vehicles.tenantId, session.tenantId)))
+      .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+      .where(and(
+        eq(vehicleAllocations.id, allocationId),
+        eq(vehicles.tenantId, tenantId),
+        eq(transportRequests.tenantId, tenantId),
+      ))
       .limit(1);
 
     if (!allocation) {
@@ -45,18 +59,22 @@ export async function POST(req: NextRequest) {
 
     if (allocation.state !== 'confirmed') {
       return NextResponse.json(
-        {
-          error: 'Only confirmed allocations can create trips. Current state: ' + allocation.state,
-        },
+        { error: 'Only confirmed allocations can create trips. Current state: ' + allocation.state },
         { status: 409 },
       );
     }
 
-    // Check if a trip already exists for this allocation
+    if (!['approved', 'approved_emergency', 'authorised', 'ready_for_issue', 'vehicle_allocated'].includes(allocation.requestStatus)) {
+      return NextResponse.json(
+        { error: `Transport request is not ready for trip creation (current: ${allocation.requestStatus})` },
+        { status: 409 },
+      );
+    }
+
     const [existingTrip] = await db
       .select({ id: trips.id })
       .from(trips)
-      .where(eq(trips.allocationId, allocationId))
+      .where(and(eq(trips.allocationId, allocationId), eq(trips.tenantId, tenantId)))
       .limit(1);
 
     if (existingTrip) {
@@ -66,36 +84,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify the transport request is approved
-    const [request] = await db
-      .select({ status: transportRequests.status })
-      .from(transportRequests)
-      .where(
-        and(
-          eq(transportRequests.id, allocation.requestId),
-          eq(transportRequests.tenantId, session.tenantId),
-        ),
-      )
-      .limit(1);
-
-    if (!request) {
-      return NextResponse.json({ error: 'Transport request not found' }, { status: 404 });
-    }
-
-    if (
-      !['approved', 'approved_emergency', 'authorised', 'ready_for_issue'].includes(request.status)
-    ) {
-      return NextResponse.json(
-        { error: `Transport request must be approved (current: ${request.status})` },
-        { status: 409 },
-      );
-    }
-
-    // Create the trip
     const [trip] = await db
       .insert(trips)
       .values({
-        tenantId: session.tenantId,
+        tenantId,
         requestId: allocation.requestId,
         allocationId: allocation.id,
         vehicleId: allocation.vehicleId,
@@ -106,7 +98,7 @@ export async function POST(req: NextRequest) {
     try {
       const provisioned = await provisionTripAuthority({
         tripId: trip.id,
-        tenantId: session.tenantId,
+        tenantId,
         requestId: allocation.requestId,
         allocationId: allocation.id,
         actorUserId: session.user.id,
@@ -115,11 +107,11 @@ export async function POST(req: NextRequest) {
         .select({ userId: employees.userId })
         .from(vehicleAllocations)
         .innerJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
-        .where(eq(vehicleAllocations.id, allocation.id))
+        .where(and(eq(vehicleAllocations.id, allocation.id), eq(employees.tenantId, tenantId)))
         .limit(1);
       if (driver?.userId) {
         await createScopedNotifications({
-          tenantId: session.tenantId,
+          tenantId,
           recipientUserIds: [driver.userId],
           category: 'action_required',
           eventType: 'driver_acceptance_required',
@@ -133,7 +125,7 @@ export async function POST(req: NextRequest) {
         });
       }
       await db.insert(auditEvents).values({
-        tenantId: session.tenantId,
+        tenantId,
         tenantSequence: Date.now(),
         eventType: 'trip_authority_issued',
         actorUserId: session.user.id,
@@ -150,7 +142,7 @@ export async function POST(req: NextRequest) {
         message: 'Trip and Trip Authority created successfully',
       });
     } catch (authorityError) {
-      await db.delete(trips).where(eq(trips.id, trip.id));
+      await db.delete(trips).where(and(eq(trips.id, trip.id), eq(trips.tenantId, tenantId)));
       throw authorityError;
     }
   } catch (error) {
