@@ -142,9 +142,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!result.ok) return result.error;
 
-    // Outbound email is deliberately post-commit and best-effort. It must not
-    // make an already durable workflow action appear to have failed.
-    void sendWorkflowOutcomeEmailBestEffort({
+    // Outbound email is deliberately post-commit and best-effort. Await it so
+    // serverless runtimes cannot terminate delivery after the response, while
+    // the helper itself still swallows mail failures for already-durable actions.
+    await sendWorkflowOutcomeEmailBestEffort({
       requestId: instance.requestId,
       result: semanticResult,
       stepLabel: status.currentStep.label,
