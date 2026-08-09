@@ -86,9 +86,10 @@ async function deliverIncidentSideEffects(
   input: CreateIncidentInput,
   incident: typeof tripIncidents.$inferSelect,
   officialNumber: string,
+  maintenanceAssigneeUserId: string | null,
 ) {
   const documentType = requiresMvaForm(input) ? 'accident_report' : 'trip_incident_report';
-  await Promise.allSettled([
+  const effects: Promise<unknown>[] = [
     createScopedNotifications({
       tenantId: input.tenantId,
       recipientUserIds: [input.reportedByUserId],
@@ -124,7 +125,25 @@ async function deliverIncidentSideEffects(
       tenantId: input.tenantId,
       generatedByUserId: input.reportedByUserId,
     }),
-  ]);
+  ];
+
+  if (input.severity === 'critical' && maintenanceAssigneeUserId) {
+    effects.push(createScopedNotifications({
+      tenantId: input.tenantId,
+      recipientUserIds: [maintenanceAssigneeUserId],
+      category: 'action_required',
+      eventType: 'critical_incident_maintenance',
+      title: `${officialNumber} requires technical clearance`,
+      body: `${input.description.slice(0, 180)}. The vehicle remains blocked until the assigned defect is resolved.`,
+      entityType: 'trip_incident',
+      entityId: incident.id,
+      actionUrl: '/dashboard/fleet/defects?status=open',
+      workspace: WorkspaceIds.MAINTENANCE,
+      priority: 'emergency',
+    }));
+  }
+
+  await Promise.allSettled(effects);
 }
 
 export async function createIncident(input: CreateIncidentInput): Promise<CreateIncidentResult> {
@@ -149,6 +168,11 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
     .where(and(eq(trips.id, input.tripId), eq(trips.tenantId, input.tenantId)))
     .limit(1);
   if (!trip) throw new Error('Trip not found in your organisation');
+
+  const maintenanceUsers = input.severity === 'critical'
+    ? await resolveActiveRoleRecipients(input.tenantId, [SystemRoles.MAINTENANCE])
+    : [];
+  const maintenanceAssigneeUserId = maintenanceUsers[0] ?? null;
 
   const year = input.occurredAt.getUTCFullYear();
   const [sequence] = await db
@@ -224,6 +248,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             severity: input.severity,
             continuationState: input.continuationState,
             detailsRequired: needsMvaDetails,
+            maintenanceAssigneeUserId,
           },
         }),
       ];
@@ -250,6 +275,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             description: `Critical incident ${officialNumber}: ${input.description.slice(0, 200)}`,
             isBlocking: true,
             reportedByUserId: input.reportedByUserId,
+            assignedToUserId: maintenanceAssigneeUserId,
           }),
           tx.insert(maintenanceEvents).values({
             vehicleId: trip.vehicleId,
@@ -258,6 +284,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             serviceType: 'repair',
             description: `Follow-up from critical incident ${officialNumber}. Vehicle must be inspected and cleared before returning to service.`,
             createdByUserId: input.reportedByUserId,
+            assignedToUserId: maintenanceAssigneeUserId,
           }),
         );
       }
@@ -283,6 +310,6 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
     .where(and(eq(tripIncidents.id, incidentId), eq(tripIncidents.tenantId, input.tenantId)))
     .limit(1);
   if (!incident) throw new Error('Incident was committed but could not be reloaded');
-  await deliverIncidentSideEffects(input, incident, officialNumber);
+  await deliverIncidentSideEffects(input, incident, officialNumber, maintenanceAssigneeUserId);
   return { incident, officialNumber };
 }
