@@ -74,6 +74,7 @@ export async function POST(
       }
     }
 
+    const now = new Date();
     await db.transaction(async (tx) => {
       await tx
         .update(tenantMemberships)
@@ -86,7 +87,12 @@ export async function POST(
       if (profile?.status === 'removed') {
         await tx
           .update(userProfiles)
-          .set({ status: 'active', updatedAt: new Date() })
+          .set({
+            status: 'active',
+            accountEnabled: true,
+            disabledAt: null,
+            updatedAt: now,
+          })
           .where(and(eq(userProfiles.userId, id), eq(userProfiles.status, 'removed')));
       }
 
@@ -99,7 +105,7 @@ export async function POST(
         summary: 'User access restored. The tenant membership is active again in User Management.',
         after: {
           userId: id,
-          restoredAt: new Date().toISOString(),
+          restoredAt: now.toISOString(),
           tenantMembershipStatus: 'active',
           globalProfileStatusChanged: profile?.status === 'removed',
           staffRecordPreserved: true,
