@@ -11,9 +11,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tenantMemberships } from '@/db/schema/tenants';
 import { userProfiles } from '@/db/schema/auth';
-import { eq, and } from 'drizzle-orm';
+import { and, count, eq, inArray } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 export async function POST(
@@ -22,7 +23,6 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
@@ -31,8 +31,6 @@ export async function POST(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-
-    // Verify the user is (or was) a member of this tenant (cross-tenant protection)
     const [membership] = await db
       .select()
       .from(tenantMemberships)
@@ -44,7 +42,6 @@ export async function POST(
     if (!membership) {
       return NextResponse.json({ error: 'User not found in your organisation' }, { status: 404 });
     }
-
     if (membership.status !== 'access_removed') {
       return NextResponse.json(
         { error: 'This account has not been removed and does not need restoring.' },
@@ -52,43 +49,56 @@ export async function POST(
       );
     }
 
-    // NOTE: the neon-http driver has no multi-statement transaction support,
-    // so these two idempotent updates run sequentially (same behaviour in
-    // SQLite). Re-restoring an already-active account is a no-op on both.
+    const entitlements = await getTenantEntitlements(session.tenantId);
+    if (entitlements) {
+      const [countRow] = await db
+        .select({ total: count() })
+        .from(tenantMemberships)
+        .where(and(
+          eq(tenantMemberships.tenantId, session.tenantId),
+          inArray(tenantMemberships.status, ['active', 'pending', 'pending_activation', 'suspended']),
+        ));
+      const userCheck = checkEntitlement(entitlements, 'users', Number(countRow?.total ?? 0), 1);
+      if (!userCheck.ok) {
+        return NextResponse.json(
+          { error: userCheck.message || 'User limit reached. Increase the tenant user allowance before restoring this account.' },
+          { status: 409 },
+        );
+      }
+    }
+
+    // These updates are idempotent and both remain tenant/user scoped. The
+    // membership state is the authoritative tenant access switch; Staff
+    // Management and employee history are deliberately untouched.
     await db
       .update(tenantMemberships)
       .set({ status: 'active' })
-      .where(eq(tenantMemberships.id, membership.id));
+      .where(and(eq(tenantMemberships.id, membership.id), eq(tenantMemberships.tenantId, session.tenantId)));
     await db
       .update(userProfiles)
       .set({ status: 'active', updatedAt: new Date() })
       .where(eq(userProfiles.userId, id));
 
-    try {
-      await recordAuditEvent({
-        tenantId: session.tenantId,
-        actorUserId: session.user.id,
-        action: 'user_access.restored',
-        entityType: 'tenant_membership',
-        entityId: membership.id,
-        summary: `User access restored. The account is active again in User Management.`,
-        after: {
-          userId: id,
-          restoredAt: new Date().toISOString(),
-          accountStatus: 'active',
-          staffRecordPreserved: true,
-        },
-      });
-    } catch (auditErr) {
+    await recordAuditEvent({
+      tenantId: session.tenantId,
+      actorUserId: session.user.id,
+      action: 'user_access.restored',
+      entityType: 'tenant_membership',
+      entityId: membership.id,
+      summary: 'User access restored. The account is active again in User Management.',
+      after: {
+        userId: id,
+        restoredAt: new Date().toISOString(),
+        accountStatus: 'active',
+        staffRecordPreserved: true,
+      },
+    }).catch((auditErr) => {
       console.warn('[Admin User Restore] audit failed:', auditErr);
-    }
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Admin User Restore] POST failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to restore user: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to restore user access' }, { status: 500 });
   }
 }
