@@ -201,6 +201,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
   const maintenanceUsers = failedItems.length
     ? await resolveActiveRoleRecipients(tenantId, [SystemRoles.MAINTENANCE])
     : [];
+  const maintenanceAssignee = maintenanceUsers[0] ?? null;
 
   const now = new Date();
   const inspectionId = randomUUID();
@@ -241,7 +242,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
         description: item.comment || `Inspection item failed: ${item.label}`,
         isBlocking: item.isCritical,
         reportedByUserId: userId,
-        assignedToUserId: maintenanceUsers[0] ?? null,
+        assignedToUserId: maintenanceAssignee,
       }))));
     }
 
@@ -266,7 +267,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
         description: `Critical ${input.type} inspection defect follow-up`,
         notes: `Automatically escalated from inspection ${inspectionId}`,
         createdByUserId: userId,
-        assignedToUserId: maintenanceUsers[0] ?? null,
+        assignedToUserId: maintenanceAssignee,
       }));
       queries.push(tx.insert(vehicleStatusEvents).values({
         vehicleId: input.vehicleId,
@@ -290,15 +291,12 @@ export async function completeOfficialInspection(input: InspectionInput) {
           )));
       }
       if (overallPass) {
-        const expected = trip.authorityStatus === 'driver_accepted'
-          ? 'awaiting_pre_trip_inspection'
-          : 'awaiting_pre_trip_inspection';
         queries.push(tx.update(tripAuthorities)
           .set({ status: 'ready_for_departure', beginningOdometer: input.odometerReading, updatedAt: now })
           .where(and(
             eq(tripAuthorities.id, trip.authorityId),
             eq(tripAuthorities.tenantId, tenantId),
-            eq(tripAuthorities.status, expected),
+            eq(tripAuthorities.status, 'awaiting_pre_trip_inspection'),
           )));
       }
     } else {
@@ -381,18 +379,18 @@ export async function completeOfficialInspection(input: InspectionInput) {
   ]);
   if (!inspection) throw new Error('Inspection committed but could not be reloaded');
 
-  if (failedItems.length && maintenanceUsers.length) {
+  if (failedItems.length && maintenanceAssignee) {
     try {
       await createScopedNotifications({
         tenantId,
-        recipientUserIds: maintenanceUsers,
+        recipientUserIds: [maintenanceAssignee],
         category: 'action_required',
         eventType: criticalFailure ? 'critical_inspection_defect' : 'inspection_defect',
         title: criticalFailure ? 'Critical inspection defect' : 'Inspection defect requires review',
         body: `${failedItems.length} defect${failedItems.length === 1 ? '' : 's'} recorded during a ${input.type} inspection.`,
         entityType: 'inspection',
         entityId: inspectionId,
-        actionUrl: '/dashboard/maintenance',
+        actionUrl: '/dashboard/fleet/defects?status=open',
         workspace: WorkspaceIds.MAINTENANCE,
         priority: criticalFailure ? 'urgent' : 'high',
       });
