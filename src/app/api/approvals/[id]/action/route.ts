@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { workflowInstances } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
-import { eq } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import {
   WorkflowEngine,
@@ -10,6 +10,19 @@ import {
   type WorkflowActionResult,
 } from '@/lib/workflow-engine';
 import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
+
+function semanticPositiveResult(actionType: string): WorkflowActionResult {
+  switch (actionType) {
+    case 'release':
+      return 'released';
+    case 'authorise':
+      return 'authorised';
+    case 'acknowledge':
+      return 'acknowledged';
+    default:
+      return 'approved';
+  }
+}
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -30,10 +43,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const body = await request.json();
     const { actionType, comment } = body;
-    const validResults = ['approved', 'rejected', 'returned'];
-    if (!validResults.includes(actionType)) {
+    const validDecisions = ['approved', 'rejected', 'returned'];
+    if (!validDecisions.includes(actionType)) {
       return NextResponse.json(
-        { error: `Invalid action type: ${actionType}. Valid: ${validResults.join(', ')}` },
+        { error: `Invalid decision: ${actionType}. Valid: ${validDecisions.join(', ')}` },
         { status: 400 },
       );
     }
@@ -81,6 +94,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     const stepActionType = status.currentStep.actionType;
+    const semanticResult: WorkflowActionResult =
+      actionType === 'approved'
+        ? semanticPositiveResult(stepActionType)
+        : (actionType as WorkflowActionResult);
+
     // Supervisor decisions use a race-safe single-statement transition. Later
     // operational/release/authorisation steps retain their specialised engine
     // side effects and are audited in their own role passes.
@@ -88,7 +106,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       stepActionType === 'supervisor_approve'
         ? await processSupervisorDecisionAtomic({
             instanceId: id,
-            result: actionType as WorkflowActionResult,
+            result: semanticResult,
             comment: typeof comment === 'string' ? comment : undefined,
             session,
           })
@@ -96,7 +114,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             {
               instanceId: id,
               action: stepActionType as WorkflowActionType,
-              result: actionType as WorkflowActionResult,
+              result: semanticResult,
               comment: typeof comment === 'string' ? comment : undefined,
               actorUserId: session.user.id,
             },
