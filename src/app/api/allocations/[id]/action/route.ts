@@ -167,10 +167,21 @@ export async function POST(
     ]);
 
     try {
-      const recipientUserIds = new Set<string>();
-      if (allocation.requesterUserId) recipientUserIds.add(allocation.requesterUserId);
+      if (allocation.requesterUserId) {
+        await createScopedNotifications({
+          tenantId: session.tenantId,
+          recipientUserIds: [allocation.requesterUserId],
+          category: 'awareness',
+          eventType: 'allocation.cancelled',
+          title: 'Vehicle allocation cancelled',
+          body: `The vehicle allocation for request ${allocation.requestReference} was cancelled and returned to Transport Review. Reason: ${cancellationReason}`,
+          entityType: 'allocation',
+          entityId: id,
+          actionUrl: `/dashboard/requests/${allocation.requestId}`,
+          workspace: 'personal',
+        });
+      }
 
-      let driverUserId: string | null = null;
       if (allocation.driverEmployeeId) {
         const [driver] = await db
           .select({ userId: employees.userId })
@@ -180,23 +191,20 @@ export async function POST(
             eq(employees.tenantId, session.tenantId),
           ))
           .limit(1);
-        driverUserId = driver?.userId ?? null;
-        if (driverUserId) recipientUserIds.add(driverUserId);
-      }
-
-      if (recipientUserIds.size > 0) {
-        await createScopedNotifications({
-          tenantId: session.tenantId,
-          recipientUserIds: Array.from(recipientUserIds),
-          category: 'status_update',
-          eventType: 'allocation.cancelled',
-          title: 'Vehicle allocation cancelled',
-          body: `The vehicle allocation for request ${allocation.requestReference} was cancelled and returned to Transport Review. Reason: ${cancellationReason}`,
-          entityType: 'allocation',
-          entityId: id,
-          actionUrl: `/dashboard/requests/${allocation.requestId}`,
-          workspace: 'transport',
-        });
+        if (driver?.userId) {
+          await createScopedNotifications({
+            tenantId: session.tenantId,
+            recipientUserIds: [driver.userId],
+            category: 'awareness',
+            eventType: 'driver.assignment_cancelled',
+            title: 'Driver assignment cancelled',
+            body: `Your assignment to request ${allocation.requestReference} was cancelled. Reason: ${cancellationReason}`,
+            entityType: 'allocation',
+            entityId: id,
+            actionUrl: '/dashboard/trips',
+            workspace: 'driver',
+          });
+        }
       }
 
       await recordTenantRequestActivity({
