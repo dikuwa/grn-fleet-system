@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { workflowInstances } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
+import { vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import {
   WorkflowEngine,
@@ -111,6 +112,39 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         },
         { status: 409 },
       );
+    }
+
+    if (stepActionType === 'transport_review' && actionType === 'approved') {
+      const [operationalAllocation] = await db
+        .select({
+          id: vehicleAllocations.id,
+          state: vehicleAllocations.state,
+          vehicleId: vehicleAllocations.vehicleId,
+          driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        })
+        .from(vehicleAllocations)
+        .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+        .where(
+          and(
+            eq(vehicleAllocations.requestId, instance.requestId),
+            eq(vehicleAllocations.state, 'confirmed'),
+            eq(transportRequests.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+
+      if (!operationalAllocation?.vehicleId || !operationalAllocation.driverEmployeeId) {
+        return NextResponse.json(
+          {
+            error:
+              'Transport Review cannot be completed until a confirmed vehicle allocation and eligible driver are assigned.',
+            actionUrl: operationalAllocation?.id
+              ? `/dashboard/allocations/${operationalAllocation.id}`
+              : `/dashboard/approvals/${id}/action`,
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const semanticResult: WorkflowActionResult =
