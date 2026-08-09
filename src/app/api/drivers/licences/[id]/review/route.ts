@@ -35,9 +35,9 @@ import { WorkspaceIds } from '@/lib/workspaces';
 import { getSignedFileUrl } from '@/lib/storage';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { createScopedNotifications } from '@/lib/notification-service';
-import { licenceCoversClass } from '@/lib/licence-classes';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REVIEWABLE_STATUSES = new Set(['awaiting_review', 'needs_correction', 'uploaded', 'pending']);
 
 async function canReviewLicence(session: Parameters<typeof getSessionWorkspace>[0]) {
   const workspace = await getSessionWorkspace(session);
@@ -163,7 +163,7 @@ export async function GET(
 
     const warnings: string[] = [];
     if (rawOcr.qualityWarnings?.length) warnings.push(...rawOcr.qualityWarnings);
-    if (currentVerified) {
+    if (currentVerified && currentVerified.id !== licence.licence.id) {
       if (
         licence.licence.licenceNumber !== currentVerified.licenceNumber &&
         !licence.licence.licenceNumber.startsWith('PENDING-')
@@ -188,6 +188,7 @@ export async function GET(
       success: true,
       data: {
         canReview,
+        reviewable: REVIEWABLE_STATUSES.has(licence.licence.verificationStatus),
         licence: {
           ...licence.licence,
           ocrText: rawOcr.text ?? null,
@@ -215,10 +216,6 @@ export async function GET(
         previousVersions: allVersions,
         files: { frontUrl, backUrl, pdfUrl },
         warnings,
-        licenceCoversVehicleClass: (requiredClass?: string | null) =>
-          requiredClass
-            ? licenceCoversClass(licence.licence.licenceClass, requiredClass)
-            : true,
       },
     });
   } catch (error) {
@@ -233,6 +230,9 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Invalid licence identifier' }, { status: 400 });
+    }
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
 
@@ -280,14 +280,21 @@ export async function POST(
     if (!licence) {
       return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
     }
+    if (!REVIEWABLE_STATUSES.has(licence.verificationStatus)) {
+      return NextResponse.json(
+        { error: `This licence is ${licence.verificationStatus.replaceAll('_', ' ')} and can no longer receive a review decision.` },
+        { status: 409 },
+      );
+    }
 
     const newStatus = body.action === 'reject' ? 'rejected' : 'needs_correction';
     await db
       .update(driverLicences)
       .set({
         verificationStatus: newStatus,
+        isActive: false,
         isVerified: false,
-        rejectionReason: body.reason,
+        rejectionReason: body.reason.trim(),
         updatedAt: new Date(),
       })
       .where(eq(driverLicences.id, licence.id));
@@ -306,8 +313,8 @@ export async function POST(
       entityType: 'driver_licence',
       entityId: licence.id,
       before: { verificationStatus: licence.verificationStatus },
-      after: { verificationStatus: newStatus },
-      reason: body.reason,
+      after: { verificationStatus: newStatus, isActive: false },
+      reason: body.reason.trim(),
       summary: `Driver licence ${body.action === 'reject' ? 'rejected' : 'changes requested'} (${licence.licenceClass})`,
     });
 
