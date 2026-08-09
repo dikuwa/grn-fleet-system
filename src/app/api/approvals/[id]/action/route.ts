@@ -13,6 +13,7 @@ import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 import { processAuthorisationDecision } from '@/lib/authorisation-decision';
 import { processDriverAcknowledgement } from '@/lib/driver-acknowledgement';
+import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
   switch (actionType) {
@@ -140,6 +141,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     if (!result.ok) return result.error;
+
+    // Outbound email is deliberately post-commit and best-effort. It must not
+    // make an already durable workflow action appear to have failed.
+    void sendWorkflowOutcomeEmailBestEffort({
+      requestId: instance.requestId,
+      result: semanticResult,
+      stepLabel: status.currentStep.label,
+    });
 
     return NextResponse.json({
       success: true,
