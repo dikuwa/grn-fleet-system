@@ -116,7 +116,8 @@ export async function GET(request: NextRequest) {
 
     // Eligibility must use the currently active, verified licence version only.
     // Superseded/inactive verified records and provisional uploads remain visible
-    // in history but never make a driver assignment-eligible.
+    // in history but never make a driver assignment-eligible. A licence remains
+    // valid through its expiry date; it becomes expired on the following day.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const enrichedDrivers = driverEmployees.map((emp) => {
@@ -136,12 +137,13 @@ export async function GET(request: NextRequest) {
           ),
         }))
         .sort((a, b) => a.daysUntil - b.daysUntil);
-      const nextExpiry = expiries[0] ?? null;
-      const hasExpiredLicence = expiries.some((expiry) => expiry.daysUntil < 0);
-      const hasExpiringLicence = expiries.some(
-        (expiry) => expiry.daysUntil >= 0 && expiry.daysUntil <= 60,
-      );
-      const hasValidLicence = expiries.length > 0 && !hasExpiredLicence;
+      const validExpiries = expiries.filter((expiry) => expiry.daysUntil >= 0);
+      const expiredExpiries = expiries.filter((expiry) => expiry.daysUntil < 0);
+      const nextExpiry =
+        validExpiries[0] ?? expiredExpiries[expiredExpiries.length - 1] ?? null;
+      const hasValidLicence = validExpiries.length > 0;
+      const hasExpiredLicence = expiries.length > 0 && !hasValidLicence;
+      const hasExpiringLicence = validExpiries.some((expiry) => expiry.daysUntil <= 60);
       const hasVerifiedLicence = activeLicences.length > 0;
       const pendingVerification =
         licences.length > 0 &&
@@ -156,9 +158,7 @@ export async function GET(request: NextRequest) {
         ...emp,
         driverStatus: profile?.driverStatus || 'unauthorised',
         licenceCount: licences.length,
-        activeLicenceCount: activeLicences.filter(
-          (licence) => new Date(licence.expiryDate) > new Date(),
-        ).length,
+        activeLicenceCount: validExpiries.length,
         nextExpiry,
         hasExpiredLicence,
         hasExpiringLicence,
