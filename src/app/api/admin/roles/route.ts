@@ -22,6 +22,7 @@ import {
   type PermissionCode,
 } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 function normalizePermissionCodes(value: unknown): PermissionCode[] | null {
   if (!Array.isArray(value)) return null;
@@ -31,6 +32,16 @@ function normalizePermissionCodes(value: unknown): PermissionCode[] | null {
   );
   if (allowed.length !== unique.length) return null;
   return allowed as PermissionCode[];
+}
+
+function databaseCode(error: unknown) {
+  if (!error || typeof error !== 'object') return null;
+  const value = error as { code?: unknown; cause?: { code?: unknown } };
+  return typeof value.code === 'string'
+    ? value.code
+    : typeof value.cause?.code === 'string'
+      ? value.cause.code
+      : null;
 }
 
 export async function GET(request: NextRequest) {
@@ -90,7 +101,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, data: { roles: enrichedRoles } });
   } catch (error) {
     console.error('[Admin Roles] GET failed:', error);
-    return NextResponse.json({ error: 'Failed to list roles: ' + String(error) }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to list roles' }, { status: 500 });
   }
 }
 
@@ -120,7 +131,7 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
     const [existing] = await db
-      .select()
+      .select({ id: roles.id })
       .from(roles)
       .where(and(eq(roles.tenantId, session.tenantId), eq(roles.name, name)))
       .limit(1);
@@ -132,26 +143,48 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const [role] = await db
-      .insert(roles)
-      .values({
-        tenantId: session.tenantId,
-        name,
-        description: description || null,
-        isSystem: false,
-      })
-      .returning();
+    const role = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(roles)
+        .values({
+          tenantId: session.tenantId,
+          name,
+          description: description || null,
+          isSystem: false,
+        })
+        .returning();
 
-    if (permissionCodes.length > 0) {
-      await db.insert(rolePermissions).values(
-        permissionCodes.map((permissionCode) => ({ roleId: role.id, permissionCode })),
-      );
-    }
+      if (permissionCodes.length > 0) {
+        await tx.insert(rolePermissions).values(
+          permissionCodes.map((permissionCode) => ({ roleId: created.id, permissionCode })),
+        );
+      }
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        eventType: 'role_created',
+        action: 'create',
+        entityType: 'role',
+        entityId: created.id,
+        after: {
+          name: created.name,
+          description: created.description,
+          permissionCodes,
+        },
+        summary: `Custom role created: ${created.name}`,
+      }, tx);
+
+      return created;
+    });
 
     return NextResponse.json({ success: true, data: role }, { status: 201 });
   } catch (error) {
     console.error('[Admin Roles] POST failed:', error);
-    return NextResponse.json({ error: 'Failed to create role: ' + String(error) }, { status: 500 });
+    if (databaseCode(error) === '23505') {
+      return NextResponse.json({ error: 'A role with this name already exists in your organisation' }, { status: 409 });
+    }
+    return NextResponse.json({ error: 'Failed to create role' }, { status: 500 });
   }
 }
 
@@ -227,25 +260,58 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
-    const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (name !== undefined) updateData.name = name;
-    if (description !== undefined) updateData.description = description || null;
-    if (Object.keys(updateData).length > 1) {
-      await db.update(roles).set(updateData).where(eq(roles.id, roleId));
-    }
+    const existingPermissions = await db
+      .select({ permissionCode: rolePermissions.permissionCode })
+      .from(rolePermissions)
+      .where(eq(rolePermissions.roleId, roleId));
 
-    if (permissionCodes !== undefined) {
-      await db.delete(rolePermissions).where(eq(rolePermissions.roleId, roleId));
-      if (permissionCodes.length > 0) {
-        await db.insert(rolePermissions).values(
-          permissionCodes.map((permissionCode) => ({ roleId, permissionCode })),
-        );
+    await db.transaction(async (tx) => {
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (name !== undefined) updateData.name = name;
+      if (description !== undefined) updateData.description = description || null;
+      if (Object.keys(updateData).length > 1) {
+        await tx
+          .update(roles)
+          .set(updateData)
+          .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)));
       }
-    }
+
+      if (permissionCodes !== undefined) {
+        await tx.delete(rolePermissions).where(eq(rolePermissions.roleId, roleId));
+        if (permissionCodes.length > 0) {
+          await tx.insert(rolePermissions).values(
+            permissionCodes.map((permissionCode) => ({ roleId, permissionCode })),
+          );
+        }
+      }
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        eventType: 'role_updated',
+        action: 'update',
+        entityType: 'role',
+        entityId: roleId,
+        before: {
+          name: existing.name,
+          description: existing.description,
+          permissionCodes: existingPermissions.map((permission) => permission.permissionCode),
+        },
+        after: {
+          name: name ?? existing.name,
+          description: description === undefined ? existing.description : description || null,
+          permissionCodes: permissionCodes ?? existingPermissions.map((permission) => permission.permissionCode),
+        },
+        summary: `Custom role updated: ${name ?? existing.name}`,
+      }, tx);
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Admin Roles] PATCH failed:', error);
-    return NextResponse.json({ error: 'Failed to update role: ' + String(error) }, { status: 500 });
+    if (databaseCode(error) === '23505') {
+      return NextResponse.json({ error: 'A role with this name already exists in your organisation' }, { status: 409 });
+    }
+    return NextResponse.json({ error: 'Failed to update role' }, { status: 500 });
   }
 }
