@@ -105,25 +105,47 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (decision === 'requires_correction' || decision === 'follow_up') {
       const now = new Date();
-      await runAtomicMutations((tx) => [
-        tx.update(trips)
-          .set({ status: 'closure_review', updatedAt: now })
-          .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId))),
-        tx.insert(auditEvents).values({
-          tenantId,
-          tenantSequence: Date.now(),
-          eventType: 'trip_reconciliation_returned',
-          actorUserId: userId,
-          action: decision === 'follow_up' ? 'request_follow_up' : 'request_correction',
-          entityType: 'trip',
-          entityId: id,
-          summary: decision === 'follow_up'
-            ? 'Trip reconciliation marked for follow-up'
-            : 'Trip reconciliation returned for correction',
-          reason: reviewNotes,
-          sourceChannel: 'web',
-        }),
-      ]);
+      const action = decision === 'follow_up' ? 'request_follow_up' : 'request_correction';
+      const summary = decision === 'follow_up'
+        ? 'Trip reconciliation marked for follow-up'
+        : 'Trip reconciliation returned for correction';
+
+      await db.execute(sql`
+        WITH trip_claim AS (
+          UPDATE trips
+          SET status = 'closure_review', updated_at = ${now}
+          WHERE id = ${id}::uuid
+            AND tenant_id = ${tenantId}::uuid
+            AND status IN ('return_inspection', 'closure_review')
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id, action,
+            entity_type, entity_id, summary, reason, source_channel
+          )
+          SELECT
+            ${tenantId}::uuid,
+            ${Date.now()},
+            'trip_reconciliation_returned',
+            ${userId},
+            ${action},
+            'trip',
+            ${id}::uuid,
+            ${summary},
+            ${reviewNotes},
+            'web'
+          FROM trip_claim
+          RETURNING id
+        )
+        SELECT CASE
+          WHEN (SELECT count(*) FROM trip_claim) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN 1
+          ELSE CAST('closure_decision_conflict' AS integer)
+        END AS committed
+      `);
+
       const [updatedTrip] = await db.select().from(trips)
         .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId))).limit(1);
       return NextResponse.json({
@@ -162,12 +184,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const [outstandingExpenses] = await db
       .select({ count: sql<number>`count(*)` })
       .from(tripExpenses)
-      .where(and(eq(tripExpenses.tripId, id), ne(tripExpenses.verificationStatus, 'verified')));
+      .where(and(
+        eq(tripExpenses.tripId, id),
+        eq(tripExpenses.tenantId, tenantId),
+        ne(tripExpenses.verificationStatus, 'verified'),
+      ));
     const [unsafeIncident] = await db
       .select({ id: tripIncidents.id })
       .from(tripIncidents)
       .where(and(
         eq(tripIncidents.tripId, id),
+        eq(tripIncidents.tenantId, tenantId),
         eq(tripIncidents.safeToContinue, false),
         ne(tripIncidents.status, 'resolved'),
       ))
@@ -275,7 +302,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         closedByUserId: userId,
         decision,
       }),
-      // Preserve the canonical authority transition sequence inside this one transaction.
       tx.update(tripAuthorities)
         .set({ status: 'completed', version: sql`${tripAuthorities.version} + 1`, updatedAt: now })
         .where(and(
@@ -292,13 +318,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         )),
       tx.update(trips)
         .set({ status: 'closed', closedAt: now, updatedAt: now })
-        .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId))),
+        .where(and(
+          eq(trips.id, id),
+          eq(trips.tenantId, tenantId),
+          inArray(trips.status, ['return_inspection', 'closure_review']),
+        )),
       tx.update(transportRequests)
         .set({ status: 'closed', updatedAt: now })
         .where(and(eq(transportRequests.id, trip.requestId), eq(transportRequests.tenantId, tenantId))),
       tx.update(vehicleAllocations)
         .set({ state: 'released', updatedAt: now })
-        .where(eq(vehicleAllocations.id, trip.allocationId)),
+        .where(and(
+          eq(vehicleAllocations.id, trip.allocationId),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed']),
+          sql`exists (
+            select 1 from ${transportRequests} tr
+            where tr.id = ${vehicleAllocations.requestId}
+              and tr.tenant_id = ${tenantId}
+          )`,
+        )),
       tx.update(vehicles)
         .set({ status: resultingVehicleStatus, updatedAt: now })
         .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, tenantId))),
@@ -361,6 +399,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     console.error('[trips/close] POST failed:', error);
     if ((error as { code?: string })?.code === '23505') {
       return NextResponse.json({ error: 'Trip is already closed' }, { status: 409 });
+    }
+    if (String(error).includes('closure_decision_conflict')) {
+      return NextResponse.json(
+        { error: 'This closure decision is no longer current. Refresh and review the latest trip state.' },
+        { status: 409 },
+      );
     }
     return NextResponse.json({ error: 'Failed to close trip' }, { status: 500 });
   }
