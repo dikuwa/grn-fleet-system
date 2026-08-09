@@ -2,13 +2,11 @@
  * Request & Trip Status Mapping
  *
  * Maps internal database statuses to user-facing labels, badge variants,
- * and colours. Covers the full transport-request → trip → closure
- * lifecycle as defined in the Business Workflow Specification.
+ * and colours. Covers the full transport-request → trip → closure lifecycle.
  *
- * Usage:
- *   import { statusConfig } from '@/lib/request-status';
- *   const cfg = statusConfig(request.status);
- *   // cfg.label -> "Supervisor Review", cfg.variant -> "pending", cfg.icon -> ...
+ * Workflow definitions are tenant-configurable. Business status therefore
+ * follows the configured step action, never a hard-coded regional/national
+ * step number.
  */
 
 // ---------------------------------------------------------------------------
@@ -27,20 +25,14 @@ export interface StatusConfig {
   order: number;
 }
 
-/**
- * Full transport request status definitions.
- * Covers the entire workflow from draft → closure.
- */
+/** Full transport request status definitions. */
 export const REQUEST_STATUSES: Record<string, StatusConfig> = {
-  // --- Pre-submission ---
   draft: { label: 'Draft', variant: 'secondary', order: 1 },
-
-  // --- Submission & approval pipeline ---
   submitted: {
     label: 'Submitted',
     variant: 'pending',
     order: 2,
-    description: 'Awaiting supervisor review',
+    description: 'Awaiting the first configured review or approval step',
   },
   supervisor_review: {
     label: 'Supervisor Review',
@@ -58,7 +50,7 @@ export const REQUEST_STATUSES: Record<string, StatusConfig> = {
     label: 'Transport Review',
     variant: 'pending',
     order: 5,
-    description: 'Being reviewed by the transport office',
+    description: 'Operational review by the transport office before allocation/release',
   },
   vehicle_allocated: {
     label: 'Vehicle Allocated',
@@ -67,13 +59,11 @@ export const REQUEST_STATUSES: Record<string, StatusConfig> = {
     description: 'A vehicle has been assigned',
   },
   trip_authority_prepared: { label: 'Trip Authority Prepared', variant: 'info', order: 7 },
-
-  // --- Release & authorisation ---
   release_pending: {
     label: 'Release Pending',
     variant: 'pending',
     order: 8,
-    description: 'Awaiting administrative release',
+    description: 'Awaiting the configured administrative release action',
   },
   administratively_released: { label: 'Administratively Released', variant: 'info', order: 9 },
   final_authorisation_pending: {
@@ -85,7 +75,7 @@ export const REQUEST_STATUSES: Record<string, StatusConfig> = {
     label: 'Authorised',
     variant: 'success',
     order: 11,
-    description: 'Trip has been fully authorised',
+    description: 'Configured workflow has completed successfully',
   },
   driver_acknowledgement_pending: {
     label: 'Driver Acknowledgment Pending',
@@ -99,8 +89,6 @@ export const REQUEST_STATUSES: Record<string, StatusConfig> = {
     order: 14,
     description: 'Vehicle has been physically issued to the driver',
   },
-
-  // --- Trip in progress & return ---
   in_progress: { label: 'In Progress', variant: 'pending', order: 15 },
   return_due: {
     label: 'Return Due',
@@ -127,8 +115,6 @@ export const REQUEST_STATUSES: Record<string, StatusConfig> = {
     description: 'Trip has been completed and closed',
   },
   cancelled: { label: 'Cancelled', variant: 'error', order: 20 },
-
-  // --- Fallback / legacy ---
   rejected: {
     label: 'Rejected',
     variant: 'error',
@@ -150,20 +136,22 @@ export const REQUEST_STATUSES: Record<string, StatusConfig> = {
 };
 
 export const REQUEST_STATUS_GROUPS = {
+  // Decision/approval work only. Operational transport review and driver
+  // acknowledgement are deliberately not counted as approvals.
   pendingApproval: [
     'submitted',
     'supervisor_review',
-    'transport_review',
     'release_pending',
     'final_authorisation_pending',
-    'driver_acknowledgement_pending',
   ],
   active: [
+    'transport_review',
     'vehicle_allocated',
     'trip_authority_prepared',
     'administratively_released',
     'authorised',
     'approved',
+    'driver_acknowledgement_pending',
     'ready_for_issue',
     'vehicle_issued',
     'in_progress',
@@ -197,10 +185,6 @@ export const TRIP_STATUS_GROUPS = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Get the status configuration for a request or trip status code.
- * Falls back gracefully for unknown statuses.
- */
 export function statusConfig(status: string | null | undefined): StatusConfig {
   if (!status) return { label: 'Unknown', variant: 'secondary', order: 999 };
   return (
@@ -214,66 +198,40 @@ export function statusConfig(status: string | null | undefined): StatusConfig {
 }
 
 /**
- * Map a workflow step number + action type to a business status name.
+ * Convert the configured workflow step being entered into a business status.
  *
- * Regional (5 steps):
- *   1: supervisor_approve   → supervisor_review
- *   2: transport_review    → transport_review
- *   3: release              → release_pending
- *   4: authorise            → administratively_released
- *   5: acknowledge          → driver_acknowledgement_pending
- *
- * National (6 steps):
- *   1: supervisor_approve   → supervisor_review
- *   2: transport_review    → transport_review
- *   3: release (regional)   → vehicle_allocated
- *   4: release (national)   → administratively_released
- *   5: authorise            → final_authorisation_pending
- *   6: acknowledge          → driver_acknowledgement_pending
+ * `stepOrder` and `scope` remain in the signature for compatibility with
+ * existing callers, but neither controls the mapping. This is intentional:
+ * tenants may insert/remove/reorder workflow steps without changing business
+ * status semantics.
  */
 export function workflowStepToStatus(
   stepOrder: number,
   actionType: string,
   _scope: 'regional' | 'national' = 'regional',
 ): string {
-  const REGIONAL_MAP: Record<number, string> = {
-    1: 'supervisor_review',
-    2: 'transport_review',
-    3: 'release_pending',
-    4: 'administratively_released',
-    5: 'driver_acknowledgement_pending',
+  const STATUS_BY_ACTION: Record<string, string> = {
+    supervisor_approve: 'supervisor_review',
+    transport_review: 'transport_review',
+    release: 'release_pending',
+    authorise: 'final_authorisation_pending',
+    acknowledge: 'driver_acknowledgement_pending',
   };
-  const NATIONAL_MAP: Record<number, string> = {
-    1: 'supervisor_review',
-    2: 'transport_review',
-    3: 'vehicle_allocated',
-    4: 'administratively_released',
-    5: 'final_authorisation_pending',
-    6: 'driver_acknowledgement_pending',
-  };
-  return (
-    (_scope === 'national' ? NATIONAL_MAP[stepOrder] : REGIONAL_MAP[stepOrder]) ??
-    `step_${stepOrder}`
-  );
+
+  return STATUS_BY_ACTION[actionType] ?? `step_${stepOrder}`;
 }
 
-/**
- * Get the next trip status when a workflow completes (all steps approved).
- */
+/** Request status after all configured workflow steps complete. */
 export function workflowCompletedStatus(): string {
   return 'authorised';
 }
 
-/**
- * Get the trip status when a request is issued to the driver.
- */
+/** Request status when the vehicle is physically issued to the driver. */
 export function vehicleIssuedStatus(): string {
   return 'vehicle_issued';
 }
 
-/**
- * Get CSS colour for a status variant (for non-Badge use, e.g. icons).
- */
+/** Get CSS colour for a status variant (for non-Badge use, e.g. icons). */
 export function statusColour(variant: StatusConfig['variant']): string {
   switch (variant) {
     case 'success':
