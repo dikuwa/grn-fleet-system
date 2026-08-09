@@ -542,11 +542,34 @@ export async function DELETE(
       }
     }
 
+    const otherMemberships = await db
+      .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+      .from(tenantMemberships)
+      .where(and(eq(tenantMemberships.userId, id), ne(tenantMemberships.id, membership.id)));
+    const hasRemainingMembership = otherMemberships.some(
+      (otherMembership) => otherMembership.status !== 'access_removed',
+    );
+    const revokeGlobalAccount = !hasRemainingMembership;
+
     await db.transaction(async (tx) => {
-      await tx.delete(sessionTable).where(eq(sessionTable.userId, id));
-      await tx.delete(verification).where(or(eq(verification.identifier, userRecord.email), eq(verification.identifier, id)));
-      await tx.update(tenantMemberships).set({ status: 'access_removed' }).where(eq(tenantMemberships.id, membership.id));
-      await tx.update(userProfiles).set({ status: 'removed', updatedAt: new Date() }).where(eq(userProfiles.userId, id));
+      await tx
+        .update(tenantMemberships)
+        .set({ status: 'access_removed' })
+        .where(and(eq(tenantMemberships.id, membership.id), eq(tenantMemberships.tenantId, session.tenantId)));
+
+      if (revokeGlobalAccount) {
+        await tx.delete(sessionTable).where(eq(sessionTable.userId, id));
+        await tx.delete(verification).where(or(eq(verification.identifier, userRecord.email), eq(verification.identifier, id)));
+        await tx
+          .update(userProfiles)
+          .set({
+            status: 'removed',
+            accountEnabled: false,
+            disabledAt: now,
+            updatedAt: now,
+          })
+          .where(eq(userProfiles.userId, id));
+      }
 
       await recordAuditEvent({
         tenantId: session.tenantId,
@@ -562,8 +585,10 @@ export async function DELETE(
           staffRecordPreserved: true,
           activeRoleCount: activeAssignments.length,
           futureOrHistoricalRoleRecordsPreserved: assignments.length,
-          sessionsRevoked: true,
-          verificationTokensInvalidated: true,
+          otherMembershipsPreserved: otherMemberships.length,
+          globalAccountRevoked: revokeGlobalAccount,
+          sessionsRevoked: revokeGlobalAccount,
+          verificationTokensInvalidated: revokeGlobalAccount,
           removedAt: now.toISOString(),
           accountStatus: 'access_removed',
         },
