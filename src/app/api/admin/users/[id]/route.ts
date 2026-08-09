@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user, session as sessionTable, verification } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
-import { employees, driverProfiles, departments, offices } from '@/db/schema/people';
+import { employees, driverProfiles, driverLicences, departments, offices } from '@/db/schema/people';
 import { userProfiles } from '@/db/schema/auth';
 import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { eq, and, or, ne, inArray } from 'drizzle-orm';
@@ -230,30 +230,82 @@ export async function PATCH(
             .limit(1);
           if (employee) {
             const [existingProfile] = await db
-              .select({ id: driverProfiles.id })
+              .select({
+                id: driverProfiles.id,
+                availabilityStatus: driverProfiles.availabilityStatus,
+              })
               .from(driverProfiles)
               .where(eq(driverProfiles.employeeId, employee.id))
               .limit(1);
+
+            let profileId = existingProfile?.id;
+            let driverStatus: 'authorised' | 'pending_verification' = 'pending_verification';
+            let availabilityStatus = 'unavailable';
+
             if (!existingProfile) {
               const [profile] = await db.insert(driverProfiles).values({
                 employeeId: employee.id,
-                driverStatus: 'authorised',
-                availabilityStatus: 'available',
-                notes: 'Auto-provisioned from Driver role assignment. Awaiting licence upload and verification.',
+                driverStatus: 'pending_verification',
+                availabilityStatus: 'unavailable',
+                notes: 'Auto-provisioned from Driver role assignment. Licence upload and verification are required before operational assignment.',
               }).returning();
-              await db.update(employees).set({ isDriver: true, updatedAt: new Date() }).where(eq(employees.id, employee.id));
+              profileId = profile.id;
+            } else {
+              const verifiedLicences = await db
+                .select({ expiryDate: driverLicences.expiryDate })
+                .from(driverLicences)
+                .where(and(
+                  eq(driverLicences.driverProfileId, existingProfile.id),
+                  eq(driverLicences.verificationStatus, 'verified'),
+                  eq(driverLicences.isActive, true),
+                ));
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const hasValidVerifiedLicence = verifiedLicences.some((licence) => {
+                const expiry = new Date(licence.expiryDate);
+                expiry.setHours(0, 0, 0, 0);
+                return expiry >= today;
+              });
+
+              if (hasValidVerifiedLicence) {
+                driverStatus = 'authorised';
+                availabilityStatus = existingProfile.availabilityStatus || 'available';
+                await db
+                  .update(driverProfiles)
+                  .set({ driverStatus: 'authorised', updatedAt: new Date() })
+                  .where(eq(driverProfiles.id, existingProfile.id));
+              } else {
+                await db
+                  .update(driverProfiles)
+                  .set({
+                    driverStatus: 'pending_verification',
+                    availabilityStatus: 'unavailable',
+                    updatedAt: new Date(),
+                  })
+                  .where(eq(driverProfiles.id, existingProfile.id));
+              }
+            }
+
+            await db
+              .update(employees)
+              .set({ isDriver: true, updatedAt: new Date() })
+              .where(eq(employees.id, employee.id));
+
+            if (profileId) {
               await recordAuditEvent({
                 tenantId: session.tenantId,
                 actorUserId: session.user.id,
-                action: 'driver_profile.auto_provisioned',
+                action: 'driver_profile.role_assignment_synced',
                 entityType: 'driver_profile',
-                entityId: profile.id,
-                summary: `Driver profile auto-created for ${employee.firstName} ${employee.lastName} via role assignment`,
-                after: { driverStatus: 'authorised', roleAssigned: role.name },
+                entityId: profileId,
+                summary: `Driver profile synced for ${employee.firstName} ${employee.lastName} via role assignment`,
+                after: {
+                  driverStatus,
+                  availabilityStatus,
+                  roleAssigned: role.name,
+                  licenceVerificationRequired: driverStatus !== 'authorised',
+                },
               }).catch(() => undefined);
-            } else {
-              await db.update(driverProfiles).set({ driverStatus: 'authorised', updatedAt: new Date() }).where(eq(driverProfiles.id, existingProfile.id));
-              await db.update(employees).set({ isDriver: true, updatedAt: new Date() }).where(eq(employees.id, employee.id));
             }
           }
         }
