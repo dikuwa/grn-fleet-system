@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
@@ -10,6 +10,8 @@ import { createScopedNotifications } from '@/lib/notification-service';
 /**
  * POST /api/defects/[id]/resolve
  * Resolve a tenant-scoped defect assigned to the current Maintenance Officer.
+ * Unassigned defects may be claimed by the first authorised Maintenance Officer
+ * who resolves them, so safety work cannot become permanently orphaned.
  * A vehicle blocked by inspection/incident defects is returned to service only
  * when no other unresolved blocking defect remains. Explicit out_of_service
  * and written_off states are never changed here.
@@ -51,11 +53,14 @@ export async function POST(
       .where(and(
         eq(vehicleDefects.id, id),
         eq(vehicles.tenantId, session.tenantId),
-        eq(vehicleDefects.assignedToUserId, session.user.id),
+        or(
+          eq(vehicleDefects.assignedToUserId, session.user.id),
+          isNull(vehicleDefects.assignedToUserId),
+        )!,
       ))
       .limit(1);
 
-    if (!defect) return NextResponse.json({ error: 'Assigned defect not found' }, { status: 404 });
+    if (!defect) return NextResponse.json({ error: 'Assigned or unassigned defect not found' }, { status: 404 });
     if (defect.resolvedAt) return NextResponse.json({ success: true, alreadyResolved: true });
 
     const auditId = randomUUID();
@@ -63,14 +68,15 @@ export async function POST(
     const auditAfter = JSON.stringify({
       vehicleId: defect.vehicleId,
       isBlocking: defect.isBlocking,
-      assignedToUserId: defect.assignedToUserId,
+      assignedToUserId: defect.assignedToUserId ?? session.user.id,
       resolutionNotes,
     });
 
     const committed = await db.execute(sql`
       WITH resolved AS (
         UPDATE vehicle_defects d
-        SET resolved_at = now(),
+        SET assigned_to_user_id = coalesce(d.assigned_to_user_id, ${session.user.id}),
+            resolved_at = now(),
             resolved_by_user_id = ${session.user.id},
             resolution_notes = ${resolutionNotes},
             updated_at = now()
@@ -78,7 +84,7 @@ export async function POST(
         WHERE d.id = ${id}::uuid
           AND d.vehicle_id = v.id
           AND v.tenant_id = ${session.tenantId}::uuid
-          AND d.assigned_to_user_id = ${session.user.id}
+          AND (d.assigned_to_user_id = ${session.user.id} OR d.assigned_to_user_id IS NULL)
           AND d.resolved_at IS NULL
         RETURNING d.id, d.vehicle_id, d.is_blocking
       ),
@@ -139,11 +145,19 @@ export async function POST(
     const releasedCount = Number(row?.released_count ?? 0);
     const auditCount = Number(row?.audit_count ?? 0);
     if (resolvedCount !== 1 || auditCount !== 1) {
-      const [latest] = await db.select({ resolvedAt: vehicleDefects.resolvedAt }).from(vehicleDefects).where(and(
+      const [latest] = await db.select({
+        assignedToUserId: vehicleDefects.assignedToUserId,
+        resolvedAt: vehicleDefects.resolvedAt,
+      }).from(vehicleDefects).where(and(
         eq(vehicleDefects.id, id),
-        eq(vehicleDefects.assignedToUserId, session.user.id),
+        or(
+          eq(vehicleDefects.assignedToUserId, session.user.id),
+          isNull(vehicleDefects.assignedToUserId),
+        )!,
       )).limit(1);
-      if (latest?.resolvedAt) return NextResponse.json({ success: true, alreadyResolved: true });
+      if (latest?.resolvedAt && latest.assignedToUserId === session.user.id) {
+        return NextResponse.json({ success: true, alreadyResolved: true });
+      }
       return NextResponse.json({ error: 'The defect changed while it was being resolved. Refresh and try again.' }, { status: 409 });
     }
 
@@ -169,7 +183,12 @@ export async function POST(
       }
     }
 
-    return NextResponse.json({ success: true, alreadyResolved: false, vehicleReleased: releasedCount === 1 });
+    return NextResponse.json({
+      success: true,
+      alreadyResolved: false,
+      claimed: defect.assignedToUserId === null,
+      vehicleReleased: releasedCount === 1,
+    });
   } catch (error) {
     console.error('[defects/resolve] POST failed:', error);
     return NextResponse.json({ error: 'Failed to resolve defect' }, { status: 500 });
