@@ -80,6 +80,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Personal self-service is intentionally limited to user/request content.
+    // Operational namespaces such as inspections, receipts, vehicle evidence,
+    // imports, and trip incidents belong to their dedicated workspaces even
+    // when the same multi-role account also has FILE_UPLOAD elsewhere.
+    const workspace = await getSessionWorkspace(session);
+    if (
+      workspace.activeWorkspace === WorkspaceIds.PERSONAL &&
+      category !== 'document' &&
+      category !== 'avatar'
+    ) {
+      return NextResponse.json(
+        { error: 'This upload category is not available in Personal workspace.' },
+        { status: 403 },
+      );
+    }
+
     // Arbitrary tenant documents must never become public just because a
     // client sends public=true. The only intentionally public upload category
     // is an avatar, and it must actually be an allowed image type.
