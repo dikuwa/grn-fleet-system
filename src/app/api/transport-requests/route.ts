@@ -8,6 +8,7 @@ import {
   requestDrivers,
   requestRoutes,
 } from '@/db/schema/requests';
+import { requestReferenceSequences } from '@/db/schema/request-sequences';
 import { programmes } from '@/db/schema/programmes';
 import { employees, departments, driverProfiles } from '@/db/schema/people';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
@@ -396,10 +397,24 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const seq = String(Math.floor(Math.random() * 900) + 100);
-    const reference = `GRN/TR/${now.getFullYear()}/${month}${day}/${seq}`;
+    const sequenceYear = Number(
+      new Intl.DateTimeFormat('en', { timeZone: 'Africa/Windhoek', year: 'numeric' }).format(now),
+    );
+    const [sequence] = await db
+      .insert(requestReferenceSequences)
+      .values({ tenantId, sequenceYear, currentValue: 1, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [requestReferenceSequences.tenantId, requestReferenceSequences.sequenceYear],
+        set: {
+          currentValue: sql`${requestReferenceSequences.currentValue} + 1`,
+          updatedAt: now,
+        },
+      })
+      .returning({ currentValue: requestReferenceSequences.currentValue });
+    if (!sequence?.currentValue) {
+      throw new Error('Unable to allocate a transport request reference');
+    }
+    const reference = `GRN/TR/${sequenceYear}/${String(sequence.currentValue).padStart(6, '0')}`;
 
     const routeKm = (routes || []).reduce(
       (sum: number, route: { estimatedKm?: number }) => sum + (route.estimatedKm || 0),
