@@ -71,7 +71,7 @@ export const workspaceRegistry: readonly WorkspaceDefinition[] = [
   {
     id: WorkspaceIds.INSPECTOR,
     label: 'Inspections',
-    roleNames: [R.INSPECTOR],
+    roleNames: [R.INSPECTOR, R.RELEASE_OFFICER],
     tenantWorkspace: true,
     order: 40,
   },
