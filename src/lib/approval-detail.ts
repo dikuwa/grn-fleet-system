@@ -199,14 +199,10 @@ export async function getApprovalDetail(input: {
   const canViewActive = Boolean(
     instance.status === 'active' &&
     currentStep &&
-    (currentStep.assignedUserId === input.userId || hasStepPermission),
-  );
-  const canAct = Boolean(
-    canViewActive &&
-    currentStep &&
     (currentStep.assignedUserId === input.userId ||
       (!currentStep.assignedUserId && hasStepPermission)),
   );
+  const canAct = canViewActive;
   const actedPreviously = actions.some((action) => action.actorUserId === input.userId);
   if (!canViewActive && !actedPreviously) return null;
 
