@@ -3,10 +3,7 @@ import { tenants } from './tenants';
 
 /**
  * Tenant/year-scoped sequence for official transport request references.
- *
- * Sequence gaps are acceptable (for example, if a later submission step fails),
- * but a value must never be reused. The database unique key makes concurrent
- * increments safe when used through INSERT ... ON CONFLICT DO UPDATE.
+ * Sequence gaps are acceptable, but values are never reused.
  */
 export const requestReferenceSequences = pgTable(
   'request_reference_sequences',
@@ -20,6 +17,25 @@ export const requestReferenceSequences = pgTable(
   },
   (table) => [
     uniqueIndex('uq_request_reference_sequence_tenant_year').on(
+      table.tenantId,
+      table.sequenceYear,
+    ),
+  ],
+);
+
+/** Tenant/year-scoped sequence for official Programme references. */
+export const programmeReferenceSequences = pgTable(
+  'programme_reference_sequences',
+  {
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    sequenceYear: integer('sequence_year').notNull(),
+    currentValue: integer('current_value').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_programme_reference_sequence_tenant_year').on(
       table.tenantId,
       table.sequenceYear,
     ),
