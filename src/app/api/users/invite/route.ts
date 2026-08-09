@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user, account } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles, tenants } from '@/db/schema/tenants';
-import { employees } from '@/db/schema/people';
+import { employees, driverProfiles } from '@/db/schema/people';
 import { userProfiles } from '@/db/schema/auth';
 import { eq, and, inArray, count, or, isNull } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
@@ -204,6 +204,46 @@ export async function POST(req: NextRequest) {
             startDate: now,
           })),
         );
+      }
+
+      if (selectedRoles.some((role) => role.name === 'Assigned Driver')) {
+        const [existingProfile] = await tx
+          .select({ id: driverProfiles.id })
+          .from(driverProfiles)
+          .where(eq(driverProfiles.employeeId, employee.id))
+          .limit(1);
+
+        if (!existingProfile) {
+          const [profile] = await tx
+            .insert(driverProfiles)
+            .values({
+              employeeId: employee.id,
+              driverStatus: 'pending_verification',
+              availabilityStatus: 'unavailable',
+              notes: 'Auto-provisioned when the Assigned Driver role was granted. Licence verification is required before operational assignment.',
+            })
+            .returning({ id: driverProfiles.id });
+
+          await recordAuditEvent({
+            tenantId: session.tenantId,
+            actorUserId: session.user.id,
+            action: 'driver_profile.auto_provisioned',
+            entityType: 'driver_profile',
+            entityId: profile.id,
+            summary: `Pending driver profile created for ${displayName} during account setup`,
+            after: {
+              driverStatus: 'pending_verification',
+              availabilityStatus: 'unavailable',
+              roleAssigned: 'Assigned Driver',
+              licenceVerificationRequired: true,
+            },
+          }, tx);
+        }
+
+        await tx
+          .update(employees)
+          .set({ isDriver: true, updatedAt: now })
+          .where(and(eq(employees.id, employee.id), eq(employees.tenantId, session.tenantId)));
       }
 
       await recordAuditEvent({
