@@ -1,4 +1,4 @@
-import { and, eq, or, type SQL } from 'drizzle-orm';
+import { and, eq, isNull, or, type SQL } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { employees } from '@/db/schema/people';
 import { programmes } from '@/db/schema/programmes';
@@ -30,11 +30,20 @@ export function programmeOwnershipCondition(
   userId: string,
   employeeId: string | null,
 ): SQL {
-  const conditions: SQL[] = [
-    eq(programmes.createdByUserId, userId),
-    eq(programmes.ownerUserId, userId),
-  ];
+  const conditions: SQL[] = [eq(programmes.ownerUserId, userId)];
   if (employeeId) conditions.push(eq(programmes.ownerEmployeeId, employeeId));
+
+  // createdByUserId records provenance, not perpetual ownership. Keep it only
+  // as a compatibility fallback for legacy rows that pre-date explicit owner
+  // fields; once either owner field is populated, ownership transfers cleanly.
+  conditions.push(
+    and(
+      isNull(programmes.ownerUserId),
+      isNull(programmes.ownerEmployeeId),
+      eq(programmes.createdByUserId, userId),
+    )!,
+  );
+
   return or(...conditions)!;
 }
 
@@ -43,9 +52,11 @@ export function isProgrammeOwnedByUser(
   userId: string,
   employeeId: string | null,
 ) {
+  if (programme.ownerUserId === userId) return true;
+  if (employeeId && programme.ownerEmployeeId === employeeId) return true;
   return (
-    programme.createdByUserId === userId ||
-    programme.ownerUserId === userId ||
-    Boolean(employeeId && programme.ownerEmployeeId === employeeId)
+    programme.ownerUserId == null &&
+    programme.ownerEmployeeId == null &&
+    programme.createdByUserId === userId
   );
 }
