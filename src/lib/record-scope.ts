@@ -180,7 +180,11 @@ export function vehicleScopeCondition(context: RecordScopeContext): SQL {
       sql`exists (
         select 1 from ${vehicleDefects} vd
         where vd.vehicle_id = ${vehicles.id}
-          and (vd.reported_by_user_id = ${context.userId} or vd.resolved_by_user_id = ${context.userId})
+          and (
+            vd.reported_by_user_id = ${context.userId}
+            or vd.assigned_to_user_id = ${context.userId}
+            or vd.resolved_by_user_id = ${context.userId}
+          )
       )`,
     )!,
   )!;
