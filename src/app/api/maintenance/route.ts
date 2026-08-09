@@ -4,11 +4,18 @@ import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { maintenanceEvents, vehicleOdometerEvents, vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { vehicleScopeCondition } from '@/lib/record-scope';
 
 const SERVICE_TYPES = new Set(['scheduled', 'repair', 'inspection']);
 
@@ -21,12 +28,12 @@ function optionalNonNegativeNumber(value: unknown, label: string) {
 
 /**
  * POST /api/maintenance
- * Record a completed/planned maintenance-history event.
+ * Record a maintenance-history event for a vehicle already within the active
+ * Maintenance workspace's vehicle scope.
  *
- * A maintenance history row is not itself a vehicle safety decision. Vehicle
- * blocking is controlled by unresolved blocking defects / explicit fleet state
- * transitions, so merely recording a service must never strand a vehicle in
- * `maintenance` indefinitely.
+ * A history row is not itself a vehicle safety decision. Vehicle blocking is
+ * controlled by unresolved blocking defects / explicit fleet state changes,
+ * so recording service history must never strand a vehicle in `maintenance`.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -75,13 +82,24 @@ export async function POST(req: NextRequest) {
     }
 
     const db = getDb();
+    const roleNames = await getSessionRoleNames(session);
+    const fleetAccess = resolveDashboardAccess('/dashboard/fleet', roleNames);
     const [vehicle] = await db
       .select({ id: vehicles.id, currentOdometer: vehicles.currentOdometer })
       .from(vehicles)
-      .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, session.tenantId)))
+      .where(and(
+        eq(vehicles.id, vehicleId),
+        vehicleScopeCondition({
+          tenantId: session.tenantId,
+          userId: session.user.id,
+          recordScope: fleetAccess.recordScope ?? 'related',
+        }),
+      ))
       .limit(1);
 
-    if (!vehicle) return NextResponse.json({ error: 'Vehicle not found in your organisation' }, { status: 404 });
+    if (!vehicle) {
+      return NextResponse.json({ error: 'Vehicle is not available in your current maintenance scope' }, { status: 404 });
+    }
     if (serviceOdometer !== null && serviceOdometer < vehicle.currentOdometer) {
       return NextResponse.json({ error: `Service odometer cannot be below the current vehicle odometer (${vehicle.currentOdometer} km)` }, { status: 409 });
     }
