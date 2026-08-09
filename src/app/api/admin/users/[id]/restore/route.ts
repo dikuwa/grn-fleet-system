@@ -3,8 +3,8 @@
  *
  * POST /api/admin/users/[id]/restore — Re-activate a user whose access was
  * removed via DELETE (status `access_removed`). The staff record is untouched;
- * this only restores the login account within the tenant and re-activates the
- * linked user profile so the person appears in User Management again.
+ * this only restores the login account within the tenant. Global profile
+ * security state is changed only when it was previously marked `removed`.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -31,13 +31,20 @@ export async function POST(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-    const [membership] = await db
-      .select()
-      .from(tenantMemberships)
-      .where(
-        and(eq(tenantMemberships.userId, id), eq(tenantMemberships.tenantId, session.tenantId)),
-      )
-      .limit(1);
+    const [[membership], [profile]] = await Promise.all([
+      db
+        .select()
+        .from(tenantMemberships)
+        .where(
+          and(eq(tenantMemberships.userId, id), eq(tenantMemberships.tenantId, session.tenantId)),
+        )
+        .limit(1),
+      db
+        .select({ status: userProfiles.status })
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, id))
+        .limit(1),
+    ]);
 
     if (!membership) {
       return NextResponse.json({ error: 'User not found in your organisation' }, { status: 404 });
@@ -67,33 +74,37 @@ export async function POST(
       }
     }
 
-    // These updates are idempotent and both remain tenant/user scoped. The
-    // membership state is the authoritative tenant access switch; Staff
-    // Management and employee history are deliberately untouched.
-    await db
-      .update(tenantMemberships)
-      .set({ status: 'active' })
-      .where(and(eq(tenantMemberships.id, membership.id), eq(tenantMemberships.tenantId, session.tenantId)));
-    await db
-      .update(userProfiles)
-      .set({ status: 'active', updatedAt: new Date() })
-      .where(eq(userProfiles.userId, id));
+    await db.transaction(async (tx) => {
+      await tx
+        .update(tenantMemberships)
+        .set({ status: 'active' })
+        .where(and(eq(tenantMemberships.id, membership.id), eq(tenantMemberships.tenantId, session.tenantId)));
 
-    await recordAuditEvent({
-      tenantId: session.tenantId,
-      actorUserId: session.user.id,
-      action: 'user_access.restored',
-      entityType: 'tenant_membership',
-      entityId: membership.id,
-      summary: 'User access restored. The account is active again in User Management.',
-      after: {
-        userId: id,
-        restoredAt: new Date().toISOString(),
-        accountStatus: 'active',
-        staffRecordPreserved: true,
-      },
-    }).catch((auditErr) => {
-      console.warn('[Admin User Restore] audit failed:', auditErr);
+      // `user_profiles` is global to the Better Auth user. Only clear a
+      // previous tenant-removal marker; never override a deliberate global
+      // suspended/disabled security state while restoring one membership.
+      if (profile?.status === 'removed') {
+        await tx
+          .update(userProfiles)
+          .set({ status: 'active', updatedAt: new Date() })
+          .where(and(eq(userProfiles.userId, id), eq(userProfiles.status, 'removed')));
+      }
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        action: 'user_access.restored',
+        entityType: 'tenant_membership',
+        entityId: membership.id,
+        summary: 'User access restored. The tenant membership is active again in User Management.',
+        after: {
+          userId: id,
+          restoredAt: new Date().toISOString(),
+          tenantMembershipStatus: 'active',
+          globalProfileStatusChanged: profile?.status === 'removed',
+          staffRecordPreserved: true,
+        },
+      }, tx);
     });
 
     return NextResponse.json({ success: true });
