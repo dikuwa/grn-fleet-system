@@ -1,19 +1,12 @@
 /**
  * Offline Draft Store (PWA)
  *
- * Uses Dexie (IndexedDB wrapper) to persist form drafts locally so
- * field officers can record fuel entries, transport requests, and
- * inspections without a network connection. Drafts sync automatically
- * when connectivity resumes.
- *
- * Feature flag: NEXT_PUBLIC_ENABLE_OFFLINE_DRAFTS
+ * Uses Dexie (IndexedDB wrapper) to persist form drafts locally. Drafts are
+ * scoped to the authenticated user and tenant when read for display or sync;
+ * ownerless legacy drafts are intentionally not auto-adopted by another account
+ * on a shared device.
  */
-
 import Dexie, { type EntityTable } from 'dexie';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 export interface OfflineDraft {
   id: string;
@@ -26,47 +19,33 @@ export interface OfflineDraft {
     | 'trip_expense'
     | 'inspection_departure'
     | 'inspection_return';
-  /** Serialised form state */
   formData: Record<string, unknown>;
-  /** The user who drafted this (from auth session) */
   userId: string | null;
-  /** Tenant context */
   tenantId: string | null;
-  /** Local timestamp of last modification */
-  updatedAt: string; // ISO-8601
-  /** Local timestamp of creation */
-  createdAt: string; // ISO-8601
-  /** Sync status */
+  updatedAt: string;
+  createdAt: string;
   syncStatus: 'pending' | 'syncing' | 'synced' | 'conflict' | 'failed';
-  /** Error message from last sync attempt */
   syncError?: string | null;
-  /** Server entity ID after successful sync */
   syncedEntityId?: string | null;
 }
-
-// ---------------------------------------------------------------------------
-// Database
-// ---------------------------------------------------------------------------
 
 const db = new Dexie('GovFleetOfflineDrafts') as Dexie & {
   drafts: EntityTable<OfflineDraft, 'id'>;
 };
 
 db.version(1).stores({
-  drafts:
-    '++id, draftType, userId, syncStatus, updatedAt, createdAt, tenantId',
+  drafts: '++id, draftType, userId, syncStatus, updatedAt, createdAt, tenantId',
 });
 
-// ---------------------------------------------------------------------------
-// API
-// ---------------------------------------------------------------------------
-
-export async function saveDraft(draft: Omit<OfflineDraft, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) {
+export async function saveDraft(
+  draft: Omit<OfflineDraft, 'id' | 'createdAt' | 'updatedAt'> & { id?: string },
+) {
   const now = new Date().toISOString();
+  const existing = draft.id ? await db.drafts.get(draft.id) : undefined;
   const record: OfflineDraft = {
     ...draft,
     id: draft.id || crypto.randomUUID(),
-    createdAt: now,
+    createdAt: existing?.createdAt || now,
     updatedAt: now,
   };
   await db.drafts.put(record);
@@ -79,7 +58,6 @@ export async function updateDraft(
 ) {
   const existing = await db.drafts.get(id);
   if (!existing) throw new Error(`OfflineDraft not found: ${id}`);
-
   const updated: OfflineDraft = {
     ...existing,
     ...patch,
@@ -93,46 +71,35 @@ export async function getDraft(id: string): Promise<OfflineDraft | undefined> {
   return db.drafts.get(id);
 }
 
-export async function listDrafts(
-  filters?: {
-    draftType?: OfflineDraft['draftType'];
-    draftTypes?: OfflineDraft['draftType'][];
-    syncStatus?: OfflineDraft['syncStatus'];
-    syncStatuses?: OfflineDraft['syncStatus'][];
-    userId?: string;
-    tenantId?: string;
-  },
-): Promise<OfflineDraft[]> {
+export async function listDrafts(filters?: {
+  draftType?: OfflineDraft['draftType'];
+  draftTypes?: OfflineDraft['draftType'][];
+  syncStatus?: OfflineDraft['syncStatus'];
+  syncStatuses?: OfflineDraft['syncStatus'][];
+  userId?: string;
+  tenantId?: string;
+}): Promise<OfflineDraft[]> {
   let collection = db.drafts.orderBy('updatedAt').reverse();
-
   if (filters?.draftType) {
-    collection = collection.filter((d) => d.draftType === filters.draftType) as typeof collection;
+    collection = collection.filter((draft) => draft.draftType === filters.draftType) as typeof collection;
   }
   if (filters?.draftTypes) {
     const allowed = new Set(filters.draftTypes);
-    collection = collection.filter((d) => allowed.has(d.draftType)) as typeof collection;
+    collection = collection.filter((draft) => allowed.has(draft.draftType)) as typeof collection;
   }
   if (filters?.syncStatus) {
-    collection = collection.filter((d) => d.syncStatus === filters.syncStatus) as typeof collection;
+    collection = collection.filter((draft) => draft.syncStatus === filters.syncStatus) as typeof collection;
   }
   if (filters?.syncStatuses) {
     const allowed = new Set(filters.syncStatuses);
-    collection = collection.filter((d) => allowed.has(d.syncStatus)) as typeof collection;
+    collection = collection.filter((draft) => allowed.has(draft.syncStatus)) as typeof collection;
   }
-  // A draft saved before the profile query resolved has no owner (null). On a
-  // single-user PWA device those device-owned drafts must still be eligible for
-  // sync by whoever is logged in — excluding them would orphan them forever.
   if (filters?.userId) {
-    collection = collection.filter(
-      (d) => !d.userId || d.userId === filters.userId,
-    ) as typeof collection;
+    collection = collection.filter((draft) => draft.userId === filters.userId) as typeof collection;
   }
   if (filters?.tenantId) {
-    collection = collection.filter(
-      (d) => !d.tenantId || d.tenantId === filters.tenantId,
-    ) as typeof collection;
+    collection = collection.filter((draft) => draft.tenantId === filters.tenantId) as typeof collection;
   }
-
   return collection.toArray();
 }
 
@@ -142,47 +109,41 @@ export async function deleteDraft(id: string): Promise<void> {
 
 export async function countUnsyncedDrafts(filters?: { userId?: string; tenantId?: string }): Promise<number> {
   return db.drafts
-    .filter((d) =>
-      (d.syncStatus === 'pending' || d.syncStatus === 'failed')
-      // Device-owned drafts (saved before the profile resolved) count for
-      // whoever is logged in — same rule as listDrafts.
-      && (!filters?.userId || !d.userId || d.userId === filters.userId)
-      && (!filters?.tenantId || !d.tenantId || d.tenantId === filters.tenantId),
+    .filter(
+      (draft) =>
+        (draft.syncStatus === 'pending' || draft.syncStatus === 'failed') &&
+        (!filters?.userId || draft.userId === filters.userId) &&
+        (!filters?.tenantId || draft.tenantId === filters.tenantId),
     )
     .count();
 }
 
-export async function markDraftSynced(
-  id: string,
-  syncedEntityId: string,
-) {
-  return updateDraft(id, {
-    syncStatus: 'synced',
-    syncedEntityId,
-    syncError: null,
-  });
+export async function markDraftSynced(id: string, syncedEntityId: string | null) {
+  return updateDraft(id, { syncStatus: 'synced', syncedEntityId, syncError: null });
 }
 
 export async function markDraftFailed(id: string, error: string) {
-  return updateDraft(id, {
-    syncStatus: 'failed',
-    syncError: error,
-  });
+  return updateDraft(id, { syncStatus: 'failed', syncError: error });
 }
 
 export async function markDraftConflict(id: string, error: string) {
-  return updateDraft(id, {
-    syncStatus: 'conflict',
-    syncError: error,
-  });
+  return updateDraft(id, { syncStatus: 'conflict', syncError: error });
 }
 
-export async function removeSyncedDrafts() {
+export async function removeSyncedDrafts(filters?: { userId?: string; tenantId?: string }) {
+  // Never perform a cross-account cleanup on a shared device. Legacy callers
+  // without a complete identity scope simply leave synced drafts visible until
+  // a scoped cleanup call or explicit user discard.
+  if (!filters?.userId || !filters?.tenantId) return;
   const synced = await db.drafts
-    .filter((d) => d.syncStatus === 'synced')
+    .filter(
+      (draft) =>
+        draft.syncStatus === 'synced' &&
+        draft.userId === filters.userId &&
+        draft.tenantId === filters.tenantId,
+    )
     .toArray();
-
-  await Promise.all(synced.map((d) => db.drafts.delete(d.id)));
+  await Promise.all(synced.map((draft) => db.drafts.delete(draft.id)));
 }
 
 export { db };
