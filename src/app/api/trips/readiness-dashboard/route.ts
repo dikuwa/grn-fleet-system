@@ -19,18 +19,38 @@ import { transportRequests } from '@/db/schema/requests';
 import { workflowInstances } from '@/db/schema/workflows';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
 import { eq, and, desc, ne, isNull, sql } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { getSessionWorkspace, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 export async function GET(_req: NextRequest) {
   try {
     const auth = await requireRequestAuth(_req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const routeCheck = await requireDashboardAction(session, '/dashboard/trips/readiness', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
 
     const db = getDb();
     const tenantId = session.tenantId;
+    const { activeWorkspace } = await getSessionWorkspace(session);
 
-    // Fetch all non-closed trips
+    let assignedEmployeeId: string | null = null;
+    if (activeWorkspace === WorkspaceIds.DRIVER) {
+      const [employee] = await db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(
+          eq(employees.userId, session.user.id),
+          eq(employees.tenantId, tenantId),
+          eq(employees.employmentStatus, 'active'),
+        ))
+        .limit(1);
+      if (!employee) {
+        return NextResponse.json({ trips: [], summary: { total: 0, ready: 0, blocked: 0, pending: 0 }, topBlockers: [] });
+      }
+      assignedEmployeeId = employee.id;
+    }
+
     const tripRows = await db
       .select({
         id: trips.id,
@@ -50,43 +70,47 @@ export async function GET(_req: NextRequest) {
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
       })
       .from(trips)
-      .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
-      .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
-      .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+      .leftJoin(vehicles, and(eq(trips.vehicleId, vehicles.id), eq(vehicles.tenantId, tenantId)))
+      .leftJoin(transportRequests, and(eq(trips.requestId, transportRequests.id), eq(transportRequests.tenantId, tenantId)))
+      .leftJoin(employees, and(eq(transportRequests.requesterEmployeeId, employees.id), eq(employees.tenantId, tenantId)))
       .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .where(
         and(
           eq(trips.tenantId, tenantId),
           ne(trips.status, 'closed'),
+          ...(assignedEmployeeId ? [eq(vehicleAllocations.driverEmployeeId, assignedEmployeeId)] : []),
         ),
       )
       .orderBy(desc(trips.createdAt));
 
-    // For each trip, compute a lightweight readiness summary
     const enrichedTrips = await Promise.all(
       tripRows.map(async (trip) => {
         if (!trip.requestId) {
           return { ...trip, readiness: { status: 'pending', blockingCount: 0, pendingCount: 0, passedCount: 0, total: 7, label: 'No request linked', gates: [] } };
         }
 
-        // Workflow approval status
         const [workflow] = await db
           .select({ status: workflowInstances.status })
           .from(workflowInstances)
-          .where(eq(workflowInstances.requestId, trip.requestId))
+          .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
+          .where(and(
+            eq(workflowInstances.requestId, trip.requestId),
+            eq(transportRequests.tenantId, tenantId),
+          ))
           .limit(1);
 
         const requestApproved = workflow?.status === 'approved' || workflow?.status === 'completed';
 
-        // Vehicle blocking defects (unresolved)
         let blockingDefects = 0;
         if (trip.vehicleId) {
           const [defect] = await db
             .select({ count: sql<number>`count(*)` })
             .from(vehicleDefects)
+            .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
             .where(
               and(
                 eq(vehicleDefects.vehicleId, trip.vehicleId),
+                eq(vehicles.tenantId, tenantId),
                 isNull(vehicleDefects.resolvedAt),
                 eq(vehicleDefects.isBlocking, true),
               ),
@@ -94,7 +118,6 @@ export async function GET(_req: NextRequest) {
           blockingDefects = Number(defect?.count || 0);
         }
 
-        // Pre-departure inspection
         let depInspectionPassed = false;
         let depInspectionExists = false;
         if (trip.id) {
@@ -106,7 +129,9 @@ export async function GET(_req: NextRequest) {
             .from(vehicleInspections)
             .where(
               and(
+                eq(vehicleInspections.tenantId, tenantId),
                 eq(vehicleInspections.tripId, trip.id),
+                eq(vehicleInspections.vehicleId, trip.vehicleId),
                 eq(vehicleInspections.type, 'departure'),
               ),
             )
@@ -116,7 +141,6 @@ export async function GET(_req: NextRequest) {
           depInspectionPassed = dep?.overallPass === true;
         }
 
-        // Trip Authority
         const [authority] = await db
           .select({ id: tripAuthorities.id, status: tripAuthorities.status })
           .from(tripAuthorities)
@@ -128,7 +152,6 @@ export async function GET(_req: NextRequest) {
           authority?.status === 'awaiting_pre_trip_inspection' ||
           authority?.status === 'ready_for_departure';
 
-        // Driver status
         let driverIssue = false;
         if (trip.driverEmployeeId) {
           const [profile] = await db
@@ -138,9 +161,14 @@ export async function GET(_req: NextRequest) {
               verificationStatus: driverLicences.verificationStatus,
             })
             .from(driverProfiles)
+            .innerJoin(employees, eq(employees.id, driverProfiles.employeeId))
             .leftJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
-            .where(eq(driverProfiles.employeeId, trip.driverEmployeeId))
-            .orderBy(desc(driverLicences.expiryDate))
+            .where(and(
+              eq(driverProfiles.employeeId, trip.driverEmployeeId),
+              eq(employees.tenantId, tenantId),
+              eq(driverLicences.isActive, true),
+            ))
+            .orderBy(desc(driverLicences.version))
             .limit(1);
 
           if (!profile || profile.driverStatus !== 'authorised' || profile.verificationStatus !== 'verified') {
@@ -151,7 +179,6 @@ export async function GET(_req: NextRequest) {
           }
         }
 
-        // Categorise readiness
         const gates: { key: string; passed: boolean }[] = [
           { key: 'approvals', passed: requestApproved },
           { key: 'vehicle_allocated', passed: !!trip.vehicleId },
@@ -197,12 +224,10 @@ export async function GET(_req: NextRequest) {
       }),
     );
 
-    // Aggregate counts
     const readyCount = enrichedTrips.filter((t) => t.readiness.status === 'ready').length;
     const blockedCount = enrichedTrips.filter((t) => t.readiness.status === 'blocked').length;
     const pendingSortCount = enrichedTrips.filter((t) => t.readiness.status === 'pending').length;
 
-    // Top blocking gate categories
     const gateCounts = new Map<string, number>();
     for (const t of enrichedTrips) {
       for (const g of t.readiness.gates ?? []) {
