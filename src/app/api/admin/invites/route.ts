@@ -14,9 +14,9 @@ import bcrypt from 'bcryptjs';
 /**
  * GET /api/admin/invites
  *
- * Lists tenant account invitations that are genuinely still pending. Pending
- * invitations are unverified accounts with an active tenant membership.
- * Revoked/suspended accounts are deliberately excluded from the pending queue.
+ * Lists tenant account invitations only. Pending invitations are unverified
+ * accounts with an active tenant membership. The `all` view includes revoked
+ * or otherwise non-active invitation records, but never activated users.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -53,7 +53,10 @@ export async function GET(req: NextRequest) {
               eq(tenantMemberships.status, 'active'),
               eq(user.emailVerified, false),
             )
-          : eq(tenantMemberships.tenantId, session.tenantId),
+          : and(
+              eq(tenantMemberships.tenantId, session.tenantId),
+              eq(user.emailVerified, false),
+            ),
       )
       .orderBy(desc(user.createdAt))
       .limit(100);
