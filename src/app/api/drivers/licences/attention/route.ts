@@ -11,7 +11,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
 import { and, count, eq, inArray } from 'drizzle-orm';
-import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  requireAnyPermission,
+  requireDashboardAction,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 const PENDING_REVIEW = ['uploaded', 'awaiting_review', 'needs_correction', 'pending'] as const;
@@ -21,6 +25,14 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const routeCheck = await requireDashboardAction(
+      session,
+      '/dashboard/drivers/licences',
+      'view',
+    );
+    if (routeCheck instanceof NextResponse) return routeCheck;
+
     const permCheck = await requireAnyPermission(session, [
       Permissions.LICENCE_VERIFY,
       Permissions.DRIVER_MANAGE,
