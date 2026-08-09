@@ -1,4 +1,4 @@
-import { and, eq, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, eq, or, sql, type SQL } from 'drizzle-orm';
 import {
   employees,
   fuelTransactions,
@@ -213,21 +213,6 @@ export function defectScopeCondition(context: RecordScopeContext): SQL {
     where v.id = ${vehicleDefects.vehicleId} and v.tenant_id = ${context.tenantId}
   )`;
   if (context.recordScope === 'tenant') return tenantVehicle;
-
-  // An assigned Maintenance queue must also surface unassigned defects. This
-  // prevents safety work created while no Maintenance Officer was active from
-  // becoming permanently invisible after an officer is later assigned.
-  if (context.recordScope === 'assigned') {
-    return and(
-      tenantVehicle,
-      or(
-        eq(vehicleDefects.assignedToUserId, context.userId),
-        isNull(vehicleDefects.assignedToUserId),
-        eq(vehicleDefects.resolvedByUserId, context.userId),
-      )!,
-    )!;
-  }
-
   return and(
     tenantVehicle,
     or(

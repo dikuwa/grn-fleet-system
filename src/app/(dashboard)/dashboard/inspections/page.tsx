@@ -14,9 +14,8 @@ import { ChevronLeft, ChevronRight, ClipboardCheck, Database } from 'lucide-reac
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
-import { getSessionRoleNames, hasPermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
 import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
-import { Permissions } from '@/lib/permissions';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { numericCount } from '@/lib/statistics';
@@ -144,9 +143,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
 
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
-  const canCreate =
-    canPerformDashboardAction('/dashboard/inspections/new', roleNames, 'create') &&
-    await hasPermission(session, Permissions.INSPECTION_PERFORM);
+  const canCreate = canPerformDashboardAction('/dashboard/inspections/new', roleNames, 'create');
   let result: Awaited<ReturnType<typeof fetchInspections>>;
   try {
     result = await fetchInspections(sp, session.tenantId, session.user.id, access.recordScope);
@@ -173,7 +170,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-      <PageHeader title="Vehicle Inspections" description={canCreate ? 'Perform and review official vehicle inspections' : 'View official inspection records within your assigned scope'}>
+      <PageHeader title="Vehicle Inspections" description={canCreate ? 'Schedule, perform and review official vehicle inspections' : 'View official inspection records within your assigned scope'}>
         {canCreate && (
           <>
             <Button variant="secondary" size="sm" asChild><Link href="/dashboard/inspections/new?type=departure"><ClipboardCheck className="h-4 w-4" aria-hidden="true" /> Departure Inspection</Link></Button>
@@ -205,6 +202,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
             <div className="w-full sm:w-[180px]">
               <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
               <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
+                <option value="in_progress">In Progress</option>
                 <option value="completed">Completed</option>
                 <option value="failed">Failed</option>
               </StyledSelect>
@@ -229,7 +227,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-ink-950 text-sm font-semibold capitalize">{inspection.type} Inspection</p>
-                    <Badge variant={inspection.status === 'completed' ? 'success' : 'error'} size="sm">{inspection.status?.replace(/_/g, ' ')}</Badge>
+                    <Badge variant={inspection.status === 'completed' ? 'success' : inspection.status === 'failed' ? 'error' : 'pending'} size="sm">{inspection.status?.replace(/_/g, ' ')}</Badge>
                     {inspection.overallPass != null && <Badge variant={inspection.overallPass ? 'success' : 'error'} size="sm">{inspection.overallPass ? 'Pass' : 'Fail'}</Badge>}
                   </div>
                   <div className="text-ink-500 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
