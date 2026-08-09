@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { programmes } from '@/db/schema/programmes';
+import { employees } from '@/db/schema/people';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, sql, type SQL } from 'drizzle-orm';
@@ -265,7 +266,23 @@ export async function POST(
           });
         }
       } else {
-        const recipientUserId = programme.ownerUserId || programme.createdByUserId;
+        let recipientUserId = programme.ownerUserId;
+        if (!recipientUserId && programme.ownerEmployeeId) {
+          const [ownerEmployee] = await db
+            .select({ userId: employees.userId })
+            .from(employees)
+            .where(
+              and(
+                eq(employees.id, programme.ownerEmployeeId),
+                eq(employees.tenantId, tenantId),
+              ),
+            )
+            .limit(1);
+          recipientUserId = ownerEmployee?.userId ?? null;
+        }
+        if (!recipientUserId && !programme.ownerUserId && !programme.ownerEmployeeId) {
+          recipientUserId = programme.createdByUserId;
+        }
         if (recipientUserId) {
           await createScopedNotifications({
             tenantId,
