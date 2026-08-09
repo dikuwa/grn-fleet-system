@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { getDb } from '@/db';
+import { user } from '@/db/schema/better-auth';
 import { notificationDeliveries, notifications } from '@/db/schema/notifications';
 import { employees } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
@@ -112,7 +113,20 @@ export async function POST(
           ),
         )
         .limit(1);
-      recipientEmail = employee?.email ?? null;
+      recipientEmail = employee?.email?.trim() || null;
+
+      // Not every tenant login account has a Staff record (for example some
+      // administrative/service accounts). The notification itself is already
+      // tenant-scoped above, so it is safe to fall back to the Better Auth
+      // account email for the same recipient user id.
+      if (!recipientEmail) {
+        const [recipientUser] = await db
+          .select({ email: user.email })
+          .from(user)
+          .where(eq(user.id, delivery.notification.recipientUserId))
+          .limit(1);
+        recipientEmail = recipientUser?.email?.trim() || null;
+      }
     }
 
     if (!recipientEmail) {
