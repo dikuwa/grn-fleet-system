@@ -488,107 +488,129 @@ export async function POST(
     })),
   };
 
-  await runAtomicMutations((tx) => {
-    const mutations: any[] = [
-      // A returned/rejected workflow should already be cancelled. Cancel any
-      // stale active instance defensively so resubmission always starts a new chain.
-      tx.update(workflowInstances)
-        .set({ status: 'cancelled', updatedAt: correctedAt })
-        .where(and(eq(workflowInstances.requestId, id), eq(workflowInstances.status, 'active'))),
-      tx.update(transportRequests)
-        .set({
-          purpose,
-          scope,
-          programmeId,
-          specialAuthorityRequired,
-          specialAuthorityReason,
-          driverPreference: body.driverPreference ?? existing.driverPreference,
-          preferredDriverEmployeeId: driverEmployeeIds[0] || null,
-          totalAuthorisedKilometres: totalKm || null,
-          workflowInstanceId: null,
-          version: nextVersion,
-          updatedAt: correctedAt,
-        })
-        .where(and(
-          eq(transportRequests.id, id),
-          eq(transportRequests.tenantId, session.tenantId),
-          eq(transportRequests.status, existing.status),
-          eq(transportRequests.version, existing.version),
-        )),
-      tx.delete(requestActivities).where(eq(requestActivities.requestId, id)),
-      tx.delete(requestPassengers).where(eq(requestPassengers.requestId, id)),
-      tx.delete(requestDrivers).where(eq(requestDrivers.requestId, id)),
-      tx.delete(requestRoutes).where(eq(requestRoutes.requestId, id)),
-    ];
+  try {
+    await runAtomicMutations((tx) => {
+      const mutations: any[] = [
+        // A returned/rejected workflow should already be cancelled. This
+        // mutation is part of the same transaction as the optimistic claim,
+        // so a stale editor cannot cancel a workflow that belongs to a newer
+        // request version.
+        tx.update(workflowInstances)
+          .set({ status: 'cancelled', updatedAt: correctedAt })
+          .where(and(eq(workflowInstances.requestId, id), eq(workflowInstances.status, 'active'))),
+        // Claim the exact request version before touching dependent rows. A
+        // zero-row claim deliberately throws inside the transaction, causing
+        // Neon batch/local Postgres to roll back the workflow cancellation and
+        // every child delete/insert below.
+        tx.execute(sql`
+          WITH request_claim AS (
+            UPDATE transport_requests
+            SET
+              purpose = ${purpose},
+              scope = ${scope},
+              programme_id = ${programmeId}::uuid,
+              special_authority_required = ${specialAuthorityRequired},
+              special_authority_reason = ${specialAuthorityReason},
+              driver_preference = ${body.driverPreference ?? existing.driverPreference},
+              preferred_driver_employee_id = ${driverEmployeeIds[0] || null}::uuid,
+              total_authorised_kilometres = ${totalKm || null},
+              workflow_instance_id = NULL,
+              version = ${nextVersion},
+              updated_at = ${correctedAt}
+            WHERE id = ${id}::uuid
+              AND tenant_id = ${session.tenantId}::uuid
+              AND status = ${existing.status}
+              AND version = ${existing.version}
+            RETURNING id
+          )
+          SELECT CASE
+            WHEN (SELECT count(*) FROM request_claim) = 1 THEN 1
+            ELSE CAST('stale_request_resubmit' AS integer)
+          END AS committed
+        `),
+        tx.delete(requestActivities).where(eq(requestActivities.requestId, id)),
+        tx.delete(requestPassengers).where(eq(requestPassengers.requestId, id)),
+        tx.delete(requestDrivers).where(eq(requestDrivers.requestId, id)),
+        tx.delete(requestRoutes).where(eq(requestRoutes.requestId, id)),
+      ];
 
-    if (pendingRevision) {
-      mutations.push(
-        tx.update(requestRevisions)
-          .set({ reason, changedFields })
-          .where(eq(requestRevisions.id, pendingRevision.id)),
-      );
-    } else {
-      mutations.push(
-        tx.insert(requestRevisions).values({
+      if (pendingRevision) {
+        mutations.push(
+          tx.update(requestRevisions)
+            .set({ reason, changedFields })
+            .where(eq(requestRevisions.id, pendingRevision.id)),
+        );
+      } else {
+        mutations.push(
+          tx.insert(requestRevisions).values({
+            requestId: id,
+            revision: nextRevision,
+            reason,
+            createdByUserId: session.user.id,
+            changedFields,
+            data: snapshot,
+          }),
+        );
+      }
+
+      if (activities.length > 0) {
+        mutations.push(tx.insert(requestActivities).values(activities.map((activity) => ({
           requestId: id,
-          revision: nextRevision,
-          reason,
-          createdByUserId: session.user.id,
-          changedFields,
-          data: snapshot,
-        }),
+          title: activity.title!.trim(),
+          description: activity.description?.trim() || null,
+          venue: activity.venue?.trim() || null,
+          startDate: new Date(activity.startDate!),
+          endDate: new Date(activity.endDate!),
+          estimatedKilometres: Number(activity.estimatedKilometres || 0) || null,
+        }))));
+      }
+      if (passengers.length > 0) {
+        mutations.push(tx.insert(requestPassengers).values(passengers.map((passenger) => ({
+          requestId: id,
+          employeeId: passenger.type === 'employee' ? passenger.employeeId || null : null,
+          externalName: passenger.type === 'external' ? passenger.externalName?.trim() || null : null,
+          externalIdReference: passenger.type === 'external' ? passenger.externalIdReference?.trim() || null : null,
+          externalOrganisation: passenger.type === 'external' ? passenger.externalOrganisation?.trim() || null : null,
+          externalPhone: passenger.type === 'external' ? passenger.externalPhone?.trim() || null : null,
+          externalEmail: passenger.type === 'external' ? passenger.externalEmail?.trim() || null : null,
+          travellerRole: passenger.travellerRole?.trim() || 'passenger',
+          reasonForTravel: passenger.reasonForTravel?.trim() || purpose,
+          status: 'confirmed',
+        }))));
+      }
+      if (drivers.length > 0) {
+        mutations.push(tx.insert(requestDrivers).values(drivers.map((driver, index) => ({
+          requestId: id,
+          employeeId: driver.employeeId!,
+          driverType: 'nominated',
+          sortOrder: driver.sortOrder || index + 1,
+        }))));
+      }
+      if (routes.length > 0) {
+        mutations.push(tx.insert(requestRoutes).values(routes.map((route) => ({
+          requestId: id,
+          originName: route.originName!.trim(),
+          destinationName: route.destinationName!.trim(),
+          originPlaceId: route.originPlaceId || null,
+          destinationPlaceId: route.destinationPlaceId || null,
+          originCoordinates: route.originCoordinates || null,
+          destinationCoordinates: route.destinationCoordinates || null,
+          totalKilometres: Number(route.estimatedKm || 0),
+          additionalKilometres: 0,
+          isVerified: false,
+        }))));
+      }
+      return mutations;
+    });
+  } catch (error) {
+    if (String(error).includes('stale_request_resubmit')) {
+      return NextResponse.json(
+        { error: 'This request changed while you were editing it. Refresh and review the latest version before resubmitting.' },
+        { status: 409 },
       );
     }
-
-    if (activities.length > 0) {
-      mutations.push(tx.insert(requestActivities).values(activities.map((activity) => ({
-        requestId: id,
-        title: activity.title!.trim(),
-        description: activity.description?.trim() || null,
-        venue: activity.venue?.trim() || null,
-        startDate: new Date(activity.startDate!),
-        endDate: new Date(activity.endDate!),
-        estimatedKilometres: Number(activity.estimatedKilometres || 0) || null,
-      }))));
-    }
-    if (passengers.length > 0) {
-      mutations.push(tx.insert(requestPassengers).values(passengers.map((passenger) => ({
-        requestId: id,
-        employeeId: passenger.type === 'employee' ? passenger.employeeId || null : null,
-        externalName: passenger.type === 'external' ? passenger.externalName?.trim() || null : null,
-        externalIdReference: passenger.type === 'external' ? passenger.externalIdReference?.trim() || null : null,
-        externalOrganisation: passenger.type === 'external' ? passenger.externalOrganisation?.trim() || null : null,
-        externalPhone: passenger.type === 'external' ? passenger.externalPhone?.trim() || null : null,
-        externalEmail: passenger.type === 'external' ? passenger.externalEmail?.trim() || null : null,
-        travellerRole: passenger.travellerRole?.trim() || 'passenger',
-        reasonForTravel: passenger.reasonForTravel?.trim() || purpose,
-        status: 'confirmed',
-      }))));
-    }
-    if (drivers.length > 0) {
-      mutations.push(tx.insert(requestDrivers).values(drivers.map((driver, index) => ({
-        requestId: id,
-        employeeId: driver.employeeId!,
-        driverType: 'nominated',
-        sortOrder: driver.sortOrder || index + 1,
-      }))));
-    }
-    if (routes.length > 0) {
-      mutations.push(tx.insert(requestRoutes).values(routes.map((route) => ({
-        requestId: id,
-        originName: route.originName!.trim(),
-        destinationName: route.destinationName!.trim(),
-        originPlaceId: route.originPlaceId || null,
-        destinationPlaceId: route.destinationPlaceId || null,
-        originCoordinates: route.originCoordinates || null,
-        destinationCoordinates: route.destinationCoordinates || null,
-        totalKilometres: Number(route.estimatedKm || 0),
-        additionalKilometres: 0,
-        isVerified: false,
-      }))));
-    }
-    return mutations;
-  });
+    throw error;
+  }
 
   const corrected = await loadEditableRequest(id, session.tenantId);
   if (!corrected || corrected.request.version !== nextVersion || corrected.request.status !== existing.status) {
