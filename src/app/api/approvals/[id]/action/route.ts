@@ -10,6 +10,7 @@ import {
   type WorkflowActionResult,
 } from '@/lib/workflow-engine';
 import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
+import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
   switch (actionType) {
@@ -99,27 +100,38 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         ? semanticPositiveResult(stepActionType)
         : (actionType as WorkflowActionResult);
 
-    // Supervisor decisions use a race-safe single-statement transition. Later
-    // operational/release/authorisation steps retain their specialised engine
-    // side effects and are audited in their own role passes.
-    const result =
-      stepActionType === 'supervisor_approve'
-        ? await processSupervisorDecisionAtomic({
-            instanceId: id,
-            result: semanticResult,
-            comment: typeof comment === 'string' ? comment : undefined,
-            session,
-          })
-        : await engine.processAction(
-            {
-              instanceId: id,
-              action: stepActionType as WorkflowActionType,
-              result: semanticResult,
-              comment: typeof comment === 'string' ? comment : undefined,
-              actorUserId: session.user.id,
-            },
-            session,
-          );
+    let result;
+    if (stepActionType === 'supervisor_approve') {
+      result = await processSupervisorDecisionAtomic({
+        instanceId: id,
+        result: semanticResult,
+        comment: typeof comment === 'string' ? comment : undefined,
+        session,
+      });
+    } else if (stepActionType === 'transport_review' || stepActionType === 'release') {
+      result = await processAtomicWorkflowDecision({
+        instanceId: id,
+        action: stepActionType as WorkflowActionType,
+        result: semanticResult,
+        comment: typeof comment === 'string' ? comment : undefined,
+        session,
+      });
+    } else {
+      // Authorisation and driver acknowledgement have additional domain side
+      // effects (Trip Authority provisioning / driver acceptance), so they stay
+      // on the specialised engine path until those writes are committed with
+      // their workflow transition as one unit.
+      result = await engine.processAction(
+        {
+          instanceId: id,
+          action: stepActionType as WorkflowActionType,
+          result: semanticResult,
+          comment: typeof comment === 'string' ? comment : undefined,
+          actorUserId: session.user.id,
+        },
+        session,
+      );
+    }
 
     if (!result.ok) return result.error;
 
