@@ -153,6 +153,17 @@ export function resolveActiveWorkspace(
     if (stored) return stored.id;
   }
 
+  // Control Administrative Officers have two legitimate operational surfaces:
+  // their core release decisions live in Approvals, while official vehicle
+  // inspections are performed from the dedicated Inspections workspace. Keep
+  // Approvals as the default unless they explicitly switch to Inspections.
+  if (
+    roleNames.includes(R.RELEASE_OFFICER) &&
+    eligible.some((workspace) => workspace.id === WorkspaceIds.APPROVER)
+  ) {
+    return WorkspaceIds.APPROVER;
+  }
+
   const primary = [...eligible]
     .filter((workspace) => workspace.id !== WorkspaceIds.PERSONAL)
     .sort((a, b) => b.order - a.order)[0];
