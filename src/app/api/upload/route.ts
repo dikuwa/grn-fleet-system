@@ -17,6 +17,7 @@ import { computeSha256FromBytes, buildDedupKey, findDuplicateKeys } from '@/lib/
 // ---------------------------------------------------------------------------
 
 const ALLOWED_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_DOCUMENT_TYPES] as string[];
+const ALLOWED_IMAGE_TYPE_SET = new Set<string>(ALLOWED_IMAGE_TYPES);
 
 // ---------------------------------------------------------------------------
 // POST — Upload a file (with optional SHA-256 dedup)
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null;
     const category = (formData.get('category') as UploadCategory) || 'document';
     const requestedPublic = formData.get('public') === 'true';
-    const clientSha256 = (formData.get('sha256') as string | null) || null;
+    const clientSha256 = ((formData.get('sha256') as string | null) || '').trim().toLowerCase() || null;
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided. Use field name "file".' }, { status: 400 });
@@ -88,7 +89,7 @@ export async function POST(request: NextRequest) {
         { status: 403 },
       );
     }
-    if (category === 'avatar' && !ALLOWED_IMAGE_TYPES.includes(file.type as never)) {
+    if (category === 'avatar' && !ALLOWED_IMAGE_TYPE_SET.has(file.type)) {
       return NextResponse.json(
         { error: 'Avatar uploads must be an allowed image type.' },
         { status: 415 },
@@ -99,11 +100,20 @@ export async function POST(request: NextRequest) {
     const tenantPrefix = `tenant/${session.tenantId}`;
     const path = CATEGORY_PATHS[category];
 
-    // Compute SHA-256 if not provided by client
+    // Never trust a client-provided digest for deduplication. A forged digest
+    // could otherwise make the API reveal/reuse the object key of unrelated
+    // tenant content. Compute the digest server-side and treat a supplied hash
+    // only as an integrity assertion that must match exactly.
     const buffer = Buffer.from(await file.arrayBuffer());
-    const sha256 = clientSha256 || (await computeSha256FromBytes(new Uint8Array(buffer)));
+    const sha256 = await computeSha256FromBytes(new Uint8Array(buffer));
+    if (clientSha256 && clientSha256 !== sha256) {
+      return NextResponse.json(
+        { error: 'File integrity check failed: SHA-256 does not match the uploaded bytes.' },
+        { status: 400 },
+      );
+    }
 
-    // Check for existing duplicate using hash prefix — skip re-upload if found
+    // Check for existing duplicate using the verified hash prefix — skip re-upload if found
     const existingKeys = await findDuplicateKeys(tenantPrefix, path, sha256);
     if (existingKeys.length > 0) {
       return NextResponse.json({
@@ -113,6 +123,7 @@ export async function POST(request: NextRequest) {
           size: file.size,
           category,
           originalName: file.name,
+          sha256,
           deduplicated: true,
         },
       });
