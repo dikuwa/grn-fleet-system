@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { regions } from '@/db/schema/fleet';
-import { auditEvents } from '@/db/schema/audit';
 import { notifications } from '@/db/schema/notifications';
 import { eq, and, like, or, ne, type SQL } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 function databaseCode(error: unknown) {
   if (!error || typeof error !== 'object') return null;
@@ -68,16 +68,15 @@ export async function POST(req: NextRequest) {
       sortOrder: Number.isFinite(Number(body.sortOrder)) ? Number(body.sortOrder) : 0,
     }).returning();
 
-    await db.insert(auditEvents).values({
+    await recordAuditEvent({
       tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'region_created',
       actorUserId: session.user.id,
+      eventType: 'region_created',
       action: 'create',
       entityType: 'region',
       entityId: region.id,
+      after: { name: region.name, code: region.code, isActive: region.isActive },
       summary: `Region created: ${region.name} (${region.code})`,
-      sourceChannel: 'web',
     });
     await db.insert(notifications).values({
       tenantId: session.tenantId,
@@ -131,18 +130,16 @@ export async function PATCH(req: NextRequest) {
       updatedAt: new Date(),
     }).where(and(eq(regions.id, existing.id), eq(regions.tenantId, session.tenantId))).returning();
 
-    await db.insert(auditEvents).values({
+    await recordAuditEvent({
       tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'region_updated',
       actorUserId: session.user.id,
+      eventType: 'region_updated',
       action: 'update',
       entityType: 'region',
       entityId: updated.id,
-      summary: `Region updated: ${updated.name} (${updated.code})`,
-      sourceChannel: 'web',
       before: { name: existing.name, code: existing.code, isActive: existing.isActive },
       after: { name: updated.name, code: updated.code, isActive: updated.isActive },
+      summary: `Region updated: ${updated.name} (${updated.code})`,
     });
     return NextResponse.json({ region: updated });
   } catch (error) {
@@ -178,20 +175,15 @@ export async function DELETE(req: NextRequest) {
       throw error;
     }
 
-    // Record success only after the delete has actually succeeded. The audit
-    // event intentionally keeps a tombstone summary while its entity id is not
-    // used as a live navigation target.
-    await db.insert(auditEvents).values({
+    await recordAuditEvent({
       tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'region_deleted',
       actorUserId: session.user.id,
+      eventType: 'region_deleted',
       action: 'delete',
       entityType: 'region',
       entityId: null,
-      summary: `Region deleted: ${existing.name} (${existing.code})`,
-      sourceChannel: 'web',
       before: { id: existing.id, name: existing.name, code: existing.code },
+      summary: `Region deleted: ${existing.name} (${existing.code})`,
     });
     await db.insert(notifications).values({
       tenantId: session.tenantId,
