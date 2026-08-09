@@ -62,8 +62,6 @@ function normaliseLegacyProgress(progress: {
     };
   }
 
-  // Previous setup versions used 11 steps. Only steps that map to persisted,
-  // real configuration are carried forward.
   const mapped = new Set<number>();
   if (completed.includes(0)) mapped.add(0);
   if (completed.includes(1)) mapped.add(1);
@@ -175,11 +173,23 @@ export async function POST(request: NextRequest) {
     const now = new Date();
     const completedSteps = [...new Set(body.completedSteps)].sort((a, b) => a - b);
 
-    const [tenant] = await db
-      .select({ id: tenants.id, lifecycleStatus: tenants.lifecycleStatus })
-      .from(tenants)
-      .where(eq(tenants.id, tenantId))
-      .limit(1);
+    const [[tenant], [storedProgress]] = await Promise.all([
+      db
+        .select({ id: tenants.id, lifecycleStatus: tenants.lifecycleStatus })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1),
+      db
+        .select({
+          id: tenantSetupProgress.id,
+          currentStep: tenantSetupProgress.currentStep,
+          completedSteps: tenantSetupProgress.completedSteps,
+          totalSteps: tenantSetupProgress.totalSteps,
+        })
+        .from(tenantSetupProgress)
+        .where(eq(tenantSetupProgress.tenantId, tenantId))
+        .limit(1),
+    ]);
     if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
     if (body.action === 'complete') {
@@ -192,9 +202,17 @@ export async function POST(request: NextRequest) {
           { status: 409 },
         );
       }
-      if (!REQUIRED_SETUP_STEPS.every((step) => completedSteps.includes(step))) {
+      if (!storedProgress) {
+        return NextResponse.json({ error: 'Save the required setup steps before submitting.' }, { status: 409 });
+      }
+      const persisted = normaliseLegacyProgress({
+        currentStep: storedProgress.currentStep,
+        completedSteps: storedProgress.completedSteps,
+        totalSteps: storedProgress.totalSteps,
+      });
+      if (!REQUIRED_SETUP_STEPS.every((step) => persisted.completedSteps.includes(step))) {
         return NextResponse.json(
-          { error: 'Complete Organisation, Departments, Offices and Branding before submitting setup.' },
+          { error: 'Complete and save Organisation, Departments, Offices and Branding before submitting setup.' },
           { status: 409 },
         );
       }
@@ -211,29 +229,9 @@ export async function POST(request: NextRequest) {
       }
 
       await db.transaction(async (tx) => {
-        const [existing] = await tx
-          .select({ id: tenantSetupProgress.id })
-          .from(tenantSetupProgress)
-          .where(eq(tenantSetupProgress.tenantId, tenantId))
-          .limit(1);
-
-        if (existing) {
-          await tx
-            .update(tenantSetupProgress)
-            .set({
-              currentStep: TOTAL_STEPS - 1,
-              completedSteps: [...REQUIRED_SETUP_STEPS, TOTAL_STEPS - 1],
-              totalSteps: TOTAL_STEPS,
-              stepData: body.stepData,
-              isReady: true,
-              readinessScore: 100,
-              lastSavedAt: now,
-              updatedAt: now,
-            })
-            .where(eq(tenantSetupProgress.id, existing.id));
-        } else {
-          await tx.insert(tenantSetupProgress).values({
-            tenantId,
+        await tx
+          .update(tenantSetupProgress)
+          .set({
             currentStep: TOTAL_STEPS - 1,
             completedSteps: [...REQUIRED_SETUP_STEPS, TOTAL_STEPS - 1],
             totalSteps: TOTAL_STEPS,
@@ -241,8 +239,9 @@ export async function POST(request: NextRequest) {
             isReady: true,
             readinessScore: 100,
             lastSavedAt: now,
-          });
-        }
+            updatedAt: now,
+          })
+          .where(eq(tenantSetupProgress.id, storedProgress.id));
 
         await tx
           .update(tenants)
@@ -269,22 +268,14 @@ export async function POST(request: NextRequest) {
       });
 
       await seedDefaultIncidentCategories(tenantId, session.user.id).catch(() => undefined);
-      return NextResponse.json({
-        success: true,
-        data: { lifecycleStatus: 'PENDING_PLATFORM_REVIEW' },
-      });
+      return NextResponse.json({ success: true, data: { lifecycleStatus: 'PENDING_PLATFORM_REVIEW' } });
     }
 
-    const [existing] = await db
-      .select({ id: tenantSetupProgress.id })
-      .from(tenantSetupProgress)
-      .where(eq(tenantSetupProgress.tenantId, tenantId))
-      .limit(1);
     const isReady = REQUIRED_SETUP_STEPS.every((step) => completedSteps.includes(step));
     const readinessScore = Math.round((completedSteps.length / (TOTAL_STEPS - 1)) * 100);
 
     await db.transaction(async (tx) => {
-      if (existing) {
+      if (storedProgress) {
         await tx
           .update(tenantSetupProgress)
           .set({
@@ -297,7 +288,7 @@ export async function POST(request: NextRequest) {
             readinessScore: Math.min(100, readinessScore),
             updatedAt: now,
           })
-          .where(eq(tenantSetupProgress.id, existing.id));
+          .where(eq(tenantSetupProgress.id, storedProgress.id));
       } else {
         await tx.insert(tenantSetupProgress).values({
           tenantId,
