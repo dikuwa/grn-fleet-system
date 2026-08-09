@@ -6,6 +6,7 @@ import {
   boolean,
   integer,
   jsonb,
+  index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
@@ -55,22 +56,44 @@ export const workflowSteps = pgTable('workflow_steps', {
 });
 
 /**
- * Workflow instances (created per request submission)
+ * Workflow instances (created per request submission).
+ *
+ * The current resolved assignment belongs to the instance, not the reusable
+ * workflow definition. Acting/delegated/conflict reassignment for one request
+ * must therefore never mutate workflow_steps and accidentally affect other
+ * workflow instances using the same definition.
  */
-export const workflowInstances = pgTable('workflow_instances', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  requestId: uuid('request_id')
-    .notNull()
-    .references(() => transportRequests.id, { onDelete: 'cascade' }),
-  definitionId: uuid('definition_id')
-    .notNull()
-    .references(() => workflowDefinitions.id),
-  definitionVersion: integer('definition_version').notNull(),
-  currentStepOrder: integer('current_step_order').notNull().default(0),
-  status: text('status').notNull().default('active'), // active, completed, cancelled, overridden
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const workflowInstances = pgTable(
+  'workflow_instances',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requestId: uuid('request_id')
+      .notNull()
+      .references(() => transportRequests.id, { onDelete: 'cascade' }),
+    definitionId: uuid('definition_id')
+      .notNull()
+      .references(() => workflowDefinitions.id),
+    definitionVersion: integer('definition_version').notNull(),
+    currentStepOrder: integer('current_step_order').notNull().default(0),
+    status: text('status').notNull().default('active'), // active, completed, cancelled, overridden
+    currentAssignedUserId: text('current_assigned_user_id'),
+    currentAssignedEmployeeId: uuid('current_assigned_employee_id'),
+    currentRoleAssignmentId: uuid('current_role_assignment_id'),
+    currentAssignmentIsActing: boolean('current_assignment_is_acting').notNull().default(false),
+    currentAssignmentSource: text('current_assignment_source'),
+    currentAssignmentMetadata: jsonb('current_assignment_metadata')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('workflow_instances_current_assigned_user_idx')
+      .on(table.currentAssignedUserId)
+      .where(sql`${table.status} = 'active' AND ${table.currentAssignedUserId} IS NOT NULL`),
+  ],
+);
 
 /**
  * Workflow actions (approve, reject, return, release, authorise, etc.)
