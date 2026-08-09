@@ -21,12 +21,29 @@ import { eq, and, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
+const CLOSURE_DECISIONS = ['closed', 'requires_correction', 'follow_up'] as const;
+type ClosureDecision = (typeof CLOSURE_DECISIONS)[number];
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body: any = await req.json();
-    const { decision, reviewNotes } = body;
+    const decision: ClosureDecision = body.decision || 'closed';
+    const reviewNotes = typeof body.reviewNotes === 'string' ? body.reviewNotes.trim() : '';
+
+    if (!CLOSURE_DECISIONS.includes(decision)) {
+      return NextResponse.json(
+        { error: 'decision must be: closed, requires_correction, or follow_up' },
+        { status: 400 },
+      );
+    }
+    if (reviewNotes.length > 2000) {
+      return NextResponse.json({ error: 'Review notes must be 2000 characters or fewer' }, { status: 422 });
+    }
+    if ((decision === 'requires_correction' || decision === 'follow_up') && !reviewNotes) {
+      return NextResponse.json({ error: 'Review notes are required when returning a trip for correction or follow-up' }, { status: 422 });
+    }
 
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
@@ -97,17 +114,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           tenantSequence: Date.now(),
           eventType: 'trip_reconciliation_returned',
           actorUserId: userId,
-          action: 'request_correction',
+          action: decision === 'follow_up' ? 'request_follow_up' : 'request_correction',
           entityType: 'trip',
           entityId: id,
-          summary: 'Trip reconciliation returned for correction',
-          reason: reviewNotes || 'Correction required',
+          summary: decision === 'follow_up'
+            ? 'Trip reconciliation marked for follow-up'
+            : 'Trip reconciliation returned for correction',
+          reason: reviewNotes,
           sourceChannel: 'web',
         }),
       ]);
       const [updatedTrip] = await db.select().from(trips)
         .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId))).limit(1);
-      return NextResponse.json({ trip: updatedTrip, correctionRequired: true });
+      return NextResponse.json({
+        trip: updatedTrip,
+        correctionRequired: decision === 'requires_correction',
+        followUpRequired: decision === 'follow_up',
+      });
     }
 
     const [arrivalInspection] = await db.select({ id: vehicleInspections.id })
@@ -115,12 +138,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       .where(and(
         eq(vehicleInspections.tripId, id),
         eq(vehicleInspections.tenantId, tenantId),
+        eq(vehicleInspections.vehicleId, trip.vehicleId),
         eq(vehicleInspections.type, 'return'),
         inArray(vehicleInspections.status, ['completed', 'failed']),
       ))
       .limit(1);
     if (!arrivalInspection) {
-      return NextResponse.json({ error: 'A submitted arrival inspection is required before reconciliation can close' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'A submitted arrival inspection for the currently allocated vehicle is required before reconciliation can close' },
+        { status: 409 },
+      );
     }
 
     const [outstandingFuel] = await db
@@ -246,7 +273,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         totalFuelCost: totalFuelCost ? String(totalFuelCost) : null,
         reviewNotes: reviewNotes || null,
         closedByUserId: userId,
-        decision: decision || 'closed',
+        decision,
       }),
       // Preserve the canonical authority transition sequence inside this one transaction.
       tx.update(tripAuthorities)
