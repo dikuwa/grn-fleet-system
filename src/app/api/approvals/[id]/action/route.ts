@@ -12,6 +12,7 @@ import {
 import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 import { processAuthorisationDecision } from '@/lib/authorisation-decision';
+import { processDriverAcknowledgement } from '@/lib/driver-acknowledgement';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
   switch (actionType) {
@@ -124,18 +125,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         comment: typeof comment === 'string' ? comment : undefined,
         session,
       });
-    } else {
-      // Driver acknowledgement still has its own trip + authority acceptance
-      // side effects and is audited separately from approval roles.
-      result = await engine.processAction(
-        {
-          instanceId: id,
-          action: stepActionType as WorkflowActionType,
-          result: semanticResult,
-          comment: typeof comment === 'string' ? comment : undefined,
-          actorUserId: session.user.id,
-        },
+    } else if (stepActionType === 'acknowledge') {
+      result = await processDriverAcknowledgement({
+        instanceId: id,
+        result: semanticResult,
+        comment: typeof comment === 'string' ? comment : undefined,
         session,
+      });
+    } else {
+      return NextResponse.json(
+        { error: `Unsupported workflow action: ${stepActionType}` },
+        { status: 400 },
       );
     }
 

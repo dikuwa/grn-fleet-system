@@ -34,6 +34,7 @@ export function ApprovalActionPanel({
   const router = useRouter();
   const { toast } = useToast();
   const primary = getApprovalPrimaryAction(actionType);
+  const isAcknowledgement = actionType === 'acknowledge';
   const [selected, setSelected] = useState<DecisionResult | null>(null);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -65,8 +66,8 @@ export function ApprovalActionPanel({
             ? 'returned for correction'
             : 'rejected';
       toast({
-        title: `Request ${label}`,
-        description: result.data?.message || `The request was ${label}.`,
+        title: isAcknowledgement ? 'Trip acknowledged' : `Request ${label}`,
+        description: result.data?.message || (isAcknowledgement ? 'Your assigned trip was acknowledged.' : `The request was ${label}.`),
         variant: selected === 'rejected' ? 'error' : 'success',
       });
       router.push(`/dashboard/approvals/${instanceId}`);
@@ -74,12 +75,12 @@ export function ApprovalActionPanel({
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : 'An unexpected error occurred';
       setError(message);
-      toast({ title: 'Action failed', description: message, variant: 'error' });
+      toast({ title: isAcknowledgement ? 'Acknowledgement failed' : 'Action failed', description: message, variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [comment, instanceId, primary.past, router, selected, stepRequiresComment, toast]);
+  }, [comment, instanceId, isAcknowledgement, primary.past, router, selected, stepRequiresComment, toast]);
 
-  const options: Array<{
+  const decisionOptions: Array<{
     value: DecisionResult;
     label: string;
     description: string;
@@ -89,9 +90,11 @@ export function ApprovalActionPanel({
     {
       value: 'approved',
       label: primary.label,
-      description: isFinalStage
-        ? `Complete the final ${stageLabel.toLocaleLowerCase()} decision.`
-        : `Complete this stage and send the request to ${nextStageLabel || 'the next approver'}.`,
+      description: isAcknowledgement
+        ? 'Confirm that you have reviewed and accept this authorised trip and vehicle assignment.'
+        : isFinalStage
+          ? `Complete the final ${stageLabel.toLocaleLowerCase()} decision.`
+          : `Complete this stage and send the request to ${nextStageLabel || 'the next approver'}.`,
       icon: <CheckCircle2 className="h-5 w-5" aria-hidden="true" />,
       tone: 'border-status-success-bg bg-status-success-bg/25 text-status-success-text',
     },
@@ -110,11 +113,12 @@ export function ApprovalActionPanel({
       tone: 'border-status-error-bg bg-status-error-bg/25 text-status-error-text',
     },
   ];
+  const options = isAcknowledgement ? decisionOptions.slice(0, 1) : decisionOptions;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Your Decision</CardTitle>
+        <CardTitle>{isAcknowledgement ? 'Trip Acknowledgement' : 'Your Decision'}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         <section
@@ -122,7 +126,7 @@ export function ApprovalActionPanel({
           aria-labelledby="decision-context-title"
         >
           <h2 id="decision-context-title" className="text-ink-950 text-sm font-semibold">
-            What you are deciding
+            {isAcknowledgement ? 'What you are acknowledging' : 'What you are deciding'}
           </h2>
           <p className="overflow-wrap-anywhere text-ink-950 mt-2 text-sm font-medium">
             {requestTitle}
@@ -131,15 +135,17 @@ export function ApprovalActionPanel({
             {requestReference} · {stageLabel}
           </p>
           <p className="text-ink-700 mt-3 text-sm">
-            {isFinalStage
-              ? `This is the final workflow stage. ${primary.label} will complete the approval path.`
-              : `${primary.label} will advance the request to ${nextStageLabel || 'the next configured stage'}.`}
+            {isAcknowledgement
+              ? 'Acknowledging confirms that you have reviewed and accept the authorised trip and assigned vehicle. If the assignment is incorrect or unsafe, do not acknowledge it; contact Transport Administration or report the relevant issue through Driver Self-Service.'
+              : isFinalStage
+                ? `This is the final workflow stage. ${primary.label} will complete the approval path.`
+                : `${primary.label} will advance the request to ${nextStageLabel || 'the next configured stage'}.`}
           </p>
         </section>
 
         <fieldset className="space-y-3">
           <legend className="text-ink-500 text-xs font-semibold tracking-wider uppercase">
-            Choose one decision
+            {isAcknowledgement ? 'Confirm acknowledgement' : 'Choose one decision'}
           </legend>
           {options.map((option) => (
             <button
@@ -175,14 +181,16 @@ export function ApprovalActionPanel({
 
         <div className="space-y-1.5">
           <Label htmlFor="approval-comment" required={commentRequired}>
-            Decision comment
+            {isAcknowledgement ? 'Acknowledgement note' : 'Decision comment'}
           </Label>
           <Textarea
             id="approval-comment"
             placeholder={
               commentRequired
                 ? 'Explain the reason for this decision…'
-                : 'Add an optional decision note…'
+                : isAcknowledgement
+                  ? 'Add an optional acknowledgement note…'
+                  : 'Add an optional decision note…'
             }
             value={comment}
             onChange={(event) => setComment(event.target.value)}
@@ -194,7 +202,9 @@ export function ApprovalActionPanel({
           <p id="approval-comment-help" className="text-ink-500 text-xs">
             {commentRequired
               ? 'A comment is required and will be recorded in the audit history.'
-              : 'Comments are optional and are recorded in the workflow history.'}
+              : isAcknowledgement
+                ? 'The note is optional and will be recorded with your acknowledgement.'
+                : 'Comments are optional and are recorded in the workflow history.'}
           </p>
         </div>
 
@@ -205,16 +215,22 @@ export function ApprovalActionPanel({
           >
             <p className="text-ink-950 text-sm font-semibold">Confirmation</p>
             <p className="text-ink-700 mt-1 text-xs leading-5">
-              You selected{' '}
-              <strong>{options.find((option) => option.value === selected)?.label}</strong> for{' '}
-              {stageLabel}.
-              {selected === 'approved'
-                ? isFinalStage
-                  ? ' This will complete the workflow.'
-                  : ` The request will move to ${nextStageLabel || 'the next stage'}.`
-                : selected === 'returned'
-                  ? ' The requester will need to correct and resubmit the request.'
-                  : ' The workflow will be cancelled.'}
+              {isAcknowledgement ? (
+                <>You are confirming acceptance of this authorised trip and vehicle assignment.</>
+              ) : (
+                <>
+                  You selected{' '}
+                  <strong>{options.find((option) => option.value === selected)?.label}</strong> for{' '}
+                  {stageLabel}.
+                  {selected === 'approved'
+                    ? isFinalStage
+                      ? ' This will complete the workflow.'
+                      : ` The request will move to ${nextStageLabel || 'the next stage'}.`
+                    : selected === 'returned'
+                      ? ' The requester will need to correct and resubmit the request.'
+                      : ' The workflow will be cancelled.'}
+                </>
+              )}
             </p>
           </section>
         )}
@@ -235,7 +251,13 @@ export function ApprovalActionPanel({
             disabled={!selected || isSubmitting || (commentRequired && !comment.trim())}
           >
             {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            {isSubmitting ? 'Processing decision…' : 'Confirm Decision'}
+            {isSubmitting
+              ? isAcknowledgement
+                ? 'Recording acknowledgement…'
+                : 'Processing decision…'
+              : isAcknowledgement
+                ? 'Confirm Acknowledgement'
+                : 'Confirm Decision'}
           </Button>
           <Button
             variant="secondary"
