@@ -15,6 +15,7 @@ import {
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 export async function GET(request: NextRequest) {
   const auth = await requireRequestAuth(request);
@@ -68,11 +69,7 @@ export async function GET(request: NextRequest) {
   for (const row of roleRows) {
     if (new Date(row.startDate) > now) continue;
     if (row.endDate && new Date(row.endDate) <= now) continue;
-    (eligibleByPermission[row.permissionCode] ??= []).push({
-      userId: row.userId,
-      name: row.name,
-      email: row.email,
-    });
+    (eligibleByPermission[row.permissionCode] ??= []).push({ userId: row.userId, name: row.name, email: row.email });
   }
   for (const code of Object.keys(eligibleByPermission)) {
     const seen = new Set<string>();
@@ -136,10 +133,7 @@ export async function PATCH(request: NextRequest) {
       ))
       .limit(1);
     if (!owned) {
-      return NextResponse.json(
-        { error: `${criterion.label} must be active and belong to this tenant` },
-        { status: 422 },
-      );
+      return NextResponse.json({ error: `${criterion.label} must be active and belong to this tenant` }, { status: 422 });
     }
   }
 
@@ -152,18 +146,11 @@ export async function PATCH(request: NextRequest) {
   }
 
   const definitionSteps = await db
-    .select({
-      id: workflowSteps.id,
-      label: workflowSteps.label,
-      requiredPermission: workflowSteps.requiredPermission,
-    })
+    .select({ id: workflowSteps.id, label: workflowSteps.label, requiredPermission: workflowSteps.requiredPermission })
     .from(workflowSteps)
     .where(eq(workflowSteps.definitionId, definition.id));
   const definitionStepIds = new Set(definitionSteps.map((step) => step.id));
-  if (
-    definitionSteps.length !== stepIds.length
-    || stepIds.some((stepId) => !definitionStepIds.has(stepId))
-  ) {
+  if (definitionSteps.length !== stepIds.length || stepIds.some((stepId) => !definitionStepIds.has(stepId))) {
     return NextResponse.json({ error: 'The submitted steps must exactly match this workflow definition.' }, { status: 422 });
   }
 
@@ -187,9 +174,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   const requiredPermissions = [...new Set(
-    definitionSteps
-      .map((step) => step.requiredPermission)
-      .filter((value): value is string => Boolean(value)),
+    definitionSteps.map((step) => step.requiredPermission).filter((value): value is string => Boolean(value)),
   )];
   const permissionGrants = uniqueAssignedUserIds.length && requiredPermissions.length
     ? await db
@@ -231,43 +216,43 @@ export async function PATCH(request: NextRequest) {
     }
   }
 
-  await db.transaction(async (tx) => {
-    await tx
+  const updatedAt = new Date();
+  await runAtomicMutations((executor) => [
+    executor
       .update(workflowDefinitions)
       .set({
         regionId: body.regionId || null,
         officeId: body.officeId || null,
         departmentId: body.departmentId || null,
-        updatedAt: new Date(),
+        updatedAt,
       })
-      .where(and(eq(workflowDefinitions.id, definition.id), eq(workflowDefinitions.tenantId, session.tenantId)));
-
-    for (const step of submittedSteps) {
+      .where(and(eq(workflowDefinitions.id, definition.id), eq(workflowDefinitions.tenantId, session.tenantId))),
+    ...submittedSteps.map((step) => {
       const stepId = String(step.id);
       const assignedUserId = typeof step.assignedUserId === 'string' && step.assignedUserId
         ? step.assignedUserId
         : null;
-      await tx
+      return executor
         .update(workflowSteps)
         .set({ assignedUserId })
         .where(and(eq(workflowSteps.id, stepId), eq(workflowSteps.definitionId, definition.id)));
-    }
+    }),
+  ]);
 
-    await recordAuditEvent({
-      tenantId: session.tenantId,
-      actorUserId: session.user.id,
-      eventType: 'workflow_routing_updated',
-      action: 'update',
-      entityType: 'workflow_definition',
-      entityId: definition.id,
-      summary: 'Approval routing and assigned people updated',
-      after: {
-        regionId: body.regionId || null,
-        officeId: body.officeId || null,
-        departmentId: body.departmentId || null,
-        steps: submittedSteps,
-      },
-    }, tx);
+  await recordAuditEvent({
+    tenantId: session.tenantId,
+    actorUserId: session.user.id,
+    eventType: 'workflow_routing_updated',
+    action: 'update',
+    entityType: 'workflow_definition',
+    entityId: definition.id,
+    summary: 'Approval routing and assigned people updated',
+    after: {
+      regionId: body.regionId || null,
+      officeId: body.officeId || null,
+      departmentId: body.departmentId || null,
+      steps: submittedSteps,
+    },
   });
 
   return NextResponse.json({ success: true });
