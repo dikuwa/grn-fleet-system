@@ -22,15 +22,24 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, Number(request.nextUrl.searchParams.get('page')) || 1);
   const offset = (page - 1) * limit;
 
+  // Employment status controls whether a person belongs in ordinary employee
+  // selectors. Availability is an operational scheduling signal and must not
+  // make an otherwise active staff member disappear from passenger/requester
+  // selection. Driver searches remain availability-aware because assigning a
+  // driver is an operational resource decision.
   const conditions = [
     eq(employees.tenantId, session.tenantId),
     eq(employees.employmentStatus, 'active'),
   ];
-  if (!canViewUnavailable) conditions.push(eq(employees.availabilityStatus, 'available'));
 
   if (kind === 'driver') {
     conditions.push(eq(employees.isDriver, true), eq(driverProfiles.driverStatus, 'authorised'));
-    if (!canViewUnavailable) conditions.push(eq(driverProfiles.availabilityStatus, 'available'));
+    if (!canViewUnavailable) {
+      conditions.push(
+        eq(employees.availabilityStatus, 'available'),
+        eq(driverProfiles.availabilityStatus, 'available'),
+      );
+    }
   }
   if (query) {
     conditions.push(
