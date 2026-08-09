@@ -233,6 +233,8 @@ export async function POST(request: NextRequest) {
             eq(tenantMemberships.tenantId, tenantId),
             eq(tenantMemberships.status, 'active'),
             eq(roles.name, 'Tenant Administrator'),
+            lte(roleAssignments.startDate, now),
+            or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
           ));
         const activeAdmins = [...new Set(
           adminAssignments
