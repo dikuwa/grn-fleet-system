@@ -120,18 +120,27 @@ export async function PATCH(request: NextRequest) {
   if (!definition) return NextResponse.json({ error: 'Workflow definition not found' }, { status: 404 });
 
   const criteria = [
-    { value: body.regionId, table: regions, id: regions.id, tenantId: regions.tenantId, label: 'Region' },
-    { value: body.officeId, table: offices, id: offices.id, tenantId: offices.tenantId, label: 'Office' },
-    { value: body.departmentId, table: departments, id: departments.id, tenantId: departments.tenantId, label: 'Department' },
+    { value: body.regionId, table: regions, id: regions.id, tenantId: regions.tenantId, isActive: regions.isActive, label: 'Region' },
+    { value: body.officeId, table: offices, id: offices.id, tenantId: offices.tenantId, isActive: offices.isActive, label: 'Office' },
+    { value: body.departmentId, table: departments, id: departments.id, tenantId: departments.tenantId, isActive: departments.isActive, label: 'Department' },
   ] as const;
   for (const criterion of criteria) {
     if (!criterion.value) continue;
     const [owned] = await db
       .select({ id: criterion.id })
       .from(criterion.table)
-      .where(and(eq(criterion.id, criterion.value), eq(criterion.tenantId, session.tenantId)))
+      .where(and(
+        eq(criterion.id, criterion.value),
+        eq(criterion.tenantId, session.tenantId),
+        eq(criterion.isActive, true),
+      ))
       .limit(1);
-    if (!owned) return NextResponse.json({ error: `${criterion.label} is not part of this tenant` }, { status: 422 });
+    if (!owned) {
+      return NextResponse.json(
+        { error: `${criterion.label} must be active and belong to this tenant` },
+        { status: 422 },
+      );
+    }
   }
 
   const submittedSteps = body.steps as Array<{ id?: unknown; assignedUserId?: unknown }>;
