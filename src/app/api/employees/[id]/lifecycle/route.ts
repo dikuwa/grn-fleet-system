@@ -114,13 +114,24 @@ async function wouldDisableFinalTenantAdmin(userId: string, tenantId: string) {
   return activeAdmins.length === 1 && activeAdmins[0] === userId;
 }
 
-async function restoreArchivedAccountIfAllowed(userId: string, tenantId: string) {
+async function restoreArchivedAccountIfAllowed(
+  userId: string,
+  tenantId: string,
+  archivedAt: Date | string | null,
+) {
   const db = getDb();
-  const [membership] = await db
-    .select({ id: tenantMemberships.id, status: tenantMemberships.status })
-    .from(tenantMemberships)
-    .where(and(eq(tenantMemberships.userId, userId), eq(tenantMemberships.tenantId, tenantId)))
-    .limit(1);
+  const [[membership], [profile]] = await Promise.all([
+    db
+      .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+      .from(tenantMemberships)
+      .where(and(eq(tenantMemberships.userId, userId), eq(tenantMemberships.tenantId, tenantId)))
+      .limit(1),
+    db
+      .select({ status: userProfiles.status, disabledAt: userProfiles.disabledAt })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, userId))
+      .limit(1),
+  ]);
 
   // Only the archive-specific inactive state may be reversed here. Suspended,
   // removed, pending and other states belong to User Management and remain intact.
@@ -141,6 +152,14 @@ async function restoreArchivedAccountIfAllowed(userId: string, tenantId: string)
     }
   }
 
+  const archivedTimestamp = archivedAt ? new Date(archivedAt).getTime() : null;
+  const disabledTimestamp = profile?.disabledAt ? new Date(profile.disabledAt).getTime() : null;
+  const archiveDisabledGlobalProfile =
+    profile?.status === 'disabled'
+    && archivedTimestamp !== null
+    && disabledTimestamp !== null
+    && archivedTimestamp === disabledTimestamp;
+
   await db.transaction(async (tx) => {
     await tx
       .update(tenantMemberships)
@@ -150,10 +169,15 @@ async function restoreArchivedAccountIfAllowed(userId: string, tenantId: string)
         eq(tenantMemberships.tenantId, tenantId),
         eq(tenantMemberships.status, 'inactive'),
       ));
-    await tx
-      .update(userProfiles)
-      .set({ accountEnabled: true, status: 'active', disabledAt: null, updatedAt: new Date() })
-      .where(and(eq(userProfiles.userId, userId), eq(userProfiles.status, 'disabled')));
+
+    // Only undo the global profile disable when this exact staff archive set it.
+    // A separate security suspension/disablement must remain authoritative.
+    if (archiveDisabledGlobalProfile) {
+      await tx
+        .update(userProfiles)
+        .set({ accountEnabled: true, status: 'active', disabledAt: null, updatedAt: new Date() })
+        .where(and(eq(userProfiles.userId, userId), eq(userProfiles.status, 'disabled')));
+    }
   });
   return true;
 }
@@ -246,6 +270,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     let accountArchived = false;
+    let globalProfileDisabled = false;
     if (employee.userId) {
       const [membership] = await db
         .select({ id: tenantMemberships.id, status: tenantMemberships.status })
@@ -263,6 +288,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             { status: 409 },
           );
         }
+
+        const otherMemberships = await db
+          .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+          .from(tenantMemberships)
+          .where(and(
+            eq(tenantMemberships.userId, employee.userId),
+            ne(tenantMemberships.id, membership.id),
+          ));
+        globalProfileDisabled = !otherMemberships.some(
+          (otherMembership) => otherMembership.status !== 'access_removed',
+        );
         accountArchived = true;
       }
     }
@@ -295,18 +331,25 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             eq(tenantMemberships.tenantId, auth.session.tenantId),
             eq(tenantMemberships.status, 'active'),
           ));
-        await tx
-          .update(userProfiles)
-          .set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
-          .where(and(eq(userProfiles.userId, employee.userId), eq(userProfiles.status, 'active')));
+
+        if (globalProfileDisabled) {
+          await tx
+            .update(userProfiles)
+            .set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
+            .where(and(eq(userProfiles.userId, employee.userId), eq(userProfiles.status, 'active')));
+        }
       }
     });
-    after = { employmentStatus: 'archived', accountArchived };
+    after = { employmentStatus: 'archived', accountArchived, globalProfileDisabled };
   } else if (body.action === 'restore') {
     let accountRestored = false;
     try {
       if (employee.userId) {
-        accountRestored = await restoreArchivedAccountIfAllowed(employee.userId, auth.session.tenantId);
+        accountRestored = await restoreArchivedAccountIfAllowed(
+          employee.userId,
+          auth.session.tenantId,
+          employee.archivedAt,
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
