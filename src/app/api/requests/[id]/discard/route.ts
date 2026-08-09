@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
-import { auditEvents } from '@/db/schema/audit';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { runAtomicMutations } from '@/lib/db-atomic';
 
 /**
  * PATCH /api/requests/[id]/discard
@@ -55,48 +53,59 @@ export async function PATCH(
     const body = (await request.json().catch(() => ({}))) as { reason?: string };
     const reason = body.reason?.trim() || 'Draft discarded by requester';
     const now = new Date();
+    const auditSequence = Date.now();
 
-    // State change and immutable audit evidence commit as one unit so a draft
-    // cannot disappear from the active queue without a corresponding audit event.
-    await runAtomicMutations((tx) => [
-      tx.update(transportRequests)
-        .set({ status: 'cancelled', updatedAt: now })
-        .where(and(
-          eq(transportRequests.id, id),
-          eq(transportRequests.tenantId, session.tenantId),
-          eq(transportRequests.status, 'draft'),
-        )),
-      tx.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'request_discarded',
-        actorUserId: session.user.id,
-        action: 'discard',
-        entityType: 'transport_request',
-        entityId: id,
-        sourceChannel: 'web',
-        before: { status: 'draft' },
-        after: { status: 'cancelled' },
-        reason,
-        summary: `Draft ${req.reference} discarded`,
-      }),
-    ]);
+    // Claim the draft first, then create immutable audit evidence only from the
+    // successful claim. A stale concurrent request cannot write a false discard
+    // event after another actor has already changed the request state.
+    await db.execute(sql`
+      WITH draft_claim AS (
+        UPDATE transport_requests
+        SET status = 'cancelled', updated_at = ${now}
+        WHERE id = ${id}::uuid
+          AND tenant_id = ${session.tenantId}::uuid
+          AND status = 'draft'
+        RETURNING id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id,
+          action, entity_type, entity_id, source_channel,
+          before, after, reason, summary
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${auditSequence},
+          'request_discarded',
+          ${session.user.id},
+          'discard',
+          'transport_request',
+          ${id}::uuid,
+          'web',
+          jsonb_build_object('status', 'draft'),
+          jsonb_build_object('status', 'cancelled'),
+          ${reason},
+          ${`Draft ${req.reference} discarded`}
+        FROM draft_claim
+        RETURNING id
+      )
+      SELECT CASE
+        WHEN (SELECT count(*) FROM draft_claim) = 1
+         AND (SELECT count(*) FROM audit_insert) = 1
+        THEN 1
+        ELSE CAST('atomic_request_discard_failed' AS integer)
+      END AS committed
+    `);
 
-    const [discarded] = await db
-      .select({ status: transportRequests.status })
-      .from(transportRequests)
-      .where(and(eq(transportRequests.id, id), eq(transportRequests.tenantId, session.tenantId)))
-      .limit(1);
-    if (!discarded || discarded.status !== 'cancelled') {
+    return NextResponse.json({ success: true, status: 'cancelled' });
+  } catch (error) {
+    console.error('Discard request failed:', error);
+    if (String(error).includes('atomic_request_discard_failed')) {
       return NextResponse.json(
         { error: 'This draft changed before it could be discarded. Refresh and try again.' },
         { status: 409 },
       );
     }
-
-    return NextResponse.json({ success: true, status: 'cancelled' });
-  } catch (error) {
-    console.error('Discard request failed:', error);
     return NextResponse.json({ error: 'Discard request failed' }, { status: 500 });
   }
 }
