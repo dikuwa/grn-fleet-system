@@ -28,6 +28,11 @@ function semanticPositiveResult(actionType: string): WorkflowActionResult {
   }
 }
 
+function isExpectedAtomicRollback(error: unknown) {
+  const candidate = error as { code?: string; message?: string };
+  return candidate?.code === '22P02' && String(candidate.message || '').includes('atomic_');
+}
+
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -159,6 +164,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       },
     });
   } catch (error) {
+    if (isExpectedAtomicRollback(error)) {
+      console.warn('Approval action rolled back because the workflow changed concurrently:', error);
+      return NextResponse.json(
+        { error: 'This workflow changed while the decision was being recorded. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
     console.error('Approval action failed:', error);
     return NextResponse.json({ error: 'Failed to process approval action' }, { status: 500 });
   }
