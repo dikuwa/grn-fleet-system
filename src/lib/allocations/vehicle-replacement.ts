@@ -1,44 +1,30 @@
 /**
  * Vehicle Replacement Service
  *
- * Drives the mid-trip (and pre-issue) replacement of the vehicle assigned
- * to a trip allocation. Replacing a vehicle is a multi-table operation:
- *
- *   1. Verify the replacement vehicle belongs to the same tenant and is
- *      eligible (available, not already on an overlapping allocation).
- *   2. Record the replacement on the allocation — the original vehicle is
- *      preserved in `replacedFromVehicleId` so the trip closure can split
- *      odometer readings per vehicle.
- *   3. Repoint the trip's `vehicleId` to the replacement.
- *   4. Transfers outstanding departure inspection item results from the
- *      original to the replacement so a mid-trip swap isn't blocked by an
- *      incomplete checklist.
- *   5. Put the original vehicle back into the pool and mark the replacement
- *      as allocated/issued, each with a vehicle status event.
- *   6. Write a single audit event capturing before/after + odometer handover.
- *
- * The service lives in a transaction so a failure mid-way never leaves the
- * allocation, trip, inspections and vehicle statuses inconsistent.
+ * Replaces the vehicle attached to an allocation/trip without creating a
+ * second operational state machine. Allocation state remains confirmed while
+ * a trip is live; trip.issuedAt/status determine whether the swap is mid-trip.
  */
 
+import { randomUUID } from 'crypto';
 import { getDb } from '@/db';
-import { vehicleAllocations, trips } from '@/db/schema/trips';
 import {
+  vehicleAllocations,
+  trips,
   vehicleInspections,
   inspectionItemResults,
 } from '@/db/schema/trips';
+import { transportRequests } from '@/db/schema/requests';
 import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and, ne, inArray, lt, gt } from 'drizzle-orm';
-import { sql } from 'drizzle-orm';
+import { eq, and, ne, inArray, lt, gt, sql } from 'drizzle-orm';
 import type { AuthSession } from '@/lib/auth-helpers';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 export interface ReplaceVehicleInput {
   allocationId: string;
-  /** The vehicle being moved TO. */
   replacementVehicleId: string;
   reason: string;
-  /** Odometer reading of the original vehicle at handover (mid-trip only). */
   handoverOdometer?: number | null;
 }
 
@@ -49,18 +35,9 @@ export interface ReplaceVehicleResult {
   handoverOdometer?: number | null;
 }
 
-/**
- * States from which a vehicle replacement is permitted.
- * Pre-issue swaps (provisional/confirmed) are routine; an allocated or issued
- * vehicle may also be replaced mid-trip as long as a handover odometer is
- * supplied.
- */
-const SWAPPABLE_STATES = ['provisional', 'confirmed', 'allocated', 'issued'];
+const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
+const MID_TRIP_STATUSES = ['in_progress', 'return_due', 'return_inspection', 'closure_review'];
 
-/**
- * Replace the vehicle assigned to an allocation (and its trip).
- * See the module doc for the full behaviour contract.
- */
 export async function replaceVehicle(
   input: ReplaceVehicleInput,
   session: AuthSession,
@@ -68,208 +45,223 @@ export async function replaceVehicle(
   const db = getDb();
   const { allocationId, replacementVehicleId, reason, handoverOdometer } = input;
   const tenantId = session.tenantId;
+  const cleanReason = reason?.trim();
 
-  if (!replacementVehicleId || !reason.trim()) {
+  if (!replacementVehicleId || !cleanReason) {
     throw new VehicleReplaceError('Replacement vehicle and reason are required');
   }
+  if (handoverOdometer != null && (!Number.isInteger(handoverOdometer) || handoverOdometer < 0)) {
+    throw new VehicleReplaceError('Handover odometer must be a non-negative whole number');
+  }
 
-  // Read the current allocation (tenant-isolated via join).
-  const [allocation] = await db
+  const [context] = await db
     .select({
-      id: vehicleAllocations.id,
-      state: vehicleAllocations.state,
-      vehicleId: vehicleAllocations.vehicleId,
+      allocationId: vehicleAllocations.id,
+      allocationState: vehicleAllocations.state,
+      originalVehicleId: vehicleAllocations.vehicleId,
       startAt: vehicleAllocations.startAt,
       endAt: vehicleAllocations.endAt,
       replacedFromVehicleId: vehicleAllocations.replacedFromVehicleId,
+      requestId: vehicleAllocations.requestId,
+      tripId: trips.id,
+      tripStatus: trips.status,
+      issuedAt: trips.issuedAt,
     })
     .from(vehicleAllocations)
-    .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
-    .where(and(eq(vehicleAllocations.id, allocationId), eq(vehicles.tenantId, tenantId)))
+    .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+    .leftJoin(trips, eq(trips.allocationId, vehicleAllocations.id))
+    .where(and(
+      eq(vehicleAllocations.id, allocationId),
+      eq(transportRequests.tenantId, tenantId),
+    ))
     .limit(1);
 
-  if (!allocation) {
-    throw new VehicleReplaceError('Allocation not found', 404);
-  }
-
-  if (!SWAPPABLE_STATES.includes(allocation.state)) {
+  if (!context) throw new VehicleReplaceError('Allocation not found', 404);
+  if (!LIVE_ALLOCATION_STATES.includes(context.allocationState as typeof LIVE_ALLOCATION_STATES[number])) {
     throw new VehicleReplaceError(
-      `Vehicle replacement is not allowed from '${allocation.state}' state`,
+      `Vehicle replacement is not allowed from '${context.allocationState}' allocation state`,
+      409,
+    );
+  }
+  if (replacementVehicleId === context.originalVehicleId) {
+    throw new VehicleReplaceError('Replacement vehicle is the same as the current vehicle');
+  }
+  if (context.replacedFromVehicleId) {
+    throw new VehicleReplaceError(
+      'This allocation already records a vehicle replacement. Use the incident/escalation workflow for an additional swap so vehicle history is not overwritten.',
       409,
     );
   }
 
-  if (replacementVehicleId === allocation.vehicleId) {
-    throw new VehicleReplaceError('Replacement vehicle is the same as the current vehicle');
+  const midTrip = Boolean(
+    context.issuedAt ||
+    (context.tripStatus && MID_TRIP_STATUSES.includes(context.tripStatus)),
+  );
+  if (midTrip && handoverOdometer == null) {
+    throw new VehicleReplaceError('Odometer reading at handover is required after vehicle issue', 409);
   }
 
-  // Mid-trip (issued/allocated) replacements require the odometer handover.
-  const midTrip = allocation.state === 'allocated' || allocation.state === 'issued';
-  if (midTrip && (handoverOdometer === null || handoverOdometer === undefined)) {
-    throw new VehicleReplaceError('Odometer reading at handover is required for a mid-trip replacement', 409);
-  }
-
-  // Verify the replacement vehicle exists, belongs to the tenant, and is eligible.
   const [replacement] = await db
-    .select({ id: vehicles.id, status: vehicles.status })
+    .select({ id: vehicles.id, status: vehicles.status, currentOdometer: vehicles.currentOdometer })
     .from(vehicles)
     .where(and(eq(vehicles.id, replacementVehicleId), eq(vehicles.tenantId, tenantId)))
     .limit(1);
-  if (!replacement) {
-    throw new VehicleReplaceError('Replacement vehicle not found in this tenant', 404);
-  }
-  if (!['available', 'provisional', 'allocated'].includes(replacement.status)) {
-    throw new VehicleReplaceError(
-      `Replacement vehicle is not available (status: ${replacement.status})`,
-      409,
-    );
-  }
-  if (replacement.status === 'allocated') {
-    throw new VehicleReplaceError('Replacement vehicle is already allocated elsewhere', 409);
+  if (!replacement) throw new VehicleReplaceError('Replacement vehicle not found in this tenant', 404);
+  if (replacement.status !== 'available') {
+    throw new VehicleReplaceError(`Replacement vehicle is not available (status: ${replacement.status})`, 409);
   }
 
-  // No overlapping active allocation for the replacement in this period.
   const [conflict] = await db
     .select({ id: vehicleAllocations.id })
     .from(vehicleAllocations)
-    .where(
-      and(
-        eq(vehicleAllocations.vehicleId, replacementVehicleId),
-        ne(vehicleAllocations.id, allocation.id),
-        inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'allocated', 'issued']),
-        lt(vehicleAllocations.startAt, allocation.endAt),
-        gt(vehicleAllocations.endAt, allocation.startAt),
-      ),
-    )
+    .where(and(
+      eq(vehicleAllocations.vehicleId, replacementVehicleId),
+      ne(vehicleAllocations.id, allocationId),
+      inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
+      lt(vehicleAllocations.startAt, context.endAt),
+      gt(vehicleAllocations.endAt, context.startAt),
+    ))
     .limit(1);
   if (conflict) {
     throw new VehicleReplaceError('Replacement vehicle is already allocated during this period', 409);
   }
 
+  // Read dependent inspection data before building the non-interactive Neon
+  // transaction. IDs are pre-generated so the entire mutation set can still be
+  // committed atomically by db.batch().
+  const inspectionCopies: Array<{
+    id: string;
+    templateId: string;
+    templateVersion: number;
+    items: Array<{
+      templateItemId: string;
+      result: string;
+      comment: string | null;
+      defectId: string | null;
+    }>;
+  }> = [];
+
+  if (context.tripId && !midTrip) {
+    const departures = await db
+      .select({
+        id: vehicleInspections.id,
+        templateId: vehicleInspections.templateId,
+        templateVersion: vehicleInspections.templateVersion,
+        status: vehicleInspections.status,
+      })
+      .from(vehicleInspections)
+      .where(and(
+        eq(vehicleInspections.tripId, context.tripId),
+        eq(vehicleInspections.tenantId, tenantId),
+        eq(vehicleInspections.type, 'departure'),
+      ));
+
+    // Only unfinished departure work follows a pre-issue replacement. A passed
+    // inspection belongs to the original vehicle and cannot certify the new one.
+    for (const inspection of departures.filter((row) => row.status !== 'completed')) {
+      const items = await db
+        .select({
+          templateItemId: inspectionItemResults.templateItemId,
+          result: inspectionItemResults.result,
+          comment: inspectionItemResults.comment,
+          defectId: inspectionItemResults.defectId,
+        })
+        .from(inspectionItemResults)
+        .where(eq(inspectionItemResults.inspectionId, inspection.id));
+      inspectionCopies.push({
+        id: randomUUID(),
+        templateId: inspection.templateId,
+        templateVersion: inspection.templateVersion,
+        items,
+      });
+    }
+  }
+
   const now = new Date();
-
-  try {
-    const dbc = getDb();
-    const result = await dbc.transaction(async (tx) => {
-      const originalVehicleId = allocation.vehicleId;
-
-      // 1. Update the allocation: point to the new vehicle and record the swap.
-      await tx
-        .update(vehicleAllocations)
+  await runAtomicMutations((tx) => {
+    const mutations: any[] = [
+      tx.update(vehicleAllocations)
         .set({
           vehicleId: replacementVehicleId,
-          replacedFromVehicleId: originalVehicleId,
-          replacementReason: reason.trim(),
+          replacedFromVehicleId: context.originalVehicleId,
+          replacementReason: cleanReason,
           replacementAt: now,
           updatedAt: now,
           version: sql`${vehicleAllocations.version} + 1`,
         })
-        .where(eq(vehicleAllocations.id, allocationId));
+        .where(eq(vehicleAllocations.id, allocationId)),
+    ];
 
-      // 2. Repoint the trip (if one exists for this allocation) and remember its id
-      //    so departure inspections can be re-associated to the new vehicle.
-      const [tripMatch] = await tx
-        .select({ id: trips.id })
-        .from(trips)
-        .where(eq(trips.allocationId, allocationId))
-        .limit(1);
-      if (tripMatch) {
-        await tx
-          .update(trips)
-          .set({ vehicleId: replacementVehicleId, updatedAt: now, version: sql`${trips.version} + 1` })
-          .where(eq(trips.id, tripMatch.id));
+    if (context.tripId) {
+      mutations.push(
+        tx.update(trips)
+          .set({
+            vehicleId: replacementVehicleId,
+            updatedAt: now,
+            version: sql`${trips.version} + 1`,
+          })
+          .where(and(eq(trips.id, context.tripId), eq(trips.tenantId, tenantId))),
+      );
+    }
 
-        // 3. Transfer outstanding departure inspection item results to the
-        //    replacement, and move the inspection rows so the checklist follows
-        //    the trip's vehicle. Pending item results are copied to the new
-        //    vehicle's inspection record so a mid-trip swap isn't blocked by an
-        //    incomplete checklist on the original.
-        const existingDepartures = await tx
-          .select({ id: vehicleInspections.id, templateVersion: vehicleInspections.templateVersion, templateId: vehicleInspections.templateId })
-          .from(vehicleInspections)
-          .where(
-            and(
-              eq(vehicleInspections.tripId, tripMatch.id),
-              eq(vehicleInspections.type, 'departure'),
-            ),
-          );
-        for (const insp of existingDepartures) {
-          const [replacementInspection] = await tx
-            .insert(vehicleInspections)
-            .values({
-              tenantId,
-              vehicleId: replacementVehicleId,
-              tripId: tripMatch.id,
-              templateId: insp.templateId,
-              templateVersion: insp.templateVersion,
-              type: 'departure',
-              status: 'in_progress',
-              inspectorUserId: session.user.id,
-              clientSyncId: undefined,
-            })
-            .returning({ id: vehicleInspections.id });
-          // Carry pending item results across to the replacement inspection.
-          const existingItems = await tx
-            .select({
-              templateItemId: inspectionItemResults.templateItemId,
-              result: inspectionItemResults.result,
-              comment: inspectionItemResults.comment,
-              defectId: inspectionItemResults.defectId,
-            })
-            .from(inspectionItemResults)
-            .where(
-              and(
-                eq(inspectionItemResults.inspectionId, insp.id),
-                ne(inspectionItemResults.result, 'not_applicable'),
-              ),
-            );
-          if (existingItems.length > 0) {
-            await tx
-              .insert(inspectionItemResults)
-              .values(
-                existingItems.map((item) => ({
-                  inspectionId: replacementInspection.id,
-                  templateItemId: item.templateItemId,
-                  result: item.result,
-                  comment: item.comment,
-                  defectId: item.defectId,
-                })),
-              );
-          }
-        }
+    for (const copy of inspectionCopies) {
+      mutations.push(
+        tx.insert(vehicleInspections).values({
+          id: copy.id,
+          tenantId,
+          vehicleId: replacementVehicleId,
+          tripId: context.tripId,
+          templateId: copy.templateId,
+          templateVersion: copy.templateVersion,
+          type: 'departure',
+          status: 'in_progress',
+          inspectorUserId: session.user.id,
+        }),
+      );
+      if (copy.items.length) {
+        mutations.push(
+          tx.insert(inspectionItemResults).values(copy.items.map((item) => ({
+            inspectionId: copy.id,
+            templateItemId: item.templateItemId,
+            result: item.result,
+            comment: item.comment,
+            defectId: item.defectId,
+          }))),
+        );
       }
+    }
 
-      // 4. Release the original vehicle back to the pool and mark the replacement.
-      await tx
-        .update(vehicles)
-        .set({ status: 'available', updatedAt: now })
-        .where(eq(vehicles.id, originalVehicleId));
-      await tx.insert(vehicleStatusEvents).values({
-        vehicleId: originalVehicleId,
-        previousStatus: 'allocated',
-        newStatus: 'available',
-        reason: `Vehicle replaced on allocation ${allocationId.slice(0, 8)}...`,
-        changedByUserId: session.user.id,
-        referenceEntityType: 'allocation',
-        referenceEntityId: allocationId,
-      });
+    if (midTrip) {
+      mutations.push(
+        tx.update(vehicles)
+          .set({ status: 'available', updatedAt: now })
+          .where(and(eq(vehicles.id, context.originalVehicleId), eq(vehicles.tenantId, tenantId))),
+        tx.insert(vehicleStatusEvents).values({
+          vehicleId: context.originalVehicleId,
+          previousStatus: 'allocated',
+          newStatus: 'available',
+          reason: `Vehicle replaced on allocation ${allocationId.slice(0, 8)}...`,
+          changedByUserId: session.user.id,
+          referenceEntityType: 'allocation',
+          referenceEntityId: allocationId,
+        }),
+        tx.update(vehicles)
+          .set({ status: 'allocated', updatedAt: now })
+          .where(and(eq(vehicles.id, replacementVehicleId), eq(vehicles.tenantId, tenantId))),
+        tx.insert(vehicleStatusEvents).values({
+          vehicleId: replacementVehicleId,
+          previousStatus: 'available',
+          newStatus: 'allocated',
+          reason: `Replacement for vehicle ${context.originalVehicleId.slice(0, 8)}...`,
+          changedByUserId: session.user.id,
+          referenceEntityType: 'allocation',
+          referenceEntityId: allocationId,
+        }),
+      );
+    }
 
-      await tx
-        .update(vehicles)
-        .set({ status: 'allocated', updatedAt: now })
-        .where(eq(vehicles.id, replacementVehicleId));
-      await tx.insert(vehicleStatusEvents).values({
-        vehicleId: replacementVehicleId,
-        previousStatus: replacement.status,
-        newStatus: 'allocated',
-        reason: `Replacement for vehicle ${originalVehicleId.slice(0, 8)}...`,
-        changedByUserId: session.user.id,
-        referenceEntityType: 'allocation',
-        referenceEntityId: allocationId,
-      });
-
-      // 5. Audit event with before/after + odometer handover.
-      await tx.insert(auditEvents).values({
+    mutations.push(
+      tx.insert(auditEvents).values({
         tenantId,
         tenantSequence: Date.now(),
         eventType: 'allocation_vehicle_replaced',
@@ -277,27 +269,27 @@ export async function replaceVehicle(
         action: 'replace_vehicle',
         entityType: 'allocation',
         entityId: allocationId,
-        summary: `Allocation vehicle replaced: ${originalVehicleId.slice(0, 8)}… → ${replacementVehicleId.slice(0, 8)}…`,
-        before: { vehicleId: originalVehicleId, state: allocation.state },
-        after: { vehicleId: replacementVehicleId, reason: reason.trim(), handoverOdometer: handoverOdometer ?? null },
-      });
+        summary: `Allocation vehicle replaced: ${context.originalVehicleId.slice(0, 8)}… → ${replacementVehicleId.slice(0, 8)}…`,
+        before: { vehicleId: context.originalVehicleId, state: context.allocationState },
+        after: {
+          vehicleId: replacementVehicleId,
+          reason: cleanReason,
+          handoverOdometer: handoverOdometer ?? null,
+          midTrip,
+        },
+      }),
+    );
+    return mutations;
+  });
 
-      return { originalVehicleId };
-    });
-
-    return {
-      success: true,
-      replacementVehicleId,
-      originalVehicleId: result.originalVehicleId,
-      handoverOdometer: handoverOdometer ?? null,
-    };
-  } catch (err) {
-    if (err instanceof VehicleReplaceError) throw err;
-    throw err;
-  }
+  return {
+    success: true,
+    replacementVehicleId,
+    originalVehicleId: context.originalVehicleId,
+    handoverOdometer: handoverOdometer ?? null,
+  };
 }
 
-/** Typed error for vehicle replacement failures (maps to HTTP status). */
 export class VehicleReplaceError extends Error {
   status: number;
   constructor(message: string, status = 400) {
