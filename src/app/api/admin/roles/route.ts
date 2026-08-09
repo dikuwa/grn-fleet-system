@@ -16,13 +16,10 @@ import { getDb } from '@/db';
 import { roles, rolePermissions, roleAssignments, tenantMemberships } from '@/db/schema/tenants';
 import { eq, and, inArray, asc } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
-import {
-  Permissions,
-  isPermissionAvailableInWorkspace,
-  type PermissionCode,
-} from '@/lib/permissions';
+import { Permissions, isPermissionAvailableInWorkspace, type PermissionCode } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 function normalizePermissionCodes(value: unknown): PermissionCode[] | null {
   if (!Array.isArray(value)) return null;
@@ -54,12 +51,7 @@ export async function GET(request: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-    const roleRows = await db
-      .select()
-      .from(roles)
-      .where(eq(roles.tenantId, session.tenantId))
-      .orderBy(asc(roles.name));
-
+    const roleRows = await db.select().from(roles).where(eq(roles.tenantId, session.tenantId)).orderBy(asc(roles.name));
     const roleIds = roleRows.map((role) => role.id);
     const perms = roleIds.length > 0
       ? await db.select().from(rolePermissions).where(inArray(rolePermissions.roleId, roleIds))
@@ -74,23 +66,14 @@ export async function GET(request: NextRequest) {
 
     const assignments = roleIds.length > 0
       ? await db
-          .select({
-            roleId: roleAssignments.roleId,
-            startDate: roleAssignments.startDate,
-            endDate: roleAssignments.endDate,
-          })
+          .select({ roleId: roleAssignments.roleId, startDate: roleAssignments.startDate, endDate: roleAssignments.endDate })
           .from(roleAssignments)
-          .innerJoin(
-            tenantMemberships,
-            eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
-          )
-          .where(
-            and(
-              inArray(roleAssignments.roleId, roleIds),
-              eq(tenantMemberships.tenantId, session.tenantId),
-              eq(tenantMemberships.status, 'active'),
-            ),
-          )
+          .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+          .where(and(
+            inArray(roleAssignments.roleId, roleIds),
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(tenantMemberships.status, 'active'),
+          ))
       : [];
 
     const now = new Date();
@@ -99,10 +82,7 @@ export async function GET(request: NextRequest) {
       const started = new Date(assignment.startDate) <= now;
       const notEnded = !assignment.endDate || new Date(assignment.endDate) > now;
       if (!started || !notEnded) continue;
-      memberCountByRole.set(
-        assignment.roleId,
-        (memberCountByRole.get(assignment.roleId) || 0) + 1,
-      );
+      memberCountByRole.set(assignment.roleId, (memberCountByRole.get(assignment.roleId) || 0) + 1);
     }
 
     const enrichedRoles = roleRows.map((role) => ({
@@ -136,9 +116,7 @@ export async function POST(request: NextRequest) {
     const description = typeof body?.description === 'string' ? body.description.trim() : '';
     const permissionCodes = normalizePermissionCodes(body?.permissionCodes ?? []);
 
-    if (!name) {
-      return NextResponse.json({ error: 'Role name is required' }, { status: 400 });
-    }
+    if (!name) return NextResponse.json({ error: 'Role name is required' }, { status: 400 });
     if (permissionCodes === null) {
       return NextResponse.json(
         { error: 'One or more selected permissions are not available to tenant roles.' },
@@ -152,47 +130,47 @@ export async function POST(request: NextRequest) {
       .from(roles)
       .where(and(eq(roles.tenantId, session.tenantId), eq(roles.name, name)))
       .limit(1);
-
     if (existing) {
-      return NextResponse.json(
-        { error: `A role named "${name}" already exists in your organisation` },
-        { status: 409 },
-      );
+      return NextResponse.json({ error: `A role named "${name}" already exists in your organisation` }, { status: 409 });
     }
 
-    const role = await db.transaction(async (tx) => {
-      const [created] = await tx
-        .insert(roles)
-        .values({
+    const roleId = crypto.randomUUID();
+    await runAtomicMutations((executor) => {
+      const mutations = [
+        executor.insert(roles).values({
+          id: roleId,
           tenantId: session.tenantId,
           name,
           description: description || null,
           isSystem: false,
-        })
-        .returning();
-
+        }),
+      ];
       if (permissionCodes.length > 0) {
-        await tx.insert(rolePermissions).values(
-          permissionCodes.map((permissionCode) => ({ roleId: created.id, permissionCode })),
+        mutations.push(
+          executor.insert(rolePermissions).values(
+            permissionCodes.map((permissionCode) => ({ roleId, permissionCode })),
+          ),
         );
       }
+      return mutations;
+    });
 
-      await recordAuditEvent({
-        tenantId: session.tenantId,
-        actorUserId: session.user.id,
-        eventType: 'role_created',
-        action: 'create',
-        entityType: 'role',
-        entityId: created.id,
-        after: {
-          name: created.name,
-          description: created.description,
-          permissionCodes,
-        },
-        summary: `Custom role created: ${created.name}`,
-      }, tx);
+    const [role] = await db
+      .select()
+      .from(roles)
+      .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
+      .limit(1);
+    if (!role) throw new Error('Created role could not be reloaded.');
 
-      return created;
+    await recordAuditEvent({
+      tenantId: session.tenantId,
+      actorUserId: session.user.id,
+      eventType: 'role_created',
+      action: 'create',
+      entityType: 'role',
+      entityId: role.id,
+      after: { name: role.name, description: role.description, permissionCodes },
+      summary: `Custom role created: ${role.name}`,
     });
 
     return NextResponse.json({ success: true, data: role }, { status: 201 });
@@ -216,9 +194,7 @@ export async function PATCH(request: NextRequest) {
 
     const body = await request.json();
     const roleId = typeof body?.roleId === 'string' ? body.roleId : '';
-    if (!roleId) {
-      return NextResponse.json({ error: 'Role ID is required' }, { status: 400 });
-    }
+    if (!roleId) return NextResponse.json({ error: 'Role ID is required' }, { status: 400 });
 
     const db = getDb();
     const [existing] = await db
@@ -226,36 +202,23 @@ export async function PATCH(request: NextRequest) {
       .from(roles)
       .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
       .limit(1);
-
-    if (!existing) {
-      return NextResponse.json({ error: 'Role not found' }, { status: 404 });
-    }
+    if (!existing) return NextResponse.json({ error: 'Role not found' }, { status: 404 });
     if (existing.isSystem) {
       return NextResponse.json(
-        {
-          error: 'Built-in system roles are managed by GovFleet and cannot be edited. Assign or remove the role from users instead.',
-        },
+        { error: 'Built-in system roles are managed by GovFleet and cannot be edited. Assign or remove the role from users instead.' },
         { status: 409 },
       );
     }
 
-    const name = body?.name === undefined
-      ? undefined
-      : typeof body.name === 'string'
-        ? body.name.trim()
-        : '';
+    const name = body?.name === undefined ? undefined : typeof body.name === 'string' ? body.name.trim() : '';
     const description = body?.description === undefined
       ? undefined
-      : typeof body.description === 'string'
-        ? body.description.trim()
-        : '';
+      : typeof body.description === 'string' ? body.description.trim() : '';
     const permissionCodes = body?.permissionCodes === undefined
       ? undefined
       : normalizePermissionCodes(body.permissionCodes);
 
-    if (name !== undefined && !name) {
-      return NextResponse.json({ error: 'Role name cannot be empty' }, { status: 400 });
-    }
+    if (name !== undefined && !name) return NextResponse.json({ error: 'Role name cannot be empty' }, { status: 400 });
     if (permissionCodes === null) {
       return NextResponse.json(
         { error: 'One or more selected permissions are not available to tenant roles.' },
@@ -270,10 +233,7 @@ export async function PATCH(request: NextRequest) {
         .where(and(eq(roles.tenantId, session.tenantId), eq(roles.name, name)))
         .limit(1);
       if (duplicate && duplicate.id !== roleId) {
-        return NextResponse.json(
-          { error: `A role named "${name}" already exists in your organisation` },
-          { status: 409 },
-        );
+        return NextResponse.json({ error: `A role named "${name}" already exists in your organisation` }, { status: 409 });
       }
     }
 
@@ -282,45 +242,48 @@ export async function PATCH(request: NextRequest) {
       .from(rolePermissions)
       .where(eq(rolePermissions.roleId, roleId));
 
-    await db.transaction(async (tx) => {
+    await runAtomicMutations((executor) => {
+      const mutations = [] as any[];
       const updateData: Record<string, unknown> = { updatedAt: new Date() };
       if (name !== undefined) updateData.name = name;
       if (description !== undefined) updateData.description = description || null;
       if (Object.keys(updateData).length > 1) {
-        await tx
-          .update(roles)
-          .set(updateData)
-          .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)));
+        mutations.push(
+          executor.update(roles).set(updateData).where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId))),
+        );
       }
 
       if (permissionCodes !== undefined) {
-        await tx.delete(rolePermissions).where(eq(rolePermissions.roleId, roleId));
+        mutations.push(executor.delete(rolePermissions).where(eq(rolePermissions.roleId, roleId)));
         if (permissionCodes.length > 0) {
-          await tx.insert(rolePermissions).values(
-            permissionCodes.map((permissionCode) => ({ roleId, permissionCode })),
+          mutations.push(
+            executor.insert(rolePermissions).values(
+              permissionCodes.map((permissionCode) => ({ roleId, permissionCode })),
+            ),
           );
         }
       }
+      return mutations;
+    });
 
-      await recordAuditEvent({
-        tenantId: session.tenantId,
-        actorUserId: session.user.id,
-        eventType: 'role_updated',
-        action: 'update',
-        entityType: 'role',
-        entityId: roleId,
-        before: {
-          name: existing.name,
-          description: existing.description,
-          permissionCodes: existingPermissions.map((permission) => permission.permissionCode),
-        },
-        after: {
-          name: name ?? existing.name,
-          description: description === undefined ? existing.description : description || null,
-          permissionCodes: permissionCodes ?? existingPermissions.map((permission) => permission.permissionCode),
-        },
-        summary: `Custom role updated: ${name ?? existing.name}`,
-      }, tx);
+    await recordAuditEvent({
+      tenantId: session.tenantId,
+      actorUserId: session.user.id,
+      eventType: 'role_updated',
+      action: 'update',
+      entityType: 'role',
+      entityId: roleId,
+      before: {
+        name: existing.name,
+        description: existing.description,
+        permissionCodes: existingPermissions.map((permission) => permission.permissionCode),
+      },
+      after: {
+        name: name ?? existing.name,
+        description: description === undefined ? existing.description : description || null,
+        permissionCodes: permissionCodes ?? existingPermissions.map((permission) => permission.permissionCode),
+      },
+      summary: `Custom role updated: ${name ?? existing.name}`,
     });
 
     return NextResponse.json({ success: true });
