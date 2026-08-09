@@ -13,20 +13,9 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
  *
  * POST /api/programmes/[id]/action  { action, note? }
  *
- * Actions: submit | request_changes | approve | reject | publish | archive | complete
- *
- * State machine (server-enforced):
- *   draft / changes_requested --submit--> submitted
- *   submitted --request_changes--> changes_requested
- *   submitted --approve--> approved
- *   submitted --reject--> rejected
- *   approved  --publish--> published
- *   published --complete--> completed
- *   approved/published/completed --archive--> archived
- *   draft --archive--> archived
- *
- * A submitted Programme goes to the Tenant Administrator (or configured
- * Programme reviewer) — it does NOT enter the transport request chain.
+ * Programme review is intentionally separate from the transport-request
+ * approval chain. Creator and reviewer must be different people, including
+ * when the creator also holds Tenant Administrator permissions.
  */
 
 type Action =
@@ -40,11 +29,9 @@ type Action =
 
 type PermissionsKey = (typeof Permissions)[keyof typeof Permissions];
 
-const EDITABLE_DRAFT_ACTIONS: readonly Action[] = ['submit'];
-
 const VALID_TRANSITIONS: Record<string, readonly Action[]> = {
-  draft: [...EDITABLE_DRAFT_ACTIONS, 'archive'],
-  changes_requested: [...EDITABLE_DRAFT_ACTIONS, 'archive'],
+  draft: ['submit', 'archive'],
+  changes_requested: ['submit', 'archive'],
   submitted: ['request_changes', 'approve', 'reject'],
   approved: ['publish', 'archive'],
   published: ['complete', 'archive'],
@@ -76,7 +63,6 @@ export async function POST(
     const body = await request.json();
     const action = body?.action as Action;
     const note = typeof body?.note === 'string' ? body.note.trim() : '';
-
     const validActions: readonly Action[] = [
       'submit',
       'request_changes',
@@ -87,31 +73,23 @@ export async function POST(
       'complete',
     ];
     if (!validActions.includes(action)) {
-      return NextResponse.json(
-        { error: `Invalid programme action: ${String(action)}` },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: `Invalid programme action: ${String(action)}` }, { status: 400 });
     }
 
     const db = getDb();
     const tenantId = session.tenantId;
     const userId = session.user.id;
-
     const [programme] = await db
       .select()
       .from(programmes)
       .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
       .limit(1);
-    if (!programme) {
-      return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
-    }
+    if (!programme) return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
 
     const allowed = VALID_TRANSITIONS[programme.status] ?? [];
     if (!allowed.includes(action)) {
       return NextResponse.json(
-        {
-          error: `Cannot ${action.replace(/_/g, ' ')} a programme with status "${programme.status}".`,
-        },
+        { error: `Cannot ${action.replace(/_/g, ' ')} a programme with status "${programme.status}".` },
         { status: 409 },
       );
     }
@@ -126,33 +104,20 @@ export async function POST(
       complete: Permissions.PROGRAMME_PUBLISH,
     };
     const requiredPermission = permissionForAction[action];
-    if (!requiredPermission) {
-      return NextResponse.json({ error: 'Programme action is not permitted' }, { status: 403 });
-    }
+    if (!requiredPermission) return NextResponse.json({ error: 'Programme action is not permitted' }, { status: 403 });
     const permCheck = await requirePermission(session, requiredPermission);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    if (
-      ['request_changes', 'approve', 'reject'].includes(action) &&
-      programme.createdByUserId === userId
-    ) {
-      const tenantAdminCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
-      if (tenantAdminCheck instanceof NextResponse) {
-        return NextResponse.json(
-          { error: 'You cannot review or approve your own programme.' },
-          { status: 409 },
-        );
-      }
+    if (['request_changes', 'approve', 'reject'].includes(action) && programme.createdByUserId === userId) {
+      return NextResponse.json(
+        { error: 'You cannot review or decide a programme that you created. Another authorised Tenant Administrator must perform the review.' },
+        { status: 409 },
+      );
     }
 
     if (['request_changes', 'reject'].includes(action) && !note) {
       return NextResponse.json(
-        {
-          error:
-            action === 'request_changes'
-              ? 'A note is required when requesting changes.'
-              : 'A rejection reason is required.',
-        },
+        { error: action === 'request_changes' ? 'A note is required when requesting changes.' : 'A rejection reason is required.' },
         { status: 400 },
       );
     }
@@ -160,7 +125,6 @@ export async function POST(
     const now = new Date();
     const patch: Record<string, unknown> = { updatedAt: now };
     let nextStatus: string;
-
     switch (action) {
       case 'submit':
         nextStatus = 'submitted';
@@ -205,11 +169,23 @@ export async function POST(
         return NextResponse.json({ error: 'Invalid programme action' }, { status: 400 });
     }
 
+    // Status is part of the write predicate so approve/reject or other
+    // simultaneous decisions cannot silently overwrite one another.
     const [updated] = await db
       .update(programmes)
       .set({ ...patch, status: nextStatus })
-      .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
+      .where(and(
+        eq(programmes.id, id),
+        eq(programmes.tenantId, tenantId),
+        eq(programmes.status, programme.status),
+      ))
       .returning();
+    if (!updated) {
+      return NextResponse.json(
+        { error: 'This programme changed while you were reviewing it. Refresh and review the latest status before deciding.' },
+        { status: 409 },
+      );
+    }
 
     await recordAuditEvent({
       tenantId,
@@ -224,19 +200,16 @@ export async function POST(
       summary: `Programme ${programme.reference} ${action.replace(/_/g, ' ')} (${programme.status} → ${nextStatus})`,
     });
 
-    // Notifications are intentionally split by recipient context. A submission
-    // belongs to the Tenant Admin workspace; an outcome belongs to the creator
-    // and must remain visible regardless of which tenant workspace they use.
     try {
       const statusLabel = nextStatus.replace(/_/g, ' ');
       const notificationBody = `${programme.title} (${programme.reference}) is now ${statusLabel}.`;
-
       if (action === 'submit') {
         const reviewers = await resolveActiveRoleRecipients(tenantId, [SystemRoles.TENANT_ADMIN]);
-        if (reviewers.length > 0) {
+        const recipients = reviewers.filter((recipientUserId) => recipientUserId !== userId);
+        if (recipients.length > 0) {
           await createScopedNotifications({
             tenantId,
-            recipientUserIds: reviewers,
+            recipientUserIds: recipients,
             category: 'action_required',
             eventType: 'programme_submit',
             title: TITLE_BY_ACTION.submit,
@@ -254,18 +227,13 @@ export async function POST(
           await createScopedNotifications({
             tenantId,
             recipientUserIds: [creatorUserId],
-            category:
-              action === 'reject' || action === 'request_changes'
-                ? 'action_required'
-                : 'outcome',
+            category: action === 'reject' || action === 'request_changes' ? 'action_required' : 'outcome',
             eventType: `programme_${action}`,
             title: TITLE_BY_ACTION[action],
             body: notificationBody,
             entityType: 'programme',
             entityId: id,
             actionUrl: `/dashboard/programmes/${id}`,
-            // Creator outcomes are personal. Keep workspace null so a requester
-            // does not lose the notification because it was tagged tenant_admin.
             workspace: null,
             requiredRole: null,
           });
