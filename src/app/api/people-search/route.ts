@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   // Employment status controls whether a person belongs in ordinary employee
   // selectors. Availability is an operational scheduling signal and must not
   // make an otherwise active staff member disappear from passenger/requester
-  // selection. Driver searches remain availability-aware because assigning a
+  // selection. Driver searches remain availability-aware because nominating a
   // driver is an operational resource decision.
   const conditions = [
     eq(employees.tenantId, session.tenantId),
@@ -33,7 +33,29 @@ export async function GET(request: NextRequest) {
   ];
 
   if (kind === 'driver') {
-    conditions.push(eq(employees.isDriver, true), eq(driverProfiles.driverStatus, 'authorised'));
+    conditions.push(
+      eq(employees.isDriver, true),
+      eq(driverProfiles.driverStatus, 'authorised'),
+      // Match the Transport Review licence lifecycle rule: only the highest-
+      // version active licence is authoritative. The Requester picker must not
+      // surface a driver whose current version is provisional/unverified or
+      // already expired. Final submission performs the stronger trip-end check.
+      sql`exists (
+        select 1
+        from driver_licences dl
+        where dl.driver_profile_id = ${driverProfiles.id}
+          and dl.is_active = true
+          and dl.verification_status = 'verified'
+          and dl.expiry_date >= current_date
+          and not exists (
+            select 1
+            from driver_licences newer
+            where newer.driver_profile_id = dl.driver_profile_id
+              and newer.is_active = true
+              and newer.version > dl.version
+          )
+      )`,
+    );
     if (!canViewUnavailable) {
       conditions.push(
         eq(employees.availabilityStatus, 'available'),
