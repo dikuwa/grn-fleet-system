@@ -318,25 +318,34 @@ export async function POST(req: NextRequest) {
       throw new Error('Atomic allocation creation committed but created records could not be reloaded');
     }
 
-    const doc = await onTripIssued(allocation.id, tenantId, userId);
+    let doc: Awaited<ReturnType<typeof onTripIssued>> | null = null;
+    try {
+      doc = await onTripIssued(allocation.id, tenantId, userId);
+    } catch (documentError) {
+      console.warn('[allocations] Post-commit document generation failed:', documentError);
+    }
 
-    await recordAuditEvent({
-      tenantId,
-      actorUserId: userId,
-      action: resolvedDriverId ? 'allocation.created_with_driver' : 'allocation.created',
-      entityType: 'allocation',
-      entityId: allocation.id,
-      summary: `Allocation created for ${foundReq.reference}: vehicle ${vehicle.licenceNumber}${resolvedDriverId ? `, driver ${resolvedDriverId.slice(0, 8)}` : ''}`,
-      before: {},
-      after: { vehicleId: resolvedVehicleId, driverEmployeeId: resolvedDriverId, startAt: startAt.toISOString(), endAt: endAt.toISOString() },
-    });
-    await recordTenantRequestActivity({
-      tenantId,
-      requestId: foundReq.id,
-      reference: foundReq.reference,
-      stage: 'allocated',
-      officeLabel: 'Transport office',
-    });
+    try {
+      await recordAuditEvent({
+        tenantId,
+        actorUserId: userId,
+        action: resolvedDriverId ? 'allocation.created_with_driver' : 'allocation.created',
+        entityType: 'allocation',
+        entityId: allocation.id,
+        summary: `Allocation created for ${foundReq.reference}: vehicle ${vehicle.licenceNumber}${resolvedDriverId ? `, driver ${resolvedDriverId.slice(0, 8)}` : ''}`,
+        before: {},
+        after: { vehicleId: resolvedVehicleId, driverEmployeeId: resolvedDriverId, startAt: startAt.toISOString(), endAt: endAt.toISOString() },
+      });
+      await recordTenantRequestActivity({
+        tenantId,
+        requestId: foundReq.id,
+        reference: foundReq.reference,
+        stage: 'allocated',
+        officeLabel: 'Transport office',
+      });
+    } catch (activityError) {
+      console.warn('[allocations] Post-commit audit/activity failed:', activityError);
+    }
 
     if (resolvedDriverId) {
       const [driverRow] = await db
@@ -400,13 +409,7 @@ export async function POST(req: NextRequest) {
       console.warn('[allocations] Allocation email failed:', emailErr);
     }
 
-    return NextResponse.json({
-      allocation,
-      trip,
-      document: doc,
-      recommendation,
-      compliance: driverCompliance,
-    });
+    return NextResponse.json({ allocation, trip, document: doc, recommendation, compliance: driverCompliance });
   } catch (error) {
     console.error('[allocations] POST failed:', error);
     if ((error as { code?: string })?.code === '23P01') {

@@ -7,6 +7,7 @@ import {
   roles,
 } from '@/db/schema';
 import { and, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm';
+import { anyNamibiaLicenceClassCovers } from '@/lib/namibia-licence';
 
 export const EMPLOYMENT_STATUSES = [
   'active',
@@ -66,8 +67,11 @@ export function calculateDriverCompliance(input: DriverComplianceInput): DriverC
 
   const expiry = new Date(`${input.licenceExpiry}T23:59:59.999Z`);
   if (expiry < input.tripEndAt) reasons.push('Licence expires before the trip ends');
-  if (input.requiredLicenceClass && !input.licenceCodes.includes(input.requiredLicenceClass)) {
-    reasons.push(`Required licence class ${input.requiredLicenceClass} is missing`);
+  if (
+    input.requiredLicenceClass &&
+    !anyNamibiaLicenceClassCovers(input.licenceCodes, input.requiredLicenceClass)
+  ) {
+    reasons.push(`Required licence class ${input.requiredLicenceClass} is not covered by the driver's verified licence`);
   }
   if (input.professionalRequired && (!input.professionalVerified || !input.professionalExpiry)) {
     reasons.push('Verified professional authorisation is required');
