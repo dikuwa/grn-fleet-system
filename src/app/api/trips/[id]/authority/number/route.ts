@@ -5,6 +5,7 @@ import { auditEvents } from '@/db/schema/audit';
 import { tripAuthorities } from '@/db/schema/trips';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 function normalizeAuthorityNumber(value: string): string {
   return value
@@ -36,6 +37,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       { error: 'Record an operational reason of at least 10 characters.' },
       { status: 400 },
     );
+  }
+  if (reason.length > 500) {
+    return NextResponse.json({ error: 'Operational reason must be 500 characters or fewer.' }, { status: 422 });
   }
 
   const db = getDb();
@@ -73,34 +77,40 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     );
   }
 
-  const [updated] = await db
-    .update(tripAuthorities)
-    .set({
-      authorityNumber,
-      authorityNumberSource: 'manual_override',
-      manualNumberOverrideReason: reason,
-      manualNumberOverrideByUserId: session.user.id,
-      manualNumberOverrideAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(eq(tripAuthorities.id, authority.id), eq(tripAuthorities.tenantId, session.tenantId)),
-    )
-    .returning();
+  const now = new Date();
+  await runAtomicMutations((tx) => [
+    tx.update(tripAuthorities)
+      .set({
+        authorityNumber,
+        authorityNumberSource: 'manual_override',
+        manualNumberOverrideReason: reason,
+        manualNumberOverrideByUserId: session.user.id,
+        manualNumberOverrideAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(eq(tripAuthorities.id, authority.id), eq(tripAuthorities.tenantId, session.tenantId)),
+      ),
+    tx.insert(auditEvents).values({
+      tenantId: session.tenantId,
+      tenantSequence: Date.now(),
+      eventType: 'trip_authority_number_overridden',
+      actorUserId: session.user.id,
+      action: 'override_number',
+      entityType: 'trip_authority',
+      entityId: authority.id,
+      before: { authorityNumber: authority.authorityNumber },
+      after: { authorityNumber },
+      reason,
+      summary: `Trip Authority number changed from ${authority.authorityNumber} to ${authorityNumber}`,
+      sourceChannel: 'web',
+    }),
+  ]);
 
-  await db.insert(auditEvents).values({
-    tenantId: session.tenantId,
-    tenantSequence: Date.now(),
-    eventType: 'trip_authority_number_overridden',
-    actorUserId: session.user.id,
-    action: 'override_number',
-    entityType: 'trip_authority',
-    entityId: authority.id,
-    before: { authorityNumber: authority.authorityNumber },
-    after: { authorityNumber },
-    reason,
-    summary: `Trip Authority number changed from ${authority.authorityNumber} to ${authorityNumber}`,
-    sourceChannel: 'web',
-  });
+  const [updated] = await db
+    .select()
+    .from(tripAuthorities)
+    .where(and(eq(tripAuthorities.id, authority.id), eq(tripAuthorities.tenantId, session.tenantId)))
+    .limit(1);
   return NextResponse.json({ success: true, data: updated });
 }
