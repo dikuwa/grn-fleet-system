@@ -1,7 +1,7 @@
 import { getDb, isDbConnected } from '@/db';
 import { trips, tripIncidents, tripLogEntries, fuelTransactions, vehicleInspections, tripIssues, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests, requestRoutes } from '@/db/schema/requests';
-import { vehicleDefects, vehicles } from '@/db/schema/fleet';
+import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { eq, and, desc } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -23,7 +23,8 @@ import { TripActions } from '../components/TripActions';
 import { ReleaseReadinessCheck } from '../components/ReleaseReadinessCheck';
 import { DriverTripWorkspace } from '../components/DriverTripWorkspace';
 import Link from 'next/link';
-import { resolveDashboardAccess, SystemRoles } from '@/lib/dashboard-access';
+import { resolveDashboardAccess, SystemRoles, type DashboardRecordScope } from '@/lib/dashboard-access';
+import { tripScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -43,7 +44,12 @@ const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'err
   closed: statusConfig('closed').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
 };
 
-async function fetchTripDetail(id: string, tenantId: string) {
+async function fetchTripDetail(
+  id: string,
+  tenantId: string,
+  userId: string,
+  recordScope: DashboardRecordScope,
+) {
   const db = getDb();
 
   const trip = await db
@@ -72,11 +78,20 @@ async function fetchTripDetail(id: string, tenantId: string) {
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
     })
     .from(trips)
-    .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
-    .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
-    .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+    .leftJoin(vehicles, and(eq(trips.vehicleId, vehicles.id), eq(vehicles.tenantId, tenantId)))
+    .leftJoin(
+      transportRequests,
+      and(eq(trips.requestId, transportRequests.id), eq(transportRequests.tenantId, tenantId)),
+    )
+    .leftJoin(
+      employees,
+      and(eq(transportRequests.requesterEmployeeId, employees.id), eq(employees.tenantId, tenantId)),
+    )
     .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-    .where(and(eq(trips.id, id), eq(trips.tenantId, tenantId)))
+    .where(and(
+      eq(trips.id, id),
+      tripScopeCondition({ tenantId, userId, recordScope }),
+    ))
     .then((r) => r[0] ?? null);
 
   if (!trip) notFound();
@@ -113,7 +128,10 @@ async function fetchTripDetail(id: string, tenantId: string) {
         driverLastName: employees.lastName,
       })
       .from(tripLogEntries)
-      .leftJoin(employees, eq(tripLogEntries.driverEmployeeId, employees.id))
+      .leftJoin(
+        employees,
+        and(eq(tripLogEntries.driverEmployeeId, employees.id), eq(employees.tenantId, tenantId)),
+      )
       .where(eq(tripLogEntries.tripId, id))
       .orderBy(tripLogEntries.logDate),
     db
@@ -124,7 +142,7 @@ async function fetchTripDetail(id: string, tenantId: string) {
     db
       .select()
       .from(vehicleInspections)
-      .where(eq(vehicleInspections.tripId, id))
+      .where(and(eq(vehicleInspections.tripId, id), eq(vehicleInspections.tenantId, tenantId)))
       .orderBy(desc(vehicleInspections.createdAt)),
     trip.requestId
       ? db.select().from(requestRoutes).where(eq(requestRoutes.requestId, trip.requestId))
@@ -137,7 +155,6 @@ async function fetchTripDetail(id: string, tenantId: string) {
   const totalFuelLitres = fuel.reduce((sum, f) => sum + Number(f.litres), 0);
   const totalFuelCost = fuel.reduce((sum, f) => sum + Number(f.amount), 0);
   const totalLogKm = logEntries.reduce((sum, e) => sum + (e.distanceKm ?? 0), 0);
-  // Planned route distance from the linked request's mapped routes
   const routeKm = Math.round(routeRows.reduce((sum, r) => sum + (r.totalKilometres ?? r.mappedDistanceKm ?? 0), 0));
 
   return { trip, issueRecord, logEntries, fuel, inspections, incidents, totalFuelLitres, totalFuelCost, totalLogKm, routeKm };
@@ -167,9 +184,18 @@ export default async function TripDetailPage({ params }: PageProps) {
     );
   }
 
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/trips', roleNames);
+  if (!access.allowed || !access.actions.includes('view')) notFound();
+
   let data: Awaited<ReturnType<typeof fetchTripDetail>>;
   try {
-    data = await fetchTripDetail(id, session.tenantId);
+    data = await fetchTripDetail(
+      id,
+      session.tenantId,
+      session.user.id,
+      access.recordScope ?? 'assigned',
+    );
   } catch (error) {
     console.error('Trip detail query failed:', error);
     return (
@@ -182,24 +208,6 @@ export default async function TripDetailPage({ params }: PageProps) {
   }
 
   const { trip, issueRecord, logEntries, fuel, inspections, incidents } = data;
-  const roleNames = await getSessionRoleNames(session);
-  const access = resolveDashboardAccess('/dashboard/trips', roleNames);
-  if (access.recordScope === 'assigned') {
-    const db = getDb();
-    const [employee] = await db.select({ id: employees.id }).from(employees)
-      .where(and(eq(employees.tenantId, session.tenantId), eq(employees.userId, session.user.id)))
-      .limit(1);
-    if (!employee || employee.id !== trip.driverEmployeeId) notFound();
-  }
-  if (access.recordScope === 'related') {
-    const db = getDb();
-    const relatedInspection = inspections.some((inspection) => inspection.inspectorUserId === session.user.id);
-    const maintenanceRelated = roleNames.includes(SystemRoles.MAINTENANCE)
-      ? await db.select({ id: vehicleDefects.id }).from(vehicleDefects)
-          .where(eq(vehicleDefects.vehicleId, trip.vehicleId)).limit(1)
-      : [];
-    if (!relatedInspection && maintenanceRelated.length === 0) notFound();
-  }
   const permissionCodes = await getSessionPermissions(session);
   const isDriver = roleNames.includes(SystemRoles.DRIVER);
   const canOperate = access.actions.includes('update');
@@ -248,12 +256,10 @@ export default async function TripDetailPage({ params }: PageProps) {
         <DriverTripWorkspace tripId={trip.id} />
       )}
 
-      {/* Release Readiness Checklist */}
       {(trip.status === 'pending' || trip.status === 'in_progress') && (
         <ReleaseReadinessCheck tripId={trip.id} status={trip.status} />
       )}
 
-      {/* Trip Summary */}
       <Card>
         <CardContent className="pt-4">
           <div className="flex items-center gap-4">
@@ -277,7 +283,6 @@ export default async function TripDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Stats */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{data.routeKm > 0 ? `${data.routeKm.toLocaleString()} km` : '—'}</p><p className="text-xs text-ink-500">Planned Route</p></CardContent></Card>
         <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{data.totalLogKm.toLocaleString()} km</p><p className="text-xs text-ink-500">Logged Distance</p></CardContent></Card>
@@ -287,7 +292,6 @@ export default async function TripDetailPage({ params }: PageProps) {
         <Card><CardContent className="pt-4 text-center"><p className={`text-2xl font-[650] tabular-nums ${incidents.length ? 'text-status-error-text' : 'text-ink-950'}`}>{incidents.length}</p><p className="text-xs text-ink-500">Trip Events</p></CardContent></Card>
       </div>
 
-      {/* Trip Timeline */}
       <Card>
         <CardHeader><CardTitle>Trip Timeline</CardTitle></CardHeader>
         <CardContent>
@@ -302,7 +306,6 @@ export default async function TripDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Authoritative operational event timeline */}
       {incidents.length > 0 && (
         <Card className="border-status-error-text/30">
           <CardHeader><CardTitle>Incident, Accident and Defect Timeline ({incidents.length})</CardTitle></CardHeader>
@@ -333,7 +336,6 @@ export default async function TripDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {/* Inspections */}
       {inspections.length > 0 && (
         <Card>
           <CardHeader><CardTitle>Inspections ({inspections.length})</CardTitle></CardHeader>
@@ -365,7 +367,6 @@ export default async function TripDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {/* Log Entries */}
       {logEntries.length > 0 && (
         <Card>
           <CardHeader><CardTitle>Daily Log Entries ({logEntries.length})</CardTitle></CardHeader>
@@ -416,7 +417,6 @@ export default async function TripDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {/* Fuel Transactions */}
       {fuel.length > 0 && (
         <Card>
           <CardHeader><CardTitle>Fuel Transactions ({fuel.length})</CardTitle></CardHeader>
@@ -453,7 +453,6 @@ export default async function TripDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {/* Empty states */}
       {inspections.length === 0 && logEntries.length === 0 && fuel.length === 0 && (
         <Card>
           <CardContent className="py-8 text-center">

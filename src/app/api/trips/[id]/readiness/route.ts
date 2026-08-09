@@ -11,7 +11,15 @@ import { vehicles, vehicleDefects, vehicleCategories } from '@/db/schema/fleet';
 import { workflowInstances, workflowActions, workflowSteps } from '@/db/schema/workflows';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
 import { eq, and, desc, isNull, sql } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { tripScopeCondition } from '@/lib/record-scope';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -37,6 +45,13 @@ export async function GET(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const routeCheck = await requireDashboardAction(session, '/dashboard/trips', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
+    const permission = await requirePermission(session, Permissions.TRIP_VIEW);
+    if (permission instanceof NextResponse) return permission;
+
+    const roleNames = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/trips', roleNames);
     const db = getDb();
     const tenantId = session.tenantId;
 
@@ -58,8 +73,12 @@ export async function GET(
       .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
       .where(and(
         eq(trips.id, id),
-        eq(trips.tenantId, tenantId),
         eq(vehicles.tenantId, tenantId),
+        tripScopeCondition({
+          tenantId,
+          userId: session.user.id,
+          recordScope: access.recordScope ?? 'assigned',
+        }),
       ))
       .limit(1);
 
