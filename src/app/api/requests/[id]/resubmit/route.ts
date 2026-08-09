@@ -9,6 +9,7 @@ import {
   requestRoutes,
   requestRevisions,
   programmes,
+  workflowInstances,
 } from '@/db/schema';
 import { departments, driverProfiles, employees, offices } from '@/db/schema/people';
 import {
@@ -298,7 +299,7 @@ export async function POST(
     reasonForTravel: passenger.reasonForTravel || undefined,
   }));
   const employeePassengers = passengers.filter((passenger) => passenger.type === 'employee');
-  const passengerEmployeeIds = Array.from(new Set(employeePassengers.map((p) => p.employeeId).filter(Boolean))) as string[];
+  const passengerEmployeeIds = Array.from(new Set(employeePassengers.map((passenger) => passenger.employeeId).filter(Boolean))) as string[];
   if (passengerEmployeeIds.length !== employeePassengers.length) {
     return NextResponse.json(
       { error: 'Each employee passenger must be selected once from the employee directory.' },
@@ -399,9 +400,11 @@ export async function POST(
   }
 
   const specialAuthorityRequired = body.specialAuthorityRequired ?? existing.specialAuthorityRequired;
-  const specialAuthorityReason = body.specialAuthorityReason !== undefined
-    ? body.specialAuthorityReason.trim() || null
-    : existing.specialAuthorityReason;
+  const specialAuthorityReason = specialAuthorityRequired
+    ? body.specialAuthorityReason !== undefined
+      ? body.specialAuthorityReason.trim() || null
+      : existing.specialAuthorityReason
+    : null;
   if (specialAuthorityRequired && !specialAuthorityReason) {
     return NextResponse.json(
       { error: 'Explain why special authority is required.' },
@@ -419,7 +422,25 @@ export async function POST(
   const nextVersion = existing.version + 1;
   const nextRevision = existing.revision + 1;
 
-  // Preserve the complete prior revision before replacing any correction data.
+  const changedFields = {
+    purpose: purpose !== existing.purpose,
+    scope: scope !== existing.scope,
+    programmeId: programmeId !== existing.programmeId,
+    specialAuthority:
+      specialAuthorityRequired !== existing.specialAuthorityRequired ||
+      specialAuthorityReason !== existing.specialAuthorityReason,
+    activities: true,
+    passengers: true,
+    drivers: true,
+    routes: true,
+  };
+
+  const [pendingRevision] = await db
+    .select({ id: requestRevisions.id })
+    .from(requestRevisions)
+    .where(and(eq(requestRevisions.requestId, id), eq(requestRevisions.revision, nextRevision)))
+    .limit(1);
+
   const snapshot = {
     request: {
       scope: existing.scope,
@@ -430,33 +451,50 @@ export async function POST(
       driverPreference: existing.driverPreference,
       totalAuthorisedKilometres: existing.totalAuthorisedKilometres,
       status: existing.status,
+      revision: existing.revision,
       version: existing.version,
     },
-    activities: data.activities,
-    passengers: data.passengers.map(({ firstName: _firstName, lastName: _lastName, employeeNumber: _employeeNumber, email: _email, jobTitle: _jobTitle, departmentName: _departmentName, officeName: _officeName, availabilityStatus: _availabilityStatus, ...passenger }) => passenger),
-    drivers: data.drivers.map(({ firstName: _firstName, lastName: _lastName, employeeNumber: _employeeNumber, email: _email, jobTitle: _jobTitle, departmentName: _departmentName, officeName: _officeName, driverStatus: _driverStatus, availabilityStatus: _availabilityStatus, ...driver }) => driver),
-    routes: data.routes,
+    activities: data.activities.map((activity) => ({
+      title: activity.title,
+      description: activity.description,
+      venue: activity.venue,
+      startDate: activity.startDate,
+      endDate: activity.endDate,
+      estimatedKilometres: activity.estimatedKilometres,
+    })),
+    passengers: data.passengers.map((passenger) => ({
+      type: passenger.type,
+      employeeId: passenger.employeeId,
+      externalName: passenger.externalName,
+      externalIdReference: passenger.externalIdReference,
+      externalOrganisation: passenger.externalOrganisation,
+      externalPhone: passenger.externalPhone,
+      externalEmail: passenger.externalEmail,
+      travellerRole: passenger.travellerRole,
+      reasonForTravel: passenger.reasonForTravel,
+    })),
+    drivers: data.drivers.map((driver) => ({
+      employeeId: driver.employeeId,
+      sortOrder: driver.sortOrder,
+    })),
+    routes: data.routes.map((route) => ({
+      originName: route.originName,
+      destinationName: route.destinationName,
+      originPlaceId: route.originPlaceId,
+      destinationPlaceId: route.destinationPlaceId,
+      originCoordinates: route.originCoordinates,
+      destinationCoordinates: route.destinationCoordinates,
+      totalKilometres: route.totalKilometres,
+    })),
   };
 
   await runAtomicMutations((tx) => {
     const mutations: any[] = [
-      tx.insert(requestRevisions).values({
-        requestId: id,
-        revision: existing.revision,
-        reason,
-        createdByUserId: session.user.id,
-        changedFields: {
-          purpose: purpose !== existing.purpose,
-          scope: scope !== existing.scope,
-          programmeId: programmeId !== existing.programmeId,
-          specialAuthority: specialAuthorityRequired !== existing.specialAuthorityRequired || specialAuthorityReason !== existing.specialAuthorityReason,
-          activities: true,
-          passengers: true,
-          drivers: true,
-          routes: true,
-        },
-        data: snapshot,
-      }),
+      // A returned/rejected workflow should already be cancelled. Cancel any
+      // stale active instance defensively so resubmission always starts a new chain.
+      tx.update(workflowInstances)
+        .set({ status: 'cancelled', updatedAt: correctedAt })
+        .where(and(eq(workflowInstances.requestId, id), eq(workflowInstances.status, 'active'))),
       tx.update(transportRequests)
         .set({
           purpose,
@@ -482,6 +520,25 @@ export async function POST(
       tx.delete(requestDrivers).where(eq(requestDrivers.requestId, id)),
       tx.delete(requestRoutes).where(eq(requestRoutes.requestId, id)),
     ];
+
+    if (pendingRevision) {
+      mutations.push(
+        tx.update(requestRevisions)
+          .set({ reason, changedFields })
+          .where(eq(requestRevisions.id, pendingRevision.id)),
+      );
+    } else {
+      mutations.push(
+        tx.insert(requestRevisions).values({
+          requestId: id,
+          revision: nextRevision,
+          reason,
+          createdByUserId: session.user.id,
+          changedFields,
+          data: snapshot,
+        }),
+      );
+    }
 
     if (activities.length > 0) {
       mutations.push(tx.insert(requestActivities).values(activities.map((activity) => ({
@@ -551,9 +608,7 @@ export async function POST(
       { status: 503 },
     );
   }
-  if (!workflow.ok) {
-    return workflow.error;
-  }
+  if (!workflow.ok) return workflow.error;
 
   try {
     await db
@@ -574,11 +629,20 @@ export async function POST(
       ));
 
     const [finalised] = await db
-      .select({ status: transportRequests.status, revision: transportRequests.revision })
+      .select({
+        status: transportRequests.status,
+        revision: transportRequests.revision,
+        workflowInstanceId: transportRequests.workflowInstanceId,
+      })
       .from(transportRequests)
       .where(and(eq(transportRequests.id, id), eq(transportRequests.tenantId, session.tenantId)))
       .limit(1);
-    if (!finalised || finalised.status !== 'submitted' || finalised.revision !== nextRevision) {
+    if (
+      !finalised ||
+      finalised.status !== 'submitted' ||
+      finalised.revision !== nextRevision ||
+      finalised.workflowInstanceId !== workflow.instance.id
+    ) {
       await abandonRequestWorkflow(id, session.tenantId, workflow.instance.id);
       return NextResponse.json(
         { error: 'This request changed before resubmission completed. Your corrections are saved; refresh before trying again.' },
