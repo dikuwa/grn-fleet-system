@@ -34,7 +34,12 @@ import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 import { getSignedFileUrl, isStorageConfigured } from '@/lib/storage';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
-import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import {
+  canPerformDashboardAction,
+  resolveDashboardAccess,
+  type DashboardRecordScope,
+} from '@/lib/dashboard-access';
+import { inspectionScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -58,9 +63,26 @@ const FUEL_LEVEL_LABELS: Record<string, string> = {
   empty: 'Empty',
 };
 
-async function fetchInspectionDetail(id: string, tenantId: string) {
+async function fetchInspectionDetail(
+  id: string,
+  tenantId: string,
+  userId: string,
+  recordScope: DashboardRecordScope | null,
+) {
   const db = getDb();
+  const inspectionConditions = [
+    eq(vehicleInspections.id, id),
+    eq(vehicleInspections.tenantId, tenantId),
+  ];
+  if (recordScope === 'assigned' || recordScope === 'self') {
+    inspectionConditions.push(
+      inspectionScopeCondition({ tenantId, userId, recordScope }),
+    );
+  }
 
+  // Scope the parent inspection before loading checklist items, defects, photos
+  // or generating signed file URLs. Drivers can view official inspections for
+  // their assigned trips but cannot use the official inspection-create routes.
   const [inspection] = await db
     .select({
       id: vehicleInspections.id,
@@ -82,17 +104,11 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
     })
     .from(vehicleInspections)
     .leftJoin(vehicles, eq(vehicleInspections.vehicleId, vehicles.id))
-    .where(
-      and(
-        eq(vehicleInspections.id, id),
-        eq(vehicleInspections.tenantId, tenantId),
-      ),
-    )
+    .where(and(...inspectionConditions))
     .limit(1);
 
   if (!inspection) return null;
 
-  // Fetch checklist results ordered by category
   const results = await db
     .select({
       id: inspectionItemResults.id,
@@ -110,12 +126,8 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
       eq(inspectionItemResults.templateItemId, inspectionTemplateItems.id),
     )
     .where(eq(inspectionItemResults.inspectionId, id))
-    .orderBy(
-      inspectionTemplateItems.category,
-      inspectionTemplateItems.sortOrder,
-    );
+    .orderBy(inspectionTemplateItems.category, inspectionTemplateItems.sortOrder);
 
-  // Fetch photos
   const photoRecords = await db
     .select({
       id: inspectionPhotos.id,
@@ -127,7 +139,6 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
     .where(eq(inspectionPhotos.inspectionId, id))
     .orderBy(inspectionPhotos.capturedAt);
 
-  // Generate signed URLs for each photo
   const storageAvailable = isStorageConfigured();
   const photos = await Promise.all(
     photoRecords.map(async (photo) => {
@@ -143,7 +154,6 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
     }),
   );
 
-  // Fetch defects created from this inspection
   const defects = await db
     .select({
       id: vehicleDefects.id,
@@ -162,8 +172,12 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
     .where(eq(maintenanceEvents.vehicleId, inspection.vehicleId))
     .limit(1);
 
-  // Fetch trip info if linked
-  let tripInfo: { id: string; status: string; startedAt: Date | null; returnedAt: Date | null } | null = null;
+  let tripInfo: {
+    id: string;
+    status: string;
+    startedAt: Date | null;
+    returnedAt: Date | null;
+  } | null = null;
   if (inspection.tripId) {
     const [trip] = await db
       .select({
@@ -173,12 +187,11 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
         returnedAt: trips.returnedAt,
       })
       .from(trips)
-      .where(eq(trips.id, inspection.tripId))
+      .where(and(eq(trips.id, inspection.tripId), eq(trips.tenantId, tenantId)))
       .limit(1);
     tripInfo = trip || null;
   }
 
-  // Group results by category
   const groupedResults = results.reduce(
     (acc, r) => {
       const cat = r.category || 'uncategorized';
@@ -192,9 +205,7 @@ async function fetchInspectionDetail(id: string, tenantId: string) {
   const passCount = results.filter((r) => r.result === 'pass').length;
   const failCount = results.filter((r) => r.result === 'fail').length;
   const naCount = results.filter((r) => r.result === 'not_applicable').length;
-  const criticalFails = results.filter(
-    (r) => r.result === 'fail' && r.isCritical,
-  ).length;
+  const criticalFails = results.filter((r) => r.result === 'fail' && r.isCritical).length;
 
   return {
     inspection,
@@ -232,9 +243,19 @@ export default async function InspectionDetailPage({ params }: PageProps) {
     );
   }
 
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
+  const canViewFleet = canPerformDashboardAction('/dashboard/fleet', roleNames, 'view');
+  const canViewDefects = canPerformDashboardAction('/dashboard/fleet/defects', roleNames, 'view');
+
   let data: Awaited<ReturnType<typeof fetchInspectionDetail>>;
   try {
-    data = await fetchInspectionDetail(id, session.tenantId);
+    data = await fetchInspectionDetail(
+      id,
+      session.tenantId,
+      session.user.id,
+      access.recordScope,
+    );
   } catch (error) {
     console.error('[InspectionDetail] Query failed:', error);
     return (
@@ -246,15 +267,19 @@ export default async function InspectionDetailPage({ params }: PageProps) {
   }
 
   if (!data) notFound();
-  const roleNames = await getSessionRoleNames(session);
-  const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
-  if (
-    (access.recordScope === 'assigned' || access.recordScope === 'self') &&
-    data.inspection.inspectorUserId !== session.user.id
-  ) notFound();
   if (access.recordScope === 'related' && data.defects.length === 0 && !data.hasMaintenance) notFound();
 
-  const { inspection, groupedResults, photos, defects, tripInfo, passCount, failCount, naCount, criticalFails } = data;
+  const {
+    inspection,
+    groupedResults,
+    photos,
+    defects,
+    tripInfo,
+    passCount,
+    failCount,
+    naCount,
+    criticalFails,
+  } = data;
 
   return (
     <div className="space-y-6">
@@ -285,7 +310,6 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         )}
       </PageHeader>
 
-      {/* Status & Summary */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="pt-4">
@@ -326,9 +350,13 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         <Card>
           <CardContent className="pt-4">
             <p className="text-xs text-ink-500">Vehicle</p>
-            <Link href={`/dashboard/fleet/${inspection.vehicleId}`} className="mt-1 block text-sm font-[650] text-brand-700 hover:underline">
-              {inspection.make} {inspection.model}
-            </Link>
+            {canViewFleet ? (
+              <Link href={`/dashboard/fleet/${inspection.vehicleId}`} className="mt-1 block text-sm font-[650] text-brand-700 hover:underline">
+                {inspection.make} {inspection.model}
+              </Link>
+            ) : (
+              <p className="mt-1 text-sm font-[650] text-ink-950">{inspection.make} {inspection.model}</p>
+            )}
             <p className="text-xs text-ink-500 tabular-nums">{inspection.licenceNumber}</p>
           </CardContent>
         </Card>
@@ -350,7 +378,6 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         </Card>
       </div>
 
-      {/* Vehicle & Trip Details */}
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="h-4 w-4" /> Vehicle Details</CardTitle></CardHeader>
@@ -427,7 +454,6 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         )}
       </div>
 
-      {/* Checklist Results */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
@@ -473,13 +499,9 @@ export default async function InspectionDetailPage({ params }: PageProps) {
                             <div>
                               <div className="flex items-center gap-2">
                                 <p className="text-sm font-medium text-ink-950">{item.label}</p>
-                                {item.isCritical && (
-                                  <Badge variant="emergency" size="sm">Critical</Badge>
-                                )}
+                                {item.isCritical && <Badge variant="emergency" size="sm">Critical</Badge>}
                               </div>
-                              {item.comment && (
-                                <p className="mt-0.5 text-xs text-ink-500">{item.comment}</p>
-                              )}
+                              {item.comment && <p className="mt-0.5 text-xs text-ink-500">{item.comment}</p>}
                             </div>
                           </div>
                           <Badge
@@ -489,7 +511,7 @@ export default async function InspectionDetailPage({ params }: PageProps) {
                             {item.result === 'not_applicable' ? 'N/A' : item.result.charAt(0).toUpperCase() + item.result.slice(1)}
                           </Badge>
                         </div>
-                        {item.defectId && (
+                        {item.defectId && canViewDefects && (
                           <Link
                             href={`/dashboard/fleet/defects?defectId=${item.defectId}`}
                             className="mt-2 inline-flex items-center gap-1 text-xs text-status-error-text hover:underline"
@@ -508,7 +530,6 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Defects */}
       {defects.length > 0 && (
         <Card>
           <CardHeader>
@@ -530,9 +551,7 @@ export default async function InspectionDetailPage({ params }: PageProps) {
                       >
                         {defect.severity}
                       </Badge>
-                      {defect.isBlocking && (
-                        <Badge variant="emergency" size="sm">Blocking</Badge>
-                      )}
+                      {defect.isBlocking && <Badge variant="emergency" size="sm">Blocking</Badge>}
                     </div>
                     <p className="mt-1 text-xs text-ink-500 tabular-nums">
                       Reported {formatDate(defect.createdAt)}
@@ -548,7 +567,6 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {/* Photos */}
       {photos.length > 0 && (
         <Card>
           <CardHeader>
@@ -589,7 +607,6 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {/* Notes */}
       {inspection.notes && (
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="h-4 w-4" /> Notes</CardTitle></CardHeader>
@@ -599,7 +616,6 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {/* Bottom Actions */}
       <div className="flex items-center gap-3">
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/inspections">
@@ -607,12 +623,14 @@ export default async function InspectionDetailPage({ params }: PageProps) {
             Back to Inspections
           </Link>
         </Button>
-        <Button variant="secondary" size="sm" asChild>
-          <Link href={`/dashboard/fleet/${inspection.vehicleId}`}>
-            <Truck className="h-4 w-4" />
-            View Vehicle
-          </Link>
-        </Button>
+        {canViewFleet && (
+          <Button variant="secondary" size="sm" asChild>
+            <Link href={`/dashboard/fleet/${inspection.vehicleId}`}>
+              <Truck className="h-4 w-4" />
+              View Vehicle
+            </Link>
+          </Button>
+        )}
       </div>
     </div>
   );

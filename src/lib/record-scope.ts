@@ -107,18 +107,43 @@ export function fuelScopeCondition(context: RecordScopeContext): SQL {
 export function inspectionScopeCondition(context: RecordScopeContext): SQL {
   const tenant = eq(vehicleInspections.tenantId, context.tenantId);
   if (context.recordScope === 'tenant') return tenant;
+
+  const assignedTrip = sql`exists (
+    select 1 from ${trips} t
+    left join ${vehicleAllocations} va on va.id = t.allocation_id
+    left join ${employees} primary_driver on primary_driver.id = va.driver_employee_id
+    where t.id = ${vehicleInspections.tripId}
+      and t.tenant_id = ${context.tenantId}
+      and (
+        primary_driver.user_id = ${context.userId}
+        or exists (
+          select 1 from ${requestDrivers} rd
+          inner join ${employees} additional_driver on additional_driver.id = rd.employee_id
+          where rd.request_id = t.request_id
+            and additional_driver.tenant_id = ${context.tenantId}
+            and additional_driver.user_id = ${context.userId}
+            and rd.driver_type in ('assigned', 'additional')
+        )
+      )
+  )`;
+
   if (context.recordScope === 'assigned' || context.recordScope === 'self') {
-    return and(tenant, eq(vehicleInspections.inspectorUserId, context.userId))!;
+    return and(
+      tenant,
+      or(eq(vehicleInspections.inspectorUserId, context.userId), assignedTrip)!,
+    )!;
   }
   return and(
     tenant,
     or(
       eq(vehicleInspections.inspectorUserId, context.userId),
+      assignedTrip,
       sql`exists (
         select 1 from ${trips} t
         inner join ${transportRequests} tr on tr.id = t.request_id
         where t.id = ${vehicleInspections.tripId}
-          and tr.requester_user_id = ${context.userId}
+          and tr.tenant_id = ${context.tenantId}
+          and (tr.requester_user_id = ${context.userId} or tr.entered_by_user_id = ${context.userId})
       )`,
     )!,
   )!;

@@ -5,6 +5,7 @@
  * POST /api/trip-logs   — Create a log entry (requires auth)
  */
 
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tripLogEntries, trips, vehicleAllocations } from '@/db/schema/trips';
@@ -22,6 +23,7 @@ import { Permissions } from '@/lib/permissions';
 import { eq, and, desc, inArray } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 /**
  * GET /api/trip-logs
@@ -259,9 +261,14 @@ export async function POST(request: NextRequest) {
       if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
     }
 
-    const [entry] = await db
-      .insert(tripLogEntries)
-      .values({
+    // The log entry and its immutable audit event are one durable unit. This
+    // prevents a late audit failure from returning HTTP 500 after the log was
+    // already saved, which could otherwise produce a duplicate on retry.
+    const entryId = randomUUID();
+    const sourceChannel = clientSyncId ? 'offline_sync' : 'web';
+    await runAtomicMutations((tx) => [
+      tx.insert(tripLogEntries).values({
+        id: entryId,
         tripId,
         clientSyncId: clientSyncId || null,
         driverEmployeeId: employee.id,
@@ -276,22 +283,25 @@ export async function POST(request: NextRequest) {
         remarks: remarks || null,
         isSynced: true,
         syncState: 'synced',
-      })
-      .returning();
-
-    await db
-      .insert(auditEvents)
-      .values({
+      }),
+      tx.insert(auditEvents).values({
         tenantId: session.tenantId,
         tenantSequence: Date.now(),
         eventType: 'trip_log_created',
         actorUserId: session.user.id,
         action: 'create',
         entityType: 'trip_log_entry',
-        entityId: entry.id,
+        entityId: entryId,
         summary: `Driver trip log recorded for ${logDate}`,
-        sourceChannel: clientSyncId ? 'offline_sync' : 'web',
-      });
+        sourceChannel,
+      }),
+    ]);
+
+    const [entry] = await db
+      .select()
+      .from(tripLogEntries)
+      .where(eq(tripLogEntries.id, entryId))
+      .limit(1);
 
     return NextResponse.json({ success: true, data: entry }, { status: 201 });
   } catch (error) {

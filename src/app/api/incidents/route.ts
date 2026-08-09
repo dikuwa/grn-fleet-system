@@ -1,22 +1,33 @@
 /**
  * Incidents API
  *
- * POST /api/incidents — Create a trip incident (atomic transaction)
- * GET /api/incidents?tripId=xxx — List incidents for a trip
+ * POST /api/incidents — Driver/operations incident reporting
+ * GET  /api/incidents?tripId=xxx — Scoped incident list
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { tripIncidents } from '@/db/schema/trips';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { tripIncidents, trips } from '@/db/schema/trips';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { requirePermission } from '@/lib/auth-helpers';
 import { createIncident } from '@/lib/incidents/create-incident';
 import { getIncidentCategory } from '@/lib/incidents/categories';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, type SQL } from 'drizzle-orm';
+import { tripScopeCondition } from '@/lib/record-scope';
+
+async function resolveIncidentAccess(session: Parameters<typeof requirePermission>[0]) {
+  const [reportCheck, manageCheck] = await Promise.all([
+    requirePermission(session, Permissions.TRIP_INCIDENT_REPORT),
+    requirePermission(session, Permissions.TRIP_INCIDENT_MANAGE),
+  ]);
+
+  const canReport = !(reportCheck instanceof NextResponse);
+  const canManage = !(manageCheck instanceof NextResponse);
+  return { canReport, canManage, denied: !canReport && !canManage ? reportCheck : null };
+}
 
 // ---------------------------------------------------------------------------
-// GET — List incidents for a trip
+// GET — List incidents within the active workspace's record scope
 // ---------------------------------------------------------------------------
 
 export async function GET(req: NextRequest) {
@@ -25,20 +36,40 @@ export async function GET(req: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    const access = await resolveIncidentAccess(session);
+    if (access.denied) return access.denied;
+
     const { searchParams } = new URL(req.url);
     const tripId = searchParams.get('tripId');
     const db = getDb();
 
-    const conditions = [eq(tripIncidents.tenantId, session.tenantId)];
+    const conditions: SQL[] = [
+      eq(tripIncidents.tenantId, session.tenantId),
+      eq(trips.tenantId, session.tenantId),
+    ];
     if (tripId) conditions.push(eq(tripIncidents.tripId, tripId));
 
+    // Operations managers can review the tenant register. A Driver/report-only
+    // user may only see incidents for trips assigned to that user.
+    if (!access.canManage) {
+      conditions.push(
+        tripScopeCondition({
+          tenantId: session.tenantId,
+          userId: session.user.id,
+          recordScope: 'assigned',
+        }),
+      );
+    }
+
     const rows = await db
-      .select()
+      .select({ incident: tripIncidents })
       .from(tripIncidents)
+      .innerJoin(trips, eq(trips.id, tripIncidents.tripId))
       .where(and(...conditions))
       .orderBy(desc(tripIncidents.occurredAt));
 
-    return NextResponse.json({ data: rows, total: rows.length });
+    const data = rows.map((row) => row.incident);
+    return NextResponse.json({ data, total: data.length });
   } catch (error) {
     console.error('[incidents] GET failed:', error);
     return NextResponse.json({ error: 'Failed to fetch incidents' }, { status: 500 });
@@ -55,13 +86,14 @@ export async function POST(req: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.INSPECTION_PERFORM);
-    if (permCheck instanceof NextResponse) return permCheck;
+    const access = await resolveIncidentAccess(session);
+    if (access.denied) return access.denied;
 
     const body = await req.json();
 
     const {
       tripId,
+      clientSyncId,
       incidentType = 'damage',
       incidentCategoryCode,
       occurredAt,
@@ -83,7 +115,7 @@ export async function POST(req: NextRequest) {
     if (!tripId) {
       return NextResponse.json({ error: 'Trip ID is required' }, { status: 400 });
     }
-    if (!description) {
+    if (!description?.trim()) {
       return NextResponse.json({ error: 'Description is required' }, { status: 400 });
     }
     if (!incidentType) {
@@ -100,35 +132,77 @@ export async function POST(req: NextRequest) {
     if (Number.isNaN(eventDate.getTime())) {
       return NextResponse.json({ error: 'A valid event date is required' }, { status: 422 });
     }
+    if (eventDate.getTime() > Date.now() + 5 * 60 * 1000) {
+      return NextResponse.json({ error: 'Incident time cannot be in the future' }, { status: 422 });
+    }
+
+    const odometer =
+      odometerReading === null || odometerReading === undefined || odometerReading === ''
+        ? null
+        : Number(odometerReading);
+    if (odometer !== null && (!Number.isInteger(odometer) || odometer < 0)) {
+      return NextResponse.json(
+        { error: 'Odometer reading must be a non-negative whole number' },
+        { status: 422 },
+      );
+    }
+    if (attachmentKeys !== undefined && !Array.isArray(attachmentKeys)) {
+      return NextResponse.json({ error: 'Attachments must be a list' }, { status: 422 });
+    }
+
+    const db = getDb();
+
+    // A report-only Driver must be assigned to the trip. Managers retain their
+    // tenant-wide operational reporting capability. Return 404 to avoid leaking
+    // whether an unassigned/other-tenant trip exists.
+    if (!access.canManage) {
+      const [assignedTrip] = await db
+        .select({ id: trips.id })
+        .from(trips)
+        .where(
+          and(
+            eq(trips.id, tripId),
+            tripScopeCondition({
+              tenantId: session.tenantId,
+              userId: session.user.id,
+              recordScope: 'assigned',
+            }),
+          ),
+        )
+        .limit(1);
+      if (!assignedTrip) {
+        return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+      }
+    }
 
     // If no explicit category code was sent, treat the incident type as the
     // category code (the driver workspace submits the category code as the type).
     const categoryCode = incidentCategoryCode || incidentType;
 
-    // Look up category to determine MVA form requirement
-    let requiresMvaForm = false;
+    let categoryRequiresMva = false;
     if (categoryCode) {
       const category = await getIncidentCategory(session.tenantId, categoryCode);
-      if (category) requiresMvaForm = category.requiresMvaForm;
+      if (category) categoryRequiresMva = category.requiresMvaForm;
     }
 
-    const { incident } = await createIncident({
+    const result = await createIncident({
       tenantId: session.tenantId,
       tripId,
+      clientSyncId: typeof clientSyncId === 'string' && clientSyncId.trim() ? clientSyncId.trim() : null,
       incidentType,
       incidentCategoryCode: categoryCode,
-      requiresMvaForm,
+      requiresMvaForm: categoryRequiresMva,
       severity,
       occurredAt: eventDate,
       location: location || null,
-      odometerReading: odometerReading ? Number(odometerReading) : null,
-      description,
-      injuries,
-      vehicleDamage,
-      thirdPartyInvolvement,
+      odometerReading: odometer,
+      description: description.trim(),
+      injuries: Boolean(injuries),
+      vehicleDamage: Boolean(vehicleDamage),
+      thirdPartyInvolvement: Boolean(thirdPartyInvolvement),
       policeReference: policeReference || null,
-      emergencyServicesContacted,
-      safeToContinue,
+      emergencyServicesContacted: Boolean(emergencyServicesContacted),
+      safeToContinue: Boolean(safeToContinue),
       continuationState,
       actionTaken: actionTaken || null,
       attachmentKeys: attachmentKeys || [],
@@ -136,7 +210,10 @@ export async function POST(req: NextRequest) {
       reportedByUserId: session.user.id,
     });
 
-    return NextResponse.json({ data: incident }, { status: 201 });
+    return NextResponse.json(
+      { data: result.incident, idempotent: result.idempotent === true },
+      { status: result.idempotent ? 200 : 201 },
+    );
   } catch (error) {
     console.error('[incidents] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create incident' }, { status: 500 });
