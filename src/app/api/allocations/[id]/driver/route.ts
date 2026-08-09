@@ -24,6 +24,7 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { requestDrivers, transportRequests } from '@/db/schema/requests';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { createScopedNotifications } from '@/lib/notification-service';
 
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 
@@ -43,11 +44,12 @@ export async function PATCH(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
-    const { driverEmployeeId } = body;
+    const { driverEmployeeId, reason } = body;
     if (!driverEmployeeId) {
       return NextResponse.json({ error: 'driverEmployeeId is required' }, { status: 400 });
     }
 
+    const cleanReason = typeof reason === 'string' ? reason.trim() : '';
     const db = getDb();
     const [allocation] = await db
       .select({
@@ -75,6 +77,12 @@ export async function PATCH(
     if (!LIVE_ALLOCATION_STATES.includes(allocation.state as typeof LIVE_ALLOCATION_STATES[number])) {
       return NextResponse.json({ error: 'Driver replacement is only allowed before physical issue/closure' }, { status: 409 });
     }
+    if (allocation.driverEmployeeId === driverEmployeeId) {
+      return NextResponse.json({ error: 'Selected driver is already assigned to this allocation' }, { status: 409 });
+    }
+    if (allocation.driverEmployeeId && !cleanReason) {
+      return NextResponse.json({ error: 'A reason is required when replacing an assigned driver' }, { status: 400 });
+    }
 
     const [driver] = await db
       .select({
@@ -87,6 +95,7 @@ export async function PATCH(
         licenceId: driverLicences.id,
         licenceStatus: driverLicences.verificationStatus,
         licenceExpiry: driverLicences.expiryDate,
+        licenceClass: driverLicences.licenceClass,
       })
       .from(employees)
       .innerJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
@@ -122,13 +131,17 @@ export async function PATCH(
         .where(eq(driverProfessionalAuthorisations.driverProfileId, driver.profileId))
         .orderBy(desc(driverProfessionalAuthorisations.expiryDate)).limit(1),
     ]);
+    const licenceCodes = [
+      ...codes.map((row) => row.code),
+      ...String(driver.licenceClass || '').split(',').map((code) => code.trim()).filter(Boolean),
+    ];
     const compliance = calculateDriverCompliance({
       employeeStatus: driver.employeeStatus,
       availabilityStatus: driver.employeeAvailability !== 'available' ? driver.employeeAvailability : driver.profileAvailability,
       driverStatus: driver.driverStatus,
       licenceStatus: driver.licenceStatus,
       licenceExpiry: driver.licenceExpiry,
-      licenceCodes: codes.map((row) => row.code),
+      licenceCodes: Array.from(new Set(licenceCodes)),
       requiredLicenceClass: allocation.requiredLicenceClass,
       professionalRequired: allocation.professionalAuthorisationRequired,
       professionalVerified: professional[0]?.isVerified,
@@ -189,10 +202,10 @@ export async function PATCH(
         entityType: 'allocation',
         entityId: id,
         summary: allocation.driverEmployeeId
-          ? `Driver replaced: ${allocation.driverEmployeeId} → ${driverEmployeeId}`
+          ? `Driver replaced: ${allocation.driverEmployeeId} → ${driverEmployeeId}. Reason: ${cleanReason}`
           : `Driver ${driverEmployeeId} assigned to allocation`,
         before: { driverEmployeeId: allocation.driverEmployeeId },
-        after: { driverEmployeeId, compliance },
+        after: { driverEmployeeId, compliance, replacementReason: cleanReason || null },
       });
       await recordTenantRequestActivity({
         tenantId: session.tenantId,
@@ -206,24 +219,70 @@ export async function PATCH(
     }
 
     try {
-      const { sendNotificationEmail } = await import('@/lib/email');
-      const [driverRow] = await db
-        .select({ email: employees.email, firstName: employees.firstName })
-        .from(employees)
-        .where(and(eq(employees.id, driverEmployeeId), eq(employees.tenantId, session.tenantId)))
-        .limit(1);
-      if (driverRow?.email) {
-        await sendNotificationEmail({
-          to: driverRow.email,
-          type: 'allocation_created',
-          title: '🚗 You have been assigned as driver',
-          body: `You have been assigned to allocation for request ${allocation.requestReference ?? ''}. Please review the trip authority in the system.`,
+      const affectedDriverIds = [driverEmployeeId, allocation.driverEmployeeId].filter(Boolean) as string[];
+      const affectedDrivers = affectedDriverIds.length > 0
+        ? await db
+            .select({ id: employees.id, userId: employees.userId, email: employees.email, firstName: employees.firstName })
+            .from(employees)
+            .where(and(inArray(employees.id, affectedDriverIds), eq(employees.tenantId, session.tenantId)))
+        : [];
+      const newDriver = affectedDrivers.find((row) => row.id === driverEmployeeId);
+      const previousDriver = allocation.driverEmployeeId
+        ? affectedDrivers.find((row) => row.id === allocation.driverEmployeeId)
+        : undefined;
+
+      if (newDriver?.userId) {
+        await createScopedNotifications({
+          tenantId: session.tenantId,
+          recipientUserIds: [newDriver.userId],
+          category: 'action_required',
+          eventType: allocation.driverEmployeeId ? 'driver.reassigned' : 'driver.assigned',
+          title: allocation.driverEmployeeId ? 'You have been assigned as replacement driver' : 'You have been assigned as driver',
+          body: `You are assigned to request ${allocation.requestReference ?? ''}. Review the trip and acknowledge before departure.`,
+          entityType: 'allocation',
+          entityId: id,
           actionUrl: '/dashboard/trips',
-          recipientName: driverRow.firstName || 'Driver',
+          workspace: 'driver',
         });
       }
-    } catch (emailErr) {
-      console.warn('[Allocation Driver] Assignment email failed:', emailErr);
+      if (previousDriver?.userId) {
+        await createScopedNotifications({
+          tenantId: session.tenantId,
+          recipientUserIds: [previousDriver.userId],
+          category: 'status_update',
+          eventType: 'driver.assignment_removed',
+          title: 'Driver assignment changed',
+          body: `You are no longer assigned to request ${allocation.requestReference ?? ''}.${cleanReason ? ` Reason: ${cleanReason}` : ''}`,
+          entityType: 'allocation',
+          entityId: id,
+          actionUrl: '/dashboard/trips',
+          workspace: 'driver',
+        });
+      }
+
+      const { sendNotificationEmail } = await import('@/lib/email');
+      if (newDriver?.email) {
+        await sendNotificationEmail({
+          to: newDriver.email,
+          type: 'allocation_created',
+          title: allocation.driverEmployeeId ? '🚗 You have been assigned as replacement driver' : '🚗 You have been assigned as driver',
+          body: `You have been assigned to allocation for request ${allocation.requestReference ?? ''}. Please review the trip authority in the system.`,
+          actionUrl: '/dashboard/trips',
+          recipientName: newDriver.firstName || 'Driver',
+        });
+      }
+      if (previousDriver?.email) {
+        await sendNotificationEmail({
+          to: previousDriver.email,
+          type: 'allocation_created',
+          title: 'Driver assignment changed',
+          body: `You are no longer assigned to request ${allocation.requestReference ?? ''}.${cleanReason ? ` Reason: ${cleanReason}` : ''}`,
+          actionUrl: '/dashboard/trips',
+          recipientName: previousDriver.firstName || 'Driver',
+        });
+      }
+    } catch (notifyErr) {
+      console.warn('[Allocation Driver] Assignment notification failed:', notifyErr);
     }
 
     return NextResponse.json({ success: true, driverEmployeeId });
