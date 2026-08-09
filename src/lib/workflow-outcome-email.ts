@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
-import { employees } from '@/db/schema/people';
+import { user } from '@/db/schema/better-auth';
 import type { WorkflowActionResult } from '@/lib/workflow-engine';
 
 type WorkflowOutcomeEmailInput = {
@@ -30,11 +30,14 @@ const EMAIL_TYPE_MAP: Partial<Record<WorkflowActionResult, string>> = {
 };
 
 /**
- * Preserve the workflow engine's requester email side effect without putting
- * outbound network I/O inside a durable workflow transaction. The caller may
- * await this helper, but all delivery failures are intentionally swallowed so
- * a committed workflow action can never be reported as failed because email
- * is unavailable.
+ * Preserve requester/assistant outcome email side effects without putting
+ * outbound network I/O inside a durable workflow transaction. Assisted
+ * requests may have no authenticated requester, so the user who entered the
+ * request must also receive outcomes that require follow-up.
+ *
+ * The caller may await this helper, but delivery failures are intentionally
+ * swallowed so a committed workflow action can never be reported as failed
+ * because email is unavailable.
  */
 export async function sendWorkflowOutcomeEmailBestEffort(
   input: WorkflowOutcomeEmailInput,
@@ -44,39 +47,51 @@ export async function sendWorkflowOutcomeEmailBestEffort(
     const [request] = await db
       .select({
         requesterUserId: transportRequests.requesterUserId,
+        enteredByUserId: transportRequests.enteredByUserId,
         reference: transportRequests.reference,
       })
       .from(transportRequests)
       .where(eq(transportRequests.id, input.requestId))
       .limit(1);
 
-    if (!request?.requesterUserId) return;
+    if (!request) return;
 
-    const [recipient] = await db
+    const recipientUserIds = [...new Set(
+      [request.requesterUserId, request.enteredByUserId].filter(
+        (value): value is string => Boolean(value),
+      ),
+    )];
+    if (!recipientUserIds.length) return;
+
+    const recipients = await db
       .select({
-        email: employees.email,
-        firstName: employees.firstName,
+        id: user.id,
+        email: user.email,
+        name: user.name,
       })
-      .from(employees)
-      .where(eq(employees.userId, request.requesterUserId))
-      .limit(1);
+      .from(user)
+      .where(inArray(user.id, recipientUserIds));
 
-    if (!recipient?.email) return;
+    if (!recipients.length) return;
 
     const { sendNotificationEmail } = await import('@/lib/email');
     const title = TITLE_MAP[input.result] || `Workflow: ${input.result}`;
     const body = `Step "${input.stepLabel}" completed with result: ${input.result}.`;
 
-    await sendNotificationEmail({
-      to: recipient.email,
-      type: EMAIL_TYPE_MAP[input.result] || 'notification',
-      title,
-      body,
-      recipientName: recipient.firstName || 'Staff Member',
-      requestReference: request.reference || input.requestId,
-      actionUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/dashboard/requests/${input.requestId}`,
-    });
+    await Promise.allSettled(
+      recipients.map((recipient) =>
+        sendNotificationEmail({
+          to: recipient.email,
+          type: EMAIL_TYPE_MAP[input.result] || 'notification',
+          title,
+          body,
+          recipientName: recipient.name || 'Staff Member',
+          requestReference: request.reference || input.requestId,
+          actionUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/dashboard/requests/${input.requestId}`,
+        }),
+      ),
+    );
   } catch (error) {
-    console.warn('[workflow-outcome-email] Requester email delivery failed:', error);
+    console.warn('[workflow-outcome-email] Request outcome email delivery failed:', error);
   }
 }
