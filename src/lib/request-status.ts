@@ -93,27 +93,45 @@ export function statusConfig(status: string | null | undefined): StatusConfig {
   );
 }
 
+/**
+ * Translate the workflow stage being entered into the request business status.
+ *
+ * Action type is the source of truth. Older code keyed primarily by step order,
+ * which made the status model drift whenever a tenant workflow inserted or
+ * removed a stage (the national fallback previously had six steps while the
+ * seeded definition has five). Keeping a small order fallback preserves
+ * compatibility with legacy definitions that omitted a recognised actionType.
+ */
 export function workflowStepToStatus(
   stepOrder: number,
-  _actionType: string,
+  actionType: string,
   scope: 'regional' | 'national' = 'regional',
 ): string {
-  const REGIONAL_MAP: Record<number, string> = {
+  const BY_ACTION: Record<string, string> = {
+    supervisor_approve: 'supervisor_review',
+    transport_review: 'transport_review',
+    release: 'release_pending',
+    authorise: 'final_authorisation_pending',
+    acknowledge: 'driver_acknowledgement_pending',
+  };
+  if (BY_ACTION[actionType]) return BY_ACTION[actionType];
+
+  const LEGACY_REGIONAL_MAP: Record<number, string> = {
     1: 'supervisor_review',
     2: 'transport_review',
     3: 'release_pending',
-    4: 'administratively_released',
+    4: 'final_authorisation_pending',
     5: 'driver_acknowledgement_pending',
   };
-  const NATIONAL_MAP: Record<number, string> = {
+  const LEGACY_NATIONAL_MAP: Record<number, string> = {
     1: 'supervisor_review',
     2: 'transport_review',
-    3: 'vehicle_allocated',
-    4: 'administratively_released',
-    5: 'final_authorisation_pending',
+    3: 'release_pending',
+    4: 'final_authorisation_pending',
+    5: 'driver_acknowledgement_pending',
     6: 'driver_acknowledgement_pending',
   };
-  return (scope === 'national' ? NATIONAL_MAP[stepOrder] : REGIONAL_MAP[stepOrder]) ?? `step_${stepOrder}`;
+  return (scope === 'national' ? LEGACY_NATIONAL_MAP[stepOrder] : LEGACY_REGIONAL_MAP[stepOrder]) ?? `step_${stepOrder}`;
 }
 
 export function workflowCompletedStatus(): string {
