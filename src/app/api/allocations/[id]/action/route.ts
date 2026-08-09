@@ -16,12 +16,15 @@ import { getDb } from '@/db';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { requestDrivers, transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
+import { employees } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
 import { eq, and } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { replaceVehicle, VehicleReplaceError } from '@/lib/allocations/vehicle-replacement';
+import { createScopedNotifications } from '@/lib/notification-service';
+import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 export async function POST(
   request: NextRequest,
@@ -63,6 +66,7 @@ export async function POST(
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         requestStatus: transportRequests.status,
         requestReference: transportRequests.reference,
+        requesterUserId: transportRequests.requesterUserId,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
@@ -104,7 +108,8 @@ export async function POST(
     if (!['provisional', 'confirmed'].includes(allocation.state)) {
       return NextResponse.json({ error: `Cannot cancel an allocation in '${allocation.state}' state` }, { status: 409 });
     }
-    if (!reason?.trim()) {
+    const cancellationReason = typeof reason === 'string' ? reason.trim() : '';
+    if (!cancellationReason) {
       return NextResponse.json({ error: 'A cancellation reason is required' }, { status: 400 });
     }
 
@@ -123,7 +128,7 @@ export async function POST(
     const now = new Date();
     await runAtomicMutations((tx) => [
       tx.update(vehicleAllocations)
-        .set({ state: 'cancelled', overrideReason: reason.trim(), updatedAt: now })
+        .set({ state: 'cancelled', overrideReason: cancellationReason, updatedAt: now })
         .where(eq(vehicleAllocations.id, id)),
       tx.update(transportRequests)
         .set({
@@ -142,7 +147,7 @@ export async function POST(
         .set({
           status: 'cancelled',
           cancelledAt: now,
-          cancellationReason: reason.trim(),
+          cancellationReason,
           updatedAt: now,
         })
         .where(and(eq(tripAuthorities.allocationId, id), eq(tripAuthorities.tenantId, session.tenantId))),
@@ -155,11 +160,55 @@ export async function POST(
         entityType: 'allocation',
         entityId: id,
         summary: `Allocation cancelled; request ${allocation.requestReference} returned to Transport Review`,
-        reason: reason.trim(),
+        reason: cancellationReason,
         before: { state: allocation.state, driverEmployeeId: allocation.driverEmployeeId },
         after: { state: 'cancelled', requestStatus: 'transport_review', driverEmployeeId: null },
       }),
     ]);
+
+    try {
+      const recipientUserIds = new Set<string>();
+      if (allocation.requesterUserId) recipientUserIds.add(allocation.requesterUserId);
+
+      let driverUserId: string | null = null;
+      if (allocation.driverEmployeeId) {
+        const [driver] = await db
+          .select({ userId: employees.userId })
+          .from(employees)
+          .where(and(
+            eq(employees.id, allocation.driverEmployeeId),
+            eq(employees.tenantId, session.tenantId),
+          ))
+          .limit(1);
+        driverUserId = driver?.userId ?? null;
+        if (driverUserId) recipientUserIds.add(driverUserId);
+      }
+
+      if (recipientUserIds.size > 0) {
+        await createScopedNotifications({
+          tenantId: session.tenantId,
+          recipientUserIds: Array.from(recipientUserIds),
+          category: 'status_update',
+          eventType: 'allocation.cancelled',
+          title: 'Vehicle allocation cancelled',
+          body: `The vehicle allocation for request ${allocation.requestReference} was cancelled and returned to Transport Review. Reason: ${cancellationReason}`,
+          entityType: 'allocation',
+          entityId: id,
+          actionUrl: `/dashboard/requests/${allocation.requestId}`,
+          workspace: 'transport',
+        });
+      }
+
+      await recordTenantRequestActivity({
+        tenantId: session.tenantId,
+        requestId: allocation.requestId,
+        reference: allocation.requestReference,
+        stage: 'transport_review',
+        officeLabel: 'Transport office',
+      });
+    } catch (postCommitError) {
+      console.warn('[Allocation Action] Post-commit cancellation notification/activity failed:', postCommitError);
+    }
 
     return NextResponse.json({ success: true, state: 'cancelled', requestStatus: 'transport_review' });
   } catch (error) {
