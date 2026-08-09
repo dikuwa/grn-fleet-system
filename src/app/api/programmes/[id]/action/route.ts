@@ -3,8 +3,7 @@ import { getDb } from '@/db';
 import { programmes } from '@/db/schema/programmes';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and } from 'drizzle-orm';
-import { recordAuditEvent } from '@/lib/audit-event';
+import { eq, and, sql } from 'drizzle-orm';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 import {
@@ -116,8 +115,6 @@ export async function POST(
     const isOwner = isProgrammeOwnedByUser(programme, userId, access.employeeId);
 
     if (action === 'submit' && !isOwner) {
-      // A requester must never be able to advance another requester's draft by
-      // guessing an ID. Tenant-wide programme managers retain that capability.
       const editAnyCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_ANY);
       if (editAnyCheck instanceof NextResponse) {
         return NextResponse.json({ error: 'You may only submit programmes that you own' }, { status: 403 });
@@ -139,80 +136,94 @@ export async function POST(
     }
 
     const now = new Date();
-    const patch: Record<string, unknown> = { updatedAt: now };
     let nextStatus: string;
+    let transitionSet;
     switch (action) {
       case 'submit':
         nextStatus = 'submitted';
-        patch.submittedAt = now;
-        patch.reviewNotes = null;
-        patch.rejectionReason = null;
+        transitionSet = sql`status = 'submitted', submitted_at = ${now}, review_notes = NULL, rejection_reason = NULL, updated_at = ${now}`;
         break;
       case 'request_changes':
         nextStatus = 'changes_requested';
-        patch.reviewNotes = note;
-        patch.reviewedByUserId = userId;
-        patch.reviewedAt = now;
+        transitionSet = sql`status = 'changes_requested', review_notes = ${note}, reviewed_by_user_id = ${userId}, reviewed_at = ${now}, updated_at = ${now}`;
         break;
       case 'approve':
         nextStatus = 'approved';
-        patch.approvedByUserId = userId;
-        patch.approvedAt = now;
-        patch.reviewNotes = note || programme.reviewNotes;
+        transitionSet = sql`status = 'approved', approved_by_user_id = ${userId}, approved_at = ${now}, review_notes = ${note || programme.reviewNotes}, updated_at = ${now}`;
         break;
       case 'reject':
         nextStatus = 'rejected';
-        patch.rejectionReason = note;
-        patch.reviewedByUserId = userId;
-        patch.reviewedAt = now;
+        transitionSet = sql`status = 'rejected', rejection_reason = ${note}, reviewed_by_user_id = ${userId}, reviewed_at = ${now}, updated_at = ${now}`;
         break;
       case 'publish':
         nextStatus = 'published';
-        patch.publishedByUserId = userId;
-        patch.publishedAt = now;
-        patch.approvedByUserId = programme.approvedByUserId ?? userId;
-        patch.approvedAt = programme.approvedAt ?? now;
+        transitionSet = sql`status = 'published', published_by_user_id = ${userId}, published_at = ${now}, approved_by_user_id = COALESCE(approved_by_user_id, ${userId}), approved_at = COALESCE(approved_at, ${now}), updated_at = ${now}`;
         break;
       case 'archive':
         nextStatus = 'archived';
-        patch.archivedAt = now;
+        transitionSet = sql`status = 'archived', archived_at = ${now}, updated_at = ${now}`;
         break;
       case 'complete':
         nextStatus = 'completed';
-        patch.completedAt = now;
+        transitionSet = sql`status = 'completed', completed_at = ${now}, updated_at = ${now}`;
         break;
       default:
         return NextResponse.json({ error: 'Invalid programme action' }, { status: 400 });
     }
 
-    const [updated] = await db
-      .update(programmes)
-      .set({ ...patch, status: nextStatus })
-      .where(and(
-        eq(programmes.id, id),
-        eq(programmes.tenantId, tenantId),
-        eq(programmes.status, programme.status),
-      ))
-      .returning();
-    if (!updated) {
-      return NextResponse.json(
-        { error: 'This programme changed while you were reviewing it. Refresh and review the latest status before deciding.' },
-        { status: 409 },
-      );
-    }
+    const auditSequence = Date.now();
+    const summary = `Programme ${programme.reference} ${action.replace(/_/g, ' ')} (${programme.status} → ${nextStatus})`;
 
-    await recordAuditEvent({
-      tenantId,
-      actorUserId: userId,
-      action: `programme.${action}`,
-      entityType: 'programme',
-      entityId: id,
-      sourceChannel: 'web',
-      before: { status: programme.status },
-      after: { status: nextStatus },
-      reason: note || undefined,
-      summary: `Programme ${programme.reference} ${action.replace(/_/g, ' ')} (${programme.status} → ${nextStatus})`,
-    });
+    // Claim exactly the expected state first. Immutable audit evidence is
+    // inserted only from that claim, so stale/concurrent actions can create
+    // neither a state transition nor a false audit event.
+    await db.execute(sql`
+      WITH programme_claim AS (
+        UPDATE programmes
+        SET ${transitionSet}
+        WHERE id = ${id}::uuid
+          AND tenant_id = ${tenantId}::uuid
+          AND status = ${programme.status}
+        RETURNING id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id,
+          action, entity_type, entity_id, source_channel,
+          before, after, reason, summary
+        )
+        SELECT
+          ${tenantId}::uuid,
+          ${auditSequence},
+          ${`programme_${action}`},
+          ${userId},
+          ${`programme.${action}`},
+          'programme',
+          ${id}::uuid,
+          'web',
+          jsonb_build_object('status', ${programme.status}),
+          jsonb_build_object('status', ${nextStatus}),
+          ${note || null},
+          ${summary}
+        FROM programme_claim
+        RETURNING id
+      )
+      SELECT CASE
+        WHEN (SELECT count(*) FROM programme_claim) = 1
+         AND (SELECT count(*) FROM audit_insert) = 1
+        THEN 1
+        ELSE CAST('atomic_programme_action_failed' AS integer)
+      END AS committed
+    `);
+
+    const [updated] = await db
+      .select()
+      .from(programmes)
+      .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
+      .limit(1);
+    if (!updated) {
+      return NextResponse.json({ error: 'Programme not found after transition' }, { status: 404 });
+    }
 
     try {
       const statusLabel = nextStatus.replace(/_/g, ' ');
@@ -260,6 +271,12 @@ export async function POST(
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     console.error('[Programmes] action failed:', error);
+    if (String(error).includes('atomic_programme_action_failed')) {
+      return NextResponse.json(
+        { error: 'This programme changed while you were reviewing it. Refresh and review the latest status before deciding.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to process programme action' }, { status: 500 });
   }
 }
