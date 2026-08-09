@@ -44,15 +44,12 @@ let interactiveConnection: ReturnType<typeof postgres> | null = null;
 let interactiveDb: PostgresDatabase | null = null;
 
 function getInteractiveDb(): PostgresDatabase {
-  if (!databaseUrl) {
+  if (!databaseUrl || !connection) {
     throw new Error('Database not configured. Set DATABASE_URL in your environment.');
   }
 
   if (isLocalPostgresUrl(databaseUrl)) {
-    if (!connection || typeof connection === 'function') {
-      return createPostgresDb(connection as ReturnType<typeof postgres>);
-    }
-    throw new Error('Local PostgreSQL transaction connection is unavailable.');
+    return createPostgresDb(connection as ReturnType<typeof postgres>);
   }
 
   if (!interactiveConnection) {
