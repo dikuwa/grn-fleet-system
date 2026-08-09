@@ -50,6 +50,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
   const router = useRouter();
   const [drivers, setDrivers] = useState<DriverInfo[]>([]);
   const [selectedDriverId, setSelectedDriverId] = useState(currentDriverId || '');
+  const [replacementReason, setReplacementReason] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -71,25 +72,40 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
     loadDrivers();
   }, []);
 
+  const isReplacement = Boolean(currentDriverId && selectedDriverId && selectedDriverId !== currentDriverId);
+
   const handleAssign = useCallback(async () => {
     if (!selectedDriverId) return;
+    if (currentDriverId && selectedDriverId === currentDriverId) {
+      setError('Choose a different driver before replacing the current assignment.');
+      return;
+    }
+    if (currentDriverId && !replacementReason.trim()) {
+      setError('Enter a reason for replacing the currently assigned driver.');
+      return;
+    }
+
     setIsSaving(true);
     setError('');
     try {
       const res = await fetch(`/api/allocations/${allocationId}/driver`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ driverEmployeeId: selectedDriverId }),
+        body: JSON.stringify({
+          driverEmployeeId: selectedDriverId,
+          reason: currentDriverId ? replacementReason.trim() : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to assign driver');
+      setReplacementReason('');
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to assign driver');
     } finally {
       setIsSaving(false);
     }
-  }, [allocationId, selectedDriverId, router]);
+  }, [allocationId, currentDriverId, replacementReason, selectedDriverId, router]);
 
   const handleUnassign = useCallback(async () => {
     setIsSaving(true);
@@ -98,8 +114,10 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       const res = await fetch(`/api/allocations/${allocationId}/driver`, {
         method: 'DELETE',
       });
-      if (!res.ok) throw new Error('Failed to unassign driver');
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'Failed to unassign driver');
       setSelectedDriverId('');
+      setReplacementReason('');
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to unassign driver');
@@ -138,6 +156,13 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
     availabilityStatus: null,
   } : null;
 
+  const assignmentBlocked = Boolean(
+    !selectedDriver ||
+    selectedDriver.activeLicenceCount === 0 ||
+    (currentDriverId && selectedDriverId === currentDriverId) ||
+    (isReplacement && !replacementReason.trim()),
+  );
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
@@ -147,12 +172,12 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
 
       {currentDriverId && currentDriver && (
         <div className="rounded-[8px] border border-status-success-border bg-status-success-bg/30 p-3">
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-status-success-bg text-status-success-text">
                 <User className="h-4 w-4" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-sm font-medium text-ink-950">
                   {currentDriver.firstName} {currentDriver.lastName}
                 </p>
@@ -160,7 +185,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
                   {currentDriver.jobTitle || 'Driver'} · {currentDriver.employeeNumber}
                 </p>
                 {currentBestLicence && (
-                  <div className="mt-1.5 flex items-center gap-2">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
                     <Badge variant={getLicenceStatus(currentBestLicence.expiryDate).variant} size="sm">
                       {getLicenceStatus(currentBestLicence.expiryDate).label}
                     </Badge>
@@ -179,56 +204,92 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       )}
 
       <div className="space-y-2">
-          {isLoading ? (
-            <div className="animate-pulse rounded-[8px] bg-muted p-3">
-              <div className="h-4 w-3/4 rounded bg-ink-200" />
-            </div>
-          ) : (
-            <>
-              <EmployeeCombobox
-                kind="driver"
-                value={selectedDriverId}
-                selectedOption={selectedEmployeeOption}
-                onSelect={(employee) => setSelectedDriverId(employee?.id || '')}
-                placeholder={currentDriverId ? 'Search for a replacement driver…' : 'Search available drivers…'}
-              />
+        {isLoading ? (
+          <div className="animate-pulse rounded-[8px] bg-muted p-3">
+            <div className="h-4 w-3/4 rounded bg-ink-200" />
+          </div>
+        ) : (
+          <>
+            <EmployeeCombobox
+              kind="driver"
+              value={selectedDriverId}
+              selectedOption={selectedEmployeeOption}
+              onSelect={(employee) => {
+                setSelectedDriverId(employee?.id || '');
+                setReplacementReason('');
+                setError('');
+              }}
+              placeholder={currentDriverId ? 'Search for a replacement driver…' : 'Search available drivers…'}
+            />
 
-              {selectedDriver && (
-                <div className="rounded-[8px] border border-border bg-muted/50 p-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium text-ink-700">
-                        Licence: {selectedDriver.activeLicenceCount} valid / {selectedDriver.licenceCount} total
-                      </p>
-                      {bestLicence && (
-                        <div className="flex items-center gap-2">
-                          <Badge variant={getLicenceStatus(bestLicence.expiryDate).variant} size="sm">
-                            {getLicenceStatus(bestLicence.expiryDate).label}
-                          </Badge>
-                          <span className="text-xs text-ink-400">
-                            Class {bestLicence.licenceClass}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <Button variant="primary" size="sm" loading={isSaving} onClick={handleAssign}>
-                      <UserPlus className="h-3.5 w-3.5" />
-                      {currentDriverId ? 'Replace Driver' : 'Assign'}
-                    </Button>
+            {currentDriverId && selectedDriverId === currentDriverId && (
+              <p className="text-xs text-ink-500">
+                Search and select a different eligible driver to make a replacement.
+              </p>
+            )}
+
+            {isReplacement && (
+              <div className="space-y-1.5 rounded-[8px] border border-border bg-muted/30 p-3">
+                <label htmlFor={`driver-replacement-reason-${allocationId}`} className="text-xs font-medium text-ink-700">
+                  Replacement reason <span className="text-status-error-text">*</span>
+                </label>
+                <textarea
+                  id={`driver-replacement-reason-${allocationId}`}
+                  value={replacementReason}
+                  onChange={(event) => setReplacementReason(event.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  placeholder="Record why the current driver is being replaced…"
+                  className="w-full resize-y rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-ink-950 outline-none transition-colors placeholder:text-ink-400 focus:border-ink-400 focus:ring-2 focus:ring-ink-200"
+                />
+                <p className="text-xs text-ink-500">
+                  This reason is recorded in the audit trail and shared with the affected driver.
+                </p>
+              </div>
+            )}
+
+            {selectedDriver && (
+              <div className="rounded-[8px] border border-border bg-muted/50 p-2.5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-ink-700">
+                      Licence: {selectedDriver.activeLicenceCount} valid / {selectedDriver.licenceCount} total
+                    </p>
+                    {bestLicence && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={getLicenceStatus(bestLicence.expiryDate).variant} size="sm">
+                          {getLicenceStatus(bestLicence.expiryDate).label}
+                        </Badge>
+                        <span className="text-xs text-ink-400">
+                          Class {bestLicence.licenceClass}
+                        </span>
+                      </div>
+                    )}
                   </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    loading={isSaving}
+                    disabled={assignmentBlocked}
+                    onClick={handleAssign}
+                  >
+                    <UserPlus className="h-3.5 w-3.5" />
+                    {currentDriverId ? 'Replace Driver' : 'Assign'}
+                  </Button>
                 </div>
-              )}
+              </div>
+            )}
 
-              {selectedDriver && selectedDriver.activeLicenceCount === 0 && (
-                <div className="flex items-center gap-1.5 rounded-[6px] bg-status-error-bg px-2.5 py-1.5">
-                  <XCircle className="h-3.5 w-3.5 text-status-error-text" />
-                  <span className="text-xs text-status-error-text font-medium">
-                    No valid licences — driver cannot be assigned
-                  </span>
-                </div>
-              )}
-            </>
-          )}
+            {selectedDriver && selectedDriver.activeLicenceCount === 0 && (
+              <div className="flex items-center gap-1.5 rounded-[6px] bg-status-error-bg px-2.5 py-1.5">
+                <XCircle className="h-3.5 w-3.5 text-status-error-text" />
+                <span className="text-xs font-medium text-status-error-text">
+                  No valid licences — driver cannot be assigned
+                </span>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {error && (
