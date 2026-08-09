@@ -18,6 +18,7 @@ import { Permissions } from '@/lib/permissions';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { AVAILABILITY_OPTIONS, normaliseAvailability, normaliseEmployeeStatus } from '@/lib/employee-status';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 const MAX_BULK = 500;
 const MAX_BULK_FILTER = 2000;
@@ -311,31 +312,35 @@ export async function POST(request: NextRequest) {
       .where(and(eq(employees.tenantId, tenantId), inArray(employees.id, employeeIds)));
     updated = result.rowCount ?? 0;
   } else if (action === 'set_availability') {
-    await db.transaction(async (tx) => {
-      await tx
+    const nextAvailability = availability;
+    if (!nextAvailability) {
+      return NextResponse.json({ error: 'A valid availability status is required.' }, { status: 400 });
+    }
+    await runAtomicMutations((executor) => [
+      executor
         .update(employeeAvailability)
         .set({ endAt: now, isActive: false })
         .where(and(
           eq(employeeAvailability.tenantId, tenantId),
           inArray(employeeAvailability.employeeId, employeeIds),
           isNull(employeeAvailability.endAt),
-        ));
-      await tx
+        )),
+      executor
         .update(employees)
-        .set({ availabilityStatus: availability!, updatedAt: now })
-        .where(and(eq(employees.tenantId, tenantId), inArray(employees.id, employeeIds)));
-      await tx.insert(employeeAvailability).values(
+        .set({ availabilityStatus: nextAvailability, updatedAt: now })
+        .where(and(eq(employees.tenantId, tenantId), inArray(employees.id, employeeIds))),
+      executor.insert(employeeAvailability).values(
         employeeIds.map((employeeId) => ({
           tenantId,
           employeeId,
-          status: availability!,
+          status: nextAvailability,
           startAt: now,
           endAt: null,
           reason: 'Bulk availability update',
           enteredByUserId: auth.session.user.id,
         })),
-      );
-    });
+      ),
+    ]);
     updated = employeeIds.length;
   } else if (action === 'assign_office') {
     const [validOffice] = await db
@@ -375,8 +380,8 @@ export async function POST(request: NextRequest) {
     updated = result.rowCount ?? 0;
   } else if (action === 'archive' || action === 'restore') {
     const isArchive = action === 'archive';
-    await db.transaction(async (tx) => {
-      await tx
+    await runAtomicMutations((executor) => {
+      const employeeUpdate = executor
         .update(employees)
         .set({
           employmentStatus: isArchive ? 'archived' : 'active',
@@ -386,56 +391,41 @@ export async function POST(request: NextRequest) {
         })
         .where(and(eq(employees.tenantId, tenantId), inArray(employees.id, employeeIds)));
 
-      if (accessUserIds.length > 0) {
-        if (isArchive) {
-          // Only memberships that were active because of this staff account are
-          // moved to the archive-specific inactive state. Suspended, removed or
-          // pending accounts retain their independent User Management state.
-          await tx
+      if (accessUserIds.length === 0) return [employeeUpdate];
+
+      if (isArchive) {
+        return [
+          employeeUpdate,
+          executor
             .update(tenantMemberships)
             .set({ status: 'inactive' })
             .where(and(
               eq(tenantMemberships.tenantId, tenantId),
               eq(tenantMemberships.status, 'active'),
               inArray(tenantMemberships.userId, accessUserIds),
-            ));
-          await tx
+            )),
+          executor
             .update(userProfiles)
-            .set({
-              accountEnabled: false,
-              status: 'disabled',
-              disabledAt: now,
-              updatedAt: now,
-            })
-            .where(and(
-              inArray(userProfiles.userId, accessUserIds),
-              eq(userProfiles.status, 'active'),
-            ));
-        } else {
-          // Restore only the account states created by Staff archive. Never
-          // overwrite suspension/access_removed decisions made in User Management.
-          await tx
-            .update(tenantMemberships)
-            .set({ status: 'active' })
-            .where(and(
-              eq(tenantMemberships.tenantId, tenantId),
-              eq(tenantMemberships.status, 'inactive'),
-              inArray(tenantMemberships.userId, accessUserIds),
-            ));
-          await tx
-            .update(userProfiles)
-            .set({
-              accountEnabled: true,
-              status: 'active',
-              disabledAt: null,
-              updatedAt: now,
-            })
-            .where(and(
-              inArray(userProfiles.userId, accessUserIds),
-              eq(userProfiles.status, 'disabled'),
-            ));
-        }
+            .set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
+            .where(and(inArray(userProfiles.userId, accessUserIds), eq(userProfiles.status, 'active'))),
+        ];
       }
+
+      return [
+        employeeUpdate,
+        executor
+          .update(tenantMemberships)
+          .set({ status: 'active' })
+          .where(and(
+            eq(tenantMemberships.tenantId, tenantId),
+            eq(tenantMemberships.status, 'inactive'),
+            inArray(tenantMemberships.userId, accessUserIds),
+          )),
+        executor
+          .update(userProfiles)
+          .set({ accountEnabled: true, status: 'active', disabledAt: null, updatedAt: now })
+          .where(and(inArray(userProfiles.userId, accessUserIds), eq(userProfiles.status, 'disabled'))),
+      ];
     });
     updated = employeesFound.length;
     disabledAccounts = accessUserIds.length;
