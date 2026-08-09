@@ -192,17 +192,18 @@ export async function POST(req: NextRequest) {
     }
 
     const [credentialAccount] = await db
-      .select({ id: account.id })
+      .select({ id: account.id, password: account.password })
       .from(account)
       .where(and(eq(account.userId, userId), eq(account.providerId, 'email')))
       .limit(1);
-    if (!credentialAccount) {
+    if (!credentialAccount?.password) {
       return NextResponse.json(
         { error: 'The invitation account has no password credential to rotate.' },
         { status: 409 },
       );
     }
 
+    const previousPasswordHash = credentialAccount.password;
     const tempPassword = `Gf!${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const passwordHash = await bcrypt.hash(tempPassword, 10);
     await db
@@ -234,6 +235,34 @@ export async function POST(req: NextRequest) {
       emailError = error instanceof Error ? error.message : 'Email delivery failed';
     }
 
+    if (!emailSent) {
+      // Do not strand the invitee with a rotated credential they never received.
+      await db
+        .update(account)
+        .set({ password: previousPasswordHash, updatedAt: new Date() })
+        .where(eq(account.id, credentialAccount.id));
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        action: 'user_invitation.resend_failed',
+        entityType: 'tenant_membership',
+        entityId: membership.id,
+        after: {
+          userId,
+          email: targetUser.email,
+          emailSent: false,
+          temporaryCredentialRestored: true,
+        },
+        summary: `Invitation resend failed for ${targetUser.email}; previous credential preserved`,
+      }).catch(() => undefined);
+
+      return NextResponse.json(
+        { error: emailError || 'Invitation email could not be delivered. The existing temporary credential remains unchanged.' },
+        { status: 502 },
+      );
+    }
+
     await recordAuditEvent({
       tenantId: session.tenantId,
       actorUserId: session.user.id,
@@ -243,7 +272,7 @@ export async function POST(req: NextRequest) {
       after: {
         userId,
         email: targetUser.email,
-        emailSent,
+        emailSent: true,
         temporaryCredentialRotated: true,
       },
       summary: `Pending account invitation reissued for ${targetUser.email}`,
@@ -252,12 +281,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        message: emailSent
-          ? `Invitation re-sent to ${targetUser.email}.`
-          : 'The temporary credential was rotated, but email delivery failed. Share the returned temporary credential securely.',
-        emailSent,
-        emailError,
-        tempPassword: emailSent ? null : tempPassword,
+        message: `Invitation re-sent to ${targetUser.email}.`,
+        emailSent: true,
       },
     });
   } catch (error) {
