@@ -8,9 +8,9 @@ import { auditEvents } from '@/db/schema/audit';
 import { requireDashboardAction, requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
-import { eq, and, desc, isNull } from 'drizzle-orm';
-import { setAuthorityStatus } from '@/lib/trip-authority';
+import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 export async function POST(
   req: NextRequest,
@@ -47,47 +47,56 @@ export async function POST(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-
     const [trip] = await db
       .select({
         trip: trips,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        allocationState: vehicleAllocations.state,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
         validFrom: tripAuthorities.validFrom,
         validUntil: tripAuthorities.validUntil,
         requestReference: transportRequests.reference,
+        requestStatus: transportRequests.status,
       })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
       .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
-      .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
+      .where(and(
+        eq(trips.id, id),
+        eq(trips.tenantId, session.tenantId),
+        eq(transportRequests.tenantId, session.tenantId),
+      ))
       .limit(1);
 
-    if (!trip) {
-      return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
-    }
-
+    if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
     const tripRecord = trip.trip;
-
     if (tripRecord.status !== 'pending') {
-      return NextResponse.json(
-        { error: `Cannot start trip with status "${tripRecord.status}". Only pending trips can be started.` },
-        { status: 409 },
-      );
+      return NextResponse.json({ error: `Cannot start trip with status "${tripRecord.status}". Only pending trips can be started.` }, { status: 409 });
+    }
+    if (trip.allocationState !== 'confirmed') {
+      return NextResponse.json({ error: `Allocation must be confirmed before departure (${trip.allocationState})` }, { status: 409 });
     }
     if (!tripRecord.issuedAt) return NextResponse.json({ error: 'Vehicle must be physically issued before the trip starts' }, { status: 409 });
     if (trip.authorityStatus !== 'ready_for_departure') {
       return NextResponse.json({ error: `Trip Authority is not ready for departure (${trip.authorityStatus})` }, { status: 409 });
     }
+    if (trip.requestStatus !== 'vehicle_issued') {
+      return NextResponse.json({ error: `Request is not ready to start (${trip.requestStatus})` }, { status: 409 });
+    }
+
     const now = new Date();
     if ((trip.validFrom && now < trip.validFrom) || (trip.validUntil && now > trip.validUntil)) {
       return NextResponse.json({ error: 'Trip Authority is outside its approved validity period' }, { status: 409 });
     }
+
     const [employee] = await db.select({ id: employees.id }).from(employees)
       .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId))).limit(1);
-    if (!employee || employee.id !== trip.driverEmployeeId) return NextResponse.json({ error: 'Only the assigned driver may start this trip' }, { status: 403 });
+    if (!employee || employee.id !== trip.driverEmployeeId) {
+      return NextResponse.json({ error: 'Only the assigned driver may start this trip' }, { status: 403 });
+    }
+
     const [licence] = await db
       .select({
         expiryDate: driverLicences.expiryDate,
@@ -96,8 +105,11 @@ export async function POST(
       })
       .from(driverProfiles)
       .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
-      .where(eq(driverProfiles.employeeId, employee.id))
-      .orderBy(desc(driverLicences.expiryDate))
+      .where(and(
+        eq(driverProfiles.employeeId, employee.id),
+        eq(driverLicences.isActive, true),
+      ))
+      .orderBy(desc(driverLicences.version))
       .limit(1);
     if (
       !licence ||
@@ -107,11 +119,13 @@ export async function POST(
     ) {
       return NextResponse.json({ error: 'Driver licence is not currently valid and verified' }, { status: 409 });
     }
-    const [blockingDefect] = await db
-      .select({ id: vehicleDefects.id })
+
+    const [blockingDefect] = await db.select({ id: vehicleDefects.id })
       .from(vehicleDefects)
+      .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
       .where(and(
         eq(vehicleDefects.vehicleId, tripRecord.vehicleId),
+        eq(vehicles.tenantId, session.tenantId),
         eq(vehicleDefects.isBlocking, true),
         isNull(vehicleDefects.resolvedAt),
       ))
@@ -119,87 +133,93 @@ export async function POST(
     if (blockingDefect) {
       return NextResponse.json({ error: 'Departure is blocked by an unresolved safety-critical defect' }, { status: 409 });
     }
-    const [inspection] = await db.select({
-      id: vehicleInspections.id,
-      odometerReading: vehicleInspections.odometerReading,
-    }).from(vehicleInspections)
-      .where(and(eq(vehicleInspections.tripId, id), eq(vehicleInspections.type, 'departure'), eq(vehicleInspections.overallPass, true))).limit(1);
+
+    const [inspection] = await db.select({ id: vehicleInspections.id, odometerReading: vehicleInspections.odometerReading })
+      .from(vehicleInspections)
+      .where(and(
+        eq(vehicleInspections.tripId, id),
+        eq(vehicleInspections.tenantId, session.tenantId),
+        eq(vehicleInspections.type, 'departure'),
+        eq(vehicleInspections.status, 'completed'),
+        eq(vehicleInspections.overallPass, true),
+      )).limit(1);
     if (!inspection) return NextResponse.json({ error: 'Passed pre-departure inspection is required' }, { status: 409 });
-    if (
-      inspection.odometerReading !== null &&
-      Number(body.beginningOdometer) < inspection.odometerReading
-    ) {
+    if (inspection.odometerReading !== null && Number(body.beginningOdometer) < inspection.odometerReading) {
       return NextResponse.json({ error: `Beginning odometer cannot be lower than the inspection reading (${inspection.odometerReading})` }, { status: 422 });
     }
 
-    const [updatedTrip] = await db
-      .update(trips)
-      .set({
-        status: 'in_progress',
-        startedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(trips.id, id))
-      .returning();
+    await runAtomicMutations((tx) => [
+      tx.update(trips)
+        .set({ status: 'in_progress', startedAt: now, updatedAt: now })
+        .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId))),
+      tx.update(tripAuthorities)
+        .set({
+          status: 'in_progress',
+          beginningOdometer: Number(body.beginningOdometer),
+          version: sql`${tripAuthorities.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(tripAuthorities.id, trip.authorityId),
+          eq(tripAuthorities.tenantId, session.tenantId),
+          eq(tripAuthorities.status, 'ready_for_departure'),
+        )),
+      tx.update(vehicles)
+        .set({ status: 'allocated', updatedAt: now })
+        .where(and(eq(vehicles.id, tripRecord.vehicleId), eq(vehicles.tenantId, session.tenantId))),
+      tx.insert(vehicleStatusEvents).values({
+        vehicleId: tripRecord.vehicleId,
+        previousStatus: 'available',
+        newStatus: 'allocated',
+        reason: `Trip started: ${tripRecord.id.slice(0, 8)}...`,
+        changedByUserId: session.user.id,
+        referenceEntityType: 'trip',
+        referenceEntityId: tripRecord.id,
+      }),
+      tx.update(transportRequests)
+        .set({ status: 'in_progress', updatedAt: now })
+        .where(and(eq(transportRequests.id, tripRecord.requestId), eq(transportRequests.tenantId, session.tenantId))),
+      tx.insert(auditEvents).values({
+        tenantId: session.tenantId,
+        tenantSequence: Date.now(),
+        eventType: 'trip_started',
+        actorUserId: session.user.id,
+        action: 'start',
+        entityType: 'trip',
+        entityId: id,
+        summary: `Trip started: vehicle ${tripRecord.vehicleId?.slice(0, 8) || 'unknown'}`,
+        after: {
+          authorityId: trip.authorityId,
+          beginningOdometer: body.beginningOdometer,
+          fuelLevel: body.fuelLevel,
+          passengersConfirmed: true,
+          location: body.latitude != null && body.longitude != null ? { latitude: body.latitude, longitude: body.longitude } : null,
+        },
+        sourceChannel: 'web',
+      }),
+    ]);
 
-    await setAuthorityStatus({
-      authorityId: trip.authorityId,
-      tenantId: session.tenantId,
-      next: 'in_progress',
-      patch: { beginningOdometer: Number(body.beginningOdometer) },
-    });
-
-    // Update vehicle status to allocated + log status event
-    await db
-      .update(vehicles)
-      .set({ status: 'allocated', updatedAt: new Date() })
-      .where(eq(vehicles.id, tripRecord.vehicleId));
-
-    await db.insert(vehicleStatusEvents).values({
-      vehicleId: tripRecord.vehicleId,
-      previousStatus: 'available',
-      newStatus: 'allocated',
-      reason: `Trip started: ${tripRecord.id.slice(0, 8)}...`,
-      changedByUserId: session.user.id,
-      referenceEntityType: 'trip',
-      referenceEntityId: tripRecord.id,
-    });
-
-    // Generate trip authority document when trip is issued
     if (tripRecord.allocationId) {
-      await onTripIssued(tripRecord.allocationId, session.tenantId, session.user.id).catch((err) => {
-        console.warn('[trips/start] Document generation failed:', err);
-      });
+      try {
+        await onTripIssued(tripRecord.allocationId, session.tenantId, session.user.id);
+      } catch (err) {
+        console.warn('[trips/start] Post-commit document generation failed:', err);
+      }
     }
-    await db.update(transportRequests).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(transportRequests.id, tripRecord.requestId));
+    try {
+      await recordTenantRequestActivity({
+        tenantId: session.tenantId,
+        requestId: tripRecord.requestId,
+        reference: trip.requestReference,
+        stage: 'started',
+        officeLabel: 'Assigned driver',
+      });
+    } catch (err) {
+      console.warn('[trips/start] Post-commit activity failed:', err);
+    }
 
-    // Audit log
-    await db.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: 0,
-      eventType: 'trip_started',
-      actorUserId: session.user.id,
-      action: 'start',
-      entityType: 'trip',
-      entityId: id,
-      summary: `Trip started: vehicle ${tripRecord.vehicleId?.slice(0, 8) || 'unknown'}`,
-      after: {
-        authorityId: trip.authorityId,
-        beginningOdometer: body.beginningOdometer,
-        fuelLevel: body.fuelLevel,
-        passengersConfirmed: true,
-        location: body.latitude && body.longitude ? { latitude: body.latitude, longitude: body.longitude } : null,
-      },
-      sourceChannel: 'web',
-    });
-    await recordTenantRequestActivity({
-      tenantId: session.tenantId,
-      requestId: tripRecord.requestId,
-      reference: trip.requestReference,
-      stage: 'started',
-      officeLabel: 'Assigned driver',
-    });
-
+    const [updatedTrip] = await db.select().from(trips)
+      .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId))).limit(1);
     return NextResponse.json({ trip: updatedTrip });
   } catch (error) {
     console.error('[trips/start] POST failed:', error);
