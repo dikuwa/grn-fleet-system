@@ -24,13 +24,19 @@ export async function POST(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
-    const { replacementVehicleId, reason, handoverOdometer } = body ?? {};
+    const {
+      replacementVehicleId,
+      reason,
+      handoverOdometer,
+      outgoingVehicleDisposition,
+    } = body ?? {};
     const result = await replaceVehicle(
       {
         allocationId: id,
         replacementVehicleId,
         reason,
         handoverOdometer: handoverOdometer != null ? Number(handoverOdometer) : null,
+        outgoingVehicleDisposition,
       },
       auth.session,
     );

@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Play, RotateCcw, CheckSquare, KeyRound, UserCheck, Repeat } from 'lucide-react';
+import { Play, CheckSquare, KeyRound, UserCheck, Repeat } from 'lucide-react';
 import Link from 'next/link';
 import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
 
@@ -49,9 +49,7 @@ export function TripActions({
   const [error, setError] = useState('');
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
 
-  // A trip is "mid-trip" once it has been issued; replacements then require an
-  // odometer handover reading so the closure can split kilometres per vehicle.
-  const midTrip = status !== 'pending' && status !== 'return_inspection' && status !== 'closure_review' && status !== 'closed';
+  const midTrip = status === 'in_progress';
 
   const handleReplaceSuccess = useCallback(() => {
     router.refresh();
@@ -65,7 +63,7 @@ export function TripActions({
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to start trip');
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load trip');
+      setError(err instanceof Error ? err.message : 'Failed to start trip');
     } finally {
       setIsWorking(false);
     }
@@ -75,22 +73,6 @@ export function TripActions({
     router.push(`/dashboard/inspections/new?type=departure&tripId=${tripId}&vehicleId=${vehicleId}`);
   }, [tripId, vehicleId, router]);
 
-  const handleMarkReturned = useCallback(async () => {
-    setIsWorking(true);
-    setError('');
-    try {
-      const res = await fetch(`/api/trips/${tripId}`);
-      if (!res.ok) throw new Error('Failed to load trip details');
-      const data = await res.json();
-      const vehicleId = data.trip?.vehicleId || '';
-      router.push(`/dashboard/inspections/new?type=return&tripId=${tripId}&vehicleId=${vehicleId}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to mark returned');
-    } finally {
-      setIsWorking(false);
-    }
-  }, [tripId, router]);
-
   const handleIssueVehicle = useCallback(async () => {
     setIsWorking(true);
     setError('');
@@ -98,7 +80,11 @@ export function TripActions({
       const res = await fetch(`/api/trips/${tripId}/issue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keysIssued: true, fuelCardIssued: true, issueOdometer: currentOdometer }),
+        body: JSON.stringify({
+          keysIssued: true,
+          fuelCardIssued: true,
+          issueOdometer: currentOdometer,
+        }),
       });
       if (!res.ok) {
         const errData = await res.json();
@@ -132,6 +118,17 @@ export function TripActions({
     }
   }, [tripId, router]);
 
+  const replacementDialog = canReplaceVehicle && allocationId && vehicle ? (
+    <VehicleReplacementDialog
+      open={replaceDialogOpen}
+      onOpenChange={setReplaceDialogOpen}
+      allocationId={allocationId}
+      currentVehicle={vehicle}
+      midTrip={midTrip}
+      onSuccess={handleReplaceSuccess}
+    />
+  ) : null;
+
   if (status === 'pending') {
     return (
       <div className="flex flex-wrap gap-2">
@@ -155,20 +152,13 @@ export function TripActions({
             <KeyRound className="h-4 w-4" /> Issue Vehicle
           </Button>
         )}
-        {canDrive && hasIssue && <Button variant="primary" size="sm" loading={isWorking} onClick={handleStartTrip}>
-          <Play className="h-4 w-4" /> Start Trip
-        </Button>}
-        {error && <p className="mt-1 w-full text-xs text-status-error-text">{error}</p>}
-        {canReplaceVehicle && allocationId && vehicle && (
-          <VehicleReplacementDialog
-            open={replaceDialogOpen}
-            onOpenChange={setReplaceDialogOpen}
-            allocationId={allocationId}
-            currentVehicle={vehicle}
-            midTrip={midTrip}
-            onSuccess={handleReplaceSuccess}
-          />
+        {canDrive && hasIssue && (
+          <Button variant="primary" size="sm" loading={isWorking} onClick={handleStartTrip}>
+            <Play className="h-4 w-4" /> Start Trip
+          </Button>
         )}
+        {error && <p className="mt-1 w-full text-xs text-status-error-text">{error}</p>}
+        {replacementDialog}
       </div>
     );
   }
@@ -177,9 +167,6 @@ export function TripActions({
     return (
       <div>
         <div className="flex flex-wrap gap-2">
-          {canDrive && <Button variant="primary" size="sm" loading={isWorking} onClick={handleMarkReturned}>
-            <RotateCcw className="h-4 w-4" /> Mark Returned
-          </Button>}
           {canReplaceVehicle && allocationId && (
             <Button variant="secondary" size="sm" onClick={() => setReplaceDialogOpen(true)}>
               <Repeat className="h-4 w-4" /> Replace Vehicle
@@ -187,51 +174,36 @@ export function TripActions({
           )}
         </div>
         {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
-        {canReplaceVehicle && allocationId && vehicle && (
-          <VehicleReplacementDialog
-            open={replaceDialogOpen}
-            onOpenChange={setReplaceDialogOpen}
-            allocationId={allocationId}
-            currentVehicle={vehicle}
-            midTrip={midTrip}
-            onSuccess={handleReplaceSuccess}
-          />
-        )}
+        {replacementDialog}
       </div>
     );
   }
 
   if (status === 'return_inspection') {
     return (
-      <div className="flex gap-2">
-        <Button variant="secondary" size="sm" asChild>
-          <Link href={`/dashboard/inspections/new?type=return&tripId=${tripId}`}>
-            <CheckSquare className="h-4 w-4" /> Complete Return Inspection
-          </Link>
-        </Button>
-        <Button variant="secondary" size="sm" asChild>
-          <Link href={`/dashboard/trips/${tripId}`}>
-            <CheckSquare className="h-4 w-4" /> Close Trip
-          </Link>
-        </Button>
+      <div className="flex flex-wrap gap-2">
+        {canInspect ? (
+          <Button variant="secondary" size="sm" asChild>
+            <Link href={`/dashboard/inspections/new?type=return&tripId=${tripId}&vehicleId=${vehicleId}`}>
+              <CheckSquare className="h-4 w-4" /> Complete Return Inspection
+            </Link>
+          </Button>
+        ) : (
+          <span className="text-xs text-ink-500">Waiting for the authorised return inspection.</span>
+        )}
       </div>
     );
   }
 
   if (status === 'closure_review') {
-    return (
-      <div className="flex gap-2">
-        <Button variant="primary" size="sm" asChild>
-          <Link href={`/dashboard/trips/${tripId}`}>
-            <CheckSquare className="h-4 w-4" /> Close Trip
-          </Link>
-        </Button>
-        <Button variant="secondary" size="sm" asChild>
-          <Link href={`/dashboard/inspections/new?type=return&tripId=${tripId}`}>
-            <CheckSquare className="h-4 w-4" /> Return Inspection
-          </Link>
-        </Button>
-      </div>
+    return canManage ? (
+      <Button variant="primary" size="sm" asChild>
+        <Link href="/dashboard/trips/closure-review">
+          <CheckSquare className="h-4 w-4" /> Open Closure Review
+        </Link>
+      </Button>
+    ) : (
+      <span className="text-xs text-ink-500">Awaiting Transport Office reconciliation.</span>
     );
   }
 
