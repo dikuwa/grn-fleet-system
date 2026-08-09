@@ -3,7 +3,8 @@ import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { requestDrafts, type RequestDraftPayload } from '@/db/schema/request-drafts';
 import { employees } from '@/db/schema/people';
-import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
+import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 const MAX_DRAFT_BYTES = 150_000;
 const MAX_STEP = 4;
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
     let requesterEmployeeId: string | null = null;
     if (body.requesterEmployeeId) {
       const [employee] = await db
-        .select({ id: employees.id })
+        .select({ id: employees.id, userId: employees.userId })
         .from(employees)
         .where(and(
           eq(employees.id, body.requesterEmployeeId),
@@ -105,6 +106,12 @@ export async function POST(request: NextRequest) {
         .limit(1);
       if (!employee) {
         return NextResponse.json({ error: 'Requester employee is inactive or outside your organisation' }, { status: 400 });
+      }
+      if (employee.userId !== session.user.id) {
+        const assistCheck = await requirePermission(session, Permissions.SECURE_REQUEST_ASSIST);
+        if (assistCheck instanceof NextResponse) {
+          return NextResponse.json({ error: 'You may only save a draft for your own linked employee record' }, { status: 403 });
+        }
       }
       requesterEmployeeId = employee.id;
     }
