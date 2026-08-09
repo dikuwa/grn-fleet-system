@@ -28,3 +28,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "uq_transport_requests_tenant_reference_v2"
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_programmes_tenant_reference_v2"
   ON "programmes" ("tenant_id", "reference")
   WHERE "reference" ~ '^GRN/PGM/[0-9]{4}/[0-9]{6}$';
+
+-- Idempotency must be enforced by the database, not only by a pre-insert
+-- application lookup. Two concurrent retries with the same client submission
+-- key can otherwise both pass the lookup and create duplicate requests.
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_transport_requests_tenant_client_submission"
+  ON "transport_requests" ("tenant_id", "client_submission_id")
+  WHERE "client_submission_id" IS NOT NULL;
