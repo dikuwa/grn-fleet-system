@@ -2,17 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips, tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
-import { vehicles } from '@/db/schema/fleet';
-import { transportRequests } from '@/db/schema/requests';
+import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
+import { auditEvents } from '@/db/schema/audit';
 import { requireDashboardAction, requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
+import { transportRequests } from '@/db/schema/requests';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const body = (await req.json().catch(() => ({}))) as {
+    const body = await req.json().catch(() => ({})) as {
       endingOdometer?: number;
       fuelLevel?: string;
       returnLocation?: string;
@@ -20,24 +22,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       outstandingReceiptsDeclared?: boolean;
       comments?: string;
     };
-    if (
-      !Number.isInteger(body.endingOdometer) ||
-      Number(body.endingOdometer) < 0 ||
-      !body.fuelLevel?.trim() ||
-      !body.returnLocation?.trim() ||
-      typeof body.incidentDeclared !== 'boolean' ||
-      typeof body.outstandingReceiptsDeclared !== 'boolean'
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            'Ending odometer, fuel level, return location, incident and outstanding-receipt declarations are required',
-        },
-        { status: 422 },
-      );
-    }
-    if (body.returnLocation.trim().length > 240 || (body.comments?.length ?? 0) > 2000) {
-      return NextResponse.json({ error: 'Return location or comments are too long' }, { status: 422 });
+    if (!Number.isInteger(body.endingOdometer) || Number(body.endingOdometer) < 0 || !body.fuelLevel || !body.returnLocation || typeof body.incidentDeclared !== 'boolean' || typeof body.outstandingReceiptsDeclared !== 'boolean') {
+      return NextResponse.json({ error: 'Ending odometer, fuel level, return location, incident and outstanding-receipt declarations are required' }, { status: 422 });
     }
 
     const auth = await requireRequestAuth(req);
@@ -45,193 +31,50 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { session } = auth;
     const roleCheck = await requireDashboardAction(session, '/dashboard/trips', 'update');
     if (roleCheck instanceof NextResponse) return roleCheck;
-    const permCheck = await requireAnyPermission(session, [
-      Permissions.TRIP_MANAGE,
-      Permissions.DRIVER_LOG_CREATE,
-    ]);
+    const permCheck = await requireAnyPermission(session, [Permissions.TRIP_MANAGE, Permissions.DRIVER_LOG_CREATE]);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-    const [trip] = await db
-      .select({
-        trip: trips,
-        driverEmployeeId: vehicleAllocations.driverEmployeeId,
-        allocationState: vehicleAllocations.state,
-        authorityId: tripAuthorities.id,
-        authorityStatus: tripAuthorities.status,
-        beginningOdometer: tripAuthorities.beginningOdometer,
-        requestReference: transportRequests.reference,
-        vehicleOdometer: vehicles.currentOdometer,
-      })
-      .from(trips)
+    const [trip] = await db.select({
+      trip: trips,
+      driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      allocationState: vehicleAllocations.state,
+      authorityId: tripAuthorities.id,
+      authorityStatus: tripAuthorities.status,
+      beginningOdometer: tripAuthorities.beginningOdometer,
+      requestReference: transportRequests.reference,
+    }).from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
       .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
-      .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
-      .where(
-        and(
-          eq(trips.id, id),
-          eq(trips.tenantId, session.tenantId),
-          eq(transportRequests.tenantId, session.tenantId),
-          eq(tripAuthorities.tenantId, session.tenantId),
-          eq(vehicles.tenantId, session.tenantId),
-        ),
-      )
+      .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId), eq(transportRequests.tenantId, session.tenantId), eq(tripAuthorities.tenantId, session.tenantId)))
       .limit(1);
+
     if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
-
-    const [employee] = await db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(
-        and(
-          eq(employees.userId, session.user.id),
-          eq(employees.tenantId, session.tenantId),
-          eq(employees.employmentStatus, 'active'),
-        ),
-      )
-      .limit(1);
-    if (!employee || employee.id !== trip.driverEmployeeId) {
-      return NextResponse.json({ error: 'Only the primary assigned driver may return this trip' }, { status: 403 });
-    }
-    if (!['in_progress', 'return_due'].includes(trip.trip.status)) {
-      return NextResponse.json({ error: `Cannot return trip with status "${trip.trip.status}".` }, { status: 409 });
-    }
-    if (
-      !['in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported'].includes(
-        trip.authorityStatus,
-      )
-    ) {
-      return NextResponse.json(
-        { error: `Trip Authority cannot be returned from "${trip.authorityStatus}"` },
-        { status: 409 },
-      );
-    }
-    if (trip.allocationState !== 'confirmed') {
-      return NextResponse.json({ error: `Allocation is no longer active (${trip.allocationState})` }, { status: 409 });
-    }
-
-    const minimumOdometer = Math.max(trip.beginningOdometer ?? 0, trip.vehicleOdometer ?? 0);
-    if (Number(body.endingOdometer) < minimumOdometer) {
-      return NextResponse.json(
-        { error: `Ending odometer cannot be lower than the current verified reading (${minimumOdometer})` },
-        { status: 422 },
-      );
-    }
+    const [employee] = await db.select({ id: employees.id }).from(employees)
+      .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId), eq(employees.employmentStatus, 'active'))).limit(1);
+    if (!employee || employee.id !== trip.driverEmployeeId) return NextResponse.json({ error: 'Only the assigned driver may return this trip' }, { status: 403 });
+    if (!['in_progress', 'return_due'].includes(trip.trip.status)) return NextResponse.json({ error: `Cannot return trip with status "${trip.trip.status}".` }, { status: 409 });
+    if (!['in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported'].includes(trip.authorityStatus)) return NextResponse.json({ error: `Trip Authority cannot be returned from "${trip.authorityStatus}"` }, { status: 409 });
+    if (trip.allocationState !== 'confirmed') return NextResponse.json({ error: `Allocation is no longer active (${trip.allocationState})` }, { status: 409 });
+    if (trip.beginningOdometer !== null && Number(body.endingOdometer) < trip.beginningOdometer) return NextResponse.json({ error: `Ending odometer cannot be lower than ${trip.beginningOdometer}` }, { status: 422 });
 
     const now = new Date();
-    const endingOdometer = Number(body.endingOdometer);
-    const fuelLevel = body.fuelLevel.trim();
-    const returnLocation = body.returnLocation.trim();
-    const comments = body.comments?.trim() || null;
-    const auditSequence = Date.now();
+    await runAtomicMutations((tx) => [
+      tx.update(trips).set({ status: 'return_inspection', returnedAt: now, updatedAt: now }).where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId))),
+      // Preserve the canonical authority state sequence inside one transaction.
+      tx.update(tripAuthorities).set({ status: 'returned', endingOdometer: Number(body.endingOdometer), version: sql`${tripAuthorities.version} + 1`, updatedAt: now }).where(and(eq(tripAuthorities.id, trip.authorityId), eq(tripAuthorities.tenantId, session.tenantId), inArray(tripAuthorities.status, ['in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported']))),
+      tx.update(tripAuthorities).set({ status: 'awaiting_arrival_inspection', version: sql`${tripAuthorities.version} + 1`, updatedAt: now }).where(and(eq(tripAuthorities.id, trip.authorityId), eq(tripAuthorities.tenantId, session.tenantId), eq(tripAuthorities.status, 'returned'))),
+      tx.insert(vehicleOdometerEvents).values({ vehicleId: trip.trip.vehicleId, odometerValue: Number(body.endingOdometer), source: 'trip_return', sourceEntityType: 'trip', sourceEntityId: trip.trip.id, recordedByUserId: session.user.id, notes: body.comments }),
+      tx.update(vehicles).set({ currentOdometer: Number(body.endingOdometer), updatedAt: now }).where(and(eq(vehicles.id, trip.trip.vehicleId), eq(vehicles.tenantId, session.tenantId))),
+      tx.insert(auditEvents).values({ tenantId: session.tenantId, tenantSequence: Date.now(), eventType: 'trip_returned', actorUserId: session.user.id, action: 'return', entityType: 'trip', entityId: id, summary: 'Trip returned: awaiting arrival inspection', after: { authorityId: trip.authorityId, endingOdometer: body.endingOdometer, fuelLevel: body.fuelLevel, returnLocation: body.returnLocation, incidentDeclared: body.incidentDeclared, outstandingReceiptsDeclared: body.outstandingReceiptsDeclared }, sourceChannel: 'web' }),
+    ]);
 
-    // "returned" is a logical transition point, but there is no external action
-    // between returned and awaiting_arrival_inspection. Commit the durable final
-    // state in one statement and advance the authority version by two to retain
-    // the two-step lifecycle history without exposing a partial intermediate state.
-    await db.execute(sql`
-      WITH trip_claim AS (
-        UPDATE trips
-        SET status = 'return_inspection', returned_at = ${now}, updated_at = ${now}
-        WHERE id = ${id}::uuid
-          AND tenant_id = ${session.tenantId}::uuid
-          AND status IN ('in_progress', 'return_due')
-        RETURNING id, request_id, vehicle_id
-      ),
-      authority_claim AS (
-        UPDATE trip_authorities
-        SET status = 'awaiting_arrival_inspection',
-            ending_odometer = ${endingOdometer},
-            version = version + 2,
-            updated_at = ${now}
-        WHERE id = ${trip.authorityId}::uuid
-          AND tenant_id = ${session.tenantId}::uuid
-          AND status IN ('in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported')
-          AND EXISTS (SELECT 1 FROM trip_claim)
-        RETURNING id
-      ),
-      odometer_insert AS (
-        INSERT INTO vehicle_odometer_events (
-          vehicle_id, odometer_value, source, source_entity_type, source_entity_id,
-          recorded_by_user_id, notes
-        )
-        SELECT
-          ${trip.trip.vehicleId}::uuid,
-          ${endingOdometer},
-          'trip_return',
-          'trip',
-          ${trip.trip.id}::uuid,
-          ${session.user.id},
-          ${comments}
-        FROM authority_claim
-        RETURNING id
-      ),
-      vehicle_claim AS (
-        UPDATE vehicles
-        SET current_odometer = GREATEST(current_odometer, ${endingOdometer}), updated_at = ${now}
-        WHERE id = ${trip.trip.vehicleId}::uuid
-          AND tenant_id = ${session.tenantId}::uuid
-          AND EXISTS (SELECT 1 FROM odometer_insert)
-        RETURNING id
-      ),
-      audit_insert AS (
-        INSERT INTO audit_events (
-          tenant_id, tenant_sequence, event_type, actor_user_id, actor_employee_id,
-          action, entity_type, entity_id, summary, after, source_channel
-        )
-        SELECT
-          ${session.tenantId}::uuid,
-          ${auditSequence},
-          'trip_returned',
-          ${session.user.id},
-          ${employee.id}::uuid,
-          'return',
-          'trip',
-          ${id}::uuid,
-          'Trip returned: awaiting arrival inspection',
-          jsonb_build_object(
-            'authorityId', ${trip.authorityId}::text,
-            'endingOdometer', ${endingOdometer},
-            'fuelLevel', ${fuelLevel},
-            'returnLocation', ${returnLocation},
-            'incidentDeclared', ${body.incidentDeclared},
-            'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}
-          ),
-          'web'
-        FROM vehicle_claim
-        RETURNING id
-      )
-      SELECT CASE
-        WHEN (SELECT count(*) FROM trip_claim) = 1
-         AND (SELECT count(*) FROM authority_claim) = 1
-         AND (SELECT count(*) FROM odometer_insert) = 1
-         AND (SELECT count(*) FROM vehicle_claim) = 1
-         AND (SELECT count(*) FROM audit_insert) = 1
-        THEN 1
-        ELSE CAST('atomic_trip_return_failed' AS integer)
-      END AS committed
-    `);
-
-    await recordTenantRequestActivity({
-      tenantId: session.tenantId,
-      requestId: trip.trip.requestId,
-      reference: trip.requestReference,
-      stage: 'completed',
-      officeLabel: 'Return inspection',
-    }).catch((error) => console.warn('[trips/return] Post-commit activity failed:', error));
-
-    const [updatedTrip] = await db
-      .select()
-      .from(trips)
-      .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
-      .limit(1);
+    await recordTenantRequestActivity({ tenantId: session.tenantId, requestId: trip.trip.requestId, reference: trip.requestReference, stage: 'completed', officeLabel: 'Return inspection' }).catch((err) => console.warn('[trips/return] Post-commit activity failed:', err));
+    const [updatedTrip] = await db.select().from(trips).where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId))).limit(1);
     return NextResponse.json({ trip: updatedTrip });
   } catch (error) {
     console.error('[trips/return] POST failed:', error);
-    return NextResponse.json(
-      { error: 'Trip state changed concurrently or the return could not be saved. Refresh and try again.' },
-      { status: 409 },
-    );
+    return NextResponse.json({ error: 'Failed to return trip' }, { status: 500 });
   }
 }

@@ -1,67 +1,131 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  requireDashboardAction,
-  requirePermission,
-  requireRequestAuth,
-} from '@/lib/auth-helpers';
+import { getDb } from '@/db';
+import { inspectionTemplates, inspectionTemplateItems } from '@/db/schema/trips';
+import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import {
-  createInspectionTemplateVersion,
-  InspectionTemplateError,
-  listInspectionTemplates,
-} from '@/lib/inspection-template-service';
+import { eq, and, desc } from 'drizzle-orm';
 
-async function requireTemplateManager(request: NextRequest, action: 'view' | 'create') {
-  const auth = await requireRequestAuth(request);
-  if (!auth.ok) return auth;
-  const routeCheck = await requireDashboardAction(
-    auth.session,
-    '/dashboard/inspections/templates',
-    action,
-  );
-  if (routeCheck instanceof NextResponse) return { ok: false as const, error: routeCheck };
-  const permissionCheck = await requirePermission(auth.session, Permissions.VEHICLE_MANAGE);
-  if (permissionCheck instanceof NextResponse) return { ok: false as const, error: permissionCheck };
-  return auth;
-}
-
-export async function GET(request: NextRequest) {
+/**
+ * GET /api/inspection-templates
+ * List all inspection templates for the tenant, optionally filtered by type.
+ */
+export async function GET(req: NextRequest) {
   try {
-    const auth = await requireTemplateManager(request, 'view');
+    const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
-    const type = new URL(request.url).searchParams.get('type');
-    const templates = await listInspectionTemplates(auth.session.tenantId, type);
-    return NextResponse.json(
-      { templates },
-      { headers: { 'Cache-Control': 'private, no-store' } },
+    const { session } = auth;
+
+    const { searchParams } = new URL(req.url);
+    const type = searchParams.get('type'); // departure, return
+
+    const db = getDb();
+    const conditions = [eq(inspectionTemplates.tenantId, session.tenantId)];
+    if (type) conditions.push(eq(inspectionTemplates.type, type));
+
+    const templates = await db
+      .select()
+      .from(inspectionTemplates)
+      .where(and(...conditions))
+      .orderBy(desc(inspectionTemplates.updatedAt));
+
+    // Fetch items for each template
+    const templatesWithItems = await Promise.all(
+      templates.map(async (tpl) => {
+        const items = await db
+          .select()
+          .from(inspectionTemplateItems)
+          .where(eq(inspectionTemplateItems.templateId, tpl.id))
+          .orderBy(inspectionTemplateItems.sortOrder);
+        return { ...tpl, items };
+      }),
     );
+
+    return NextResponse.json({ templates: templatesWithItems });
   } catch (error) {
-    if (error instanceof InspectionTemplateError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
     console.error('[inspection-templates] GET failed:', error);
-    return NextResponse.json({ error: 'Failed to load inspection templates' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to load inspection templates' },
+      { status: 500 },
+    );
   }
 }
 
-export async function POST(request: NextRequest) {
+/**
+ * POST /api/inspection-templates
+ * Create a new inspection template with optional items.
+ */
+export async function POST(req: NextRequest) {
   try {
-    const auth = await requireTemplateManager(request, 'create');
+    const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
-    const body = await request.json();
-    const template = await createInspectionTemplateVersion({
-      tenantId: auth.session.tenantId,
-      userId: auth.session.user.id,
-      name: body.name,
-      type: body.type,
-      items: body.items,
-    });
-    return NextResponse.json({ template }, { status: 201 });
-  } catch (error) {
-    if (error instanceof InspectionTemplateError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+    const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.VEHICLE_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body: any = await req.json();
+    const { name, type, items } = body;
+
+    if (!name || !type) {
+      return NextResponse.json(
+        { error: 'Template name and type are required' },
+        { status: 400 },
+      );
     }
+
+    if (!['departure', 'return'].includes(type)) {
+      return NextResponse.json(
+        { error: 'Type must be departure or return' },
+        { status: 400 },
+      );
+    }
+
+    const db = getDb();
+
+    // Create the template
+    const [template] = await db
+      .insert(inspectionTemplates)
+      .values({
+        tenantId: session.tenantId,
+        name,
+        type,
+        version: 1,
+        isActive: true,
+      })
+      .returning();
+
+    // Create items if provided
+    if (items?.length > 0) {
+      const itemValues = items.map(
+        (
+          item: { sortOrder: number; category: string; label: string; requiresPhoto?: boolean; isCritical?: boolean },
+          index: number,
+        ) => ({
+          templateId: template.id,
+          sortOrder: item.sortOrder ?? index,
+          category: item.category,
+          label: item.label,
+          requiresPhoto: item.requiresPhoto ?? false,
+          isCritical: item.isCritical ?? false,
+        }),
+      );
+      await db.insert(inspectionTemplateItems).values(itemValues);
+    }
+
+    // Fetch the created template with items
+    const createdItems = await db
+      .select()
+      .from(inspectionTemplateItems)
+      .where(eq(inspectionTemplateItems.templateId, template.id))
+      .orderBy(inspectionTemplateItems.sortOrder);
+
+    return NextResponse.json({ template: { ...template, items: createdItems } }, { status: 201 });
+  } catch (error) {
     console.error('[inspection-templates] POST failed:', error);
-    return NextResponse.json({ error: 'Failed to create inspection template' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to create inspection template' },
+      { status: 500 },
+    );
   }
 }
