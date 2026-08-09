@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, departments, offices, driverProfiles, driverLicences } from '@/db/schema/people';
 import { and, desc, eq, gte, ilike, lte, or } from 'drizzle-orm';
-import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { requireAnyPermission, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 const REVIEW_PENDING = ['uploaded', 'awaiting_review', 'needs_correction', 'pending'] as const;
@@ -42,6 +42,18 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    // Keep direct API access aligned with the dashboard registry. Transport
+    // Administration may manage the queue and Tenant Administration may read it;
+    // an unrelated workspace must not gain licence visibility merely because it
+    // happens to hold STAFF_VIEW.
+    const routeCheck = await requireDashboardAction(
+      session,
+      '/dashboard/drivers/licences',
+      'view',
+    );
+    if (routeCheck instanceof NextResponse) return routeCheck;
+
     const permCheck = await requireAnyPermission(session, [
       Permissions.LICENCE_VERIFY,
       Permissions.DRIVER_MANAGE,
