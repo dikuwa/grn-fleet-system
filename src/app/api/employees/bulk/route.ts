@@ -312,7 +312,7 @@ export async function POST(request: NextRequest) {
     await db.transaction(async (tx) => {
       await tx
         .update(employeeAvailability)
-        .set({ endAt: now, updatedAt: now })
+        .set({ endAt: now, isActive: false })
         .where(and(
           eq(employeeAvailability.tenantId, tenantId),
           inArray(employeeAvailability.employeeId, employeeIds),
