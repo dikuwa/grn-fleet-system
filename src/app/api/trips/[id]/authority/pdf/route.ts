@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
+  trips,
   tripAuthorities,
   tripAuthorityPassengers,
   tripAuthorisedDrivers,
@@ -17,10 +18,17 @@ import { departments, employees } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { tenantBranding, tenants } from '@/db/schema/tenants';
-import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { TripAuthorityDocument, type TripAuthorityData } from '@/lib/pdf/trip-authority';
 import { resolveTenantBranding } from '@/lib/tenant-branding';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { tripScopeCondition } from '@/lib/record-scope';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -30,8 +38,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const routeCheck = await requireDashboardAction(session, '/dashboard/trips', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
     const permission = await requirePermission(session, Permissions.FILE_VIEW);
     if (permission instanceof NextResponse) return permission;
+
+    const roleNames = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/trips', roleNames);
     const { id } = await params;
     const db = getDb();
     const [authority] = await db
@@ -58,12 +72,32 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         allocatedByUserId: vehicleAllocations.allocatedByUserId,
       })
       .from(tripAuthorities)
-      .innerJoin(transportRequests, eq(transportRequests.id, tripAuthorities.requestId))
+      .innerJoin(trips, and(eq(trips.id, tripAuthorities.tripId), eq(trips.tenantId, session.tenantId)))
+      .innerJoin(
+        transportRequests,
+        and(
+          eq(transportRequests.id, tripAuthorities.requestId),
+          eq(transportRequests.tenantId, session.tenantId),
+        ),
+      )
       .innerJoin(tenants, eq(tenants.id, tripAuthorities.tenantId))
       .leftJoin(tenantBranding, eq(tenantBranding.tenantId, tenants.id))
       .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, tripAuthorities.allocationId))
-      .innerJoin(vehicles, eq(vehicles.id, vehicleAllocations.vehicleId))
-      .where(and(eq(tripAuthorities.tripId, id), eq(tripAuthorities.tenantId, session.tenantId)))
+      .innerJoin(
+        vehicles,
+        and(eq(vehicles.id, vehicleAllocations.vehicleId), eq(vehicles.tenantId, session.tenantId)),
+      )
+      .where(
+        and(
+          eq(tripAuthorities.tripId, id),
+          eq(tripAuthorities.tenantId, session.tenantId),
+          tripScopeCondition({
+            tenantId: session.tenantId,
+            userId: session.user.id,
+            recordScope: access.recordScope ?? 'assigned',
+          }),
+        ),
+      )
       .limit(1);
     if (!authority)
       return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
@@ -87,20 +121,29 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           departmentName: departments.name,
         })
         .from(tripAuthorisedDrivers)
-        .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
+        .innerJoin(
+          employees,
+          and(
+            eq(employees.id, tripAuthorisedDrivers.employeeId),
+            eq(employees.tenantId, session.tenantId),
+          ),
+        )
         .leftJoin(departments, eq(departments.id, employees.departmentId))
         .where(eq(tripAuthorisedDrivers.authorityId, authority.authority.id)),
-      // Latest departure inspection for the allocated vehicle
+      // Use only this trip's latest departure inspection for the currently
+      // allocated vehicle. Never reuse an inspection from another trip.
       db
         .select()
         .from(vehicleInspections)
         .where(and(
+          eq(vehicleInspections.tenantId, session.tenantId),
+          eq(vehicleInspections.tripId, id),
           eq(vehicleInspections.vehicleId, authority.vehicleId),
           eq(vehicleInspections.type, 'departure'),
         ))
         .orderBy(desc(vehicleInspections.createdAt))
         .limit(1),
-      // Resolve authoriser name from authoriserSnapshot.employeeId
+      // Resolve authoriser name from authoriserSnapshot.employeeId.
       (async () => {
         const snap = authority.authority.authoriserSnapshot as { employeeId?: string } | null;
         if (!snap?.employeeId) return null;
@@ -111,11 +154,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             jobTitle: employees.jobTitle,
           })
           .from(employees)
-          .where(eq(employees.id, snap.employeeId))
+          .where(and(eq(employees.id, snap.employeeId), eq(employees.tenantId, session.tenantId)))
           .limit(1);
         return emp;
       })(),
-      // Resolve transport officer from allocation's allocatedByUserId
+      // Resolve transport officer from allocation's allocatedByUserId.
       (async () => {
         if (!authority.allocatedByUserId) return null;
         const [emp] = await db
@@ -125,11 +168,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             jobTitle: employees.jobTitle,
           })
           .from(employees)
-          .where(eq(employees.userId, authority.allocatedByUserId))
+          .where(and(
+            eq(employees.userId, authority.allocatedByUserId),
+            eq(employees.tenantId, session.tenantId),
+          ))
           .limit(1);
         return emp || null;
       })(),
-      // Resolve requester name from transport request's requesterEmployeeId
+      // Resolve requester name from transport request's requesterEmployeeId.
       (async () => {
         if (!authority.requesterEmployeeId) return null;
         const [emp] = await db
@@ -138,20 +184,23 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             lastName: employees.lastName,
           })
           .from(employees)
-          .where(eq(employees.id, authority.requesterEmployeeId))
+          .where(and(
+            eq(employees.id, authority.requesterEmployeeId),
+            eq(employees.tenantId, session.tenantId),
+          ))
           .limit(1);
         return emp ? `${emp.firstName} ${emp.lastName}` : null;
       })(),
-      // Fetch request routes for journey legs
+      // Request routes inherit tenant ownership from the already-scoped request.
       db
         .select()
         .from(requestRoutes)
         .where(eq(requestRoutes.requestId, authority.authority.requestId)),
     ]);
 
-    // Fetch inspection items if a departure inspection exists
+    // Fetch inspection items only from the tenant/trip-scoped departure inspection above.
     let inspectionItems: Array<{ label: string; result: string; comment: string | null }> = [];
-    if (departureInspections && departureInspections.length > 0) {
+    if (departureInspections.length > 0) {
       const insp = departureInspections[0];
       const results = await db
         .select({
@@ -205,7 +254,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       transportOffice: authority.requestingOfficeSnapshot || undefined,
       routeSummary: authority.authority.approvedRoute || undefined,
       totalKm: distance,
-      journeyLegs: routeRows && routeRows.length > 0
+      journeyLegs: routeRows.length > 0
         ? routeRows.map((r) => ({
             origin: r.originName || 'Not specified',
             destination: r.destinationName || 'Not specified',
@@ -285,7 +334,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       goodsAndEquipment: authority.authority.purpose
         ? [{ description: 'Authorised cargo per trip purpose', purpose: authority.authority.purpose }]
         : undefined,
-      preDepartureInspection: departureInspections && departureInspections.length > 0
+      preDepartureInspection: departureInspections.length > 0
         ? {
             status: departureInspections[0].status,
             odometer: departureInspections[0].odometerReading || undefined,
