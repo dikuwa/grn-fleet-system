@@ -7,13 +7,17 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, like, or, desc, sql, type SQL } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
+import {
+  programmeOwnershipCondition,
+  resolveProgrammeAccess,
+} from '@/lib/programme-access';
 
 /**
  * Programme management API
  *
- * GET  /api/programmes             — list programmes (tenant-scoped, status/search/pagination)
- * GET  /api/programmes?selectable=1 — only approved/published, current/future, non-archived
- * POST /api/programmes             — create a programme draft (requires programme:create)
+ * GET  /api/programmes              — own programmes in personal scope; tenant-wide for Tenant Admin
+ * GET  /api/programmes?selectable=1 — approved/published tenant programmes available for request linking
+ * POST /api/programmes              — create a programme draft
  */
 export async function GET(request: NextRequest) {
   try {
@@ -34,6 +38,7 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
     const tenantId = session.tenantId;
+    const access = await resolveProgrammeAccess(session);
 
     const conditions: SQL[] = [eq(programmes.tenantId, tenantId)];
     if (status) conditions.push(eq(programmes.status, status));
@@ -47,9 +52,15 @@ export async function GET(request: NextRequest) {
         )!,
       );
     }
+
     if (selectable) {
       conditions.push(sql`${programmes.status} IN ('approved', 'published')`);
+      conditions.push(sql`${programmes.archivedAt} IS NULL`);
       conditions.push(sql`(${programmes.endDate} IS NULL OR ${programmes.endDate} >= now())`);
+    } else if (!access.tenantWide) {
+      // The Personal workspace is explicitly own-scope. Do not expose another
+      // requester's drafts, review notes, rejected programmes or history.
+      conditions.push(programmeOwnershipCondition(session.user.id, access.employeeId));
     }
 
     const where = and(...conditions);
@@ -93,10 +104,10 @@ export async function GET(request: NextRequest) {
     const total = Number(totalResult[0]?.count || 0);
     return NextResponse.json({
       success: true,
-      data: rows.map((r) => ({
-        ...r,
-        ownerName: r.ownerFirstName
-          ? `${r.ownerFirstName} ${r.ownerLastName ?? ''}`.trim()
+      data: rows.map((row) => ({
+        ...row,
+        ownerName: row.ownerFirstName
+          ? `${row.ownerFirstName} ${row.ownerLastName ?? ''}`.trim()
           : null,
       })),
       total,
@@ -142,55 +153,65 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Programme title is required' }, { status: 400 });
     }
     if (title.trim().length > 300) {
-      return NextResponse.json(
-        { error: 'Programme title must be 300 characters or fewer' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Programme title must be 300 characters or fewer' }, { status: 400 });
     }
-    if (startDate && endDate && new Date(endDate) < new Date(startDate)) {
-      return NextResponse.json(
-        { error: 'End date must be on or after the start date' },
-        { status: 400 },
-      );
+
+    const parsedStart = startDate ? new Date(startDate) : null;
+    const parsedEnd = endDate ? new Date(endDate) : null;
+    if ((parsedStart && Number.isNaN(parsedStart.getTime())) || (parsedEnd && Number.isNaN(parsedEnd.getTime()))) {
+      return NextResponse.json({ error: 'Programme dates are invalid' }, { status: 400 });
+    }
+    if (parsedStart && parsedEnd && parsedEnd < parsedStart) {
+      return NextResponse.json({ error: 'End date must be on or after the start date' }, { status: 400 });
     }
     if (estimatedKilometres != null && (!Number.isFinite(Number(estimatedKilometres)) || Number(estimatedKilometres) < 0)) {
       return NextResponse.json({ error: 'Estimated kilometres must be a non-negative number' }, { status: 400 });
+    }
+    if (expectedParticipants != null && expectedParticipants !== '' && (!Number.isFinite(Number(expectedParticipants)) || Number(expectedParticipants) < 0)) {
+      return NextResponse.json({ error: 'Expected participants must be a non-negative number' }, { status: 400 });
     }
 
     const db = getDb();
     const tenantId = session.tenantId;
     const userId = session.user.id;
+    const access = await resolveProgrammeAccess(session);
 
-    // Validate tenant-scoped references where provided
     if (departmentId) {
       const [dept] = await db
-        .select({ id: departments.id, name: departments.name })
+        .select({ id: departments.id })
         .from(departments)
         .where(and(eq(departments.id, departmentId), eq(departments.tenantId, tenantId)))
         .limit(1);
-      if (!dept) {
-        return NextResponse.json({ error: 'Department not found in your organisation' }, { status: 400 });
-      }
+      if (!dept) return NextResponse.json({ error: 'Department not found in your organisation' }, { status: 400 });
     }
+
+    let resolvedOwnerEmployeeId: string | null = null;
+    let resolvedOwnerUserId: string | null = userId;
     if (ownerEmployeeId) {
       const [owner] = await db
-        .select({ id: employees.id })
+        .select({ id: employees.id, userId: employees.userId, employmentStatus: employees.employmentStatus })
         .from(employees)
         .where(and(eq(employees.id, ownerEmployeeId), eq(employees.tenantId, tenantId)))
         .limit(1);
-      if (!owner) {
-        return NextResponse.json({ error: 'Programme owner not found in your organisation' }, { status: 400 });
+      if (!owner || owner.employmentStatus !== 'active') {
+        return NextResponse.json({ error: 'Programme owner must be an active employee in your organisation' }, { status: 400 });
       }
+      if (!access.tenantWide && owner.id !== access.employeeId) {
+        return NextResponse.json({ error: 'You may only create a programme for your own employee record' }, { status: 403 });
+      }
+      resolvedOwnerEmployeeId = owner.id;
+      resolvedOwnerUserId = owner.userId ?? (owner.id === access.employeeId ? userId : null);
+    } else if (access.employeeId) {
+      resolvedOwnerEmployeeId = access.employeeId;
     }
+
     if (officeId) {
       const [office] = await db
         .select({ id: offices.id })
         .from(offices)
         .where(and(eq(offices.id, officeId), eq(offices.tenantId, tenantId)))
         .limit(1);
-      if (!office) {
-        return NextResponse.json({ error: 'Office not found in your organisation' }, { status: 400 });
-      }
+      if (!office) return NextResponse.json({ error: 'Office not found in your organisation' }, { status: 400 });
     }
     if (regionId) {
       const [regionRow] = await db
@@ -198,12 +219,9 @@ export async function POST(request: NextRequest) {
         .from(regions)
         .where(and(eq(regions.id, regionId), eq(regions.tenantId, tenantId)))
         .limit(1);
-      if (!regionRow) {
-        return NextResponse.json({ error: 'Region not found in your organisation' }, { status: 400 });
-      }
+      if (!regionRow) return NextResponse.json({ error: 'Region not found in your organisation' }, { status: 400 });
     }
 
-    // Generate a programme reference
     const now = new Date();
     const seq = String(Math.floor(Math.random() * 900) + 100);
     const reference = `GRN/PGM/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}/${seq}`;
@@ -218,22 +236,22 @@ export async function POST(request: NextRequest) {
         purpose: purpose?.trim() || null,
         department: department?.trim() || null,
         departmentId: departmentId || null,
-        ownerEmployeeId: ownerEmployeeId || null,
-        ownerUserId: ownerEmployeeId ? null : userId,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
+        ownerEmployeeId: resolvedOwnerEmployeeId,
+        ownerUserId: resolvedOwnerUserId,
+        startDate: parsedStart,
+        endDate: parsedEnd,
         venue: venue?.trim() || null,
         officeId: officeId || null,
         regionId: regionId || null,
         region: region?.trim() || null,
         expectedParticipants:
-          expectedParticipants != null && Number.isFinite(Number(expectedParticipants))
+          expectedParticipants != null && expectedParticipants !== ''
             ? Number(expectedParticipants)
             : null,
         plannedActivities: plannedActivities?.trim() || null,
         estimatedTravelRequirement: estimatedTravelRequirement?.trim() || null,
         estimatedKilometres:
-          estimatedKilometres != null && Number.isFinite(Number(estimatedKilometres))
+          estimatedKilometres != null && estimatedKilometres !== ''
             ? Number(estimatedKilometres)
             : null,
         status: 'draft',
@@ -252,6 +270,7 @@ export async function POST(request: NextRequest) {
         reference: created.reference,
         title: created.title,
         status: 'draft',
+        ownerEmployeeId: created.ownerEmployeeId,
       },
       summary: `Programme ${created.reference} created as a draft`,
     });

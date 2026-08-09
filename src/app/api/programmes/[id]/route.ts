@@ -6,15 +6,19 @@ import { employees, departments, offices } from '@/db/schema/people';
 import { regions } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, or, sql } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
+import {
+  isProgrammeOwnedByUser,
+  resolveProgrammeAccess,
+} from '@/lib/programme-access';
 
 /**
  * Programme detail API
  *
- * GET    /api/programmes/[id]  — full detail + linked transport requests
- * PATCH  /api/programmes/[id]  — edit a draft / changes-requested programme
- * DELETE /api/programmes/[id]  — delete a draft (creator or edit-any)
+ * GET    /api/programmes/[id]  — own detail, tenant-wide for Tenant Admin, or shared approved/published detail
+ * PATCH  /api/programmes/[id]  — edit own draft/changes-requested programme; Tenant Admin may edit any
+ * DELETE /api/programmes/[id]  — delete own draft; Tenant Admin may delete any draft
  */
 export async function GET(
   request: NextRequest,
@@ -30,6 +34,7 @@ export async function GET(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
+    const access = await resolveProgrammeAccess(session);
     const [programme] = await db
       .select({
         id: programmes.id,
@@ -82,8 +87,28 @@ export async function GET(
       .where(and(eq(programmes.id, id), eq(programmes.tenantId, session.tenantId)))
       .limit(1);
 
-    if (!programme) {
+    if (!programme) return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
+
+    const isOwner = isProgrammeOwnedByUser(programme, session.user.id, access.employeeId);
+    const isShared =
+      ['approved', 'published'].includes(programme.status) &&
+      programme.archivedAt == null;
+    if (!access.tenantWide && !isOwner && !isShared) {
+      // Hide existence of another requester's private programme.
       return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
+    }
+
+    const linkedConditions = [
+      eq(transportRequests.programmeId, id),
+      eq(transportRequests.tenantId, session.tenantId),
+    ];
+    if (!access.tenantWide) {
+      linkedConditions.push(
+        or(
+          eq(transportRequests.requesterUserId, session.user.id),
+          eq(transportRequests.enteredByUserId, session.user.id),
+        )!,
+      );
     }
 
     const linkedRequests = await db
@@ -95,12 +120,7 @@ export async function GET(
         createdAt: transportRequests.createdAt,
       })
       .from(transportRequests)
-      .where(
-        and(
-          eq(transportRequests.programmeId, id),
-          eq(transportRequests.tenantId, session.tenantId),
-        ),
-      )
+      .where(and(...linkedConditions))
       .orderBy(sql`${transportRequests.createdAt} DESC`);
 
     return NextResponse.json({ success: true, data: { programme, linkedRequests } });
@@ -123,17 +143,16 @@ export async function PATCH(
     const db = getDb();
     const tenantId = session.tenantId;
     const userId = session.user.id;
+    const access = await resolveProgrammeAccess(session);
 
     const [existing] = await db
       .select()
       .from(programmes)
       .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
       .limit(1);
-    if (!existing) {
-      return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
-    }
+    if (!existing) return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
 
-    const isOwner = existing.createdByUserId === userId;
+    const isOwner = isProgrammeOwnedByUser(existing, userId, access.employeeId);
     if (isOwner) {
       const permCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_OWN);
       if (permCheck instanceof NextResponse) return permCheck;
@@ -174,17 +193,12 @@ export async function PATCH(
         return NextResponse.json({ error: 'Programme title cannot be empty' }, { status: 400 });
       }
       if (title.trim().length > 300) {
-        return NextResponse.json(
-          { error: 'Programme title must be 300 characters or fewer' },
-          { status: 400 },
-        );
+        return NextResponse.json({ error: 'Programme title must be 300 characters or fewer' }, { status: 400 });
       }
     }
 
-    const effectiveStart =
-      startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
-    const effectiveEnd =
-      endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate;
+    const effectiveStart = startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
+    const effectiveEnd = endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate;
     if (
       (effectiveStart && Number.isNaN(new Date(effectiveStart).getTime())) ||
       (effectiveEnd && Number.isNaN(new Date(effectiveEnd).getTime()))
@@ -192,10 +206,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Programme dates are invalid' }, { status: 400 });
     }
     if (effectiveStart && effectiveEnd && new Date(effectiveEnd) < new Date(effectiveStart)) {
-      return NextResponse.json(
-        { error: 'End date must be on or after the start date' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'End date must be on or after the start date' }, { status: 400 });
     }
 
     if (
@@ -204,10 +215,7 @@ export async function PATCH(
       estimatedKilometres !== '' &&
       (!Number.isFinite(Number(estimatedKilometres)) || Number(estimatedKilometres) < 0)
     ) {
-      return NextResponse.json(
-        { error: 'Estimated kilometres must be a non-negative number' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Estimated kilometres must be a non-negative number' }, { status: 400 });
     }
     if (
       expectedParticipants !== undefined &&
@@ -215,10 +223,7 @@ export async function PATCH(
       expectedParticipants !== '' &&
       (!Number.isFinite(Number(expectedParticipants)) || Number(expectedParticipants) < 0)
     ) {
-      return NextResponse.json(
-        { error: 'Expected participants must be a non-negative number' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'Expected participants must be a non-negative number' }, { status: 400 });
     }
 
     if (departmentId !== undefined && departmentId) {
@@ -227,25 +232,29 @@ export async function PATCH(
         .from(departments)
         .where(and(eq(departments.id, departmentId), eq(departments.tenantId, tenantId)))
         .limit(1);
-      if (!departmentRow) {
-        return NextResponse.json(
-          { error: 'Department not found in your organisation' },
-          { status: 400 },
-        );
-      }
+      if (!departmentRow) return NextResponse.json({ error: 'Department not found in your organisation' }, { status: 400 });
     }
 
-    if (ownerEmployeeId !== undefined && ownerEmployeeId) {
-      const [owner] = await db
-        .select({ id: employees.id })
-        .from(employees)
-        .where(and(eq(employees.id, ownerEmployeeId), eq(employees.tenantId, tenantId)))
-        .limit(1);
-      if (!owner) {
-        return NextResponse.json(
-          { error: 'Programme owner not found in your organisation' },
-          { status: 400 },
-        );
+    let resolvedOwnerEmployeeId = existing.ownerEmployeeId;
+    let resolvedOwnerUserId = existing.ownerUserId;
+    if (ownerEmployeeId !== undefined) {
+      if (!ownerEmployeeId) {
+        resolvedOwnerEmployeeId = access.employeeId;
+        resolvedOwnerUserId = userId;
+      } else {
+        const [owner] = await db
+          .select({ id: employees.id, userId: employees.userId, employmentStatus: employees.employmentStatus })
+          .from(employees)
+          .where(and(eq(employees.id, ownerEmployeeId), eq(employees.tenantId, tenantId)))
+          .limit(1);
+        if (!owner || owner.employmentStatus !== 'active') {
+          return NextResponse.json({ error: 'Programme owner must be an active employee in your organisation' }, { status: 400 });
+        }
+        if (!access.tenantWide && owner.id !== access.employeeId) {
+          return NextResponse.json({ error: 'You may only assign your own employee record as programme owner' }, { status: 403 });
+        }
+        resolvedOwnerEmployeeId = owner.id;
+        resolvedOwnerUserId = owner.userId ?? (owner.id === access.employeeId ? userId : null);
       }
     }
 
@@ -255,26 +264,15 @@ export async function PATCH(
         .from(offices)
         .where(and(eq(offices.id, officeId), eq(offices.tenantId, tenantId)))
         .limit(1);
-      if (!office) {
-        return NextResponse.json(
-          { error: 'Office not found in your organisation' },
-          { status: 400 },
-        );
-      }
+      if (!office) return NextResponse.json({ error: 'Office not found in your organisation' }, { status: 400 });
     }
-
     if (regionId !== undefined && regionId) {
       const [regionRow] = await db
         .select({ id: regions.id })
         .from(regions)
         .where(and(eq(regions.id, regionId), eq(regions.tenantId, tenantId)))
         .limit(1);
-      if (!regionRow) {
-        return NextResponse.json(
-          { error: 'Region not found in your organisation' },
-          { status: 400 },
-        );
-      }
+      if (!regionRow) return NextResponse.json({ error: 'Region not found in your organisation' }, { status: 400 });
     }
 
     const [updated] = await db
@@ -285,16 +283,9 @@ export async function PATCH(
         purpose: purpose !== undefined ? purpose?.trim() || null : existing.purpose,
         department: department !== undefined ? department?.trim() || null : existing.department,
         departmentId: departmentId !== undefined ? departmentId || null : existing.departmentId,
-        ownerEmployeeId:
-          ownerEmployeeId !== undefined ? ownerEmployeeId || null : existing.ownerEmployeeId,
-        ownerUserId:
-          ownerEmployeeId !== undefined
-            ? ownerEmployeeId
-              ? null
-              : userId
-            : existing.ownerUserId,
-        startDate:
-          startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate,
+        ownerEmployeeId: resolvedOwnerEmployeeId,
+        ownerUserId: resolvedOwnerUserId,
+        startDate: startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate,
         endDate: endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate,
         venue: venue !== undefined ? venue?.trim() || null : existing.venue,
         officeId: officeId !== undefined ? officeId || null : existing.officeId,
@@ -306,10 +297,7 @@ export async function PATCH(
               ? Number(expectedParticipants)
               : null
             : existing.expectedParticipants,
-        plannedActivities:
-          plannedActivities !== undefined
-            ? plannedActivities?.trim() || null
-            : existing.plannedActivities,
+        plannedActivities: plannedActivities !== undefined ? plannedActivities?.trim() || null : existing.plannedActivities,
         estimatedTravelRequirement:
           estimatedTravelRequirement !== undefined
             ? estimatedTravelRequirement?.trim() || null
@@ -322,8 +310,16 @@ export async function PATCH(
             : existing.estimatedKilometres,
         updatedAt: new Date(),
       })
-      .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
+      .where(and(
+        eq(programmes.id, id),
+        eq(programmes.tenantId, tenantId),
+        eq(programmes.status, existing.status),
+      ))
       .returning();
+
+    if (!updated) {
+      return NextResponse.json({ error: 'This programme changed while you were editing it. Refresh and try again.' }, { status: 409 });
+    }
 
     await recordAuditEvent({
       tenantId,
@@ -332,8 +328,8 @@ export async function PATCH(
       entityType: 'programme',
       entityId: id,
       sourceChannel: 'web',
-      before: { status: existing.status, title: existing.title },
-      after: { status: updated.status, title: updated.title },
+      before: { status: existing.status, title: existing.title, ownerEmployeeId: existing.ownerEmployeeId },
+      after: { status: updated.status, title: updated.title, ownerEmployeeId: updated.ownerEmployeeId },
       summary: `Programme ${existing.reference} was edited`,
     });
 
@@ -357,15 +353,14 @@ export async function DELETE(
     const db = getDb();
     const tenantId = session.tenantId;
     const userId = session.user.id;
+    const access = await resolveProgrammeAccess(session);
 
     const [existing] = await db
       .select()
       .from(programmes)
       .where(and(eq(programmes.id, id), eq(programmes.tenantId, tenantId)))
       .limit(1);
-    if (!existing) {
-      return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
-    }
+    if (!existing) return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
 
     if (existing.status !== 'draft') {
       return NextResponse.json(
@@ -374,7 +369,7 @@ export async function DELETE(
       );
     }
 
-    const isOwner = existing.createdByUserId === userId;
+    const isOwner = isProgrammeOwnedByUser(existing, userId, access.employeeId);
     if (isOwner) {
       const permCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_OWN);
       if (permCheck instanceof NextResponse) return permCheck;
@@ -386,9 +381,7 @@ export async function DELETE(
     await db
       .update(transportRequests)
       .set({ programmeId: null })
-      .where(
-        and(eq(transportRequests.programmeId, id), eq(transportRequests.tenantId, tenantId)),
-      );
+      .where(and(eq(transportRequests.programmeId, id), eq(transportRequests.tenantId, tenantId)));
 
     await db
       .delete(programmes)

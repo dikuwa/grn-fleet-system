@@ -7,17 +7,19 @@ import { eq, and } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
+import {
+  isProgrammeOwnedByUser,
+  resolveProgrammeAccess,
+} from '@/lib/programme-access';
 
 /**
  * Programme workflow action API
  *
- * POST /api/programmes/[id]/action  { action, note? }
- *
  * Programme review is intentionally separate from the transport-request
- * approval chain. Creator and reviewer must be different people, including
- * when the creator also holds Tenant Administrator permissions.
+ * approval chain. Personal-workspace users may submit only programmes they
+ * own; Tenant Administrators may operate tenant-wide, subject to separation
+ * of duty for review decisions.
  */
-
 type Action =
   | 'submit'
   | 'request_changes'
@@ -104,13 +106,27 @@ export async function POST(
       complete: Permissions.PROGRAMME_PUBLISH,
     };
     const requiredPermission = permissionForAction[action];
-    if (!requiredPermission) return NextResponse.json({ error: 'Programme action is not permitted' }, { status: 403 });
+    if (!requiredPermission) {
+      return NextResponse.json({ error: 'Programme action is not permitted' }, { status: 403 });
+    }
     const permCheck = await requirePermission(session, requiredPermission);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    if (['request_changes', 'approve', 'reject'].includes(action) && programme.createdByUserId === userId) {
+    const access = await resolveProgrammeAccess(session);
+    const isOwner = isProgrammeOwnedByUser(programme, userId, access.employeeId);
+
+    if (action === 'submit' && !isOwner) {
+      // A requester must never be able to advance another requester's draft by
+      // guessing an ID. Tenant-wide programme managers retain that capability.
+      const editAnyCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_ANY);
+      if (editAnyCheck instanceof NextResponse) {
+        return NextResponse.json({ error: 'You may only submit programmes that you own' }, { status: 403 });
+      }
+    }
+
+    if (['request_changes', 'approve', 'reject'].includes(action) && isOwner) {
       return NextResponse.json(
-        { error: 'You cannot review or decide a programme that you created. Another authorised Tenant Administrator must perform the review.' },
+        { error: 'You cannot review or decide a programme that you own. Another authorised Tenant Administrator must perform the review.' },
         { status: 409 },
       );
     }
@@ -169,8 +185,6 @@ export async function POST(
         return NextResponse.json({ error: 'Invalid programme action' }, { status: 400 });
     }
 
-    // Status is part of the write predicate so approve/reject or other
-    // simultaneous decisions cannot silently overwrite one another.
     const [updated] = await db
       .update(programmes)
       .set({ ...patch, status: nextStatus })
@@ -222,11 +236,11 @@ export async function POST(
           });
         }
       } else {
-        const creatorUserId = programme.createdByUserId || programme.ownerUserId;
-        if (creatorUserId) {
+        const recipientUserId = programme.ownerUserId || programme.createdByUserId;
+        if (recipientUserId) {
           await createScopedNotifications({
             tenantId,
-            recipientUserIds: [creatorUserId],
+            recipientUserIds: [recipientUserId],
             category: action === 'reject' || action === 'request_changes' ? 'action_required' : 'outcome',
             eventType: `programme_${action}`,
             title: TITLE_BY_ACTION[action],
