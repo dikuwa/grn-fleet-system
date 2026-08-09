@@ -1,9 +1,132 @@
+import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { transportRequests, workflowInstances } from '@/db/schema';
+import {
+  transportRequests,
+  workflowDefinitions,
+  workflowInstances,
+  workflowSteps,
+} from '@/db/schema';
+import { Permissions } from '@/lib/permissions';
 import { WorkflowEngine, type EngineResult } from '@/lib/workflow-engine';
 import { runAtomicMutations } from '@/lib/db-atomic';
+
+/**
+ * Guarantee that standard tenants have a real workflow definition before the
+ * engine initialises a request. This keeps new/legacy tenants on the same
+ * five-stage workflows as the production seed and prevents the engine's
+ * historical ad-hoc fallback from becoming an accidental second business
+ * process.
+ */
+async function ensureDefaultWorkflowDefinition(
+  tenantId: string,
+  scope: 'regional' | 'national',
+): Promise<void> {
+  const db = getDb();
+  const [existing] = await db
+    .select({ id: workflowDefinitions.id })
+    .from(workflowDefinitions)
+    .where(and(
+      eq(workflowDefinitions.tenantId, tenantId),
+      eq(workflowDefinitions.tripScope, scope),
+      eq(workflowDefinitions.isActive, true),
+    ))
+    .limit(1);
+  if (existing) return;
+
+  const definitionId = randomUUID();
+  const name = scope === 'regional' ? 'Regional Trip Workflow' : 'National Trip Workflow';
+  const common = [
+    {
+      definitionId,
+      stepOrder: 1,
+      actionType: 'supervisor_approve',
+      requiredPermission: Permissions.REQUEST_APPROVE_SUPERVISOR,
+      label: 'Supervisor Approval',
+      description: 'Immediate supervisor reviews and approves the transport request.',
+      allowsEmergencyOverride: false,
+      separationDutyRole: 'requester',
+    },
+    {
+      definitionId,
+      stepOrder: 2,
+      actionType: 'transport_review',
+      requiredPermission: Permissions.REQUEST_REVIEW_TRANSPORT,
+      label: 'Transport Review',
+      description: 'Transport Administration reviews feasibility and completes operational allocation details.',
+      allowsEmergencyOverride: false,
+      separationDutyRole: 'requester',
+    },
+  ];
+  const scoped = scope === 'regional'
+    ? [
+        {
+          definitionId,
+          stepOrder: 3,
+          actionType: 'release',
+          requiredPermission: Permissions.VEHICLE_RELEASE_REGIONAL,
+          label: 'Administrative Release',
+          description: 'Control Administrative Officer releases the regional trip for final authorisation.',
+          allowsEmergencyOverride: true,
+          separationDutyRole: 'requester',
+        },
+        {
+          definitionId,
+          stepOrder: 4,
+          actionType: 'authorise',
+          requiredPermission: Permissions.TRIP_AUTHORIZE_REGIONAL,
+          label: 'Final Authorisation',
+          description: 'Deputy Director gives final regional trip authorisation.',
+          allowsEmergencyOverride: true,
+          separationDutyRole: 'release',
+        },
+      ]
+    : [
+        {
+          definitionId,
+          stepOrder: 3,
+          actionType: 'release',
+          requiredPermission: Permissions.VEHICLE_RELEASE_NATIONAL,
+          label: 'Director Release',
+          description: 'Director releases the national trip for final authorisation.',
+          allowsEmergencyOverride: true,
+          separationDutyRole: 'requester',
+        },
+        {
+          definitionId,
+          stepOrder: 4,
+          actionType: 'authorise',
+          requiredPermission: Permissions.TRIP_AUTHORIZE_NATIONAL,
+          label: 'CRO Authorisation',
+          description: 'Chief Regional Officer gives final national trip authorisation.',
+          requiresComment: true,
+          allowsEmergencyOverride: true,
+          separationDutyRole: 'release',
+        },
+      ];
+  const driverStep = {
+    definitionId,
+    stepOrder: 5,
+    actionType: 'acknowledge',
+    requiredPermission: Permissions.DRIVER_LOG_CREATE,
+    label: 'Driver Acknowledgement',
+    description: 'Assigned driver acknowledges the approved trip and vehicle assignment.',
+    allowsEmergencyOverride: false,
+  };
+
+  await runAtomicMutations((tx) => [
+    tx.insert(workflowDefinitions).values({
+      id: definitionId,
+      tenantId,
+      tripScope: scope,
+      version: 1,
+      name,
+      isActive: true,
+    }),
+    tx.insert(workflowSteps).values([...common, ...scoped, driverStep]),
+  ]);
+}
 
 /**
  * Initialise or recover the active workflow for a request.
@@ -21,7 +144,11 @@ export async function ensureRequestWorkflow(
   const db = getDb();
 
   const [request] = await db
-    .select({ id: transportRequests.id, workflowInstanceId: transportRequests.workflowInstanceId })
+    .select({
+      id: transportRequests.id,
+      scope: transportRequests.scope,
+      workflowInstanceId: transportRequests.workflowInstanceId,
+    })
     .from(transportRequests)
     .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, tenantId)))
     .limit(1);
@@ -69,6 +196,9 @@ export async function ensureRequestWorkflow(
 
   const recoveredBeforeInit = await recoverPersistedInstance();
   if (recoveredBeforeInit) return recoveredBeforeInit;
+
+  const scope: 'regional' | 'national' = request.scope === 'national' ? 'national' : 'regional';
+  await ensureDefaultWorkflowDefinition(tenantId, scope);
 
   const engine = new WorkflowEngine({ db });
   try {
