@@ -217,7 +217,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       tenantId: session.tenantId,
       requestId: trip.trip.requestId,
       reference: trip.requestReference,
-      stage: 'completed',
+      stage: 'return_inspection',
       officeLabel: 'Return inspection',
     }).catch((error) => console.warn('[trips/return] Post-commit activity failed:', error));
 
