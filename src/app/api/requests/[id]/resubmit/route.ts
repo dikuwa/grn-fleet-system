@@ -22,6 +22,7 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 import { abandonRequestWorkflow, ensureRequestWorkflow } from '@/lib/request-workflow';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
+import { validateRequesterDriverNominations } from '@/lib/request-driver-eligibility';
 
 const EDITABLE_STATUSES = ['returned', 'rejected', 'supervisor_rejected'] as const;
 
@@ -355,6 +356,30 @@ export async function POST(
     }
   }
 
+  if (driverEmployeeIds.length > 0) {
+    const tripEndAt = activities.reduce(
+      (latest, activity) => {
+        const end = activity.endDate ? new Date(activity.endDate) : null;
+        return end && end > latest ? end : latest;
+      },
+      new Date(),
+    );
+    const eligibility = await validateRequesterDriverNominations({
+      tenantId: session.tenantId,
+      employeeIds: driverEmployeeIds,
+      tripEndAt,
+    });
+    if (!eligibility.ok) {
+      const reasons = Array.from(new Set(eligibility.failures.flatMap((failure) => failure.reasons)));
+      return NextResponse.json(
+        {
+          error: `One or more nominated drivers are not eligible for the requested trip: ${reasons.join('; ')}`,
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   const routes = body.routes ?? data.routes.map((route) => ({
     originName: route.originName || undefined,
     destinationName: route.destinationName || undefined,
@@ -491,17 +516,9 @@ export async function POST(
   try {
     await runAtomicMutations((tx) => {
       const mutations: any[] = [
-        // A returned/rejected workflow should already be cancelled. This
-        // mutation is part of the same transaction as the optimistic claim,
-        // so a stale editor cannot cancel a workflow that belongs to a newer
-        // request version.
         tx.update(workflowInstances)
           .set({ status: 'cancelled', updatedAt: correctedAt })
           .where(and(eq(workflowInstances.requestId, id), eq(workflowInstances.status, 'active'))),
-        // Claim the exact request version before touching dependent rows. A
-        // zero-row claim deliberately throws inside the transaction, causing
-        // Neon batch/local Postgres to roll back the workflow cancellation and
-        // every child delete/insert below.
         tx.execute(sql`
           WITH request_claim AS (
             UPDATE transport_requests
