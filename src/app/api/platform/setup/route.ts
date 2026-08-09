@@ -34,6 +34,7 @@ const NON_ONBOARDING_LIFECYCLES = new Set([
   'RESTRICTED',
   'ARCHIVED',
 ]);
+const SETUP_LIFECYCLE = 'SETUP_IN_PROGRESS';
 
 interface SetupProgressData {
   currentStep: number;
@@ -196,9 +197,9 @@ export async function POST(request: NextRequest) {
       if (tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW') {
         return NextResponse.json({ success: true, data: { lifecycleStatus: tenant.lifecycleStatus } });
       }
-      if (NON_ONBOARDING_LIFECYCLES.has(tenant.lifecycleStatus)) {
+      if (tenant.lifecycleStatus !== SETUP_LIFECYCLE) {
         return NextResponse.json(
-          { error: `Workspace setup cannot be submitted while the tenant lifecycle is ${tenant.lifecycleStatus}.` },
+          { error: `Workspace setup can only be submitted while the tenant lifecycle is ${SETUP_LIFECYCLE}. Current lifecycle: ${tenant.lifecycleStatus}.` },
           { status: 409 },
         );
       }
@@ -271,6 +272,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, data: { lifecycleStatus: 'PENDING_PLATFORM_REVIEW' } });
     }
 
+    if (NON_ONBOARDING_LIFECYCLES.has(tenant.lifecycleStatus) || tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW') {
+      return NextResponse.json(
+        { error: `Initial workspace setup is closed while the tenant lifecycle is ${tenant.lifecycleStatus}. Use Tenant Settings and Organisation Management for normal changes.` },
+        { status: 409 },
+      );
+    }
+
     const isReady = REQUIRED_SETUP_STEPS.every((step) => completedSteps.includes(step));
     const readinessScore = Math.round((completedSteps.length / (TOTAL_STEPS - 1)) * 100);
 
@@ -302,7 +310,7 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      if (!NON_ONBOARDING_LIFECYCLES.has(tenant.lifecycleStatus) && tenant.lifecycleStatus !== 'PENDING_PLATFORM_REVIEW') {
+      if (tenant.lifecycleStatus === SETUP_LIFECYCLE) {
         await tx
           .update(tenants)
           .set({ currentOnboardingStep: body.currentStep, updatedAt: now })
