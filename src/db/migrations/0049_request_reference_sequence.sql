@@ -29,6 +29,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS "uq_programmes_tenant_reference_v2"
   ON "programmes" ("tenant_id", "reference")
   WHERE "reference" ~ '^GRN/PGM/[0-9]{4}/[0-9]{6}$';
 
+-- Preserve all historical request rows while reconciling any retry keys that
+-- duplicated before database-level idempotency existed. The earliest request
+-- keeps the key; later duplicates retain their complete business record but
+-- release the retry token so the unique index can be added safely.
+WITH ranked_submission_keys AS (
+  SELECT
+    id,
+    row_number() OVER (
+      PARTITION BY tenant_id, client_submission_id
+      ORDER BY created_at ASC, id ASC
+    ) AS occurrence
+  FROM transport_requests
+  WHERE client_submission_id IS NOT NULL
+)
+UPDATE transport_requests tr
+SET client_submission_id = NULL
+FROM ranked_submission_keys ranked
+WHERE tr.id = ranked.id
+  AND ranked.occurrence > 1;
+
 -- Idempotency must be enforced by the database, not only by a pre-insert
 -- application lookup. Two concurrent retries with the same client submission
 -- key can otherwise both pass the lookup and create duplicate requests.
