@@ -3,7 +3,7 @@ import { getDb } from '@/db';
 import { programmes } from '@/db/schema/programmes';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, type SQL } from 'drizzle-orm';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 import {
@@ -137,7 +137,7 @@ export async function POST(
 
     const now = new Date();
     let nextStatus: string;
-    let transitionSet;
+    let transitionSet: SQL;
     switch (action) {
       case 'submit':
         nextStatus = 'submitted';
