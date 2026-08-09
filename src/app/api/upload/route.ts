@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getSessionWorkspace, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { WorkspaceIds } from '@/lib/workspaces';
 import {
   uploadFile,
   isStorageConfigured,
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
     const category = (formData.get('category') as UploadCategory) || 'document';
-    const isPublic = formData.get('public') === 'true';
+    const requestedPublic = formData.get('public') === 'true';
     const clientSha256 = (formData.get('sha256') as string | null) || null;
 
     if (!file) {
@@ -77,6 +78,23 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    // Arbitrary tenant documents must never become public just because a
+    // client sends public=true. The only intentionally public upload category
+    // is an avatar, and it must actually be an allowed image type.
+    if (requestedPublic && category !== 'avatar') {
+      return NextResponse.json(
+        { error: 'Public uploads are allowed only for avatar images.' },
+        { status: 403 },
+      );
+    }
+    if (category === 'avatar' && !ALLOWED_IMAGE_TYPES.includes(file.type as never)) {
+      return NextResponse.json(
+        { error: 'Avatar uploads must be an allowed image type.' },
+        { status: 415 },
+      );
+    }
+    const isPublic = requestedPublic && category === 'avatar';
 
     const tenantPrefix = `tenant/${session.tenantId}`;
     const path = CATEGORY_PATHS[category];
@@ -132,7 +150,7 @@ export async function POST(request: NextRequest) {
 }
 
 // ---------------------------------------------------------------------------
-// GET — List uploaded files (tenant-scoped)
+// GET — List uploaded files (tenant-scoped administrative inventory)
 // ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
@@ -140,6 +158,20 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const permCheck = await requirePermission(session, Permissions.FILE_VIEW);
+    if (permCheck instanceof NextResponse) return permCheck;
+
+    const workspace = await getSessionWorkspace(session);
+    if (
+      workspace.activeWorkspace !== WorkspaceIds.TENANT_ADMIN &&
+      workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN
+    ) {
+      return NextResponse.json(
+        { error: 'Tenant file inventory is available only in an administrative workspace.' },
+        { status: 403 },
+      );
+    }
 
     if (!isStorageConfigured()) {
       return NextResponse.json(
@@ -150,6 +182,9 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category');
+    if (category && !CATEGORY_PATHS[category as UploadCategory]) {
+      return NextResponse.json({ error: 'Invalid file category.' }, { status: 400 });
+    }
     const prefix = `tenant/${session.tenantId}/${category ? CATEGORY_PATHS[category as UploadCategory] + '/' : ''}`;
 
     const files = await listFiles(prefix);
