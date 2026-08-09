@@ -273,6 +273,7 @@ export async function POST(req: NextRequest) {
       userId: string | null;
       departmentId: string | null;
       officeId: string | null;
+      regionId: string | null;
       departmentName: string | null;
       firstName: string;
     };
@@ -283,6 +284,7 @@ export async function POST(req: NextRequest) {
           userId: employees.userId,
           departmentId: employees.departmentId,
           officeId: employees.officeId,
+          regionId: employees.regionId,
           departmentName: departments.name,
           firstName: employees.firstName,
         })
@@ -325,6 +327,7 @@ export async function POST(req: NextRequest) {
           userId: employees.userId,
           departmentId: employees.departmentId,
           officeId: employees.officeId,
+          regionId: employees.regionId,
           departmentName: departments.name,
           firstName: employees.firstName,
         })
@@ -364,7 +367,7 @@ export async function POST(req: NextRequest) {
       );
     const hasMatchingRoute = availableRoutes.some(
       (route) =>
-        !route.regionId &&
+        (!route.regionId || route.regionId === requesterEmployee.regionId) &&
         (!route.officeId || route.officeId === requesterEmployee.officeId) &&
         (!route.departmentId || route.departmentId === requesterEmployee.departmentId),
     );
@@ -377,7 +380,7 @@ export async function POST(req: NextRequest) {
           category: 'action_required',
           eventType: 'workflow_route_missing',
           title: 'Workflow route missing',
-          body: `A ${scope} request was blocked because no active route matches the responsible office and department.`,
+          body: `A ${scope} request was blocked because no active route matches the responsible region, office and department.`,
           entityType: 'system',
           entityId: null,
           actionUrl: '/dashboard/admin/workflows',
@@ -390,7 +393,7 @@ export async function POST(req: NextRequest) {
       }
       return NextResponse.json(
         {
-          error: `No active ${scope} approval route is configured for this office and department. The Tenant Administrator has been notified.`,
+          error: `No active ${scope} approval route is configured for this region, office and department. The Tenant Administrator has been notified.`,
         },
         { status: 409 },
       );
@@ -433,159 +436,195 @@ export async function POST(req: NextRequest) {
 
     // The request and all dependent itinerary/people rows are one atomic unit.
     // A failed child insert can no longer leave a partially populated submitted request.
-    await runAtomicMutations((tx) => {
-      const mutations: any[] = [
-        tx.insert(transportRequests).values({
-          id: requestId,
-          tenantId,
-          reference,
-          clientSubmissionId: clientSubmissionId || null,
-          scope,
-          status: 'submitted',
-          requesterEmployeeId: requesterEmployee.id,
-          requesterUserId: requesterEmployee.userId,
-          enteredByUserId: userId,
-          requestSource: isAssisted ? 'assisted_by_administration' : 'logged_in_self_service',
-          requestChannel: 'dashboard',
-          submissionMethod: isAssisted ? 'assisted' : 'logged_in',
-          verificationMethod: 'authenticated_session',
-          assistedReason: isAssisted ? assistedReason.trim() : null,
-          confirmationMethod: isAssisted ? confirmationMethod || null : 'authenticated_submission',
-          employeeConfirmationStatus: isAssisted ? 'pending' : 'confirmed',
-          preferredDriverEmployeeId: preferredDriverId,
-          driverPreference:
-            driverPreference || (preferredDriverId ? 'preferred_driver' : 'transport_admin_assign'),
-          travellerEmployeeId: travellerEmployeeId || requesterEmployee.id,
-          urgency: urgency || 'normal',
-          overnight: overnight || false,
-          specialRequirements: specialRequirements || null,
-          vehicleRequirements: vehicleRequirements || {},
-          departmentId: requesterEmployee.departmentId,
-          officeId: requesterEmployee.officeId,
-          department: requesterEmployee.departmentName || department || null,
-          purpose: purpose.trim(),
-          programmeId: resolvedProgrammeId,
-          specialAuthorityRequired: specialAuthorityRequired || false,
-          specialAuthorityReason: specialAuthorityReason?.trim() || null,
-          totalAuthorisedKilometres: totalKm || null,
-          submittedAt,
-        }),
-      ];
+    try {
+      await runAtomicMutations((tx) => {
+        const mutations: any[] = [
+          tx.insert(transportRequests).values({
+            id: requestId,
+            tenantId,
+            reference,
+            clientSubmissionId: clientSubmissionId || null,
+            scope,
+            status: 'submitted',
+            requesterEmployeeId: requesterEmployee.id,
+            requesterUserId: requesterEmployee.userId,
+            enteredByUserId: userId,
+            requestSource: isAssisted ? 'assisted_by_administration' : 'logged_in_self_service',
+            requestChannel: 'dashboard',
+            submissionMethod: isAssisted ? 'assisted' : 'logged_in',
+            verificationMethod: 'authenticated_session',
+            assistedReason: isAssisted ? assistedReason.trim() : null,
+            confirmationMethod: isAssisted ? confirmationMethod || null : 'authenticated_submission',
+            employeeConfirmationStatus: isAssisted ? 'pending' : 'confirmed',
+            preferredDriverEmployeeId: preferredDriverId,
+            driverPreference:
+              driverPreference || (preferredDriverId ? 'preferred_driver' : 'transport_admin_assign'),
+            travellerEmployeeId: travellerEmployeeId || requesterEmployee.id,
+            urgency: urgency || 'normal',
+            overnight: overnight || false,
+            specialRequirements: specialRequirements || null,
+            vehicleRequirements: vehicleRequirements || {},
+            departmentId: requesterEmployee.departmentId,
+            officeId: requesterEmployee.officeId,
+            regionId: requesterEmployee.regionId,
+            department: requesterEmployee.departmentName || department || null,
+            purpose: purpose.trim(),
+            programmeId: resolvedProgrammeId,
+            specialAuthorityRequired: specialAuthorityRequired || false,
+            specialAuthorityReason: specialAuthorityReason?.trim() || null,
+            totalAuthorisedKilometres: totalKm || null,
+            submittedAt,
+          }),
+        ];
 
-      if (activities?.length > 0) {
-        mutations.push(
-          tx.insert(requestActivities).values(
-            activities.map(
-              (activity: {
-                title: string;
-                description?: string;
-                venue?: string;
-                startDate: string;
-                endDate: string;
-                estimatedKilometres?: number;
-              }) => ({
-                requestId,
-                title: activity.title.trim(),
-                description: activity.description?.trim() || null,
-                venue: activity.venue?.trim() || null,
-                startDate: new Date(activity.startDate),
-                endDate: new Date(activity.endDate),
-                estimatedKilometres: activity.estimatedKilometres || null,
-              }),
+        if (activities?.length > 0) {
+          mutations.push(
+            tx.insert(requestActivities).values(
+              activities.map(
+                (activity: {
+                  title: string;
+                  description?: string;
+                  venue?: string;
+                  startDate: string;
+                  endDate: string;
+                  estimatedKilometres?: number;
+                }) => ({
+                  requestId,
+                  title: activity.title.trim(),
+                  description: activity.description?.trim() || null,
+                  venue: activity.venue?.trim() || null,
+                  startDate: new Date(activity.startDate),
+                  endDate: new Date(activity.endDate),
+                  estimatedKilometres: activity.estimatedKilometres || null,
+                }),
+              ),
             ),
-          ),
-        );
-      }
+          );
+        }
 
-      if (passengers?.length > 0) {
-        mutations.push(
-          tx.insert(requestPassengers).values(
-            passengers.map(
-              (passenger: {
-                type: string;
-                employeeId?: string;
-                externalName?: string;
-                externalIdReference?: string;
-                externalOrganisation?: string;
-                externalPhone?: string;
-                externalEmail?: string;
-                travellerRole?: string;
-                reasonForTravel?: string;
-              }) => ({
-                requestId,
-                employeeId:
-                  passenger.type === 'employee' && passenger.employeeId
-                    ? passenger.employeeId
-                    : null,
-                externalName:
-                  passenger.type === 'external' ? passenger.externalName?.trim() || null : null,
-                externalIdReference:
-                  passenger.type === 'external'
-                    ? passenger.externalIdReference?.trim() || null
-                    : null,
-                externalOrganisation:
-                  passenger.type === 'external'
-                    ? passenger.externalOrganisation?.trim() || null
-                    : null,
-                externalPhone:
-                  passenger.type === 'external' ? passenger.externalPhone?.trim() || null : null,
-                externalEmail:
-                  passenger.type === 'external' ? passenger.externalEmail?.trim() || null : null,
-                travellerRole: passenger.travellerRole?.trim() || 'passenger',
-                reasonForTravel: passenger.reasonForTravel?.trim() || purpose.trim(),
-                status: 'confirmed',
-              }),
+        if (passengers?.length > 0) {
+          mutations.push(
+            tx.insert(requestPassengers).values(
+              passengers.map(
+                (passenger: {
+                  type: string;
+                  employeeId?: string;
+                  externalName?: string;
+                  externalIdReference?: string;
+                  externalOrganisation?: string;
+                  externalPhone?: string;
+                  externalEmail?: string;
+                  travellerRole?: string;
+                  reasonForTravel?: string;
+                }) => ({
+                  requestId,
+                  employeeId:
+                    passenger.type === 'employee' && passenger.employeeId
+                      ? passenger.employeeId
+                      : null,
+                  externalName:
+                    passenger.type === 'external' ? passenger.externalName?.trim() || null : null,
+                  externalIdReference:
+                    passenger.type === 'external'
+                      ? passenger.externalIdReference?.trim() || null
+                      : null,
+                  externalOrganisation:
+                    passenger.type === 'external'
+                      ? passenger.externalOrganisation?.trim() || null
+                      : null,
+                  externalPhone:
+                    passenger.type === 'external' ? passenger.externalPhone?.trim() || null : null,
+                  externalEmail:
+                    passenger.type === 'external' ? passenger.externalEmail?.trim() || null : null,
+                  travellerRole: passenger.travellerRole?.trim() || 'passenger',
+                  reasonForTravel: passenger.reasonForTravel?.trim() || purpose.trim(),
+                  status: 'confirmed',
+                }),
+              ),
             ),
-          ),
-        );
-      }
+          );
+        }
 
-      if (drivers?.length > 0) {
-        mutations.push(
-          tx.insert(requestDrivers).values(
-            drivers.map(
-              (driver: { employeeId: string; sortOrder?: number }, index: number) => ({
-                requestId,
-                employeeId: driver.employeeId,
-                driverType: 'nominated',
-                sortOrder: driver.sortOrder || index + 1,
-              }),
+        if (drivers?.length > 0) {
+          mutations.push(
+            tx.insert(requestDrivers).values(
+              drivers.map(
+                (driver: { employeeId: string; sortOrder?: number }, index: number) => ({
+                  requestId,
+                  employeeId: driver.employeeId,
+                  driverType: 'nominated',
+                  sortOrder: driver.sortOrder || index + 1,
+                }),
+              ),
             ),
-          ),
-        );
-      }
+          );
+        }
 
-      if (routes?.length > 0) {
-        mutations.push(
-          tx.insert(requestRoutes).values(
-            routes.map(
-              (route: {
-                originName: string;
-                destinationName: string;
-                estimatedKm?: number;
-                originPlaceId?: string;
-                destinationPlaceId?: string;
-                originCoordinates?: { lat: number; lng: number };
-                destinationCoordinates?: { lat: number; lng: number };
-              }) => ({
-                requestId,
-                originName: route.originName.trim(),
-                destinationName: route.destinationName.trim(),
-                originPlaceId: route.originPlaceId || null,
-                destinationPlaceId: route.destinationPlaceId || null,
-                originCoordinates: route.originCoordinates || null,
-                destinationCoordinates: route.destinationCoordinates || null,
-                totalKilometres: route.estimatedKm || 0,
-                additionalKilometres: 0,
-                isVerified: false,
-              }),
+        if (routes?.length > 0) {
+          mutations.push(
+            tx.insert(requestRoutes).values(
+              routes.map(
+                (route: {
+                  originName: string;
+                  destinationName: string;
+                  estimatedKm?: number;
+                  originPlaceId?: string;
+                  destinationPlaceId?: string;
+                  originCoordinates?: { lat: number; lng: number };
+                  destinationCoordinates?: { lat: number; lng: number };
+                }) => ({
+                  requestId,
+                  originName: route.originName.trim(),
+                  destinationName: route.destinationName.trim(),
+                  originPlaceId: route.originPlaceId || null,
+                  destinationPlaceId: route.destinationPlaceId || null,
+                  originCoordinates: route.originCoordinates || null,
+                  destinationCoordinates: route.destinationCoordinates || null,
+                  totalKilometres: route.estimatedKm || 0,
+                  additionalKilometres: 0,
+                  isVerified: false,
+                }),
+              ),
             ),
-          ),
-        );
-      }
+          );
+        }
 
-      return mutations;
-    });
+        return mutations;
+      });
+    } catch (creationError) {
+      // Database uniqueness is the final idempotency guard. If another
+      // identical submission committed after the pre-insert lookup, return
+      // that durable request instead of surfacing the losing insert as a 500.
+      if (clientSubmissionId) {
+        const [existingRequest] = await db
+          .select()
+          .from(transportRequests)
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              eq(transportRequests.clientSubmissionId, clientSubmissionId),
+            ),
+          )
+          .limit(1);
+        if (existingRequest) {
+          let workflowInstanceId = existingRequest.workflowInstanceId;
+          if (existingRequest.status === 'submitted' && !workflowInstanceId) {
+            try {
+              const recoveredWorkflow = await ensureRequestWorkflow(existingRequest.id, tenantId);
+              if (recoveredWorkflow.ok) workflowInstanceId = recoveredWorkflow.instance.id;
+            } catch (recoveryError) {
+              console.warn('[transport-requests] Concurrent idempotent workflow recovery failed:', recoveryError);
+            }
+          }
+          return NextResponse.json({
+            request: { ...existingRequest, workflowInstanceId },
+            reference: existingRequest.reference,
+            duplicate: true,
+          });
+        }
+      }
+      throw creationError;
+    }
 
     // A submitted request without an active workflow is not operationally valid.
     // Initialise/recover the workflow before returning success; if it cannot be
