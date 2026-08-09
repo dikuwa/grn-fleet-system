@@ -64,10 +64,16 @@ async function fetchAllocationDetail(id: string, tenantId: string) {
     .leftJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
     .leftJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
     .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
-    .where(eq(vehicleAllocations.id, id))
+    .where(and(
+      eq(vehicleAllocations.id, id),
+      eq(transportRequests.tenantId, tenantId),
+      eq(vehicles.tenantId, tenantId),
+    ))
     .then((r) => r[0] ?? null);
 
-  if (!allocation) notFound();    const [relatedTrip, authority, openDefects, tripAuthorityDoc, assignedDriver, driverLicenceInfo] = await Promise.all([
+  if (!allocation) notFound();
+
+  const [relatedTrip, authority, openDefects, tripAuthorityDoc, assignedDriver, driverLicenceInfo] = await Promise.all([
     db
       .select({
         id: trips.id,
@@ -86,16 +92,22 @@ async function fetchAllocationDetail(id: string, tenantId: string) {
         specialAuthorityGranted: tripAuthorities.specialAuthorityGranted,
       })
       .from(tripAuthorities)
-      .where(eq(tripAuthorities.allocationId, id))
+      .where(and(eq(tripAuthorities.allocationId, id), eq(tripAuthorities.tenantId, tenantId)))
       .then((r) => r[0] ?? null),
     db
       .select({ count: vehicleDefects.id })
       .from(vehicleDefects)
-      .where(eq(vehicleDefects.vehicleId, allocation.vehicleId)),    db
+      .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+      .where(and(
+        eq(vehicleDefects.vehicleId, allocation.vehicleId),
+        eq(vehicles.tenantId, tenantId),
+      )),
+    db
       .select({ id: generatedDocuments.id, status: generatedDocuments.status })
       .from(generatedDocuments)
       .where(
         and(
+          eq(generatedDocuments.tenantId, tenantId),
           eq(generatedDocuments.entityType, 'vehicle_allocation'),
           eq(generatedDocuments.entityId, id),
           eq(generatedDocuments.documentType, 'trip_authority'),
@@ -104,7 +116,6 @@ async function fetchAllocationDetail(id: string, tenantId: string) {
       .orderBy(desc(generatedDocuments.createdAt))
       .limit(1)
       .then((r) => r[0] ?? null),
-    // Fetch assigned driver info
     allocation.driverEmployeeId
       ? db
           .select({
@@ -117,11 +128,13 @@ async function fetchAllocationDetail(id: string, tenantId: string) {
           })
           .from(employees)
           .leftJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
-          .where(eq(employees.id, allocation.driverEmployeeId))
+          .where(and(
+            eq(employees.id, allocation.driverEmployeeId),
+            eq(employees.tenantId, tenantId),
+          ))
           .limit(1)
           .then((r) => r[0] ?? null)
       : Promise.resolve(null),
-    // Fetch driver licence info
     allocation.driverEmployeeId
       ? db
           .select({
@@ -133,7 +146,11 @@ async function fetchAllocationDetail(id: string, tenantId: string) {
           })
           .from(driverLicences)
           .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
-          .where(eq(driverProfiles.employeeId, allocation.driverEmployeeId))
+          .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
+          .where(and(
+            eq(driverProfiles.employeeId, allocation.driverEmployeeId),
+            eq(employees.tenantId, tenantId),
+          ))
           .orderBy(desc(driverLicences.expiryDate))
       : Promise.resolve([]),
   ]);
@@ -184,7 +201,6 @@ export default async function AllocationDetailPage({ params }: PageProps) {
   const canManage = canPerformDashboardAction('/dashboard/allocations', roleNames, 'update');
   const stateVariant = ALLOCATION_STATE_VARIANTS[allocation.state] ?? 'info';
 
-  // Determine best licence status for display
   const bestLicence = driverLicenceInfo && driverLicenceInfo.length > 0
     ? driverLicenceInfo.sort((a, b) => new Date(b.expiryDate).getTime() - new Date(a.expiryDate).getTime())[0]
     : null;
@@ -223,7 +239,6 @@ export default async function AllocationDetailPage({ params }: PageProps) {
         </div>
       </PageHeader>
 
-      {/* Summary Card */}
       <Card>
         <CardContent className="pt-4">
           <div className="flex items-center gap-4">
@@ -246,9 +261,7 @@ export default async function AllocationDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Detail Grid */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Vehicle Info */}
         <Card>
           <CardHeader><CardTitle>Vehicle Information</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -258,7 +271,6 @@ export default async function AllocationDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {/* Driver Assignment */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -304,7 +316,6 @@ export default async function AllocationDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {/* Request Info */}
         <Card>
           <CardHeader><CardTitle>Transport Request</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -314,7 +325,6 @@ export default async function AllocationDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {/* Allocation Timeline */}
         <Card>
           <CardHeader><CardTitle>Timeline</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -356,7 +366,6 @@ export default async function AllocationDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {/* Allocation Details */}
         <Card>
           <CardHeader><CardTitle>Allocation Details</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -371,7 +380,6 @@ export default async function AllocationDetailPage({ params }: PageProps) {
         </Card>
       </div>
 
-      {/* Defects Warning */}
       {openDefectCount > 0 && (
         <Card>
           <CardContent className="pt-4">
@@ -383,7 +391,6 @@ export default async function AllocationDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {/* Related Trip */}
       {relatedTrip && (
         <Card>
           <CardContent className="pt-4">
