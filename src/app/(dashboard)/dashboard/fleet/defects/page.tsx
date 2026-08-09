@@ -22,10 +22,15 @@ import { formatDate } from '@/lib/utils';
 import { DefectResolveButton } from './DefectResolveButton';
 import { getServerSession } from '@/lib/session';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
-import { canPerformDashboardAction } from '@/lib/dashboard-access';
+import {
+  canPerformDashboardAction,
+  resolveDashboardAccess,
+  type DashboardRecordScope,
+} from '@/lib/dashboard-access';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { numericCount } from '@/lib/statistics';
+import { defectScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -45,7 +50,12 @@ const SEVERITY_LABELS: Record<string, string> = {
   critical: 'Critical',
 };
 
-async function fetchDefects(sp: Record<string, string | undefined>, tenantId: string) {
+async function fetchDefects(
+  sp: Record<string, string | undefined>,
+  tenantId: string,
+  userId: string,
+  recordScope: DashboardRecordScope,
+) {
   const db = getDb();
   const page = Math.max(1, Number(sp.page) || 1);
   const limit = DEFAULT_PAGE_SIZE;
@@ -53,7 +63,9 @@ async function fetchDefects(sp: Record<string, string | undefined>, tenantId: st
   const severity = normalizeOptionalFilter(sp.severity);
   const status = normalizeOptionalFilter(sp.status);
 
-  const baseConditions: SQL[] = [eq(vehicles.tenantId, tenantId)];
+  const baseConditions: SQL[] = [
+    defectScopeCondition({ tenantId, userId, recordScope }),
+  ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
   if (status === 'open') conditions.push(isNull(vehicleDefects.resolvedAt));
@@ -141,10 +153,16 @@ export default async function DefectsPage({ searchParams }: PageProps) {
   }
 
   const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/fleet/defects', roleNames);
   const canResolve = canPerformDashboardAction('/dashboard/fleet/defects', roleNames, 'update');
   let result: Awaited<ReturnType<typeof fetchDefects>>;
   try {
-    result = await fetchDefects(sp, session.tenantId);
+    result = await fetchDefects(
+      sp,
+      session.tenantId,
+      session.user.id,
+      access.recordScope ?? 'assigned',
+    );
   } catch (error) {
     console.error('Defects query failed:', error);
     return (
@@ -185,7 +203,7 @@ export default async function DefectsPage({ searchParams }: PageProps) {
       </Card>
 
       {result.rows.length === 0 ? (
-        <EmptyState icon={<AlertTriangle className="h-8 w-8" />} title="No defects found" description={hasActiveFilters(result.filters) ? 'No matching defects. Clear filters to view all records.' : 'There are no recorded defects.'} />
+        <EmptyState icon={<AlertTriangle className="h-8 w-8" />} title="No defects found" description={hasActiveFilters(result.filters) ? 'No matching defects. Clear filters to view all records.' : 'There are no recorded defects in your current workspace scope.'} />
       ) : (
         <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
           {result.rows.map((defect) => {
