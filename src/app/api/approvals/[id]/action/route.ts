@@ -11,6 +11,7 @@ import {
 } from '@/lib/workflow-engine';
 import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
+import { processAuthorisationDecision } from '@/lib/authorisation-decision';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
   switch (actionType) {
@@ -116,11 +117,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         comment: typeof comment === 'string' ? comment : undefined,
         session,
       });
+    } else if (stepActionType === 'authorise') {
+      result = await processAuthorisationDecision({
+        instanceId: id,
+        result: semanticResult,
+        comment: typeof comment === 'string' ? comment : undefined,
+        session,
+      });
     } else {
-      // Authorisation and driver acknowledgement have additional domain side
-      // effects (Trip Authority provisioning / driver acceptance), so they stay
-      // on the specialised engine path until those writes are committed with
-      // their workflow transition as one unit.
+      // Driver acknowledgement still has its own trip + authority acceptance
+      // side effects and is audited separately from approval roles.
       result = await engine.processAction(
         {
           instanceId: id,
