@@ -26,6 +26,8 @@ import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/no
 
 /** The operational role that receives actionable licence-renewal reviews. */
 const REVIEW_ROLES = ['Transport Administrator'] as const;
+const REVIEWABLE_STATUSES = new Set(['awaiting_review', 'needs_correction', 'uploaded', 'pending']);
+const TERMINAL_STATUSES = new Set(['verified', 'expired', 'superseded', 'rejected']);
 
 async function notifyTransportAdmins(tenantId: string, input: {
   title: string;
@@ -283,6 +285,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .innerJoin(driverProfiles, eq(driverProfiles.id, driverLicences.driverProfileId))
     .where(and(eq(driverLicences.id, body.licenceId), eq(driverProfiles.employeeId, id))).limit(1);
   if (!licence) return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
+  if (!['correct', 'verify', 'approve', 'reject', 'request_upload'].includes(body.action)) {
+    return NextResponse.json({ error: 'Unsupported licence action' }, { status: 400 });
+  }
   if (body.action !== 'correct') {
     const workspace = await getSessionWorkspace(auth.session);
     if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
@@ -295,6 +300,20 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (permission instanceof NextResponse) return permission;
   }
   const current = licence.driver_licences;
+
+  if (TERMINAL_STATUSES.has(current.verificationStatus)) {
+    return NextResponse.json(
+      { error: `Licence version ${current.version} is ${current.verificationStatus.replaceAll('_', ' ')} and can no longer be changed.` },
+      { status: 409 },
+    );
+  }
+  if (!REVIEWABLE_STATUSES.has(current.verificationStatus)) {
+    return NextResponse.json(
+      { error: `Licence version ${current.version} is not in a reviewable state.` },
+      { status: 409 },
+    );
+  }
+
   if (body.action === 'correct') {
     const allowed = ['licenceNumber', 'licenceClass', 'issueDate', 'expiryDate', 'holderName', 'dateOfBirth', 'nationalIdNumber', 'issueNumber', 'driverRestrictionCode'];
     const corrections = Object.entries(body.corrections || {}).filter(([field]) => allowed.includes(field));
@@ -369,14 +388,21 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
       if (isCurrent) {
         const [profileState] = await tx
-          .select({ availabilityStatus: driverProfiles.availabilityStatus })
+          .select({
+            driverStatus: driverProfiles.driverStatus,
+            availabilityStatus: driverProfiles.availabilityStatus,
+          })
           .from(driverProfiles)
           .where(eq(driverProfiles.id, current.driverProfileId))
           .limit(1);
+        const wasAwaitingLicence = ['pending_verification', 'incomplete', 'unauthorised'].includes(
+          profileState?.driverStatus || '',
+        );
         await tx.update(driverProfiles).set({
           driverStatus: 'authorised',
-          availabilityStatus:
-            profileState?.availabilityStatus === 'unavailable' ? 'available' : profileState?.availabilityStatus || 'available',
+          availabilityStatus: wasAwaitingLicence
+            ? 'available'
+            : profileState?.availabilityStatus || 'available',
           lastVerifiedAt: new Date(),
           verifiedByUserId: auth.session.user.id,
           updatedAt: new Date(),
