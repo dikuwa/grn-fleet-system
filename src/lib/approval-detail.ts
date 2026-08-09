@@ -19,9 +19,9 @@ import {
   workflowActions,
   workflowDefinitions,
   workflowInstances,
-  workflowSteps,
 } from '@/db/schema/workflows';
 import type { PermissionCode } from '@/lib/permissions';
+import { WorkflowEngine } from '@/lib/workflow-engine';
 
 export async function getApprovalDetail(input: {
   instanceId: string;
@@ -82,8 +82,15 @@ export async function getApprovalDetail(input: {
 
   if (!instance) return null;
 
+  // Runtime assignment is the authority source used by the action endpoint.
+  // Do not authorize the detail page from workflow_steps.assigned_user_id:
+  // acting/delegated role resolution may legitimately select a different user.
+  const engine = new WorkflowEngine({ db });
+  const runtimeStatus = await engine.getWorkflowStatus(input.instanceId);
+  if (!runtimeStatus || runtimeStatus.instance.requestId !== instance.requestId) return null;
+  const steps = runtimeStatus.definition.steps;
+
   const [
-    steps,
     actions,
     activities,
     passengers,
@@ -94,11 +101,6 @@ export async function getApprovalDetail(input: {
     revision,
     override,
   ] = await Promise.all([
-    db
-      .select()
-      .from(workflowSteps)
-      .where(eq(workflowSteps.definitionId, instance.definitionId))
-      .orderBy(asc(workflowSteps.stepOrder)),
     db
       .select({
         id: workflowActions.id,
@@ -191,13 +193,13 @@ export async function getApprovalDetail(input: {
       .then((rows) => rows[0] ?? null),
   ]);
 
-  const currentStep = steps.find((step) => step.stepOrder === instance.currentStepOrder) ?? null;
+  const currentStep = runtimeStatus.currentStep;
   const hasStepPermission = Boolean(
     currentStep?.requiredPermission &&
     input.permissionCodes.includes(currentStep.requiredPermission as PermissionCode),
   );
   const canViewActive = Boolean(
-    instance.status === 'active' &&
+    runtimeStatus.instance.status === 'active' &&
     currentStep &&
     (currentStep.assignedUserId === input.userId ||
       (!currentStep.assignedUserId && hasStepPermission)),
@@ -206,10 +208,18 @@ export async function getApprovalDetail(input: {
   const actedPreviously = actions.some((action) => action.actorUserId === input.userId);
   if (!canViewActive && !actedPreviously) return null;
 
+  const resolvedInstance = {
+    ...instance,
+    status: runtimeStatus.instance.status,
+    currentStepOrder: runtimeStatus.instance.currentStepOrder,
+    updatedAt: runtimeStatus.instance.updatedAt,
+  };
+
   return {
-    instance,
+    instance: resolvedInstance,
     currentStep,
-    nextStep: steps.find((step) => step.stepOrder === instance.currentStepOrder + 1) ?? null,
+    nextStep:
+      steps.find((step) => step.stepOrder === runtimeStatus.instance.currentStepOrder + 1) ?? null,
     steps,
     actions,
     activities,
