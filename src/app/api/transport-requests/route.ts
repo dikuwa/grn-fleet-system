@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import {
@@ -13,12 +14,13 @@ import { requireDashboardAction, requireRequestAuth, requirePermission } from '@
 import { Permissions } from '@/lib/permissions';
 import { workflowDefinitions } from '@/db/schema/workflows';
 import { onRequestSubmitted } from '@/lib/document-generator';
-import { WorkflowEngine } from '@/lib/workflow-engine';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
+import { runAtomicMutations } from '@/lib/db-atomic';
+import { ensureRequestWorkflow } from '@/lib/request-workflow';
 
 export async function POST(req: NextRequest) {
   try {
@@ -55,7 +57,6 @@ export async function POST(req: NextRequest) {
     } = body;
     const clientSubmissionId = req.headers.get('idempotency-key') || bodySubmissionId;
 
-    // Validate required fields
     if (typeof purpose !== 'string' || !purpose.trim()) {
       return NextResponse.json({ error: 'Purpose is required' }, { status: 400 });
     }
@@ -65,9 +66,14 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-
     if (scope !== 'regional' && scope !== 'national') {
       return NextResponse.json({ error: 'Scope must be regional or national' }, { status: 400 });
+    }
+    if (specialAuthorityRequired && !String(specialAuthorityReason || '').trim()) {
+      return NextResponse.json(
+        { error: 'Explain why special authority is required.' },
+        { status: 400 },
+      );
     }
     if (programmeId != null && typeof programmeId !== 'string') {
       return NextResponse.json({ error: 'Programme must be a valid identifier' }, { status: 400 });
@@ -131,7 +137,6 @@ export async function POST(req: NextRequest) {
     const userId = session.user.id;
     const tenantId = session.tenantId;
 
-    // Validate the linked programme (tenant-scoped, published/approved, not archived)
     let resolvedProgrammeId: string | null = null;
     if (programmeId) {
       const [linkedProgramme] = await db
@@ -143,12 +148,16 @@ export async function POST(req: NextRequest) {
             eq(programmes.tenantId, tenantId),
             sql`${programmes.status} IN ('approved', 'published')`,
             sql`${programmes.archivedAt} IS NULL`,
+            sql`(${programmes.endDate} IS NULL OR ${programmes.endDate} >= now())`,
           ),
         )
         .limit(1);
       if (!linkedProgramme) {
         return NextResponse.json(
-          { error: 'The selected programme is not available. Only approved or published, non-archived programmes can be linked to transport requests.' },
+          {
+            error:
+              'The selected programme is not available. Only approved or published, current, non-archived programmes can be linked to transport requests.',
+          },
           { status: 400 },
         );
       }
@@ -166,12 +175,22 @@ export async function POST(req: NextRequest) {
           ),
         )
         .limit(1);
-      if (existingRequest)
+      if (existingRequest) {
+        let workflowInstanceId = existingRequest.workflowInstanceId;
+        if (existingRequest.status === 'submitted' && !workflowInstanceId) {
+          try {
+            const workflow = await ensureRequestWorkflow(existingRequest.id, tenantId);
+            if (workflow.ok) workflowInstanceId = workflow.instance.id;
+          } catch (recoveryError) {
+            console.warn('[transport-requests] Idempotent workflow recovery failed:', recoveryError);
+          }
+        }
         return NextResponse.json({
-          request: existingRequest,
+          request: { ...existingRequest, workflowInstanceId },
           reference: existingRequest.reference,
           duplicate: true,
         });
+      }
     }
 
     const employeePassengers = (passengers || []).filter(
@@ -208,10 +227,7 @@ export async function POST(req: NextRequest) {
           passenger.type === 'external' && !passenger.externalName?.trim(),
       )
     ) {
-      return NextResponse.json(
-        { error: 'External passenger names are required.' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'External passenger names are required.' }, { status: 400 });
     }
 
     const selectedPersonIds = Array.from(new Set([...passengerEmployeeIds, ...driverEmployeeIds]));
@@ -251,7 +267,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Look up the requester employee — accept employeeNumber from form or resolve from session user
     let requesterEmployee: {
       id: string;
       userId: string | null;
@@ -289,19 +304,20 @@ export async function POST(req: NextRequest) {
       requesterEmployee = found;
       if (found.userId !== userId) {
         const createForOther = await requirePermission(session, Permissions.SECURE_REQUEST_ASSIST);
-        if (createForOther instanceof NextResponse)
+        if (createForOther instanceof NextResponse) {
           return NextResponse.json(
             { error: 'You may only submit a request for your own linked employee record' },
             { status: 403 },
           );
-        if (!assistedReason?.trim())
+        }
+        if (!assistedReason?.trim()) {
           return NextResponse.json(
             { error: 'A reason is required when submitting on behalf of an employee' },
             { status: 400 },
           );
+        }
       }
     } else {
-      // Fall back to finding employee by linked user ID
       const [found] = await db
         .select({
           id: employees.id,
@@ -352,7 +368,6 @@ export async function POST(req: NextRequest) {
         (!route.departmentId || route.departmentId === requesterEmployee.departmentId),
     );
     if (!hasMatchingRoute) {
-      // Notify Tenant Administrators about the missing route configuration
       try {
         const recipients = await resolveActiveRoleRecipients(tenantId, [SystemRoles.TENANT_ADMIN]);
         await createScopedNotifications({
@@ -370,7 +385,7 @@ export async function POST(req: NextRequest) {
           priority: 'high',
         });
       } catch {
-        // Notification is best-effort
+        // Notification is best-effort.
       }
       return NextResponse.json(
         {
@@ -380,209 +395,271 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Generate a reference number
     const now = new Date();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     const seq = String(Math.floor(Math.random() * 900) + 100);
     const reference = `GRN/TR/${now.getFullYear()}/${month}${day}/${seq}`;
 
-    // Calculate total authorised kilometres from routes/activities
     const routeKm = (routes || []).reduce(
-      (sum: number, r: { estimatedKm?: number }) => sum + (r.estimatedKm || 0),
+      (sum: number, route: { estimatedKm?: number }) => sum + (route.estimatedKm || 0),
       0,
     );
     const activityKm = (activities || []).reduce(
-      (sum: number, a: { estimatedKilometres?: number }) => sum + (a.estimatedKilometres || 0),
+      (sum: number, activity: { estimatedKilometres?: number }) =>
+        sum + (activity.estimatedKilometres || 0),
       0,
     );
     const totalKm = Math.max(routeKm, activityKm);
     const isAssisted = requesterEmployee.userId !== userId;
     const preferredDriverId = preferredDriverEmployeeId || driverEmployeeIds[0] || null;
+    const requestId = randomUUID();
+    const submittedAt = new Date();
 
-    // Insert the transport request
+    // The request and all dependent itinerary/people rows are one atomic unit.
+    // A failed child insert can no longer leave a partially populated submitted request.
+    await runAtomicMutations((tx) => {
+      const mutations: any[] = [
+        tx.insert(transportRequests).values({
+          id: requestId,
+          tenantId,
+          reference,
+          clientSubmissionId: clientSubmissionId || null,
+          scope,
+          status: 'submitted',
+          requesterEmployeeId: requesterEmployee.id,
+          requesterUserId: requesterEmployee.userId,
+          enteredByUserId: userId,
+          requestSource: isAssisted ? 'assisted_by_administration' : 'logged_in_self_service',
+          requestChannel: 'dashboard',
+          submissionMethod: isAssisted ? 'assisted' : 'logged_in',
+          verificationMethod: 'authenticated_session',
+          assistedReason: isAssisted ? assistedReason.trim() : null,
+          confirmationMethod: isAssisted ? confirmationMethod || null : 'authenticated_submission',
+          employeeConfirmationStatus: isAssisted ? 'pending' : 'confirmed',
+          preferredDriverEmployeeId: preferredDriverId,
+          driverPreference:
+            driverPreference || (preferredDriverId ? 'preferred_driver' : 'transport_admin_assign'),
+          travellerEmployeeId: travellerEmployeeId || requesterEmployee.id,
+          urgency: urgency || 'normal',
+          overnight: overnight || false,
+          specialRequirements: specialRequirements || null,
+          vehicleRequirements: vehicleRequirements || {},
+          departmentId: requesterEmployee.departmentId,
+          officeId: requesterEmployee.officeId,
+          department: requesterEmployee.departmentName || department || null,
+          purpose: purpose.trim(),
+          programmeId: resolvedProgrammeId,
+          specialAuthorityRequired: specialAuthorityRequired || false,
+          specialAuthorityReason: specialAuthorityReason?.trim() || null,
+          totalAuthorisedKilometres: totalKm || null,
+          submittedAt,
+        }),
+      ];
+
+      if (activities?.length > 0) {
+        mutations.push(
+          tx.insert(requestActivities).values(
+            activities.map(
+              (activity: {
+                title: string;
+                description?: string;
+                venue?: string;
+                startDate: string;
+                endDate: string;
+                estimatedKilometres?: number;
+              }) => ({
+                requestId,
+                title: activity.title.trim(),
+                description: activity.description?.trim() || null,
+                venue: activity.venue?.trim() || null,
+                startDate: new Date(activity.startDate),
+                endDate: new Date(activity.endDate),
+                estimatedKilometres: activity.estimatedKilometres || null,
+              }),
+            ),
+          ),
+        );
+      }
+
+      if (passengers?.length > 0) {
+        mutations.push(
+          tx.insert(requestPassengers).values(
+            passengers.map(
+              (passenger: {
+                type: string;
+                employeeId?: string;
+                externalName?: string;
+                externalIdReference?: string;
+                externalOrganisation?: string;
+                externalPhone?: string;
+                externalEmail?: string;
+                travellerRole?: string;
+                reasonForTravel?: string;
+              }) => ({
+                requestId,
+                employeeId:
+                  passenger.type === 'employee' && passenger.employeeId
+                    ? passenger.employeeId
+                    : null,
+                externalName:
+                  passenger.type === 'external' ? passenger.externalName?.trim() || null : null,
+                externalIdReference:
+                  passenger.type === 'external'
+                    ? passenger.externalIdReference?.trim() || null
+                    : null,
+                externalOrganisation:
+                  passenger.type === 'external'
+                    ? passenger.externalOrganisation?.trim() || null
+                    : null,
+                externalPhone:
+                  passenger.type === 'external' ? passenger.externalPhone?.trim() || null : null,
+                externalEmail:
+                  passenger.type === 'external' ? passenger.externalEmail?.trim() || null : null,
+                travellerRole: passenger.travellerRole?.trim() || 'passenger',
+                reasonForTravel: passenger.reasonForTravel?.trim() || purpose.trim(),
+                status: 'confirmed',
+              }),
+            ),
+          ),
+        );
+      }
+
+      if (drivers?.length > 0) {
+        mutations.push(
+          tx.insert(requestDrivers).values(
+            drivers.map(
+              (driver: { employeeId: string; sortOrder?: number }, index: number) => ({
+                requestId,
+                employeeId: driver.employeeId,
+                driverType: 'nominated',
+                sortOrder: driver.sortOrder || index + 1,
+              }),
+            ),
+          ),
+        );
+      }
+
+      if (routes?.length > 0) {
+        mutations.push(
+          tx.insert(requestRoutes).values(
+            routes.map(
+              (route: {
+                originName: string;
+                destinationName: string;
+                estimatedKm?: number;
+                originPlaceId?: string;
+                destinationPlaceId?: string;
+                originCoordinates?: { lat: number; lng: number };
+                destinationCoordinates?: { lat: number; lng: number };
+              }) => ({
+                requestId,
+                originName: route.originName.trim(),
+                destinationName: route.destinationName.trim(),
+                originPlaceId: route.originPlaceId || null,
+                destinationPlaceId: route.destinationPlaceId || null,
+                originCoordinates: route.originCoordinates || null,
+                destinationCoordinates: route.destinationCoordinates || null,
+                totalKilometres: route.estimatedKm || 0,
+                additionalKilometres: 0,
+                isVerified: false,
+              }),
+            ),
+          ),
+        );
+      }
+
+      return mutations;
+    });
+
+    // A submitted request without an active workflow is not operationally valid.
+    // Initialise/recover the workflow before returning success; if it cannot be
+    // started, delete the newly-created request (children/workflow cascade).
+    let workflow;
+    try {
+      workflow = await ensureRequestWorkflow(requestId, tenantId);
+    } catch (workflowError) {
+      console.error('[transport-requests] Workflow initialisation threw:', workflowError);
+      await db
+        .delete(transportRequests)
+        .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, tenantId)))
+        .catch(() => undefined);
+      return NextResponse.json(
+        { error: 'The request could not enter the approval workflow. Nothing was submitted; please try again.' },
+        { status: 503 },
+      );
+    }
+    if (!workflow.ok) {
+      await db
+        .delete(transportRequests)
+        .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, tenantId)))
+        .catch(() => undefined);
+      return workflow.error;
+    }
+
     const [request] = await db
-      .insert(transportRequests)
-      .values({
+      .select()
+      .from(transportRequests)
+      .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, tenantId)))
+      .limit(1);
+    if (!request) {
+      return NextResponse.json(
+        { error: 'Request submission could not be verified after workflow creation.' },
+        { status: 500 },
+      );
+    }
+
+    // Documents and awareness/audit side effects happen only after the core
+    // request + workflow state is durable. Their failure must never make a
+    // successful submission look rolled back to the user.
+    let doc: Awaited<ReturnType<typeof onRequestSubmitted>> | null = null;
+    try {
+      doc = await onRequestSubmitted(requestId, tenantId, userId);
+    } catch (documentError) {
+      console.warn('[transport-requests] Post-commit document generation failed:', documentError);
+    }
+
+    try {
+      await recordAuditEvent({
         tenantId,
+        actorUserId: userId,
+        actorEmployeeId: requesterEmployee.userId === userId ? requesterEmployee.id : null,
+        action: isAssisted ? 'request.submitted_on_behalf' : 'request.submitted',
+        entityType: 'transport_request',
+        entityId: requestId,
+        sourceChannel: 'dashboard',
+        after: {
+          requestingEmployeeId: requesterEmployee.id,
+          enteredByUserId: userId,
+          submissionMethod: isAssisted ? 'assisted' : 'logged_in',
+          preferredDriverEmployeeId: preferredDriverId,
+          workflowInstanceId: workflow.instance.id,
+        },
+        reason: isAssisted ? assistedReason : undefined,
+        summary: isAssisted
+          ? `${reference} requested for employee ${requesterEmployee.id} and entered by ${userId}`
+          : `${reference} submitted through logged-in self-service`,
+      });
+    } catch (auditError) {
+      console.warn('[transport-requests] Post-commit audit write failed:', auditError);
+    }
+
+    try {
+      await recordTenantRequestActivity({
+        tenantId,
+        requestId,
         reference,
-        clientSubmissionId: clientSubmissionId || null,
-        scope,
-        status: 'submitted',
-        requesterEmployeeId: requesterEmployee.id,
-        requesterUserId: requesterEmployee.userId,
-        enteredByUserId: userId,
-        requestSource: isAssisted ? 'assisted_by_administration' : 'logged_in_self_service',
-        requestChannel: 'dashboard',
-        submissionMethod: isAssisted ? 'assisted' : 'logged_in',
-        verificationMethod: 'authenticated_session',
-        assistedReason: isAssisted ? assistedReason.trim() : null,
-        confirmationMethod: isAssisted ? confirmationMethod || null : 'authenticated_submission',
-        employeeConfirmationStatus: isAssisted ? 'pending' : 'confirmed',
-        preferredDriverEmployeeId: preferredDriverId,
-        driverPreference:
-          driverPreference || (preferredDriverId ? 'preferred_driver' : 'transport_admin_assign'),
-        travellerEmployeeId: travellerEmployeeId || requesterEmployee.id,
-        urgency: urgency || 'normal',
-        overnight: overnight || false,
-        specialRequirements: specialRequirements || null,
-        vehicleRequirements: vehicleRequirements || {},
-        departmentId: requesterEmployee.departmentId,
-        officeId: requesterEmployee.officeId,
-        department: requesterEmployee.departmentName || department || null,
-        purpose,
-        programmeId: resolvedProgrammeId,
-        specialAuthorityRequired: specialAuthorityRequired || false,
-        specialAuthorityReason: specialAuthorityReason || null,
-        totalAuthorisedKilometres: totalKm || null,
-        submittedAt: new Date(),
-      })
-      .returning();
-
-    // Insert activities
-    if (activities?.length > 0) {
-      await db.insert(requestActivities).values(
-        activities.map(
-          (a: {
-            title: string;
-            description?: string;
-            venue?: string;
-            startDate: string;
-            endDate: string;
-            estimatedKilometres?: number;
-          }) => ({
-            requestId: request.id,
-            title: a.title,
-            description: a.description || null,
-            venue: a.venue || null,
-            startDate: new Date(a.startDate),
-            endDate: new Date(a.endDate),
-            estimatedKilometres: a.estimatedKilometres || null,
-          }),
-        ),
-      );
+        stage: 'submitted',
+        officeLabel: requesterEmployee.departmentName,
+      });
+    } catch (activityError) {
+      console.warn('[transport-requests] Post-commit request activity failed:', activityError);
     }
-
-    // Insert passengers
-    if (passengers?.length > 0) {
-      await db.insert(requestPassengers).values(
-        passengers.map(
-          (p: {
-            type: string;
-            employeeId?: string;
-            externalName?: string;
-            externalIdReference?: string;
-            externalOrganisation?: string;
-            externalPhone?: string;
-            externalEmail?: string;
-            travellerRole?: string;
-            reasonForTravel?: string;
-          }) => ({
-            requestId: request.id,
-            employeeId: p.type === 'employee' && p.employeeId ? p.employeeId : null,
-            externalName: p.type === 'external' ? p.externalName || null : null,
-            externalIdReference:
-              p.type === 'external' ? p.externalIdReference?.trim() || null : null,
-            externalOrganisation:
-              p.type === 'external' ? p.externalOrganisation?.trim() || null : null,
-            externalPhone: p.type === 'external' ? p.externalPhone?.trim() || null : null,
-            externalEmail: p.type === 'external' ? p.externalEmail?.trim() || null : null,
-            travellerRole: p.travellerRole?.trim() || 'passenger',
-            reasonForTravel: p.reasonForTravel?.trim() || purpose,
-            status: 'confirmed',
-          }),
-        ),
-      );
-    }
-
-    // Insert drivers
-    if (drivers?.length > 0) {
-      await db.insert(requestDrivers).values(
-        drivers.map(
-          (d: { employeeId: string; driverType: string; sortOrder: number }, i: number) => ({
-            requestId: request.id,
-            employeeId: d.employeeId,
-            driverType: 'nominated',
-            sortOrder: d.sortOrder || i + 1,
-          }),
-        ),
-      );
-    }
-
-    // Insert routes
-    if (routes?.length > 0) {
-      await db.insert(requestRoutes).values(
-        routes.map(
-          (r: {
-            originName: string;
-            destinationName: string;
-            estimatedKm?: number;
-            originPlaceId?: string;
-            destinationPlaceId?: string;
-            originCoordinates?: { lat: number; lng: number };
-            destinationCoordinates?: { lat: number; lng: number };
-          }) => ({
-            requestId: request.id,
-            originName: r.originName,
-            destinationName: r.destinationName,
-            originPlaceId: r.originPlaceId || null,
-            destinationPlaceId: r.destinationPlaceId || null,
-            originCoordinates: r.originCoordinates || null,
-            destinationCoordinates: r.destinationCoordinates || null,
-            totalKilometres: r.estimatedKm || 0,
-            additionalKilometres: 0,
-            isVerified: false,
-          }),
-        ),
-      );
-    }
-
-    // Trigger document generation
-    const doc = await onRequestSubmitted(request.id, tenantId, userId);
-
-    // Initialise the workflow engine for this request
-    const engine = new WorkflowEngine({ db });
-    const wfResult = await engine.initializeForRequest(request.id, tenantId);
-    // initializeForRequest schedules the first step's reminder + escalation
-    // timers internally (with each step's configured hours), so no separate
-    // Inngest call is needed here — resubmits and public submissions flow
-    // through the same single path.
-    if (!wfResult.ok) {
-      console.warn('[transport-requests] Workflow initialisation failed:', wfResult.error);
-      // Non-blocking — the request is still created
-    }
-
-    await recordAuditEvent({
-      tenantId,
-      actorUserId: userId,
-      actorEmployeeId: requesterEmployee.userId === userId ? requesterEmployee.id : null,
-      action: isAssisted ? 'request.submitted_on_behalf' : 'request.submitted',
-      entityType: 'transport_request',
-      entityId: request.id,
-      sourceChannel: 'dashboard',
-      after: {
-        requestingEmployeeId: requesterEmployee.id,
-        enteredByUserId: userId,
-        submissionMethod: isAssisted ? 'assisted' : 'logged_in',
-        preferredDriverEmployeeId: preferredDriverId,
-      },
-      reason: isAssisted ? assistedReason : undefined,
-      summary: isAssisted
-        ? `${request.reference} requested for employee ${requesterEmployee.id} and entered by ${userId}`
-        : `${request.reference} submitted through logged-in self-service`,
-    });
-    await recordTenantRequestActivity({
-      tenantId,
-      requestId: request.id,
-      reference: request.reference,
-      stage: 'submitted',
-      officeLabel: requesterEmployee.departmentName,
-    });
 
     return NextResponse.json({
-      request: { ...request, workflowInstanceId: wfResult.ok ? wfResult.instance.id : null },
+      request: { ...request, workflowInstanceId: workflow.instance.id },
       document: doc,
-      reference: request.reference,
+      reference,
     });
   } catch (error) {
     console.error('[transport-requests] POST failed:', error);
