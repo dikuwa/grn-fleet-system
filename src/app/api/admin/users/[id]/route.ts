@@ -13,18 +13,35 @@ import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { employees, driverProfiles, driverLicences, departments, offices } from '@/db/schema/people';
 import { userProfiles } from '@/db/schema/auth';
 import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { transportRequests } from '@/db/schema/requests';
 import { eq, and, or, ne, inArray } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+function asDate(value: Date | string | null | undefined) {
+  return value ? new Date(value) : null;
+}
+
 function assignmentIsActive(
   assignment: { startDate: Date | string | null; endDate: Date | string | null },
   now = new Date(),
 ) {
-  const startsAt = assignment.startDate ? new Date(assignment.startDate) : null;
-  const endsAt = assignment.endDate ? new Date(assignment.endDate) : null;
+  const startsAt = asDate(assignment.startDate);
+  const endsAt = asDate(assignment.endDate);
   return (!startsAt || startsAt <= now) && (!endsAt || endsAt > now);
+}
+
+function assignmentOverlapsWindow(
+  assignment: { startDate: Date | string | null; endDate: Date | string | null },
+  startsAt: Date,
+  endsAt: Date | null,
+) {
+  const existingStart = asDate(assignment.startDate);
+  const existingEnd = asDate(assignment.endDate);
+  const existingStartsBeforeNewEnds = endsAt === null || existingStart === null || existingStart < endsAt;
+  const newStartsBeforeExistingEnds = existingEnd === null || startsAt < existingEnd;
+  return existingStartsBeforeNewEnds && newStartsBeforeExistingEnds;
 }
 
 async function requireTenantUserAdmin(request: NextRequest) {
@@ -134,7 +151,7 @@ export async function GET(
     });
   } catch (error) {
     console.error('[Admin User Detail] GET failed:', error);
-    return NextResponse.json({ error: 'Failed to load user: ' + String(error) }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to load user' }, { status: 500 });
   }
 }
 
@@ -157,6 +174,9 @@ export async function PATCH(
         return NextResponse.json({ error: 'Unsupported tenant membership status' }, { status: 422 });
       }
     }
+    if (addRoleId && removeRoleId) {
+      return NextResponse.json({ error: 'Add and remove role actions must be submitted separately' }, { status: 422 });
+    }
 
     const db = getDb();
     const [membership] = await db
@@ -166,11 +186,9 @@ export async function PATCH(
       .limit(1);
     if (!membership) return NextResponse.json({ error: 'User not found in your organisation' }, { status: 404 });
 
-    if (name !== undefined) {
-      if (typeof name !== 'string' || !name.trim()) {
-        return NextResponse.json({ error: 'User name cannot be empty' }, { status: 422 });
-      }
-      await db.update(user).set({ name: name.trim(), updatedAt: new Date() }).where(eq(user.id, id));
+    const trimmedName = name === undefined ? undefined : typeof name === 'string' ? name.trim() : '';
+    if (trimmedName !== undefined && !trimmedName) {
+      return NextResponse.json({ error: 'User name cannot be empty' }, { status: 422 });
     }
 
     if (tenantStatus !== undefined) {
@@ -189,7 +207,32 @@ export async function PATCH(
           return NextResponse.json({ error: 'The final active Tenant Administrator cannot be suspended or moved to pending activation.' }, { status: 409 });
         }
       }
-      await db.update(tenantMemberships).set({ status: tenantStatus }).where(eq(tenantMemberships.id, membership.id));
+    }
+
+    if (trimmedName !== undefined || tenantStatus !== undefined) {
+      await db.transaction(async (tx) => {
+        if (trimmedName !== undefined) {
+          await tx.update(user).set({ name: trimmedName, updatedAt: new Date() }).where(eq(user.id, id));
+        }
+        if (tenantStatus !== undefined) {
+          await tx.update(tenantMemberships).set({ status: tenantStatus }).where(eq(tenantMemberships.id, membership.id));
+        }
+        await recordAuditEvent({
+          tenantId: session.tenantId,
+          actorUserId: session.user.id,
+          eventType: 'user_account_updated',
+          action: 'update',
+          entityType: 'tenant_membership',
+          entityId: membership.id,
+          before: { tenantStatus: membership.status },
+          after: {
+            userId: id,
+            ...(trimmedName !== undefined ? { name: trimmedName } : {}),
+            ...(tenantStatus !== undefined ? { tenantStatus } : {}),
+          },
+          summary: 'Tenant user account details updated',
+        }, tx);
+      });
     }
 
     if (addRoleId) {
@@ -213,103 +256,140 @@ export async function PATCH(
         .select({ id: roleAssignments.id, startDate: roleAssignments.startDate, endDate: roleAssignments.endDate })
         .from(roleAssignments)
         .where(and(eq(roleAssignments.tenantMembershipId, membership.id), eq(roleAssignments.roleId, role.id)));
-      const hasActiveAssignment = roleHistory.some((assignment) => assignmentIsActive(assignment));
-      if (!hasActiveAssignment) {
-        await db.insert(roleAssignments).values({
+      if (roleHistory.some((assignment) => assignmentOverlapsWindow(assignment, startsAt, endsAt))) {
+        return NextResponse.json(
+          { error: 'This user already holds the selected role during part or all of the requested period' },
+          { status: 409 },
+        );
+      }
+
+      const [employee] = role.name === 'Assigned Driver'
+        ? await db
+            .select({ id: employees.id, firstName: employees.firstName, lastName: employees.lastName })
+            .from(employees)
+            .where(and(
+              eq(employees.userId, id),
+              eq(employees.tenantId, session.tenantId),
+              eq(employees.employmentStatus, 'active'),
+            ))
+            .limit(1)
+        : [];
+      if (role.name === 'Assigned Driver' && !employee) {
+        return NextResponse.json(
+          { error: 'Assigned Driver can only be granted to a login account linked to an active staff record' },
+          { status: 422 },
+        );
+      }
+
+      const [existingProfile] = employee
+        ? await db
+            .select({
+              id: driverProfiles.id,
+              driverStatus: driverProfiles.driverStatus,
+              availabilityStatus: driverProfiles.availabilityStatus,
+            })
+            .from(driverProfiles)
+            .where(eq(driverProfiles.employeeId, employee.id))
+            .limit(1)
+        : [];
+
+      let hasValidVerifiedLicence = false;
+      if (existingProfile) {
+        const verifiedLicences = await db
+          .select({ expiryDate: driverLicences.expiryDate })
+          .from(driverLicences)
+          .where(and(
+            eq(driverLicences.driverProfileId, existingProfile.id),
+            eq(driverLicences.verificationStatus, 'verified'),
+            eq(driverLicences.isActive, true),
+          ));
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        hasValidVerifiedLicence = verifiedLicences.some((licence) => {
+          const expiry = new Date(licence.expiryDate);
+          expiry.setHours(0, 0, 0, 0);
+          return expiry >= today;
+        });
+      }
+
+      await db.transaction(async (tx) => {
+        const [assignment] = await tx.insert(roleAssignments).values({
           tenantMembershipId: membership.id,
           roleId: role.id,
           startDate: startsAt,
           endDate: endsAt,
-        });
+        }).returning({ id: roleAssignments.id });
 
-        if (role.name === 'Assigned Driver') {
-          const [employee] = await db
-            .select({ id: employees.id, firstName: employees.firstName, lastName: employees.lastName })
-            .from(employees)
-            .where(and(eq(employees.userId, id), eq(employees.tenantId, session.tenantId)))
-            .limit(1);
-          if (employee) {
-            const [existingProfile] = await db
-              .select({
-                id: driverProfiles.id,
-                availabilityStatus: driverProfiles.availabilityStatus,
-              })
-              .from(driverProfiles)
-              .where(eq(driverProfiles.employeeId, employee.id))
-              .limit(1);
-
-            let profileId = existingProfile?.id;
-            let driverStatus: 'authorised' | 'pending_verification' = 'pending_verification';
-            let availabilityStatus = 'unavailable';
-
-            if (!existingProfile) {
-              const [profile] = await db.insert(driverProfiles).values({
-                employeeId: employee.id,
+        let driverProfileId: string | null = existingProfile?.id ?? null;
+        let driverLifecycle: string | null = null;
+        let driverAvailability: string | null = null;
+        if (employee) {
+          if (!existingProfile) {
+            const [profile] = await tx.insert(driverProfiles).values({
+              employeeId: employee.id,
+              driverStatus: 'pending_verification',
+              availabilityStatus: 'unavailable',
+              notes: 'Auto-provisioned from Assigned Driver role. Licence upload and verification are required before operational assignment.',
+            }).returning({ id: driverProfiles.id });
+            driverProfileId = profile.id;
+            driverLifecycle = 'pending_verification';
+            driverAvailability = 'unavailable';
+          } else if (existingProfile.driverStatus === 'suspended') {
+            driverLifecycle = 'suspended';
+            driverAvailability = 'unavailable';
+            await tx
+              .update(driverProfiles)
+              .set({ availabilityStatus: 'unavailable', updatedAt: new Date() })
+              .where(eq(driverProfiles.id, existingProfile.id));
+          } else if (hasValidVerifiedLicence) {
+            driverLifecycle = 'authorised';
+            driverAvailability = existingProfile.availabilityStatus || 'available';
+            await tx
+              .update(driverProfiles)
+              .set({ driverStatus: 'authorised', updatedAt: new Date() })
+              .where(eq(driverProfiles.id, existingProfile.id));
+          } else {
+            driverLifecycle = 'pending_verification';
+            driverAvailability = 'unavailable';
+            await tx
+              .update(driverProfiles)
+              .set({
                 driverStatus: 'pending_verification',
                 availabilityStatus: 'unavailable',
-                notes: 'Auto-provisioned from Driver role assignment. Licence upload and verification are required before operational assignment.',
-              }).returning();
-              profileId = profile.id;
-            } else {
-              const verifiedLicences = await db
-                .select({ expiryDate: driverLicences.expiryDate })
-                .from(driverLicences)
-                .where(and(
-                  eq(driverLicences.driverProfileId, existingProfile.id),
-                  eq(driverLicences.verificationStatus, 'verified'),
-                  eq(driverLicences.isActive, true),
-                ));
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              const hasValidVerifiedLicence = verifiedLicences.some((licence) => {
-                const expiry = new Date(licence.expiryDate);
-                expiry.setHours(0, 0, 0, 0);
-                return expiry >= today;
-              });
-
-              if (hasValidVerifiedLicence) {
-                driverStatus = 'authorised';
-                availabilityStatus = existingProfile.availabilityStatus || 'available';
-                await db
-                  .update(driverProfiles)
-                  .set({ driverStatus: 'authorised', updatedAt: new Date() })
-                  .where(eq(driverProfiles.id, existingProfile.id));
-              } else {
-                await db
-                  .update(driverProfiles)
-                  .set({
-                    driverStatus: 'pending_verification',
-                    availabilityStatus: 'unavailable',
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(driverProfiles.id, existingProfile.id));
-              }
-            }
-
-            await db
-              .update(employees)
-              .set({ isDriver: true, updatedAt: new Date() })
-              .where(eq(employees.id, employee.id));
-
-            if (profileId) {
-              await recordAuditEvent({
-                tenantId: session.tenantId,
-                actorUserId: session.user.id,
-                action: 'driver_profile.role_assignment_synced',
-                entityType: 'driver_profile',
-                entityId: profileId,
-                summary: `Driver profile synced for ${employee.firstName} ${employee.lastName} via role assignment`,
-                after: {
-                  driverStatus,
-                  availabilityStatus,
-                  roleAssigned: role.name,
-                  licenceVerificationRequired: driverStatus !== 'authorised',
-                },
-              }).catch(() => undefined);
-            }
+                updatedAt: new Date(),
+              })
+              .where(eq(driverProfiles.id, existingProfile.id));
           }
+
+          await tx
+            .update(employees)
+            .set({ isDriver: true, updatedAt: new Date() })
+            .where(and(eq(employees.id, employee.id), eq(employees.tenantId, session.tenantId)));
         }
-      }
+
+        await recordAuditEvent({
+          tenantId: session.tenantId,
+          actorUserId: session.user.id,
+          eventType: 'role_assignment_created',
+          action: 'create',
+          entityType: 'role_assignment',
+          entityId: assignment.id,
+          after: {
+            userId: id,
+            roleId: role.id,
+            roleName: role.name,
+            startDate: startsAt,
+            endDate: endsAt,
+            ...(driverProfileId ? {
+              driverProfileId,
+              driverStatus: driverLifecycle,
+              driverAvailability,
+              driverLicenceVerificationRequired: driverLifecycle !== 'authorised',
+            } : {}),
+          },
+          summary: `Role assigned: ${role.name}`,
+        }, tx);
+      });
     }
 
     if (removeRoleId) {
@@ -337,25 +417,33 @@ export async function PATCH(
         }
       }
 
-      if (!assignment.endDate || new Date(assignment.endDate) > now) {
-        await db.update(roleAssignments).set({ endDate: now }).where(eq(roleAssignments.id, assignment.id));
+      const assignmentStart = asDate(assignment.startDate);
+      const existingEnd = asDate(assignment.endDate);
+      if (!existingEnd || existingEnd > now) {
+        const endedAt = assignmentStart && assignmentStart > now ? assignmentStart : now;
+        await db.transaction(async (tx) => {
+          await tx.update(roleAssignments).set({ endDate: endedAt }).where(eq(roleAssignments.id, assignment.id));
+          await recordAuditEvent({
+            tenantId: session.tenantId,
+            actorUserId: session.user.id,
+            eventType: assignmentStart && assignmentStart > now ? 'role_assignment_cancelled' : 'role_assignment_ended',
+            action: 'update',
+            entityType: 'role_assignment',
+            entityId: assignment.id,
+            summary: assignmentStart && assignmentStart > now
+              ? `Scheduled role assignment cancelled: ${assignment.roleName}`
+              : `Role assignment ended: ${assignment.roleName}`,
+            before: { startDate: assignment.startDate, endDate: assignment.endDate },
+            after: { roleName: assignment.roleName, endedAt: endedAt.toISOString(), historyPreserved: true },
+          }, tx);
+        });
       }
-      await recordAuditEvent({
-        tenantId: session.tenantId,
-        actorUserId: session.user.id,
-        action: 'role_assignment.ended',
-        entityType: 'role_assignment',
-        entityId: assignment.id,
-        summary: `Role assignment for ${assignment.roleName} closed on ${now.toISOString()}`,
-        before: { startDate: assignment.startDate, endDate: assignment.endDate },
-        after: { roleName: assignment.roleName, endedAt: now.toISOString(), historyPreserved: true },
-      }).catch(() => undefined);
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Admin User Detail] PATCH failed:', error);
-    return NextResponse.json({ error: 'Failed to update user: ' + String(error) }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
   }
 }
 
@@ -439,8 +527,10 @@ export async function DELETE(
       const [openAllocation] = await db
         .select({ id: vehicleAllocations.id })
         .from(vehicleAllocations)
+        .innerJoin(transportRequests, eq(transportRequests.id, vehicleAllocations.requestId))
         .where(and(
           eq(vehicleAllocations.driverEmployeeId, employee.id),
+          eq(transportRequests.tenantId, session.tenantId),
           inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'released']),
         ))
         .limit(1);
@@ -452,34 +542,37 @@ export async function DELETE(
       }
     }
 
-    await db.delete(sessionTable).where(eq(sessionTable.userId, id));
-    await db.delete(verification).where(or(eq(verification.identifier, userRecord.email), eq(verification.identifier, id)));
-    await db.update(tenantMemberships).set({ status: 'access_removed' }).where(eq(tenantMemberships.id, membership.id));
-    await db.update(userProfiles).set({ status: 'removed', updatedAt: new Date() }).where(eq(userProfiles.userId, id));
+    await db.transaction(async (tx) => {
+      await tx.delete(sessionTable).where(eq(sessionTable.userId, id));
+      await tx.delete(verification).where(or(eq(verification.identifier, userRecord.email), eq(verification.identifier, id)));
+      await tx.update(tenantMemberships).set({ status: 'access_removed' }).where(eq(tenantMemberships.id, membership.id));
+      await tx.update(userProfiles).set({ status: 'removed', updatedAt: new Date() }).where(eq(userProfiles.userId, id));
 
-    await recordAuditEvent({
-      tenantId: session.tenantId,
-      actorUserId: session.user.id,
-      action: 'user_membership.removed',
-      entityType: 'tenant_membership',
-      entityId: membership.id,
-      summary: 'User access removed from the organisation. The linked staff record was preserved.',
-      after: {
-        userId: id,
-        userEmail: userRecord.email,
-        staffRecordPreserved: true,
-        activeRoleCount: activeAssignments.length,
-        futureOrHistoricalRoleRecordsPreserved: assignments.length,
-        sessionsRevoked: true,
-        verificationTokensInvalidated: true,
-        removedAt: now.toISOString(),
-        accountStatus: 'access_removed',
-      },
-    }).catch(() => undefined);
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        eventType: 'user_access_removed',
+        action: 'delete',
+        entityType: 'tenant_membership',
+        entityId: membership.id,
+        summary: 'User access removed from the organisation. The linked staff record was preserved.',
+        after: {
+          userId: id,
+          userEmail: userRecord.email,
+          staffRecordPreserved: true,
+          activeRoleCount: activeAssignments.length,
+          futureOrHistoricalRoleRecordsPreserved: assignments.length,
+          sessionsRevoked: true,
+          verificationTokensInvalidated: true,
+          removedAt: now.toISOString(),
+          accountStatus: 'access_removed',
+        },
+      }, tx);
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Admin User Detail] DELETE failed:', error);
-    return NextResponse.json({ error: 'Failed to remove user: ' + String(error) }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to remove user' }, { status: 500 });
   }
 }
