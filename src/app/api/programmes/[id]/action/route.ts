@@ -135,6 +135,25 @@ export async function POST(
       );
     }
 
+    // Never move a Programme into a review state that nobody can action.
+    // The reviewer must be an active Tenant Administrator other than the
+    // submitting user so the same separation-of-duty rule enforced on the
+    // decision endpoint is satisfiable after submission.
+    let submitReviewers: string[] | null = null;
+    if (action === 'submit') {
+      const reviewers = await resolveActiveRoleRecipients(tenantId, [SystemRoles.TENANT_ADMIN]);
+      submitReviewers = reviewers.filter((recipientUserId) => recipientUserId !== userId);
+      if (submitReviewers.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              'This programme cannot be submitted yet because no independent Tenant Administrator is available to review it. Assign another active Tenant Administrator or transfer programme ownership before submitting.',
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const now = new Date();
     let nextStatus: string;
     let transitionSet: SQL;
@@ -229,8 +248,7 @@ export async function POST(
       const statusLabel = nextStatus.replace(/_/g, ' ');
       const notificationBody = `${programme.title} (${programme.reference}) is now ${statusLabel}.`;
       if (action === 'submit') {
-        const reviewers = await resolveActiveRoleRecipients(tenantId, [SystemRoles.TENANT_ADMIN]);
-        const recipients = reviewers.filter((recipientUserId) => recipientUserId !== userId);
+        const recipients = submitReviewers ?? [];
         if (recipients.length > 0) {
           await createScopedNotifications({
             tenantId,
