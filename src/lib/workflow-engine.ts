@@ -8,12 +8,6 @@
  * Each workflow definition is versioned per tenant and trip scope (regional
  * vs national). The engine validates permissions, separation of duty,
  * handles emergency overrides, and records every action in the audit log.
- *
- * Usage (API route handler):
- *   const engine = new WorkflowEngine({ db, session });
- *   const result = await engine.processAction({
- *     instanceId, action: 'approve', comment: 'Approved.',
- *   });
  */
 
 import { getDb } from '@/db';
@@ -80,6 +74,9 @@ export type ProcessActionInput = {
 export type EngineResult =
   | { ok: true; message: string; instance: typeof workflowInstances.$inferSelect }
   | { ok: false; error: NextResponse };
+
+type WorkflowStep = typeof workflowSteps.$inferSelect;
+type WorkflowInstance = typeof workflowInstances.$inferSelect;
 
 // ---------------------------------------------------------------------------
 // Default workflow definitions
@@ -207,8 +204,7 @@ export class WorkflowEngine {
 
   /**
    * Create a workflow instance for a transport request.
-   * Looks up the appropriate definition based on trip scope, or creates
-   * an ad-hoc instance if no definition is found.
+   * Looks up the appropriate definition based on trip scope.
    */
   async initializeForRequest(requestId: string, tenantId: string): Promise<EngineResult> {
     const [request] = await this.db
@@ -232,7 +228,6 @@ export class WorkflowEngine {
 
     const scope = request.scope || 'regional';
 
-    // Try to find a matching active definition
     const definitionCandidates = await this.db
       .select()
       .from(workflowDefinitions)
@@ -267,9 +262,7 @@ export class WorkflowEngine {
       return {
         ok: false,
         error: NextResponse.json(
-          {
-            error: `No active ${scope} approval route is configured for this organisation and request.`,
-          },
+          { error: `No active ${scope} approval route is configured for this organisation and request.` },
           { status: 409 },
         ),
       };
@@ -286,7 +279,6 @@ export class WorkflowEngine {
       })
       .returning();
 
-    // Link the workflow instance to the transport request
     await this.db
       .update(transportRequests)
       .set({ workflowInstanceId: instance.id, updatedAt: new Date() })
@@ -294,10 +286,11 @@ export class WorkflowEngine {
 
     const resolvedSteps = await this.getDefinitionSteps(instance);
     const firstStep = resolvedSteps.find((step) => step.stepOrder === 1);
-    // Schedule the first step's reminder + escalation timers (the caller no
-    // longer hardcodes step 1 at request creation — resubmits and public
-    // submissions get the same timers through this single path).
-    if (firstStep) this.scheduleStepTimers(instance.id, firstStep);
+    if (firstStep) {
+      await this.persistCurrentAssignment(instance.id, instance.requestId, firstStep, 'initial');
+      this.scheduleStepTimers(instance.id, firstStep);
+    }
+
     if (firstStep?.assignedUserId) {
       await createScopedNotifications({
         tenantId,
@@ -326,25 +319,23 @@ export class WorkflowEngine {
       tenantId,
     );
 
-    return { ok: true, message: `Workflow initialised for ${scope} trip.`, instance };
+    const [persistedInstance] = await this.db
+      .select()
+      .from(workflowInstances)
+      .where(eq(workflowInstances.id, instance.id))
+      .limit(1);
+
+    return {
+      ok: true,
+      message: `Workflow initialised for ${scope} trip.`,
+      instance: persistedInstance ?? instance,
+    };
   }
 
   // -------------------------------------------------------------------------
   // Action processing
   // -------------------------------------------------------------------------
 
-  /**
-   * Process a workflow action (approve, reject, return, release, authorise,
-   * acknowledge, override).
-   *
-   * Validates:
-   *   1. Instance is active
-   *   2. Actor has the required permission for the current step
-   *   3. Separation of duty (actor is not the requester for approval steps)
-   *   4. Comment is provided if required
-   *
-   * On success, records the action and advances the workflow.
-   */
   async processAction(input: ProcessActionInput, session: AuthSession): Promise<EngineResult> {
     const { instanceId, action, result, comment } = input;
 
@@ -376,59 +367,50 @@ export class WorkflowEngine {
     if (instance.status !== 'active') {
       return {
         ok: false,
-        error: NextResponse.json(
-          { error: `Workflow is already ${instance.status}.` },
-          { status: 409 },
-        ),
+        error: NextResponse.json({ error: `Workflow is already ${instance.status}.` }, { status: 409 }),
       };
     }
 
-    // Get the current step definition
     const steps = await this.getDefinitionSteps(instance);
     const currentStep = steps.find((s) => s.stepOrder === instance.currentStepOrder);
 
     if (!currentStep) {
       return {
         ok: false,
-        error: NextResponse.json(
-          { error: 'No step found at the current position.' },
-          { status: 400 },
-        ),
+        error: NextResponse.json({ error: 'No step found at the current position.' }, { status: 400 }),
       };
+    }
+
+    // Legacy/unrefreshed active instances may not yet have a persisted current
+    // holder. Persist the exact holder this action is being authorised against
+    // before doing any work so queue/detail/action converge on one assignment.
+    if (!instance.currentAssignedUserId && currentStep.assignedUserId) {
+      await this.persistCurrentAssignment(instance.id, instance.requestId, currentStep, 'lazy_refresh');
     }
 
     if (currentStep.actionType !== action) {
       return {
         ok: false,
         error: NextResponse.json(
-          {
-            error: `Expected action "${currentStep.actionType}" but received "${action}".`,
-          },
+          { error: `Expected action "${currentStep.actionType}" but received "${action}".` },
           { status: 400 },
         ),
       };
     }
 
-    // Validate: comment required
     if (currentStep.requiresComment && !comment?.trim()) {
       return {
         ok: false,
-        error: NextResponse.json(
-          { error: 'A comment is required for this action.' },
-          { status: 400 },
-        ),
+        error: NextResponse.json({ error: 'A comment is required for this action.' }, { status: 400 }),
       };
     }
 
-    // Validate: permission
     if (currentStep.requiredPermission) {
       const permCheck = await requirePermission(
         session,
         currentStep.requiredPermission as PermissionCode,
       );
-      if (permCheck instanceof NextResponse) {
-        return { ok: false, error: permCheck };
-      }
+      if (permCheck instanceof NextResponse) return { ok: false, error: permCheck };
     }
 
     if (currentStep.assignedUserId && currentStep.assignedUserId !== session.user.id) {
@@ -436,7 +418,9 @@ export class WorkflowEngine {
         ok: false,
         error: forbiddenResponse('This workflow step is assigned to another responsible user.'),
       };
-    } // Validate: separation of duty — conflict-of-interest detection
+    }
+
+    // Validate separation of duty — conflict-of-interest detection.
     if (currentStep.separationDutyRole === 'requester') {
       const [request] = await this.db
         .select({
@@ -450,15 +434,12 @@ export class WorkflowEngine {
         .limit(1);
 
       const isRequester = request && request.requesterUserId === session.user.id;
-      // Also check if the actor is the main traveller/beneficiary
       let isTraveller = false;
       if (request && !isRequester) {
         const [actorEmployee] = await this.db
           .select({ id: employees.id })
           .from(employees)
-          .where(
-            and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)),
-          )
+          .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)))
           .limit(1);
         if (
           actorEmployee &&
@@ -470,10 +451,8 @@ export class WorkflowEngine {
       }
 
       if (isRequester || isTraveller) {
-        // CONFLICT DETECTED — attempt auto-reassignment to an alternate officer
         const resolution = await this.resolveAlternateOfficer(instance, currentStep, session);
         if (resolution) {
-          // The step was reassigned — notify the original actor and the replacement
           await this.logAuditEvent(
             {
               entityType: 'workflow_instance',
@@ -509,7 +488,6 @@ export class WorkflowEngine {
           };
         }
 
-        // No alternate found — block with clear message
         return {
           ok: false,
           error: forbiddenResponse(
@@ -518,6 +496,7 @@ export class WorkflowEngine {
         };
       }
     }
+
     if (currentStep.separationDutyRole === 'release') {
       const [releaseAction] = await this.db
         .select({ actorUserId: workflowActions.actorUserId })
@@ -536,6 +515,7 @@ export class WorkflowEngine {
         };
       }
     }
+
     if (currentStep.actionType === 'acknowledge') {
       const [assignedDriver] = await this.db
         .select({ userId: employees.userId })
@@ -550,6 +530,7 @@ export class WorkflowEngine {
         };
       }
     }
+
     let authorityContext: {
       allocationId: string;
       tripId: string;
@@ -575,9 +556,7 @@ export class WorkflowEngine {
         return {
           ok: false,
           error: NextResponse.json(
-            {
-              error: 'A vehicle and eligible driver must be allocated before final authorisation.',
-            },
+            { error: 'A vehicle and eligible driver must be allocated before final authorisation.' },
             { status: 409 },
           ),
         };
@@ -585,7 +564,6 @@ export class WorkflowEngine {
       authorityContext = context;
     }
 
-    // Record the action
     try {
       const [actorEmployee] = await this.db
         .select({ id: employees.id })
@@ -611,7 +589,13 @@ export class WorkflowEngine {
         actorUserId: session.user.id,
         actorEmployeeId: actorEmployee?.id || null,
         roleAssignmentId:
-          typeof resolution.delegationId === 'string' ? resolution.delegationId : null,
+          typeof resolution.assignmentReferenceId === 'string'
+            ? resolution.assignmentReferenceId
+            : typeof resolution.delegationId === 'string'
+              ? resolution.delegationId
+              : typeof resolution.assignmentId === 'string'
+                ? resolution.assignmentId
+                : null,
         isActing: resolution.isActing === true,
         comment: comment ?? null,
         signatureRef:
@@ -625,6 +609,7 @@ export class WorkflowEngine {
           resolvedCapacity: resolution.resolvedCapacity,
           resolvedRoleId: resolution.resolvedRoleId,
           resolvedEmployeeId: resolution.resolvedEmployeeId,
+          assignmentSource: resolution.assignmentSource,
           isActing: resolution.isActing === true,
         },
       });
@@ -632,10 +617,7 @@ export class WorkflowEngine {
       if ((error as { code?: string }).code === '23505') {
         return {
           ok: false,
-          error: NextResponse.json(
-            { error: 'This workflow step has already been completed.' },
-            { status: 409 },
-          ),
+          error: NextResponse.json({ error: 'This workflow step has already been completed.' }, { status: 409 }),
         };
       }
       throw error;
@@ -711,18 +693,19 @@ export class WorkflowEngine {
       session.tenantId,
     );
 
-    // Fire-and-forget notification + email
     await this.sendActionNotification(instance, currentStep, result, session).catch(() => {
-      // Notification is best-effort
+      // Notification is best-effort.
     });
 
-    // Handle rejection or return — the workflow stops and the request
-    // is returned to the requester for revision.
     if (result === 'rejected' || result === 'returned') {
       const newStatus = result === 'rejected' ? 'rejected' : 'returned';
       await this.db
         .update(workflowInstances)
-        .set({ status: 'cancelled', updatedAt: new Date() })
+        .set({
+          status: 'cancelled',
+          ...this.clearCurrentAssignmentPatch(),
+          updatedAt: new Date(),
+        })
         .where(eq(workflowInstances.id, instance.id));
       await this.db
         .update(transportRequests)
@@ -740,7 +723,6 @@ export class WorkflowEngine {
       };
     }
 
-    // Look up the request scope for status mapping
     const [reqRecord] = await this.db
       .select({ scope: transportRequests.scope })
       .from(transportRequests)
@@ -749,18 +731,17 @@ export class WorkflowEngine {
     const scope: 'regional' | 'national' =
       (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
 
-    // Advance to the next step
     const nextStepOrder = currentStep.stepOrder + 1;
     const nextStep = steps.find((s) => s.stepOrder === nextStepOrder);
 
     if (!nextStep) {
-      // Workflow is complete — approve the request
       const completedStatus = workflowCompletedStatus();
       await this.db
         .update(workflowInstances)
         .set({
           currentStepOrder: currentStep.stepOrder,
           status: 'completed',
+          ...this.clearCurrentAssignmentPatch(),
           updatedAt: new Date(),
         })
         .where(eq(workflowInstances.id, instance.id));
@@ -794,14 +775,17 @@ export class WorkflowEngine {
       };
     }
 
-    // Advance to the next step with a descriptive business status
     const businessStatus = workflowStepToStatus(nextStepOrder, nextStep.actionType, scope);
+    const nextAssignment = await this.buildAssignmentPatch(instance.requestId, nextStep, 'step_advance');
     await this.db
       .update(workflowInstances)
-      .set({ currentStepOrder: nextStepOrder, updatedAt: new Date() })
+      .set({
+        currentStepOrder: nextStepOrder,
+        ...nextAssignment,
+        updatedAt: new Date(),
+      })
       .where(eq(workflowInstances.id, instance.id));
 
-    // Chain the reminder + escalation timers for the step we just entered.
     this.scheduleStepTimers(instance.id, nextStep);
 
     await this.db
@@ -820,6 +804,8 @@ export class WorkflowEngine {
           toStep: nextStepOrder,
           stepLabel: nextStep.label,
           businessStatus,
+          assignedUserId: nextAssignment.currentAssignedUserId,
+          assignmentSource: nextAssignment.currentAssignmentSource,
         },
       },
       session.tenantId,
@@ -842,37 +828,22 @@ export class WorkflowEngine {
   // Emergency overrides
   // -------------------------------------------------------------------------
 
-  /**
-   * Process an emergency override that bypasses remaining workflow steps.
-   *
-   * Requires:
-   *   - TRIP_AUTHORIZE_EMERGENCY permission
-   *   - A written justification (reason)
-   *   - Evidence (optional but recommended)
-   *   - Post-trip review is automatically flagged
-   */
   async processEmergencyOverride(
     instanceId: string,
     reason: string,
     evidence: string | undefined,
     session: AuthSession,
   ): Promise<EngineResult> {
-    // Require emergency override permission
     const permCheck = await requirePermission(
       session,
       Permissions.TRIP_AUTHORIZE_EMERGENCY as PermissionCode,
     );
-    if (permCheck instanceof NextResponse) {
-      return { ok: false, error: permCheck };
-    }
+    if (permCheck instanceof NextResponse) return { ok: false, error: permCheck };
 
     if (!reason?.trim()) {
       return {
         ok: false,
-        error: NextResponse.json(
-          { error: 'A justification is required for emergency override.' },
-          { status: 400 },
-        ),
+        error: NextResponse.json({ error: 'A justification is required for emergency override.' }, { status: 400 }),
       };
     }
 
@@ -908,13 +879,11 @@ export class WorkflowEngine {
       };
     }
 
-    // Get remaining steps (from current step onward) to log as bypassed
     const steps = await this.getDefinitionSteps(instance);
     const bypassedSteps = steps
       .filter((s) => s.stepOrder >= instance.currentStepOrder)
       .map((s) => s.stepOrder);
 
-    // Create the emergency override record
     await this.db.insert(emergencyOverrides).values({
       instanceId,
       authorisedByUserId: session.user.id,
@@ -925,7 +894,6 @@ export class WorkflowEngine {
       reviewStatus: 'pending',
     });
 
-    // Record the override action on the current step
     await this.db.insert(workflowActions).values({
       instanceId,
       stepOrder: instance.currentStepOrder,
@@ -937,14 +905,15 @@ export class WorkflowEngine {
       metadata: { isEmergency: true, bypassedSteps },
     });
 
-    // Complete the workflow immediately
     await this.db
       .update(workflowInstances)
-      .set({ status: 'overridden', updatedAt: new Date() })
+      .set({
+        status: 'overridden',
+        ...this.clearCurrentAssignmentPatch(),
+        updatedAt: new Date(),
+      })
       .where(eq(workflowInstances.id, instance.id));
 
-    // Emergency override sets status to a reasonable business status
-    // rather than a generic 'approved_emergency'
     const nextStepOrder = instance.currentStepOrder;
     const currentStepAction =
       steps.find((s) => s.stepOrder === nextStepOrder)?.actionType ?? 'release';
@@ -990,25 +959,14 @@ export class WorkflowEngine {
   // Workflow info
   // -------------------------------------------------------------------------
 
-  /**
-   * Resolve the users who can currently act on a workflow's active step.
-   *
-   * Mirrors the approvals queue visibility model (`activeApprovalVisibleTo`)
-   * and the action-time authorization gates:
-   *   1. A runtime-resolved explicit holder (delegation / acting role) wins.
-   *   2. The acknowledge step is never pre-assigned in the DB — the allocated
-   *      driver is resolved dynamically from the vehicle allocation.
-   *   3. Otherwise every active user holding the step's required permission
-   *      (the population the queue's permission branch surfaces the step to).
-   *
-   * Used by the Inngest reminder/escalation jobs so permission-routed steps
-   * are not left without any recipient.
-   */
   async getCurrentStepRecipients(instanceId: string, tenantId: string): Promise<string[]> {
     const status = await this.getWorkflowStatus(instanceId);
     const currentStep = status?.currentStep;
     if (!currentStep) return [];
 
+    if (status.instance.currentAssignedUserId) {
+      return [status.instance.currentAssignedUserId];
+    }
     if (currentStep.assignedUserId) return [currentStep.assignedUserId];
 
     if (currentStep.actionType === 'acknowledge') {
@@ -1029,11 +987,6 @@ export class WorkflowEngine {
     return [];
   }
 
-  /**
-   * Schedule the Inngest reminder + escalation timers for a workflow step.
-   * Fire-and-forget and best-effort: Inngest is optional, and a slow or
-   * unconfigured client must never block an action/creation request.
-   */
   private scheduleStepTimers(
     instanceId: string,
     step: { stepOrder: number; reminderAfterHours?: number | null; escalationAfterHours?: number | null },
@@ -1046,7 +999,7 @@ export class WorkflowEngine {
           scheduleStepEscalation(instanceId, step.stepOrder, step.escalationAfterHours ?? 4),
         ]);
       } catch {
-        // Inngest is optional — silently skip if not configured
+        // Inngest is optional.
       }
     })();
   }
@@ -1090,25 +1043,164 @@ export class WorkflowEngine {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  /**
-   * Resolve the steps for a given workflow instance.
-   * If the instance references a real definition, load from the DB.
-   * Otherwise, return the built-in defaults based on the request scope.
-   */
-  private async getDefinitionSteps(instance: typeof workflowInstances.$inferSelect) {
+  private clearCurrentAssignmentPatch() {
+    return {
+      currentAssignedUserId: null,
+      currentAssignedEmployeeId: null,
+      currentRoleAssignmentId: null,
+      currentAssignmentIsActing: false,
+      currentAssignmentSource: null,
+      currentAssignmentMetadata: {},
+    };
+  }
+
+  private applyPersistedCurrentAssignment(
+    steps: WorkflowStep[],
+    instance: WorkflowInstance,
+  ): WorkflowStep[] {
+    if (!instance.currentAssignedUserId) return steps;
+
+    return steps.map((step) => {
+      if (step.stepOrder !== instance.currentStepOrder) return step;
+      return {
+        ...step,
+        assignedUserId: instance.currentAssignedUserId,
+        config: {
+          ...(step.config || {}),
+          resolvedEmployeeId: instance.currentAssignedEmployeeId,
+          assignmentReferenceId: instance.currentRoleAssignmentId,
+          delegationId: instance.currentAssignmentIsActing
+            ? instance.currentRoleAssignmentId
+            : null,
+          assignmentId: !instance.currentAssignmentIsActing
+            ? instance.currentRoleAssignmentId
+            : null,
+          isActing: instance.currentAssignmentIsActing,
+          assignmentSource: instance.currentAssignmentSource,
+          persistedAssignmentMetadata: instance.currentAssignmentMetadata || {},
+        },
+      };
+    });
+  }
+
+  private async buildAssignmentPatch(
+    requestId: string,
+    step: WorkflowStep,
+    phase: string,
+  ) {
+    const config = (step.config || {}) as Record<string, unknown>;
+    let assignedUserId: string | null = step.assignedUserId || null;
+    let assignedEmployeeId: string | null =
+      typeof config.resolvedEmployeeId === 'string' ? config.resolvedEmployeeId : null;
+    let assignmentReferenceId: string | null =
+      typeof config.delegationId === 'string'
+        ? config.delegationId
+        : typeof config.assignmentId === 'string'
+          ? config.assignmentId
+          : null;
+    let isActing = config.isActing === true;
+    let source =
+      typeof config.assignmentSource === 'string'
+        ? config.assignmentSource
+        : typeof config.resolvedRoleId === 'string'
+          ? 'role_holder'
+          : assignedUserId
+            ? 'definition'
+            : 'unassigned';
+
+    // Driver acknowledgement is request-instance data, not definition data.
+    if (step.actionType === 'acknowledge') {
+      const [allocated] = await this.db
+        .select({
+          userId: employees.userId,
+          employeeId: employees.id,
+        })
+        .from(vehicleAllocations)
+        .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
+        .where(eq(vehicleAllocations.requestId, requestId))
+        .orderBy(vehicleAllocations.createdAt)
+        .limit(1);
+      assignedUserId = allocated?.userId || null;
+      assignedEmployeeId = allocated?.employeeId || null;
+      assignmentReferenceId = null;
+      isActing = false;
+      source = assignedUserId ? 'driver_allocation' : 'unassigned';
+    }
+
+    if (assignedUserId && !assignedEmployeeId) {
+      const [request] = await this.db
+        .select({ tenantId: transportRequests.tenantId })
+        .from(transportRequests)
+        .where(eq(transportRequests.id, requestId))
+        .limit(1);
+      if (request) {
+        const [employee] = await this.db
+          .select({ id: employees.id })
+          .from(employees)
+          .where(and(eq(employees.tenantId, request.tenantId), eq(employees.userId, assignedUserId)))
+          .limit(1);
+        assignedEmployeeId = employee?.id || null;
+      }
+    }
+
+    return {
+      currentAssignedUserId: assignedUserId,
+      currentAssignedEmployeeId: assignedEmployeeId,
+      currentRoleAssignmentId: assignmentReferenceId,
+      currentAssignmentIsActing: isActing,
+      currentAssignmentSource: source,
+      currentAssignmentMetadata: {
+        stepOrder: step.stepOrder,
+        actionType: step.actionType,
+        label: step.label,
+        requiredPermission: step.requiredPermission,
+        resolvedRoleId:
+          typeof config.resolvedRoleId === 'string' ? config.resolvedRoleId : null,
+        resolvedCapacity:
+          typeof config.resolvedCapacity === 'string' ? config.resolvedCapacity : null,
+        phase,
+        persistedAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  private async persistCurrentAssignment(
+    instanceId: string,
+    requestId: string,
+    step: WorkflowStep,
+    phase: string,
+  ) {
+    const assignment = await this.buildAssignmentPatch(requestId, step, phase);
+    await this.db
+      .update(workflowInstances)
+      .set({ ...assignment, updatedAt: new Date() })
+      .where(
+        and(
+          eq(workflowInstances.id, instanceId),
+          eq(workflowInstances.status, 'active'),
+          eq(workflowInstances.currentStepOrder, step.stepOrder),
+        ),
+      );
+    return assignment;
+  }
+
+  /** Resolve the definition and overlay the durable current instance assignee. */
+  private async getDefinitionSteps(instance: WorkflowInstance) {
     const isRealDefinition = instance.definitionId !== ADHOC_DEFINITION_ID;
 
     if (isRealDefinition) {
       const steps = await this.db
         .select()
         .from(workflowSteps)
-        .where(and(eq(workflowSteps.definitionId, instance.definitionId)))
+        .where(eq(workflowSteps.definitionId, instance.definitionId))
         .orderBy(workflowSteps.stepOrder);
 
-      if (steps.length > 0) return this.resolveStepAssignments(steps, instance.requestId);
+      if (steps.length > 0) {
+        const resolved = await this.resolveStepAssignments(steps, instance.requestId);
+        return this.applyPersistedCurrentAssignment(resolved, instance);
+      }
     }
 
-    // Fall back to built-in defaults — resolve scope from the request
     const [request] = await this.db
       .select({ scope: transportRequests.scope })
       .from(transportRequests)
@@ -1118,32 +1210,39 @@ export class WorkflowEngine {
     const scope = request?.scope ?? 'regional';
     const fallback =
       scope === 'national'
-        ? (NATIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[])
-        : (REGIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[]);
-    return this.resolveStepAssignments(fallback, instance.requestId);
+        ? (NATIONAL_WORKFLOW_STEPS as unknown as WorkflowStep[])
+        : (REGIONAL_WORKFLOW_STEPS as unknown as WorkflowStep[]);
+    const resolved = await this.resolveStepAssignments(fallback, instance.requestId);
+    return this.applyPersistedCurrentAssignment(resolved, instance);
   }
 
-  private async resolveStepAssignments(
-    steps: (typeof workflowSteps.$inferSelect)[],
-    requestId: string,
-  ) {
-    const requestRows = await this.db
+  private async resolveStepAssignments(steps: WorkflowStep[], requestId: string) {
+    const [request] = await this.db
       .select({ tenantId: transportRequests.tenantId })
       .from(transportRequests)
       .where(eq(transportRequests.id, requestId))
       .limit(1);
-    if (!Array.isArray(requestRows)) return steps;
-    const [request] = requestRows;
     if (!request) return steps;
+
     return Promise.all(
       steps.map(async (step) => {
-        // The acknowledge step must NOT have a pre-assigned user — the
-        // actual assigned driver is resolved dynamically at action time by
-        // looking up the allocation's driverEmployeeId.  Null out any stale
-        // assignedUserId that may have been set in the DB definition.
+        // Driver acknowledgement is resolved from this request's allocation.
         if (step.actionType === 'acknowledge') {
           return { ...step, assignedUserId: null };
         }
+
+        // A specifically configured person is an explicit definition decision.
+        // Preserve it; do not overwrite it with a role-holder lookup.
+        if (step.assignedUserId) {
+          return {
+            ...step,
+            config: {
+              ...(step.config || {}),
+              assignmentSource: 'definition',
+            },
+          };
+        }
+
         if (!step.requiredPermission) return step;
         const roleQuery = this.db.select({ roleId: roles.id }).from(roles);
         if (typeof (roleQuery as { innerJoin?: unknown }).innerJoin !== 'function') return step;
@@ -1155,12 +1254,14 @@ export class WorkflowEngine {
               eq(rolePermissions.permissionCode, step.requiredPermission),
             ),
           );
+
         const capability =
           step.actionType === 'authorise'
             ? 'sign'
             : step.actionType === 'release'
               ? 'allocate'
               : 'approve';
+
         for (const role of roleRows) {
           const holder = await resolveRoleHolder({
             tenantId: request.tenantId,
@@ -1168,6 +1269,12 @@ export class WorkflowEngine {
             requireCapability: capability,
           });
           if (holder?.userId) {
+            const assignmentReferenceId =
+              'delegationId' in holder
+                ? holder.delegationId
+                : 'assignmentId' in holder
+                  ? holder.assignmentId
+                  : null;
             return {
               ...step,
               assignedUserId: holder.userId,
@@ -1177,7 +1284,10 @@ export class WorkflowEngine {
                 resolvedEmployeeId: holder.employeeId,
                 resolvedCapacity: holder.capacity,
                 isActing: holder.isActing,
+                assignmentReferenceId,
                 delegationId: 'delegationId' in holder ? holder.delegationId : null,
+                assignmentId: 'assignmentId' in holder ? holder.assignmentId : null,
+                assignmentSource: holder.isActing ? 'acting_delegation' : 'substantive_role',
               },
             };
           }
@@ -1191,22 +1301,9 @@ export class WorkflowEngine {
   // Conflict-of-interest: alternate officer resolution
   // -------------------------------------------------------------------------
 
-  /**
-   * When a conflict-of-interest is detected (officer is the requester or a
-   * traveller on the request), attempt to find an alternate officer for the
-   * current workflow step.
-   *
-   * Strategy:
-   *   1. Look for an acting delegation for the conflicted role that is active
-   *      and has the required capability.
-   *   2. Fall back to any other employee in the tenant with the same permission.
-   *   3. Exclude the conflicted user and anyone else on the request.
-   *
-   * Returns null if no eligible alternate can be found.
-   */
   private async resolveAlternateOfficer(
-    instance: typeof workflowInstances.$inferSelect,
-    currentStep: typeof workflowSteps.$inferSelect & { label?: string },
+    instance: WorkflowInstance,
+    currentStep: WorkflowStep & { label?: string },
     session: AuthSession,
   ): Promise<{
     reassignedUserId: string;
@@ -1214,7 +1311,6 @@ export class WorkflowEngine {
     method: 'acting_delegation' | 'same_role' | 'tenant_admin';
   } | null> {
     try {
-      // Look up the tenant
       const [tenantRequest] = await this.db
         .select({ tenantId: transportRequests.tenantId })
         .from(transportRequests)
@@ -1223,8 +1319,6 @@ export class WorkflowEngine {
       if (!tenantRequest) return null;
 
       const tenantId = tenantRequest.tenantId;
-
-      // Get the role IDs that grant the required permission
       const permissionCode = currentStep.requiredPermission;
       if (!permissionCode) return null;
 
@@ -1238,10 +1332,8 @@ export class WorkflowEngine {
             eq(rolePermissions.permissionCode, permissionCode as string),
           ),
         );
-
       if (roleRows.length === 0) return null;
 
-      // Get the requester/traveller employee IDs to exclude
       const [requestInfo] = await this.db
         .select({
           requesterUserId: transportRequests.requesterUserId,
@@ -1267,7 +1359,6 @@ export class WorkflowEngine {
               ? 'allocate'
               : 'approve';
 
-        // 1. Try acting delegations first
         const actingColumns = {
           approve: 'can_approve',
           sign: 'can_sign',
@@ -1298,40 +1389,46 @@ export class WorkflowEngine {
         );
 
         const actingRow = actingResult.rows?.[0] as Record<string, unknown> | undefined;
-        if (actingRow && actingRow.user_id) {
+        if (actingRow?.user_id) {
           const reassignedUserId = String(actingRow.user_id);
           const alternateName =
-            `${actingRow.first_name || ''} ${actingRow.last_name || ''}`.trim() ||
-            'Alternate Officer';
+            `${actingRow.first_name || ''} ${actingRow.last_name || ''}`.trim() || 'Alternate Officer';
 
-          // Update the step assignment to the alternate
-          await this.db
-            .update(workflowSteps)
+          const [updated] = await this.db
+            .update(workflowInstances)
             .set({
-              assignedUserId: reassignedUserId,
-              config: {
-                ...(currentStep.config || {}),
-                conflictReassigned: true,
+              currentAssignedUserId: reassignedUserId,
+              currentAssignedEmployeeId: actingRow.employee_id ? String(actingRow.employee_id) : null,
+              currentRoleAssignmentId: actingRow.delegation_id ? String(actingRow.delegation_id) : null,
+              currentAssignmentIsActing: true,
+              currentAssignmentSource: 'conflict_acting_delegation',
+              currentAssignmentMetadata: {
+                stepOrder: currentStep.stepOrder,
+                actionType: currentStep.actionType,
                 conflictedUserId: session.user.id,
                 reassignedAt: now.toISOString(),
                 reassignmentReason: 'Requester-authoriser conflict',
+                resolvedRoleId: role.roleId,
               },
+              updatedAt: now,
             })
             .where(
               and(
-                eq(workflowSteps.id, currentStep.id),
-                eq(workflowSteps.stepOrder, currentStep.stepOrder),
+                eq(workflowInstances.id, instance.id),
+                eq(workflowInstances.status, 'active'),
+                eq(workflowInstances.currentStepOrder, currentStep.stepOrder),
               ),
-            );
+            )
+            .returning({ id: workflowInstances.id });
+          if (!updated) return null;
 
-          // Notify the alternate
           await createScopedNotifications({
             tenantId,
             recipientUserIds: [reassignedUserId],
             category: 'action_required',
             eventType: 'approval_conflict_reassigned',
             title: `Conflict Reassignment — ${currentStep.label || 'Step'} Action Required`,
-            body: `A workflow step has been reassigned to you because the original officer has a conflict of interest on this request.`,
+            body: 'A workflow step has been reassigned to you because the original officer has a conflict of interest on this request.',
             entityType: 'workflow_instance',
             entityId: instance.id,
             actionUrl: `/dashboard/approvals/${instance.id}`,
@@ -1340,20 +1437,16 @@ export class WorkflowEngine {
             priority: 'high',
           });
 
-          return {
-            reassignedUserId,
-            alternateName,
-            method: 'acting_delegation',
-          };
+          return { reassignedUserId, alternateName, method: 'acting_delegation' };
         }
 
-        // 2. Try same-role holders (substantive assignments)
         const [sameRole] = await this.db
           .select({
             id: employees.id,
             userId: employees.userId,
             firstName: employees.firstName,
             lastName: employees.lastName,
+            assignmentId: roleAssignments.id,
           })
           .from(tenantMemberships)
           .innerJoin(roleAssignments, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
@@ -1382,24 +1475,33 @@ export class WorkflowEngine {
           const alternateName =
             `${sameRole.firstName || ''} ${sameRole.lastName || ''}`.trim() || 'Alternate Officer';
 
-          await this.db
-            .update(workflowSteps)
+          const [updated] = await this.db
+            .update(workflowInstances)
             .set({
-              assignedUserId: sameRole.userId,
-              config: {
-                ...(currentStep.config || {}),
-                conflictReassigned: true,
+              currentAssignedUserId: sameRole.userId,
+              currentAssignedEmployeeId: sameRole.id,
+              currentRoleAssignmentId: sameRole.assignmentId,
+              currentAssignmentIsActing: false,
+              currentAssignmentSource: 'conflict_same_role',
+              currentAssignmentMetadata: {
+                stepOrder: currentStep.stepOrder,
+                actionType: currentStep.actionType,
                 conflictedUserId: session.user.id,
                 reassignedAt: now.toISOString(),
                 reassignmentReason: 'Requester-authoriser conflict',
+                resolvedRoleId: role.roleId,
               },
+              updatedAt: now,
             })
             .where(
               and(
-                eq(workflowSteps.id, currentStep.id),
-                eq(workflowSteps.stepOrder, currentStep.stepOrder),
+                eq(workflowInstances.id, instance.id),
+                eq(workflowInstances.status, 'active'),
+                eq(workflowInstances.currentStepOrder, currentStep.stepOrder),
               ),
-            );
+            )
+            .returning({ id: workflowInstances.id });
+          if (!updated) return null;
 
           await createScopedNotifications({
             tenantId,
@@ -1407,7 +1509,7 @@ export class WorkflowEngine {
             category: 'action_required',
             eventType: 'approval_conflict_reassigned',
             title: `Conflict Reassignment — ${currentStep.label || 'Step'} Action Required`,
-            body: `A workflow step has been reassigned to you because the original officer has a conflict of interest.`,
+            body: 'A workflow step has been reassigned to you because the original officer has a conflict of interest.',
             entityType: 'workflow_instance',
             entityId: instance.id,
             actionUrl: `/dashboard/approvals/${instance.id}`,
@@ -1435,17 +1537,13 @@ export class WorkflowEngine {
   // Notifications
   // -------------------------------------------------------------------------
 
-  /**
-   * Send an in-app notification (and email) when a workflow action completes.
-   */
   private async sendActionNotification(
-    instance: typeof workflowInstances.$inferSelect,
+    instance: WorkflowInstance,
     currentStep: { label: string; stepOrder: number },
     result: string,
-    _session: AuthSession, // eslint-disable-line @typescript-eslint/no-unused-vars
+    _session: AuthSession,
   ) {
     try {
-      // Look up the request for the requester user ID and tenant
       const [request] = await this.db
         .select({
           requesterUserId: transportRequests.requesterUserId,
@@ -1478,8 +1576,6 @@ export class WorkflowEngine {
         officeLabel: currentStep.label,
       });
 
-      // Secure-link requests have no login account; their outcome is delivered
-      // through the tracking link/email rather than an internal notification.
       if (request.requesterUserId) {
         await createScopedNotifications({
           tenantId: request.tenantId,
@@ -1518,10 +1614,6 @@ export class WorkflowEngine {
         }
       }
 
-      // Send email fire-and-forget — never block the approval on an outbound
-      // network call (Resend + React Email template loading can take seconds
-      // on a cold path). In-app notifications above are already persisted,
-      // which is what tests and the UI rely on.
       void (async () => {
         try {
           const { sendNotificationEmail } = await import('@/lib/email');
@@ -1534,7 +1626,6 @@ export class WorkflowEngine {
                 .limit(1)
             : [undefined];
 
-          // Map workflow results to email template types
           const emailTypeMap: Record<string, string> = {
             approved: 'request_approved',
             rejected: 'request_rejected',
@@ -1557,7 +1648,7 @@ export class WorkflowEngine {
             });
           }
         } catch {
-          // Email is optional — silently skip on failure
+          // Email is optional.
         }
       })();
     } catch (err) {
@@ -1565,9 +1656,6 @@ export class WorkflowEngine {
     }
   }
 
-  /**
-   * Log an audit event.
-   */
   private async logAuditEvent(
     params: {
       entityType: string;
@@ -1578,8 +1666,6 @@ export class WorkflowEngine {
     },
     tenantId: string,
   ) {
-    // Audit logging is fire-and-forget — errors should not block the
-    // workflow action.
     try {
       await this.db.insert(auditEvents).values({
         entityType: params.entityType,
