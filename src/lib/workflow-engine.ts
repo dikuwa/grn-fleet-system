@@ -149,11 +149,11 @@ export const REGIONAL_WORKFLOW_STEPS = [
   },
 ] as const;
 
-/** Steps for a national-scope trip (adds Director step) */
+/** Steps for a national-scope trip using the same five-stage contract. */
 export const NATIONAL_WORKFLOW_STEPS = [
-  ...REGIONAL_WORKFLOW_STEPS.slice(0, 3),
+  ...REGIONAL_WORKFLOW_STEPS.slice(0, 2),
   {
-    stepOrder: 4,
+    stepOrder: 3,
     actionType: 'release' as const,
     requiredPermission: Permissions.VEHICLE_RELEASE_NATIONAL as PermissionCode,
     label: 'National Vehicle Release',
@@ -165,7 +165,7 @@ export const NATIONAL_WORKFLOW_STEPS = [
     separationDutyRole: null,
   },
   {
-    stepOrder: 5,
+    stepOrder: 4,
     actionType: 'authorise' as const,
     requiredPermission: Permissions.TRIP_AUTHORIZE_NATIONAL as PermissionCode,
     label: 'National Trip Authorisation',
@@ -177,7 +177,7 @@ export const NATIONAL_WORKFLOW_STEPS = [
     separationDutyRole: null,
   },
   {
-    stepOrder: 6,
+    stepOrder: 5,
     actionType: 'acknowledge' as const,
     requiredPermission: Permissions.DRIVER_LOG_CREATE as PermissionCode,
     label: 'Driver Acknowledgment',
@@ -275,7 +275,6 @@ export class WorkflowEngine {
       };
     }
 
-    // If no definition exists, we use the built-in defaults
     const [instance] = await this.db
       .insert(workflowInstances)
       .values({
@@ -991,9 +990,6 @@ export class WorkflowEngine {
   // Workflow info
   // -------------------------------------------------------------------------
 
-  /**
-   * Get the current step and full workflow status for display purposes.
-   */
   /**
    * Resolve the users who can currently act on a workflow's active step.
    *
