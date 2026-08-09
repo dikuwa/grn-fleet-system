@@ -35,6 +35,12 @@ export async function getApprovalDetail(input: {
       id: workflowInstances.id,
       status: workflowInstances.status,
       currentStepOrder: workflowInstances.currentStepOrder,
+      currentAssignedUserId: workflowInstances.currentAssignedUserId,
+      currentAssignedEmployeeId: workflowInstances.currentAssignedEmployeeId,
+      currentRoleAssignmentId: workflowInstances.currentRoleAssignmentId,
+      currentAssignmentIsActing: workflowInstances.currentAssignmentIsActing,
+      currentAssignmentSource: workflowInstances.currentAssignmentSource,
+      currentAssignmentMetadata: workflowInstances.currentAssignmentMetadata,
       createdAt: workflowInstances.createdAt,
       updatedAt: workflowInstances.updatedAt,
       requestId: workflowInstances.requestId,
@@ -191,26 +197,50 @@ export async function getApprovalDetail(input: {
       .then((rows) => rows[0] ?? null),
   ]);
 
-  const currentStep = steps.find((step) => step.stepOrder === instance.currentStepOrder) ?? null;
+  const definitionCurrentStep =
+    steps.find((step) => step.stepOrder === instance.currentStepOrder) ?? null;
+  const currentStep = definitionCurrentStep
+    ? {
+        ...definitionCurrentStep,
+        assignedUserId: instance.currentAssignedUserId ?? definitionCurrentStep.assignedUserId,
+        config: {
+          ...(definitionCurrentStep.config || {}),
+          persistedAssignedUserId: instance.currentAssignedUserId,
+          persistedAssignedEmployeeId: instance.currentAssignedEmployeeId,
+          persistedRoleAssignmentId: instance.currentRoleAssignmentId,
+          persistedAssignmentIsActing: instance.currentAssignmentIsActing,
+          persistedAssignmentSource: instance.currentAssignmentSource,
+          persistedAssignmentMetadata: instance.currentAssignmentMetadata,
+        },
+      }
+    : null;
+
   const hasStepPermission = Boolean(
     currentStep?.requiredPermission &&
     input.permissionCodes.includes(currentStep.requiredPermission as PermissionCode),
   );
+  const hasPersistedAssignment = Boolean(instance.currentAssignedUserId);
   const canViewActive = Boolean(
     instance.status === 'active' &&
     currentStep &&
-    (currentStep.assignedUserId === input.userId ||
-      (!currentStep.assignedUserId && hasStepPermission)),
+    (hasPersistedAssignment
+      ? instance.currentAssignedUserId === input.userId
+      : currentStep.assignedUserId === input.userId ||
+        (!currentStep.assignedUserId && hasStepPermission)),
   );
   const canAct = canViewActive;
   const actedPreviously = actions.some((action) => action.actorUserId === input.userId);
   if (!canViewActive && !actedPreviously) return null;
 
+  const resolvedSteps = steps.map((step) =>
+    currentStep && step.stepOrder === currentStep.stepOrder ? currentStep : step,
+  );
+
   return {
     instance,
     currentStep,
-    nextStep: steps.find((step) => step.stepOrder === instance.currentStepOrder + 1) ?? null,
-    steps,
+    nextStep: resolvedSteps.find((step) => step.stepOrder === instance.currentStepOrder + 1) ?? null,
+    steps: resolvedSteps,
     actions,
     activities,
     passengers,
