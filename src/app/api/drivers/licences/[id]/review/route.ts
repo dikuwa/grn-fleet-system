@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
+import { auditEvents } from '@/db/schema';
 import {
   driverLicenceCodes,
   driverLicenceCorrections,
@@ -33,8 +34,8 @@ import {
 import { Permissions } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { getSignedFileUrl } from '@/lib/storage';
-import { recordAuditEvent } from '@/lib/audit-event';
 import { createScopedNotifications } from '@/lib/notification-service';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REVIEWABLE_STATUSES = new Set(['awaiting_review', 'needs_correction', 'uploaded', 'pending']);
@@ -63,8 +64,6 @@ export async function GET(
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    // Tenant Administration has tenant-wide oversight, while review decisions
-    // are performed only from the Transport Administration workspace.
     const canReview = await canReviewLicence(auth.session);
 
     const db = getDb();
@@ -88,12 +87,7 @@ export async function GET(
       .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
       .leftJoin(departments, eq(employees.departmentId, departments.id))
       .leftJoin(offices, eq(employees.officeId, offices.id))
-      .where(
-        and(
-          eq(driverLicences.id, id),
-          eq(employees.tenantId, auth.session.tenantId),
-        ),
-      )
+      .where(and(eq(driverLicences.id, id), eq(employees.tenantId, auth.session.tenantId)))
       .limit(1);
 
     if (!licence) {
@@ -114,15 +108,8 @@ export async function GET(
     ]);
 
     const [codes, corrections, previous, allVersions] = await Promise.all([
-      db
-        .select({ code: driverLicenceCodes.code })
-        .from(driverLicenceCodes)
-        .where(eq(driverLicenceCodes.licenceId, id)),
-      db
-        .select()
-        .from(driverLicenceCorrections)
-        .where(eq(driverLicenceCorrections.licenceId, id))
-        .orderBy(desc(driverLicenceCorrections.createdAt)),
+      db.select({ code: driverLicenceCodes.code }).from(driverLicenceCodes).where(eq(driverLicenceCodes.licenceId, id)),
+      db.select().from(driverLicenceCorrections).where(eq(driverLicenceCorrections.licenceId, id)).orderBy(desc(driverLicenceCorrections.createdAt)),
       db
         .select()
         .from(driverLicences)
@@ -253,7 +240,8 @@ export async function POST(
     if (!['request_upload', 'reject'].includes(body.action)) {
       return NextResponse.json({ error: 'Unsupported review action' }, { status: 400 });
     }
-    if (!body.reason?.trim()) {
+    const reason = body.reason?.trim();
+    if (!reason) {
       return NextResponse.json({ error: 'A reason is required' }, { status: 400 });
     }
 
@@ -269,12 +257,7 @@ export async function POST(
       .from(driverLicences)
       .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
       .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
-      .where(
-        and(
-          eq(driverLicences.id, id),
-          eq(employees.tenantId, auth.session.tenantId),
-        ),
-      )
+      .where(and(eq(driverLicences.id, id), eq(employees.tenantId, auth.session.tenantId)))
       .limit(1);
 
     if (!licence) {
@@ -288,35 +271,62 @@ export async function POST(
     }
 
     const newStatus = body.action === 'reject' ? 'rejected' : 'needs_correction';
-    await db
-      .update(driverLicences)
-      .set({
-        verificationStatus: newStatus,
-        isActive: false,
-        isVerified: false,
-        rejectionReason: body.reason.trim(),
-        updatedAt: new Date(),
-      })
-      .where(eq(driverLicences.id, licence.id));
+    const now = new Date();
+    await runAtomicMutations((executor) => [
+      executor
+        .update(driverLicences)
+        .set({
+          verificationStatus: newStatus,
+          isActive: false,
+          isVerified: false,
+          rejectionReason: reason,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(driverLicences.id, licence.id),
+            eq(driverLicences.verificationStatus, licence.verificationStatus),
+          ),
+        ),
+      executor.insert(auditEvents).values({
+        tenantId: auth.session.tenantId,
+        tenantSequence: Date.now(),
+        eventType: `driver_licence_${body.action}`,
+        actorUserId: auth.session.user.id,
+        action: `driver_licence.${body.action}`,
+        entityType: 'driver_licence',
+        entityId: licence.id,
+        before: { verificationStatus: licence.verificationStatus },
+        after: { verificationStatus: newStatus, isActive: false, isVerified: false },
+        reason,
+        summary: `Driver licence ${body.action === 'reject' ? 'rejected' : 'changes requested'} (${licence.licenceClass})`,
+        sourceChannel: 'web',
+      }),
+    ]);
+
+    const [updated] = await db
+      .select({ verificationStatus: driverLicences.verificationStatus })
+      .from(driverLicences)
+      .where(eq(driverLicences.id, licence.id))
+      .limit(1);
+    if (updated?.verificationStatus !== newStatus) {
+      return NextResponse.json(
+        { error: 'This licence changed while the review decision was being saved. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
 
     const [driver] = await db
       .select({ userId: employees.userId, email: employees.email, firstName: employees.firstName, lastName: employees.lastName })
       .from(driverProfiles)
       .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
-      .where(eq(driverProfiles.id, licence.driverProfileId))
+      .where(
+        and(
+          eq(driverProfiles.id, licence.driverProfileId),
+          eq(employees.tenantId, auth.session.tenantId),
+        ),
+      )
       .limit(1);
-
-    await recordAuditEvent({
-      tenantId: auth.session.tenantId,
-      actorUserId: auth.session.user.id,
-      action: `driver_licence.${body.action}`,
-      entityType: 'driver_licence',
-      entityId: licence.id,
-      before: { verificationStatus: licence.verificationStatus },
-      after: { verificationStatus: newStatus, isActive: false },
-      reason: body.reason.trim(),
-      summary: `Driver licence ${body.action === 'reject' ? 'rejected' : 'changes requested'} (${licence.licenceClass})`,
-    });
 
     if (driver?.userId || driver?.email) {
       try {
@@ -328,12 +338,12 @@ export async function POST(
             eventType: 'driver_licence_review',
             title: body.action === 'reject' ? 'Your licence renewal was rejected' : 'Action needed on your licence',
             body: body.action === 'reject'
-              ? `Licence ${licence.licenceClass} was rejected: ${body.reason}`
-              : `Your licence submission needs changes: ${body.reason}`,
+              ? `Licence ${licence.licenceClass} was rejected: ${reason}`
+              : `Your licence submission needs changes: ${reason}`,
             entityType: 'driver_licence',
             entityId: licence.id,
             actionUrl: '/dashboard/driver-self-service',
-            workspace: 'driver',
+            workspace: WorkspaceIds.DRIVER,
           });
         }
         if (driver.email) {
@@ -343,8 +353,8 @@ export async function POST(
             type: 'licence_review',
             title: body.action === 'reject' ? 'Your licence renewal was rejected' : 'Action needed on your licence',
             body: body.action === 'reject'
-              ? `Licence ${licence.licenceClass} was rejected: ${body.reason}`
-              : `Your licence submission needs changes: ${body.reason}`,
+              ? `Licence ${licence.licenceClass} was rejected: ${reason}`
+              : `Your licence submission needs changes: ${reason}`,
             actionUrl: '/dashboard/driver-self-service',
             recipientName: driver.firstName || 'Driver',
           });
