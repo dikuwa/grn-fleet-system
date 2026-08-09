@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { roles, rolePermissions, roleAssignments } from '@/db/schema/tenants';
+import { roles, rolePermissions, roleAssignments, tenantMemberships } from '@/db/schema/tenants';
 import { eq, and, inArray, asc } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import {
@@ -73,13 +73,30 @@ export async function GET(request: NextRequest) {
     }
 
     const assignments = roleIds.length > 0
-      ? await db.select().from(roleAssignments).where(inArray(roleAssignments.roleId, roleIds))
+      ? await db
+          .select({
+            roleId: roleAssignments.roleId,
+            startDate: roleAssignments.startDate,
+            endDate: roleAssignments.endDate,
+          })
+          .from(roleAssignments)
+          .innerJoin(
+            tenantMemberships,
+            eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
+          )
+          .where(
+            and(
+              inArray(roleAssignments.roleId, roleIds),
+              eq(tenantMemberships.tenantId, session.tenantId),
+              eq(tenantMemberships.status, 'active'),
+            ),
+          )
       : [];
 
     const now = new Date();
     const memberCountByRole = new Map<string, number>();
     for (const assignment of assignments) {
-      const started = !assignment.startDate || new Date(assignment.startDate) <= now;
+      const started = new Date(assignment.startDate) <= now;
       const notEnded = !assignment.endDate || new Date(assignment.endDate) > now;
       if (!started || !notEnded) continue;
       memberCountByRole.set(
