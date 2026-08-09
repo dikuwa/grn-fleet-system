@@ -18,7 +18,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   FileText,
-  SteeringWheel,
 } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
@@ -273,7 +272,7 @@ export default async function ClosureReviewPage() {
                             <span className="flex items-center gap-1"><FileText className="h-3 w-3" />{trip.requestReference}</span>
                           )}
                           {trip.driverFirstName && (
-                            <span className="flex items-center gap-1"><SteeringWheel className="h-3 w-3" />Driver: {trip.driverFirstName} {trip.driverLastName}</span>
+                            <span className="flex items-center gap-1"><User className="h-3 w-3" />Driver: {trip.driverFirstName} {trip.driverLastName}</span>
                           )}
                           {trip.requesterFirstName && (
                             <span className="flex items-center gap-1"><User className="h-3 w-3" />Requester: {trip.requesterFirstName} {trip.requesterLastName}</span>
