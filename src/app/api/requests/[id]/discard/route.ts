@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
-import { eq, and, sql } from 'drizzle-orm';
+import { auditEvents } from '@/db/schema/audit';
+import { eq, and } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { recordAuditEvent } from '@/lib/audit-event';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 /**
  * PATCH /api/requests/[id]/discard
  *
  * Discard a draft transport request. Unlike cancellation (which applies to
  * submitted/in-review requests), discard is only valid for `draft` requests.
- * The record is preserved (status → cancelled) for audit continuity, and any
- * draft-only workflow state is cleaned up.
+ * The record is preserved (status -> cancelled) for audit continuity.
  */
 export async function PATCH(
   request: NextRequest,
@@ -28,7 +28,6 @@ export async function PATCH(
     if (roleCheck instanceof NextResponse) return roleCheck;
 
     const db = getDb();
-
     const [req] = await db
       .select({
         id: transportRequests.id,
@@ -40,21 +39,14 @@ export async function PATCH(
       .where(and(eq(transportRequests.id, id), eq(transportRequests.tenantId, session.tenantId)))
       .limit(1);
 
-    if (!req) {
-      return NextResponse.json({ error: 'Transport request not found' }, { status: 404 });
-    }
-
-    // Only drafts can be discarded
+    if (!req) return NextResponse.json({ error: 'Transport request not found' }, { status: 404 });
     if (req.status !== 'draft') {
       return NextResponse.json(
-        {
-          error: `A request with status "${req.status}" cannot be discarded. Draft requests only.`,
-        },
+        { error: `A request with status "${req.status}" cannot be discarded. Draft requests only.` },
         { status: 409 },
       );
     }
 
-    // The requester may discard their own draft; anyone else needs request:cancel
     if (req.requesterUserId !== session.user.id) {
       const permCheck = await requirePermission(session, Permissions.REQUEST_CANCEL);
       if (permCheck instanceof NextResponse) return permCheck;
@@ -62,31 +54,49 @@ export async function PATCH(
 
     const body = (await request.json().catch(() => ({}))) as { reason?: string };
     const reason = body.reason?.trim() || 'Draft discarded by requester';
+    const now = new Date();
 
-    await db
-      .update(transportRequests)
-      .set({ status: 'cancelled', updatedAt: sql`now()` })
-      .where(eq(transportRequests.id, id));
+    // State change and immutable audit evidence commit as one unit so a draft
+    // cannot disappear from the active queue without a corresponding audit event.
+    await runAtomicMutations((tx) => [
+      tx.update(transportRequests)
+        .set({ status: 'cancelled', updatedAt: now })
+        .where(and(
+          eq(transportRequests.id, id),
+          eq(transportRequests.tenantId, session.tenantId),
+          eq(transportRequests.status, 'draft'),
+        )),
+      tx.insert(auditEvents).values({
+        tenantId: session.tenantId,
+        tenantSequence: Date.now(),
+        eventType: 'request_discarded',
+        actorUserId: session.user.id,
+        action: 'discard',
+        entityType: 'transport_request',
+        entityId: id,
+        sourceChannel: 'web',
+        before: { status: 'draft' },
+        after: { status: 'cancelled' },
+        reason,
+        summary: `Draft ${req.reference} discarded`,
+      }),
+    ]);
 
-    await recordAuditEvent({
-      tenantId: session.tenantId,
-      actorUserId: session.user.id,
-      action: 'request.discarded',
-      entityType: 'transport_request',
-      entityId: id,
-      sourceChannel: 'web',
-      before: { status: 'draft' },
-      after: { status: 'cancelled' },
-      reason,
-      summary: `Draft ${req.reference} discarded (${reason})`,
-    });
+    const [discarded] = await db
+      .select({ status: transportRequests.status })
+      .from(transportRequests)
+      .where(and(eq(transportRequests.id, id), eq(transportRequests.tenantId, session.tenantId)))
+      .limit(1);
+    if (!discarded || discarded.status !== 'cancelled') {
+      return NextResponse.json(
+        { error: 'This draft changed before it could be discarded. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
 
     return NextResponse.json({ success: true, status: 'cancelled' });
   } catch (error) {
     console.error('Discard request failed:', error);
-    return NextResponse.json(
-      { error: 'Discard request failed: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Discard request failed' }, { status: 500 });
   }
 }

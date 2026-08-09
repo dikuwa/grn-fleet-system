@@ -4,13 +4,15 @@ import { Permissions } from '@/lib/permissions';
 import { generateDocumentPdf } from '@/lib/pdf/generate';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 
 /**
  * GET /api/documents/[id]/pdf
  *
- * Generate and download a PDF for a generated document.
- * Only Trip Authority and Inspection Report documents currently support PDF generation.
+ * Generate and download a PDF for a generated document. Tenant isolation is
+ * necessary but not sufficient: Personal/Requester users must also be entitled
+ * to the underlying request/trip/inspection record.
  */
 export async function GET(
   request: NextRequest,
@@ -26,46 +28,42 @@ export async function GET(
     const permCheck = await requirePermission(session, Permissions.FILE_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    // Verify the document exists and belongs to this tenant
     const db = getDb();
     const [doc] = await db
       .select()
       .from(generatedDocuments)
-      .where(
-        eq(generatedDocuments.id, id),
-      )
+      .where(and(eq(generatedDocuments.id, id), eq(generatedDocuments.tenantId, session.tenantId)))
       .limit(1);
 
-    if (!doc) {
-      return NextResponse.json({ error: 'Document not found' }, { status: 404 });
-    }
+    if (!doc) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
 
-    // Tenant isolation check
-    if (doc.tenantId !== session.tenantId) {
-      return NextResponse.json({ error: 'Document not found in your tenant' }, { status: 404 });
+    const canRead = await canSessionReadGeneratedDocument(session, doc);
+    if (!canRead) {
+      // Hide document existence from users outside the underlying record scope.
+      return NextResponse.json({ error: 'Document not found' }, { status: 404 });
     }
 
     const result = await generateDocumentPdf(id);
     if (!result) {
       return NextResponse.json(
-        { error: 'PDF generation not available for this document type. Only Trip Authority and Inspection Report documents support PDF export.' },
+        {
+          error:
+            'PDF generation not available for this document type. Only Trip Authority and Inspection Report documents support PDF export.',
+        },
         { status: 400 },
       );
     }
 
-    // Return the PDF as a downloadable response
     return new NextResponse(result.buffer as BodyInit, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${result.filename}"`,
+        'Cache-Control': 'private, no-store',
       },
     });
   } catch (error) {
     console.error('[documents/pdf] Failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate PDF: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to generate PDF' }, { status: 500 });
   }
 }
