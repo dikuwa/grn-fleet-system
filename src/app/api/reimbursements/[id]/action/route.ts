@@ -2,15 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { reimbursements, fuelTransactions } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { auditEvents } from '@/db/schema/audit';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
+// Ordinary Transport Office actions are deliberately forward-only. Paid claims
+// are financially final here; reopening/reversing one requires a separate,
+// auditable correction workflow rather than mutating history in-place.
 const VALID_TRANSITIONS: Record<string, string[]> = {
   pending: ['approved', 'rejected'],
   approved: ['paid', 'rejected'],
-  paid: ['rejected'],
-  rejected: ['approved'],
+  paid: [],
+  rejected: [],
 };
 
 /**
@@ -27,8 +32,9 @@ export async function POST(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    const routeCheck = await requireDashboardAction(session, '/dashboard/reimbursements', 'update');
+    if (routeCheck instanceof NextResponse) return routeCheck;
 
-    // Require fuel manage permission (reimbursements are fuel-related)
     const permCheck = await requirePermission(session, Permissions.FUEL_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
@@ -42,9 +48,14 @@ export async function POST(
       );
     }
 
-    const db = getDb();
+    if ((actionType === 'rejected' || actionType === 'paid') && !String(notes || '').trim()) {
+      return NextResponse.json(
+        { error: actionType === 'paid' ? 'Payment reference/notes are required' : 'Rejection reason is required' },
+        { status: 400 },
+      );
+    }
 
-    // Verify reimbursement exists and belongs to this tenant
+    const db = getDb();
     const [reimbursement] = await db
       .select({
         id: reimbursements.id,
@@ -61,30 +72,42 @@ export async function POST(
       return NextResponse.json({ error: 'Reimbursement not found' }, { status: 404 });
     }
 
-    // Validate state transition
     const allowedTransitions = VALID_TRANSITIONS[reimbursement.state] || [];
     if (!allowedTransitions.includes(actionType)) {
       return NextResponse.json(
         { error: `Cannot ${actionType} a reimbursement in '${reimbursement.state}' state` },
-        { status: 400 },
+        { status: 409 },
       );
     }
 
+    const now = new Date();
     const updateData: Record<string, unknown> = {
       state: actionType,
-      approvedByUserId: session.user.id,
-      notes: notes || null,
-      updatedAt: new Date(),
+      notes: String(notes || '').trim() || null,
+      updatedAt: now,
     };
+    if (actionType === 'approved') updateData.approvedByUserId = session.user.id;
+    if (actionType === 'paid') updateData.paidAt = now;
 
-    if (actionType === 'paid') {
-      updateData.paidAt = new Date();
-    }
-
-    await db
-      .update(reimbursements)
-      .set(updateData)
-      .where(eq(reimbursements.id, id));
+    await runAtomicMutations((tx) => [
+      tx.update(reimbursements)
+        .set(updateData)
+        .where(eq(reimbursements.id, id)),
+      tx.insert(auditEvents).values({
+        tenantId: session.tenantId,
+        tenantSequence: Date.now(),
+        eventType: `reimbursement_${actionType}`,
+        actorUserId: session.user.id,
+        action: actionType,
+        entityType: 'reimbursement',
+        entityId: id,
+        summary: `Reimbursement moved from ${reimbursement.state} to ${actionType}`,
+        before: { state: reimbursement.state },
+        after: { state: actionType },
+        reason: String(notes || '').trim() || null,
+        sourceChannel: 'web',
+      }),
+    ]);
 
     return NextResponse.json({ success: true, state: actionType });
   } catch (error) {
