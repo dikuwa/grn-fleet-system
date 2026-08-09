@@ -42,15 +42,15 @@ export async function GET(request: NextRequest) {
     }
   }
   if (query) {
+    // Request/passenger selection is an employee-directory lookup, not a
+    // general identity search. Do not allow ordinary request users to probe
+    // sensitive identifiers such as national ID, passport number or phone.
     conditions.push(
       or(
         ilike(employees.firstName, `%${query}%`),
         ilike(employees.lastName, `%${query}%`),
         ilike(employees.employeeNumber, `%${query}%`),
         ilike(employees.email, `%${query}%`),
-        ilike(employees.phone, `%${query}%`),
-        ilike(employees.nationalIdNumber, `%${query}%`),
-        ilike(employees.passportNumber, `%${query}%`),
         ilike(departments.name, `%${query}%`),
         ilike(offices.name, `%${query}%`),
         ilike(
