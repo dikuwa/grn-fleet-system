@@ -13,7 +13,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { auditEvents } from '@/db/schema';
 import {
   driverLicenceCodes,
   driverLicenceCorrections,
@@ -23,7 +22,7 @@ import {
   departments,
   offices,
 } from '@/db/schema/people';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   getSessionWorkspace,
   hasPermission,
@@ -35,7 +34,6 @@ import { Permissions } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { getSignedFileUrl } from '@/lib/storage';
 import { createScopedNotifications } from '@/lib/notification-service';
-import { runAtomicMutations } from '@/lib/db-atomic';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REVIEWABLE_STATUSES = new Set(['awaiting_review', 'needs_correction', 'uploaded', 'pending']);
@@ -271,45 +269,47 @@ export async function POST(
     }
 
     const newStatus = body.action === 'reject' ? 'rejected' : 'needs_correction';
-    const now = new Date();
-    await runAtomicMutations((executor) => [
-      executor
-        .update(driverLicences)
-        .set({
-          verificationStatus: newStatus,
-          isActive: false,
-          isVerified: false,
-          rejectionReason: reason,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(driverLicences.id, licence.id),
-            eq(driverLicences.verificationStatus, licence.verificationStatus),
-          ),
-        ),
-      executor.insert(auditEvents).values({
-        tenantId: auth.session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: `driver_licence_${body.action}`,
-        actorUserId: auth.session.user.id,
-        action: `driver_licence.${body.action}`,
-        entityType: 'driver_licence',
-        entityId: licence.id,
-        before: { verificationStatus: licence.verificationStatus },
-        after: { verificationStatus: newStatus, isActive: false, isVerified: false },
-        reason,
-        summary: `Driver licence ${body.action === 'reject' ? 'rejected' : 'changes requested'} (${licence.licenceClass})`,
-        sourceChannel: 'web',
-      }),
-    ]);
+    const beforeJson = JSON.stringify({ verificationStatus: licence.verificationStatus });
+    const afterJson = JSON.stringify({
+      verificationStatus: newStatus,
+      isActive: false,
+      isVerified: false,
+    });
+    const summary = `Driver licence ${body.action === 'reject' ? 'rejected' : 'changes requested'} (${licence.licenceClass})`;
 
-    const [updated] = await db
-      .select({ verificationStatus: driverLicences.verificationStatus })
-      .from(driverLicences)
-      .where(eq(driverLicences.id, licence.id))
-      .limit(1);
-    if (updated?.verificationStatus !== newStatus) {
+    const transition = await db.execute(sql`
+      WITH licence_claim AS (
+        UPDATE driver_licences dl
+        SET verification_status = ${newStatus},
+            is_active = false,
+            is_verified = false,
+            rejection_reason = ${reason},
+            updated_at = now()
+        WHERE dl.id = ${licence.id}::uuid
+          AND dl.verification_status = ${licence.verificationStatus}
+        RETURNING dl.id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id,
+          action, entity_type, entity_id, source_channel,
+          before, after, summary, reason, created_at
+        )
+        SELECT
+          ${auth.session.tenantId}::uuid, ${Date.now()}, ${`driver_licence_${body.action}`},
+          ${auth.session.user.id}, ${`driver_licence.${body.action}`}, 'driver_licence',
+          lc.id, 'web', ${beforeJson}::jsonb, ${afterJson}::jsonb,
+          ${summary}, ${reason}, now()
+        FROM licence_claim lc
+        RETURNING id
+      )
+      SELECT
+        (SELECT count(*)::int FROM licence_claim) AS claimed,
+        (SELECT count(*)::int FROM audit_insert) AS audited
+    `);
+
+    const result = transition.rows?.[0] as { claimed?: number | string; audited?: number | string } | undefined;
+    if (Number(result?.claimed ?? 0) !== 1 || Number(result?.audited ?? 0) !== 1) {
       return NextResponse.json(
         { error: 'This licence changed while the review decision was being saved. Refresh and try again.' },
         { status: 409 },
