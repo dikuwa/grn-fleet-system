@@ -1,144 +1,183 @@
+import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { maintenanceEvents } from '@/db/schema/fleet';
-import { vehicles } from '@/db/schema/fleet';
+import { maintenanceEvents, vehicleOdometerEvents, vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and } from 'drizzle-orm';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
+import { runAtomicMutations } from '@/lib/db-atomic';
+
+const SERVICE_TYPES = new Set(['scheduled', 'repair', 'inspection']);
+
+function optionalNonNegativeNumber(value: unknown, label: string) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} must be a non-negative number`);
+  return parsed;
+}
 
 /**
  * POST /api/maintenance
- * Create a new maintenance event for a vehicle.
+ * Record a completed/planned maintenance-history event.
+ *
+ * A maintenance history row is not itself a vehicle safety decision. Vehicle
+ * blocking is controlled by unresolved blocking defects / explicit fleet state
+ * transitions, so merely recording a service must never strand a vehicle in
+ * `maintenance` indefinitely.
  */
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
     const roleCheck = await requireDashboardAction(session, '/dashboard/maintenance/new', 'create');
     if (roleCheck instanceof NextResponse) return roleCheck;
-
     const permCheck = await requirePermission(session, Permissions.MAINTENANCE_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const db = getDb();
     const body = await req.json();
+    const vehicleId = typeof body.vehicleId === 'string' ? body.vehicleId : '';
+    const serviceDate = typeof body.serviceDate === 'string' ? body.serviceDate : '';
+    const serviceType = typeof body.serviceType === 'string' ? body.serviceType : '';
+    const description = typeof body.description === 'string' ? body.description.trim() : '';
+    const vendorName = typeof body.vendorName === 'string' ? body.vendorName.trim() : '';
+    const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
+    const nextServiceDate = typeof body.nextServiceDate === 'string' && body.nextServiceDate ? body.nextServiceDate : null;
 
-    const {
-      vehicleId,
-      serviceDate,
-      serviceOdometer,
-      serviceType,
-      description,
-      cost,
-      vendorName,
-      notes,
-      nextServiceDate,
-      nextServiceOdometer,
-    } = body;
-
-    // Validate required fields
-    if (!vehicleId) {
-      return NextResponse.json({ error: 'Vehicle ID is required' }, { status: 400 });
+    if (!vehicleId) return NextResponse.json({ error: 'Vehicle ID is required' }, { status: 400 });
+    if (!serviceDate || Number.isNaN(Date.parse(`${serviceDate}T00:00:00Z`))) {
+      return NextResponse.json({ error: 'A valid service date is required' }, { status: 400 });
     }
-    if (!serviceDate) {
-      return NextResponse.json({ error: 'Service date is required' }, { status: 400 });
+    if (!SERVICE_TYPES.has(serviceType)) {
+      return NextResponse.json({ error: 'Service type must be scheduled, repair, or inspection' }, { status: 400 });
     }
-    if (!serviceType || !['scheduled', 'repair', 'inspection'].includes(serviceType)) {
-      return NextResponse.json(
-        { error: 'Service type must be scheduled, repair, or inspection' },
-        { status: 400 },
-      );
+    if (!description) return NextResponse.json({ error: 'Description is required' }, { status: 400 });
+    if (nextServiceDate && Number.isNaN(Date.parse(`${nextServiceDate}T00:00:00Z`))) {
+      return NextResponse.json({ error: 'Next service date is invalid' }, { status: 400 });
     }
-    if (!description) {
-      return NextResponse.json({ error: 'Description is required' }, { status: 400 });
+    if (nextServiceDate && nextServiceDate < serviceDate) {
+      return NextResponse.json({ error: 'Next service date cannot be before the service date' }, { status: 400 });
     }
 
-    // Verify vehicle exists and belongs to this tenant
+    let serviceOdometer: number | null;
+    let nextServiceOdometer: number | null;
+    let cost: number | null;
+    try {
+      serviceOdometer = optionalNonNegativeNumber(body.serviceOdometer, 'Service odometer');
+      nextServiceOdometer = optionalNonNegativeNumber(body.nextServiceOdometer, 'Next service odometer');
+      cost = optionalNonNegativeNumber(body.cost, 'Cost');
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid numeric value' }, { status: 400 });
+    }
+
+    const db = getDb();
     const [vehicle] = await db
-      .select({ id: vehicles.id, status: vehicles.status })
+      .select({ id: vehicles.id, currentOdometer: vehicles.currentOdometer })
       .from(vehicles)
       .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
 
-    if (!vehicle) {
-      return NextResponse.json(
-        { error: 'Vehicle not found in your organisation' },
-        { status: 404 },
-      );
+    if (!vehicle) return NextResponse.json({ error: 'Vehicle not found in your organisation' }, { status: 404 });
+    if (serviceOdometer !== null && serviceOdometer < vehicle.currentOdometer) {
+      return NextResponse.json({ error: `Service odometer cannot be below the current vehicle odometer (${vehicle.currentOdometer} km)` }, { status: 409 });
+    }
+    if (nextServiceOdometer !== null && serviceOdometer !== null && nextServiceOdometer < serviceOdometer) {
+      return NextResponse.json({ error: 'Next service odometer cannot be below the service odometer' }, { status: 400 });
     }
 
-    // Create the maintenance event
-    const [event] = await db
-      .insert(maintenanceEvents)
-      .values({
-        vehicleId,
-        serviceDate,
-        serviceOdometer: serviceOdometer ? Number(serviceOdometer) : null,
-        serviceType,
-        description,
-        cost: cost ? String(cost) : null,
-        vendorName: vendorName || null,
-        notes: notes || null,
-        nextServiceDate: nextServiceDate || null,
-        nextServiceOdometer: nextServiceOdometer ? Number(nextServiceOdometer) : null,
-        createdByUserId: session.user.id,
-        assignedToUserId: session.user.id,
-      })
-      .returning();
+    const eventId = randomUUID();
+    const odometerEventId = serviceOdometer !== null ? randomUUID() : null;
+    const now = new Date();
 
-    // Update vehicle status to maintenance and log status event
-    await db
-      .update(vehicles)
-      .set({
-        status: 'maintenance',
-        updatedAt: new Date(),
-        updatedBy: session.user.id,
-      })
-      .where(eq(vehicles.id, vehicleId));
+    await runAtomicMutations((tx) => {
+      const queries: any[] = [
+        tx.insert(maintenanceEvents).values({
+          id: eventId,
+          vehicleId,
+          serviceDate,
+          serviceOdometer,
+          serviceType,
+          description,
+          cost: cost !== null ? String(cost) : null,
+          vendorName: vendorName || null,
+          notes: notes || null,
+          nextServiceDate,
+          nextServiceOdometer,
+          createdByUserId: session.user.id,
+          assignedToUserId: session.user.id,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      ];
 
-    // Log vehicle status event
-    const { vehicleStatusEvents } = await import('@/db/schema/fleet');
-    await db.insert(vehicleStatusEvents).values({
-      vehicleId,
-      previousStatus: vehicle.status,
-      newStatus: 'maintenance',
-      reason: `Maintenance: ${description || serviceType}`,
-      changedByUserId: session.user.id,
-      referenceEntityType: 'maintenance',
-      referenceEntityId: event.id,
+      if (serviceOdometer !== null && odometerEventId) {
+        queries.push(tx.insert(vehicleOdometerEvents).values({
+          id: odometerEventId,
+          vehicleId,
+          odometerValue: serviceOdometer,
+          source: 'maintenance',
+          sourceEntityType: 'maintenance',
+          sourceEntityId: eventId,
+          recordedByUserId: session.user.id,
+          notes: description,
+        }));
+        queries.push(tx.update(vehicles)
+          .set({
+            currentOdometer: sql`greatest(${vehicles.currentOdometer}, ${serviceOdometer})`,
+            updatedAt: now,
+            updatedBy: session.user.id,
+          })
+          .where(and(eq(vehicles.id, vehicleId), eq(vehicles.tenantId, session.tenantId))));
+      }
+
+      queries.push(tx.insert(auditEvents).values({
+        tenantId: session.tenantId,
+        tenantSequence: Date.now(),
+        eventType: 'maintenance_created',
+        actorUserId: session.user.id,
+        action: 'create',
+        entityType: 'maintenance_event',
+        entityId: eventId,
+        correlationId: eventId,
+        sourceChannel: 'web',
+        summary: `Maintenance history: ${serviceType} — ${description}`,
+        after: {
+          vehicleId,
+          serviceDate,
+          serviceOdometer,
+          serviceType,
+          cost,
+          vendorName: vendorName || null,
+          nextServiceDate,
+          nextServiceOdometer,
+        },
+      }));
+      return queries;
     });
 
-    // Audit log
-    await db.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: 0,
-      eventType: 'maintenance_created',
-      actorUserId: session.user.id,
-      action: 'create',
-      entityType: 'maintenance_event',
-      entityId: event.id,
-      summary: `Maintenance: ${serviceType} — ${description} (${cost || 'cost TBD'})`,
-      sourceChannel: 'web',
-    });
+    try {
+      await createScopedNotifications({
+        tenantId: session.tenantId,
+        recipientUserIds: [session.user.id],
+        category: 'outcome',
+        eventType: 'maintenance_event_created',
+        title: `Maintenance Record Created — ${serviceType}`,
+        body: `${description}${cost !== null ? ` — N$${cost.toFixed(2)}` : ''}${vendorName ? ` at ${vendorName}` : ''}.`,
+        entityType: 'maintenance_event',
+        entityId: eventId,
+        actionUrl: '/dashboard/maintenance',
+        workspace: WorkspaceIds.MAINTENANCE,
+        priority: 'normal',
+      });
+    } catch (error) {
+      console.error('[maintenance] Notification failed after commit:', error);
+    }
 
-    await createScopedNotifications({
-      tenantId: session.tenantId,
-      recipientUserIds: [session.user.id],
-      category: 'outcome',
-      eventType: 'maintenance_event_created',
-      title: `Maintenance Event Created — ${serviceType}`,
-      body: `${description} — ${cost ? `N$${cost}` : 'Cost TBD'} at ${vendorName || 'unknown vendor'}. Vehicle status set to maintenance.`,
-      entityType: 'maintenance_event',
-      entityId: event.id,
-      actionUrl: '/dashboard/maintenance',
-      workspace: WorkspaceIds.MAINTENANCE,
-      priority: 'normal',
-    });
-
+    const [event] = await db.select().from(maintenanceEvents).where(eq(maintenanceEvents.id, eventId)).limit(1);
     return NextResponse.json({ data: event }, { status: 201 });
   } catch (error) {
     console.error('[maintenance] POST failed:', error);
