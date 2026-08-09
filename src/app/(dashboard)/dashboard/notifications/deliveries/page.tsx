@@ -119,8 +119,8 @@ export default function DeliveryDashboardPage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || 'Retry failed');
       toast({
-        title: 'Delivery retry queued',
-        description: 'The new attempt has been recorded and the delivery register was refreshed.',
+        title: 'Delivery retry sent',
+        description: 'The email retry was sent and the delivery register was refreshed.',
         variant: 'success',
       });
       await fetchData();
@@ -147,7 +147,7 @@ export default function DeliveryDashboardPage() {
         { label: 'Notifications', href: '/dashboard/notifications' },
         { label: 'Delivery Dashboard' },
       ]} />
-      <PageHeader title="Delivery Dashboard" description="Monitor tenant notification delivery health and retry failed attempts.">
+      <PageHeader title="Delivery Dashboard" description="Monitor tenant notification delivery health and retry failed email attempts.">
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="sm" onClick={() => void fetchData()} loading={isLoading}>
             <RefreshCw className="h-4 w-4" aria-hidden="true" /> Refresh
@@ -238,10 +238,13 @@ export default function DeliveryDashboardPage() {
                 {delivery.errorSummary && <p className="mt-2 text-xs text-status-error-text">{delivery.errorSummary}</p>}
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
-                {delivery.status === 'failed' && (
+                {delivery.status === 'failed' && delivery.channel === 'email' && (
                   <Button variant="secondary" size="sm" onClick={() => void handleRetry(delivery.id)} loading={retryingId === delivery.id} disabled={retryingId !== null}>
-                    <RefreshCw className="h-4 w-4" aria-hidden="true" /> Retry delivery
+                    <RefreshCw className="h-4 w-4" aria-hidden="true" /> Retry email
                   </Button>
+                )}
+                {delivery.status === 'failed' && delivery.channel !== 'email' && (
+                  <span className="self-center text-xs text-ink-400">Manual retry is not available for this channel.</span>
                 )}
               </div>
             </article>
