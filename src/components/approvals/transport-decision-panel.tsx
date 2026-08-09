@@ -79,6 +79,7 @@ export function TransportDecisionPanel({
   const [selectedVehicle, setSelectedVehicle] = useState<EligibleVehicle | null>(null);
 
   const [drivers, setDrivers] = useState<EligibleDriver[]>([]);
+  const [driversTotal, setDriversTotal] = useState(0);
   const [driversLoading, setDriversLoading] = useState(false);
   const [driverQuery, setDriverQuery] = useState('');
   const [driverOpen, setDriverOpen] = useState(false);
@@ -89,7 +90,6 @@ export function TransportDecisionPanel({
   const [error, setError] = useState('');
   const fetched = useRef(false);
 
-  // Trip window from the request's programme of activities.
   const windowDates = useMemo(() => {
     if (!activities.length) return null;
     const start = activities.reduce(
@@ -103,7 +103,7 @@ export function TransportDecisionPanel({
   const loadVehicles = useCallback(async () => {
     setVehiclesLoading(true);
     try {
-      const res = await fetch('/api/fleet?status=available&limit=50');
+      const res = await fetch('/api/fleet?status=available');
       const json = await res.json();
       const rows = json.rows || json.data?.vehicles || [];
       setVehicles(Array.isArray(rows) ? rows : []);
@@ -116,24 +116,35 @@ export function TransportDecisionPanel({
   }, []);
 
   const loadDrivers = useCallback(
-    async (vehicleId: string) => {
+    async (vehicleId: string, query = '') => {
       setDriversLoading(true);
       try {
-        const res = await fetch(
-          `/api/allocations/drivers?requestId=${encodeURIComponent(requestId)}&vehicleId=${encodeURIComponent(vehicleId)}&limit=50`,
-        );
+        const params = new URLSearchParams({
+          requestId,
+          vehicleId,
+          limit: '100',
+          page: '1',
+        });
+        if (query.trim()) params.set('q', query.trim());
+        if (windowDates) {
+          params.set('startDate', windowDates.start.toISOString());
+          params.set('endDate', windowDates.end.toISOString());
+        }
+        const res = await fetch(`/api/allocations/drivers?${params.toString()}`);
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Unable to load drivers');
-        setDrivers(json.data || []);
+        setDrivers(Array.isArray(json.data) ? json.data : []);
+        setDriversTotal(Number(json.total ?? 0));
       } catch (err) {
         console.error('[TransportDecision] drivers failed:', err);
         setDrivers([]);
+        setDriversTotal(0);
         setError(err instanceof Error ? err.message : 'Unable to load drivers.');
       } finally {
         setDriversLoading(false);
       }
     },
-    [requestId],
+    [requestId, windowDates],
   );
 
   useEffect(() => {
@@ -145,11 +156,18 @@ export function TransportDecisionPanel({
         void loadDrivers(existingAllocation.vehicleId);
       }
     };
-    // Defer past the render commit so async setState never runs synchronously in the effect body.
     const timer = window.setTimeout(loadInitial, 0);
     return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [existingAllocation?.vehicleId, loadDrivers, loadVehicles]);
+
+  const driverVehicleId = existingAllocation?.vehicleId ?? selectedVehicle?.id ?? null;
+  useEffect(() => {
+    if (!driverOpen || !driverVehicleId) return;
+    const timer = window.setTimeout(() => {
+      void loadDrivers(driverVehicleId, driverQuery);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [driverOpen, driverVehicleId, driverQuery, loadDrivers]);
 
   const visibleVehicles = useMemo(() => {
     if (!vehicleQuery.trim()) return vehicles;
@@ -162,23 +180,12 @@ export function TransportDecisionPanel({
     );
   }, [vehicles, vehicleQuery]);
 
-  const visibleDrivers = useMemo(() => {
-    if (!driverQuery.trim()) return drivers;
-    const q = driverQuery.toLowerCase();
-    return drivers.filter(
-      (d) =>
-        d.firstName.toLowerCase().includes(q) ||
-        d.lastName.toLowerCase().includes(q) ||
-        d.employeeNumber.toLowerCase().includes(q) ||
-        (d.licenceClass ?? '').toLowerCase().includes(q),
-    );
-  }, [drivers, driverQuery]);
-
   const pickVehicle = useCallback(
     (vehicle: EligibleVehicle) => {
       setSelectedVehicle(vehicle);
       setVehicleOpen(false);
       setSelectedDriver(null);
+      setDriverQuery('');
       setError('');
       if (!existingAllocation) void loadDrivers(vehicle.id);
     },
@@ -190,16 +197,20 @@ export function TransportDecisionPanel({
       setError('Select a vehicle to continue.');
       return;
     }
+    if (!selectedDriver?.eligible) {
+      setError('Select an eligible driver before assigning the vehicle.');
+      return;
+    }
     setAssigning(true);
     setError('');
     try {
       const body: Record<string, string> = {
         requestId,
         vehicleId: selectedVehicle.id,
+        driverEmployeeId: selectedDriver.employeeId,
         startDate: windowDates ? windowDates.start.toISOString() : new Date().toISOString(),
       };
       if (windowDates) body.endDate = windowDates.end.toISOString();
-      if (selectedDriver) body.driverEmployeeId = selectedDriver.employeeId;
 
       const res = await fetch('/api/allocations', {
         method: 'POST',
@@ -215,8 +226,8 @@ export function TransportDecisionPanel({
         );
       }
       toast({
-        title: 'Vehicle assigned',
-        description: `${selectedVehicle.licenceNumber}${selectedDriver ? ` with ${selectedDriver.firstName} ${selectedDriver.lastName}` : ''} assigned to ${requestReference}.`,
+        title: 'Vehicle and driver assigned',
+        description: `${selectedVehicle.licenceNumber} with ${selectedDriver.firstName} ${selectedDriver.lastName} assigned to ${requestReference}.`,
         variant: 'success',
       });
       router.refresh();
@@ -229,9 +240,9 @@ export function TransportDecisionPanel({
     }
   }, [requestId, requestReference, selectedVehicle, selectedDriver, windowDates, router, toast]);
 
-  const replaceDriver = useCallback(async () => {
-    if (!existingAllocation || !selectedDriver) {
-      setError('Select a driver to continue.');
+  const assignMissingDriver = useCallback(async () => {
+    if (!existingAllocation || !selectedDriver?.eligible) {
+      setError('Select an eligible driver to continue.');
       return;
     }
     setReplacingDriver(true);
@@ -247,26 +258,25 @@ export function TransportDecisionPanel({
         throw new Error(
           json.compliance?.reasons?.length
             ? `${json.error} ${json.compliance.reasons.join(' · ')}`
-            : json.error || 'Driver replacement failed',
+            : json.error || 'Driver assignment failed',
         );
       }
       toast({
-        title: 'Driver replaced',
+        title: 'Driver assigned',
         description: `${selectedDriver.firstName} ${selectedDriver.lastName} is now assigned to ${requestReference}.`,
         variant: 'success',
       });
       router.refresh();
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Driver replacement failed';
+      const message = caught instanceof Error ? caught.message : 'Driver assignment failed';
       setError(message);
-      toast({ title: 'Replacement failed', description: message, variant: 'error' });
+      toast({ title: 'Assignment failed', description: message, variant: 'error' });
     } finally {
       setReplacingDriver(false);
     }
   }, [existingAllocation, selectedDriver, requestReference, router, toast]);
 
-  const loadingDriverList =
-    driversLoading || (!existingAllocation && selectedVehicle === null);
+  const loadingDriverList = driversLoading || (!existingAllocation && selectedVehicle === null);
 
   return (
     <Card>
@@ -278,7 +288,7 @@ export function TransportDecisionPanel({
       </CardHeader>
       <CardContent className="space-y-5">
         <p className="text-ink-500 text-xs leading-5">
-          Assign an available vehicle{existingAllocation ? '' : ' and an eligible driver'} to{' '}
+          Assign an available vehicle and an eligible driver to{' '}
           <strong className="text-ink-800">{requestReference}</strong> before advancing the
           workflow. Eligibility is validated live against licence class, professional
           authorisation and schedule conflicts.
@@ -398,13 +408,13 @@ export function TransportDecisionPanel({
         )}
 
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <label className="text-ink-500 text-xs font-semibold tracking-wider uppercase">
-              {existingAllocation ? 'Replace Driver' : 'Driver'}
+              {existingAllocation ? 'Assign Driver' : 'Driver'}
             </label>
-            {!loadingDriverList && drivers.length > 0 && (
+            {!loadingDriverList && driversTotal > 0 && (
               <span className="text-ink-500 text-[11px]">
-                {drivers.filter((d) => d.eligible).length} eligible
+                {drivers.filter((d) => d.eligible).length} eligible shown · {driversTotal} match{driversTotal === 1 ? '' : 'es'}
               </span>
             )}
           </div>
@@ -435,9 +445,7 @@ export function TransportDecisionPanel({
                       : 'Loading drivers…'}
                   </span>
                 ) : (
-                  <span className="text-ink-500">
-                    {existingAllocation ? 'Replace driver…' : 'Select a driver (optional)…'}
-                  </span>
+                  <span className="text-ink-500">Select an eligible driver…</span>
                 )}
               </span>
               {selectedDriver ? (
@@ -462,32 +470,37 @@ export function TransportDecisionPanel({
                     type="search"
                     value={driverQuery}
                     onChange={(event) => setDriverQuery(event.target.value)}
-                    placeholder="Search name, employee no, class…"
+                    placeholder="Search all drivers by name, employee no, licence…"
                     className="border-border bg-canvas text-ink-950 placeholder:text-ink-500 focus:ring-brand-600 h-10 w-full rounded-[8px] border pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
                   />
                 </div>
                 <div role="listbox" className="max-h-72 scrollbar-thin overflow-y-auto p-1">
                   {driversLoading ? (
                     <p className="text-ink-500 flex items-center gap-2 px-3 py-6 text-sm">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                      <Loader2 className="h-4 w-4 animate-spin" /> Searching drivers…
                     </p>
-                  ) : visibleDrivers.length === 0 ? (
+                  ) : drivers.length === 0 ? (
                     <p className="text-ink-500 px-3 py-6 text-center text-sm">No drivers found.</p>
                   ) : (
-                    visibleDrivers.map((driver) => (
+                    drivers.map((driver) => (
                       <button
                         key={driver.employeeId}
                         type="button"
                         role="option"
                         aria-selected={selectedDriver?.employeeId === driver.employeeId}
+                        aria-disabled={!driver.eligible}
+                        disabled={!driver.eligible}
                         onClick={() => {
+                          if (!driver.eligible) return;
                           setSelectedDriver(driver);
                           setDriverOpen(false);
                           setError('');
                         }}
                         className={cn(
-                          'focus-ring hover:bg-muted flex w-full items-start gap-3 rounded-[7px] px-3 py-2.5 text-left',
-                          !driver.eligible && 'opacity-70',
+                          'focus-ring flex w-full items-start gap-3 rounded-[7px] px-3 py-2.5 text-left',
+                          driver.eligible
+                            ? 'hover:bg-muted'
+                            : 'cursor-not-allowed opacity-60',
                         )}
                       >
                         <span className="bg-brand-50 text-brand-700 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
@@ -506,7 +519,7 @@ export function TransportDecisionPanel({
                               : ''}
                           </span>
                           {!driver.eligible && driver.compliance.reasons.length > 0 && (
-                            <span className="text-status-error-text mt-0.5 block truncate text-[11px]">
+                            <span className="text-status-error-text mt-0.5 block text-[11px] leading-4">
                               {driver.compliance.reasons.join(' · ')}
                             </span>
                           )}
@@ -524,12 +537,16 @@ export function TransportDecisionPanel({
                     ))
                   )}
                 </div>
+                {driversTotal > drivers.length && (
+                  <p className="border-border text-ink-500 border-t px-3 py-2 text-[11px]">
+                    Type a name, employee number or licence to search the full driver register.
+                  </p>
+                )}
               </div>
             )}
           </div>
           <p className="text-ink-500 text-xs">
-            Only drivers with a verified licence covering this vehicle&apos;s requirements are
-            marked eligible — excluded drivers show the exact reason.
+            Only drivers with a verified licence covering this vehicle&apos;s requirements can be selected. Excluded drivers remain visible with the exact reason.
           </p>
         </div>
 
@@ -547,23 +564,29 @@ export function TransportDecisionPanel({
           {existingAllocation ? (
             <Button
               variant="primary"
-              onClick={() => void replaceDriver()}
-              disabled={!selectedDriver || replacingDriver}
+              onClick={() => void assignMissingDriver()}
+              disabled={!selectedDriver?.eligible || replacingDriver}
             >
               {replacingDriver && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {replacingDriver ? 'Replacing…' : 'Replace Driver'}
+              {replacingDriver ? 'Assigning…' : 'Assign Driver'}
             </Button>
           ) : (
             <Button
               variant="primary"
               onClick={() => void assignAllocation()}
-              disabled={!selectedVehicle || assigning}
+              disabled={!selectedVehicle || !selectedDriver?.eligible || assigning}
             >
               {assigning && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {assigning ? 'Assigning…' : 'Assign Vehicle'}
+              {assigning ? 'Assigning…' : 'Assign Vehicle & Driver'}
             </Button>
           )}
-          <Button variant="secondary" onClick={() => void loadVehicles()}>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              void loadVehicles();
+              if (driverVehicleId) void loadDrivers(driverVehicleId, driverQuery);
+            }}
+          >
             <RefreshCw className="h-4 w-4" aria-hidden="true" />
             Refresh
           </Button>
