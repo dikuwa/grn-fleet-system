@@ -137,6 +137,13 @@ async function loadEditableRequest(id: string, tenantId: string) {
   return { request, activities, passengers, drivers, routes };
 }
 
+function canCorrectRequest(
+  request: { requesterUserId: string | null; enteredByUserId: string | null },
+  userId: string,
+) {
+  return request.requesterUserId === userId || request.enteredByUserId === userId;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -152,7 +159,7 @@ export async function GET(
   if (permission instanceof NextResponse) return permission;
 
   const data = await loadEditableRequest(id, session.tenantId);
-  if (!data || data.request.requesterUserId !== session.user.id) {
+  if (!data || !canCorrectRequest(data.request, session.user.id)) {
     return NextResponse.json({ error: 'Request not found' }, { status: 404 });
   }
   if (!EDITABLE_STATUSES.includes(data.request.status as (typeof EDITABLE_STATUSES)[number])) {
@@ -240,7 +247,7 @@ export async function POST(
 
   const db = getDb();
   const data = await loadEditableRequest(id, session.tenantId);
-  if (!data || data.request.requesterUserId !== session.user.id) {
+  if (!data || !canCorrectRequest(data.request, session.user.id)) {
     return NextResponse.json({ error: 'Request not found' }, { status: 404 });
   }
   const existing = data.request;
