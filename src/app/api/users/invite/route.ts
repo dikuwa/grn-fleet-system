@@ -4,13 +4,13 @@ import { user, account } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles, tenants } from '@/db/schema/tenants';
 import { employees } from '@/db/schema/people';
 import { userProfiles } from '@/db/schema/auth';
-import { auditEvents } from '@/db/schema/audit';
-import { eq, and, inArray, count, or } from 'drizzle-orm';
+import { eq, and, inArray, count, or, isNull } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { sendReactEmail } from '@/lib/email';
 import { UserInviteEmail } from '@/emails/user-invite';
+import { recordAuditEvent } from '@/lib/audit-event';
 import { createElement } from 'react';
 import bcrypt from 'bcryptjs';
 
@@ -23,6 +23,16 @@ function normalizeUsername(value: string) {
     .replace(/\.{2,}/g, '.')
     .replace(/^\.+|\.+$/g, '')
     .slice(0, 64);
+}
+
+function databaseCode(error: unknown) {
+  if (!error || typeof error !== 'object') return null;
+  const value = error as { code?: unknown; cause?: { code?: unknown } };
+  return typeof value.code === 'string'
+    ? value.code
+    : typeof value.cause?.code === 'string'
+      ? value.cause.code
+      : null;
 }
 
 export async function POST(req: NextRequest) {
@@ -136,71 +146,82 @@ export async function POST(req: NextRequest) {
     const userId = crypto.randomUUID();
     const passwordHash = await bcrypt.hash(tempPassword, 10);
     const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
+    const resolvedDeliveryMode = deliveryMode === 'manual' || sendInvite === false ? 'manual' : 'email';
 
-    await db.insert(user).values({
-      id: userId,
-      email: normalizedEmail,
-      username,
-      name: displayName,
-      emailVerified: false,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(userProfiles).values({
-      id: userId,
-      userId,
-      displayName,
-      requiresPasswordChange: forcePasswordChange,
-      passwordStatus: 'temporary',
-      status: 'active',
-      accountEnabled: true,
-    });
-    await db.insert(account).values({
-      id: crypto.randomUUID(),
-      accountId: userId,
-      providerId: 'email',
-      userId,
-      password: passwordHash,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const [membership] = await db
-      .insert(tenantMemberships)
-      .values({ tenantId: session.tenantId, userId, status: 'active', joinedAt: now })
-      .returning();
-
-    await db
-      .update(employees)
-      .set({ userId, updatedAt: now })
-      .where(and(eq(employees.id, employeeId), eq(employees.tenantId, session.tenantId)));
-
-    if (selectedRoles.length > 0) {
-      await db.insert(roleAssignments).values(
-        selectedRoles.map((role) => ({
-          tenantMembershipId: membership.id,
-          roleId: role.id,
-          startDate: now,
-        })),
-      );
-    }
-
-    await db.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'user_account_created',
-      actorUserId: session.user.id,
-      action: 'create',
-      entityType: 'user',
-      entityId: userId,
-      summary: `Login account created for ${displayName}`,
-      after: {
-        userId,
-        employeeId,
+    await db.transaction(async (tx) => {
+      await tx.insert(user).values({
+        id: userId,
+        email: normalizedEmail,
         username,
-        roleIds: selectedRoles.map((role) => role.id),
-        deliveryMode: deliveryMode === 'manual' || sendInvite === false ? 'manual' : 'email',
-      },
+        name: displayName,
+        emailVerified: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await tx.insert(userProfiles).values({
+        id: userId,
+        userId,
+        displayName,
+        requiresPasswordChange: forcePasswordChange,
+        passwordStatus: 'temporary',
+        status: 'active',
+        accountEnabled: true,
+      });
+      await tx.insert(account).values({
+        id: crypto.randomUUID(),
+        accountId: userId,
+        providerId: 'email',
+        userId,
+        password: passwordHash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const [membership] = await tx
+        .insert(tenantMemberships)
+        .values({ tenantId: session.tenantId, userId, status: 'active', joinedAt: now })
+        .returning();
+
+      const [linkedEmployee] = await tx
+        .update(employees)
+        .set({ userId, updatedAt: now })
+        .where(and(
+          eq(employees.id, employeeId),
+          eq(employees.tenantId, session.tenantId),
+          eq(employees.employmentStatus, 'active'),
+          isNull(employees.userId),
+        ))
+        .returning({ id: employees.id });
+      if (!linkedEmployee) {
+        throw new Error('STAFF_ACCOUNT_ALREADY_LINKED');
+      }
+
+      if (selectedRoles.length > 0) {
+        await tx.insert(roleAssignments).values(
+          selectedRoles.map((role) => ({
+            tenantMembershipId: membership.id,
+            roleId: role.id,
+            startDate: now,
+          })),
+        );
+      }
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        eventType: 'user_account_created',
+        action: 'create',
+        entityType: 'user',
+        entityId: userId,
+        summary: `Login account created for ${displayName}`,
+        after: {
+          userId,
+          employeeId,
+          username,
+          roleIds: selectedRoles.map((role) => role.id),
+          deliveryMode: resolvedDeliveryMode,
+        },
+      }, tx);
     });
 
     const [tenant] = await db
@@ -214,7 +235,7 @@ export async function POST(req: NextRequest) {
       success: false,
       error: 'Email not sent',
     };
-    if (deliveryMode === 'manual' || sendInvite === false) {
+    if (resolvedDeliveryMode === 'manual') {
       emailResult = { success: false, deliveredManually: true };
     } else {
       try {
@@ -233,7 +254,7 @@ export async function POST(req: NextRequest) {
         );
       } catch (error) {
         console.warn('[User Invite] Email send failed (non-fatal):', error);
-        emailResult = { success: false, error: String(error) };
+        emailResult = { success: false, error: error instanceof Error ? error.message : 'Email delivery failed' };
       }
     }
 
@@ -259,6 +280,12 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error('[User Invite] POST failed:', error);
-    return NextResponse.json({ error: 'Failed to invite user: ' + String(error) }, { status: 500 });
+    if (error instanceof Error && error.message === 'STAFF_ACCOUNT_ALREADY_LINKED') {
+      return NextResponse.json({ error: 'This staff member already has a login account' }, { status: 409 });
+    }
+    if (databaseCode(error) === '23505') {
+      return NextResponse.json({ error: 'A user with this email or username already exists' }, { status: 409 });
+    }
+    return NextResponse.json({ error: 'Failed to create user account' }, { status: 500 });
   }
 }
