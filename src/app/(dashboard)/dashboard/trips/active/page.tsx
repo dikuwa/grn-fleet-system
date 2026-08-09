@@ -3,7 +3,7 @@ import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, and, desc, ne, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import {Card, CardContent} from '@/components/ui/card';
 import {StatusBadge} from '@/components/ui/badge';
@@ -24,6 +24,8 @@ import { getServerSession } from '@/lib/session';
 import { statusConfig } from '@/lib/request-status';
 import Link from 'next/link';
 import { ActiveTripDuration } from './ActiveTripDuration';
+
+const ACTIVE_TRIP_STATUSES = ['in_progress', 'return_due', 'return_inspection', 'closure_review'] as const;
 
 const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
   pending: statusConfig('pending').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
@@ -59,13 +61,7 @@ async function fetchActiveTrips(tenantId: string) {
     .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
     .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
     .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-    .where(
-      and(
-        eq(trips.tenantId, tenantId),
-        ne(trips.status, 'closed'),
-        ne(trips.status, 'pending'),
-      ),
-    )
+    .where(and(eq(trips.tenantId, tenantId), inArray(trips.status, [...ACTIVE_TRIP_STATUSES])))
     .orderBy(desc(trips.startedAt));
 
   // Summary counts
@@ -85,7 +81,12 @@ async function fetchActiveTrips(tenantId: string) {
         lastName: employees.lastName,
       })
       .from(employees)
-      .where(sql`${employees.id} IN (${sql.join(driverIds.map((id) => sql`${id}`), sql`, `)})`);
+      .where(
+        and(
+          eq(employees.tenantId, tenantId),
+          sql`${employees.id} IN (${sql.join(driverIds.map((id) => sql`${id}`), sql`, `)})`,
+        ),
+      );
     for (const d of drivers) {
       driverNameMap.set(d.id, `${d.firstName} ${d.lastName}`);
     }

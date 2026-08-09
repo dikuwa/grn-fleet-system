@@ -12,6 +12,7 @@ export * from './people';
 export * from './employee-lifecycle';
 export * from './fleet';
 export * from './requests';
+export * from './request-sequences';
 export * from './programmes';
 export * from './workflows';
 export * from './trips';

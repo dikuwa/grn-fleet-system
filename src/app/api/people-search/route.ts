@@ -22,26 +22,57 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, Number(request.nextUrl.searchParams.get('page')) || 1);
   const offset = (page - 1) * limit;
 
+  // Employment status controls whether a person belongs in ordinary employee
+  // selectors. Availability is an operational scheduling signal and must not
+  // make an otherwise active staff member disappear from passenger/requester
+  // selection. Driver searches remain availability-aware because nominating a
+  // driver is an operational resource decision.
   const conditions = [
     eq(employees.tenantId, session.tenantId),
     eq(employees.employmentStatus, 'active'),
   ];
-  if (!canViewUnavailable) conditions.push(eq(employees.availabilityStatus, 'available'));
 
   if (kind === 'driver') {
-    conditions.push(eq(employees.isDriver, true), eq(driverProfiles.driverStatus, 'authorised'));
-    if (!canViewUnavailable) conditions.push(eq(driverProfiles.availabilityStatus, 'available'));
+    conditions.push(
+      eq(employees.isDriver, true),
+      eq(driverProfiles.driverStatus, 'authorised'),
+      // Match the Transport Review licence lifecycle rule: only the highest-
+      // version active licence is authoritative. The Requester picker must not
+      // surface a driver whose current version is provisional/unverified or
+      // already expired. Final submission performs the stronger trip-end check.
+      sql`exists (
+        select 1
+        from driver_licences dl
+        where dl.driver_profile_id = ${driverProfiles.id}
+          and dl.is_active = true
+          and dl.verification_status = 'verified'
+          and dl.expiry_date >= current_date
+          and not exists (
+            select 1
+            from driver_licences newer
+            where newer.driver_profile_id = dl.driver_profile_id
+              and newer.is_active = true
+              and newer.version > dl.version
+          )
+      )`,
+    );
+    if (!canViewUnavailable) {
+      conditions.push(
+        eq(employees.availabilityStatus, 'available'),
+        eq(driverProfiles.availabilityStatus, 'available'),
+      );
+    }
   }
   if (query) {
+    // Request/passenger selection is an employee-directory lookup, not a
+    // general identity search. Do not allow ordinary request users to probe
+    // sensitive identifiers such as national ID, passport number or phone.
     conditions.push(
       or(
         ilike(employees.firstName, `%${query}%`),
         ilike(employees.lastName, `%${query}%`),
         ilike(employees.employeeNumber, `%${query}%`),
         ilike(employees.email, `%${query}%`),
-        ilike(employees.phone, `%${query}%`),
-        ilike(employees.nationalIdNumber, `%${query}%`),
-        ilike(employees.passportNumber, `%${query}%`),
         ilike(departments.name, `%${query}%`),
         ilike(offices.name, `%${query}%`),
         ilike(

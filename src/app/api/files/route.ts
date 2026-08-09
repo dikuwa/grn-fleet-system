@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { and, eq, or } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { requestAttachments, transportRequests } from '@/db/schema/requests';
+import { getSessionWorkspace, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { WorkspaceIds } from '@/lib/workspaces';
 import { isStorageConfigured } from '@/lib/storage';
 
 // ---------------------------------------------------------------------------
@@ -41,6 +45,39 @@ export async function GET(request: NextRequest) {
         { error: 'Access denied: file does not belong to your organisation.' },
         { status: 403 },
       );
+    }
+
+    // A tenant prefix alone is not enough for Personal workspace users: it
+    // would turn every tenant object key into a bearer capability. Requesters
+    // may retrieve only attachment objects linked to requests they own or that
+    // were entered on their behalf. Other operational workspaces retain their
+    // existing permission boundary until their domain-specific file records
+    // are audited in their own role passes.
+    const workspace = await getSessionWorkspace(session);
+    if (workspace.activeWorkspace === WorkspaceIds.PERSONAL) {
+      const db = getDb();
+      const [attachment] = await db
+        .select({ id: requestAttachments.id })
+        .from(requestAttachments)
+        .innerJoin(transportRequests, eq(requestAttachments.requestId, transportRequests.id))
+        .where(
+          and(
+            eq(requestAttachments.fileKey, key),
+            eq(transportRequests.tenantId, session.tenantId),
+            or(
+              eq(transportRequests.requesterUserId, session.user.id),
+              eq(transportRequests.enteredByUserId, session.user.id),
+            )!,
+          ),
+        )
+        .limit(1);
+
+      if (!attachment) {
+        return NextResponse.json(
+          { error: 'Access denied: this file is not attached to one of your requests.' },
+          { status: 403 },
+        );
+      }
     }
 
     const { getSignedFileUrl, downloadFile } = await import('@/lib/storage');

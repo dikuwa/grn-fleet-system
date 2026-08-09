@@ -13,11 +13,7 @@ import { DEFAULT_PAGE_SIZE, STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constan
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
-import {
-  canPerformDashboardAction,
-  resolveDashboardAccess,
-  SystemRoles,
-} from '@/lib/dashboard-access';
+import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
@@ -138,11 +134,12 @@ export default async function RequestsPage({ searchParams }: PageProps) {
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/requests', roleNames);
   const canCreate = canPerformDashboardAction('/dashboard/requests/new', roleNames, 'create');
-  const pageTitle = roleNames.includes(SystemRoles.REQUESTER)
-    ? 'My Requests'
-    : roleNames.includes(SystemRoles.TRANSPORT_ADMIN)
-      ? 'Operational Requests'
-      : 'Transport Request Oversight';
+  const pageTitle =
+    access.activeWorkspace === 'personal'
+      ? 'My Requests'
+      : access.activeWorkspace === 'transport_admin'
+        ? 'Operational Requests'
+        : 'Transport Request Oversight';
   const canViewAll = access.recordScope === 'tenant';
   const viewParam = sp.view === 'mine' ? 'mine' : sp.view === 'all' ? 'all' : null;
   const effectiveRecordScope: DashboardRecordScope = viewParam === 'mine' ? 'self' : access.recordScope ?? 'self';

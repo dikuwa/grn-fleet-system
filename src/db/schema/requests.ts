@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, boolean, integer, jsonb, uniqueIndex } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
 import { employees, departments, offices } from './people';
 import { programmes } from './programmes';
@@ -6,55 +7,66 @@ import { programmes } from './programmes';
 /**
  * Transport requests
  */
-export const transportRequests = pgTable('transport_requests', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  reference: text('reference').notNull(),
-  clientSubmissionId: text('client_submission_id'),
-  revision: integer('revision').notNull().default(1),
-  scope: text('scope').notNull(), // regional, national
-  status: text('status').notNull().default('draft'),
-  requesterEmployeeId: uuid('requester_employee_id')
-    .notNull()
-    .references(() => employees.id),
-  requesterUserId: text('requester_user_id'),
-  enteredByUserId: text('entered_by_user_id'),
-  requestSource: text('request_source').notNull().default('logged_in_self_service'),
-  requestChannel: text('request_channel').notNull().default('dashboard'),
-  submissionMethod: text('submission_method').notNull().default('logged_in'),
-  verificationMethod: text('verification_method'),
-  assistedReason: text('assisted_reason'),
-  confirmationMethod: text('confirmation_method'),
-  employeeConfirmationStatus: text('employee_confirmation_status'),
-  publicTrackingTokenHash: text('public_tracking_token_hash'),
-  preferredDriverEmployeeId: uuid('preferred_driver_employee_id').references(() => employees.id),
-  assignedDriverEmployeeId: uuid('assigned_driver_employee_id').references(() => employees.id),
-  driverPreference: text('driver_preference').notNull().default('no_preference'),
-  requestingOfficeSnapshot: text('requesting_office_snapshot'),
-  approvalOfficeId: uuid('approval_office_id').references(() => offices.id),
-  travellerEmployeeId: uuid('traveller_employee_id').references(() => employees.id),
-  urgency: text('urgency').notNull().default('normal'),
-  overnight: boolean('overnight').notNull().default(false),
-  specialRequirements: text('special_requirements'),
-  vehicleRequirements: jsonb('vehicle_requirements').$type<Record<string, unknown>>().default({}),
-  departmentId: uuid('department_id').references(() => departments.id),
-  officeId: uuid('office_id').references(() => offices.id),
-  regionId: uuid('region_id'),
-  department: text('department'),
-  purpose: text('purpose'),
-  specialAuthorityRequired: boolean('special_authority_required').notNull().default(false),
-  specialAuthorityReason: text('special_authority_reason'),
-  specialAuthorityApproved: boolean('special_authority_approved'),
-  totalAuthorisedKilometres: integer('total_authorised_kilometres'),
-  workflowInstanceId: uuid('workflow_instance_id'),
-  programmeId: uuid('programme_id').references(() => programmes.id, { onDelete: 'set null' }),
-  version: integer('version').notNull().default(1),
-  submittedAt: timestamp('submitted_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const transportRequests = pgTable(
+  'transport_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    reference: text('reference').notNull(),
+    clientSubmissionId: text('client_submission_id'),
+    revision: integer('revision').notNull().default(1),
+    scope: text('scope').notNull(), // regional, national
+    status: text('status').notNull().default('draft'),
+    requesterEmployeeId: uuid('requester_employee_id')
+      .notNull()
+      .references(() => employees.id),
+    requesterUserId: text('requester_user_id'),
+    enteredByUserId: text('entered_by_user_id'),
+    requestSource: text('request_source').notNull().default('logged_in_self_service'),
+    requestChannel: text('request_channel').notNull().default('dashboard'),
+    submissionMethod: text('submission_method').notNull().default('logged_in'),
+    verificationMethod: text('verification_method'),
+    assistedReason: text('assisted_reason'),
+    confirmationMethod: text('confirmation_method'),
+    employeeConfirmationStatus: text('employee_confirmation_status'),
+    publicTrackingTokenHash: text('public_tracking_token_hash'),
+    preferredDriverEmployeeId: uuid('preferred_driver_employee_id').references(() => employees.id),
+    assignedDriverEmployeeId: uuid('assigned_driver_employee_id').references(() => employees.id),
+    driverPreference: text('driver_preference').notNull().default('no_preference'),
+    requestingOfficeSnapshot: text('requesting_office_snapshot'),
+    approvalOfficeId: uuid('approval_office_id').references(() => offices.id),
+    travellerEmployeeId: uuid('traveller_employee_id').references(() => employees.id),
+    urgency: text('urgency').notNull().default('normal'),
+    overnight: boolean('overnight').notNull().default(false),
+    specialRequirements: text('special_requirements'),
+    vehicleRequirements: jsonb('vehicle_requirements').$type<Record<string, unknown>>().default({}),
+    departmentId: uuid('department_id').references(() => departments.id),
+    officeId: uuid('office_id').references(() => offices.id),
+    regionId: uuid('region_id'),
+    department: text('department'),
+    purpose: text('purpose'),
+    specialAuthorityRequired: boolean('special_authority_required').notNull().default(false),
+    specialAuthorityReason: text('special_authority_reason'),
+    specialAuthorityApproved: boolean('special_authority_approved'),
+    totalAuthorisedKilometres: integer('total_authorised_kilometres'),
+    workflowInstanceId: uuid('workflow_instance_id'),
+    programmeId: uuid('programme_id').references(() => programmes.id, { onDelete: 'set null' }),
+    version: integer('version').notNull().default(1),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_transport_requests_tenant_reference_v2')
+      .on(table.tenantId, table.reference)
+      .where(sql`${table.reference} ~ '^GRN/TR/[0-9]{4}/[0-9]{6}$'`),
+    uniqueIndex('uq_transport_requests_tenant_submission')
+      .on(table.tenantId, table.clientSubmissionId)
+      .where(sql`${table.clientSubmissionId} IS NOT NULL`),
+  ],
+);
 
 /**
  * Request revisions (for tracking changes)

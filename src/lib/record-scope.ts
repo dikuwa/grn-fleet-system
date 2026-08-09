@@ -24,21 +24,28 @@ export type RecordScopeContext = {
 export function requestScopeCondition(context: RecordScopeContext): SQL {
   const tenant = eq(transportRequests.tenantId, context.tenantId);
   if (context.recordScope === 'tenant') return tenant;
-  return and(
-    tenant,
-    or(
-      eq(transportRequests.requesterUserId, context.userId),
-      eq(transportRequests.enteredByUserId, context.userId),
-      sql`exists (
-        select 1 from ${requestPassengers} rp
-        inner join ${employees} e on e.id = rp.employee_id
-        where rp.request_id = ${transportRequests.id}
-          and e.tenant_id = ${context.tenantId}
-          and e.user_id = ${context.userId}
-          and rp.status <> 'removed'
-      )`,
-    )!,
+
+  const owned = or(
+    eq(transportRequests.requesterUserId, context.userId),
+    eq(transportRequests.enteredByUserId, context.userId),
   )!;
+
+  // "My Requests" / self scope means requests the signed-in user created or
+  // that were entered on their behalf. Passenger participation is a related
+  // relationship, not ownership; including it in self scope exposed another
+  // requester's draft in My Requests/My Drafts before submission.
+  if (context.recordScope === 'self') return and(tenant, owned)!;
+
+  const participant = sql`exists (
+    select 1 from ${requestPassengers} rp
+    inner join ${employees} e on e.id = rp.employee_id
+    where rp.request_id = ${transportRequests.id}
+      and e.tenant_id = ${context.tenantId}
+      and e.user_id = ${context.userId}
+      and rp.status <> 'removed'
+  )`;
+
+  return and(tenant, or(owned, participant)!)!;
 }
 
 export function tripScopeCondition(context: RecordScopeContext): SQL {
