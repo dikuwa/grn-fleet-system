@@ -93,9 +93,15 @@ export async function POST(
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
-      .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId)))
+      .where(
+        and(
+          eq(trips.id, id),
+          eq(trips.tenantId, session.tenantId),
+          eq(vehicleAllocations.state, 'confirmed'),
+        ),
+      )
       .limit(1);
-    if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+    if (!trip) return NextResponse.json({ error: 'Current confirmed trip not found' }, { status: 404 });
 
     const [employee] = await db
       .select({ id: employees.id })
