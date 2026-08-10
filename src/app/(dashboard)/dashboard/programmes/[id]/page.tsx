@@ -70,6 +70,12 @@ interface LinkedRequest {
   createdAt: string;
 }
 
+interface ProgrammeCapabilities {
+  canEdit: boolean;
+  canDelete: boolean;
+  allowedActions: string[];
+}
+
 const STATUS_VARIANT: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled'> = {
   draft: 'pending',
   submitted: 'info',
@@ -81,7 +87,7 @@ const STATUS_VARIANT: Record<string, 'success' | 'pending' | 'info' | 'error' | 
   completed: 'success',
 };
 
-const ALLOWED_ACTIONS: Record<string, { action: string; label: string; variant: 'primary' | 'secondary' | 'destructive' }[]> = {
+const ACTIONS_BY_STATUS: Record<string, { action: string; label: string; variant: 'primary' | 'secondary' | 'destructive' }[]> = {
   draft: [
     { action: 'submit', label: 'Submit for Review', variant: 'primary' },
     { action: 'archive', label: 'Archive', variant: 'secondary' },
@@ -149,6 +155,11 @@ export default function ProgrammeDetailPage() {
 
   const programme: Programme | undefined = data?.data?.programme;
   const linkedRequests: LinkedRequest[] = data?.data?.linkedRequests || [];
+  const capabilities: ProgrammeCapabilities = data?.data?.capabilities || {
+    canEdit: false,
+    canDelete: false,
+    allowedActions: [],
+  };
 
   const openAction = useCallback((action: string) => {
     setNote('');
@@ -229,7 +240,8 @@ export default function ProgrammeDetailPage() {
     );
   }
 
-  const actions = ALLOWED_ACTIONS[programme.status] || [];
+  const allowedActionSet = new Set(capabilities.allowedActions);
+  const actions = (ACTIONS_BY_STATUS[programme.status] || []).filter((item) => allowedActionSet.has(item.action));
   const requiresNote = actionDialog === 'request_changes' || actionDialog === 'reject';
 
   return (
@@ -251,14 +263,14 @@ export default function ProgrammeDetailPage() {
               <ArrowLeft className="h-4 w-4" /> Back
             </Link>
           </Button>
-          {programme.status === 'draft' && (
+          {capabilities.canEdit && (
             <Button variant="secondary" size="sm" asChild>
               <Link href={`/dashboard/programmes/${id}/edit`}>
                 <Pencil className="h-4 w-4" /> Edit
               </Link>
             </Button>
           )}
-          {programme.status === 'draft' && (
+          {capabilities.canDelete && (
             <Button variant="destructive" size="sm" onClick={deleteDraft} loading={isWorking}>
               <Trash2 className="h-4 w-4" /> Delete
             </Button>
@@ -286,7 +298,6 @@ export default function ProgrammeDetailPage() {
       </PageHeader>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Main details */}
         <div className="space-y-6 lg:col-span-2">
           <Card>
             <CardHeader>
@@ -298,25 +309,17 @@ export default function ProgrammeDetailPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {programme.description && (
-                <p className="text-ink-700 text-sm">{programme.description}</p>
-              )}
+              {programme.description && <p className="text-ink-700 text-sm">{programme.description}</p>}
               {programme.purpose && (
                 <div>
-                  <p className="text-ink-500 mb-1 text-xs font-medium uppercase tracking-wider">
-                    Purpose / Travel Requirement
-                  </p>
+                  <p className="text-ink-500 mb-1 text-xs font-medium uppercase tracking-wider">Purpose / Travel Requirement</p>
                   <p className="text-ink-700 text-sm">{programme.purpose}</p>
                 </div>
               )}
               {programme.plannedActivities && (
                 <div>
-                  <p className="text-ink-500 mb-1 text-xs font-medium uppercase tracking-wider">
-                    Planned Activities
-                  </p>
-                  <p className="text-ink-700 text-sm whitespace-pre-line">
-                    {programme.plannedActivities}
-                  </p>
+                  <p className="text-ink-500 mb-1 text-xs font-medium uppercase tracking-wider">Planned Activities</p>
+                  <p className="text-ink-700 text-sm whitespace-pre-line">{programme.plannedActivities}</p>
                 </div>
               )}
 
@@ -353,32 +356,25 @@ export default function ProgrammeDetailPage() {
                 </div>
                 <div className="rounded-[8px] bg-muted p-3">
                   <p className="text-[11px] text-ink-500 uppercase tracking-wider">Department</p>
-                  <p className="text-ink-950 mt-0.5 text-sm font-medium">
-                    {programme.departmentName || programme.department || '—'}
-                  </p>
+                  <p className="text-ink-950 mt-0.5 text-sm font-medium">{programme.departmentName || programme.department || '—'}</p>
                 </div>
               </div>
 
               {programme.reviewNotes && (
                 <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200">
-                  <p className="mb-1 text-xs font-medium uppercase tracking-wider">
-                    Reviewer Notes
-                  </p>
+                  <p className="mb-1 text-xs font-medium uppercase tracking-wider">Reviewer Notes</p>
                   {programme.reviewNotes}
                 </div>
               )}
               {programme.rejectionReason && (
                 <div className="rounded-[8px] border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800/40 dark:bg-red-950/20 dark:text-red-300">
-                  <p className="mb-1 text-xs font-medium uppercase tracking-wider">
-                    Rejection Reason
-                  </p>
+                  <p className="mb-1 text-xs font-medium uppercase tracking-wider">Rejection Reason</p>
                   {programme.rejectionReason}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Linked transport requests */}
           <Card>
             <CardHeader>
               <CardTitle>Linked Transport Requests</CardTitle>
@@ -386,8 +382,7 @@ export default function ProgrammeDetailPage() {
             <CardContent>
               {linkedRequests.length === 0 ? (
                 <p className="py-4 text-center text-xs text-ink-400">
-                  No transport requests are linked to this programme yet. Published programmes
-                  can be selected when creating a transport request.
+                  No transport requests are linked to this programme yet. Published programmes can be selected when creating a transport request.
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -412,7 +407,6 @@ export default function ProgrammeDetailPage() {
           </Card>
         </div>
 
-        {/* Sidebar: ownership + timeline */}
         <div className="space-y-6">
           <Card>
             <CardHeader>
@@ -424,9 +418,7 @@ export default function ProgrammeDetailPage() {
                 <p className="text-ink-950 font-medium">
                   {[programme.ownerFirstName, programme.ownerLastName].filter(Boolean).join(' ') || '—'}
                 </p>
-                {programme.ownerJobTitle && (
-                  <p className="text-ink-500 text-xs">{programme.ownerJobTitle}</p>
-                )}
+                {programme.ownerJobTitle && <p className="text-ink-500 text-xs">{programme.ownerJobTitle}</p>}
               </div>
               {programme.officeName && (
                 <div>
@@ -466,20 +458,15 @@ export default function ProgrammeDetailPage() {
         </div>
       </div>
 
-      {/* Action dialog */}
       <Dialog open={Boolean(actionDialog)} onOpenChange={(open) => !open && setActionDialog(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {actionDialog ? ACTION_LABEL[actionDialog] ?? 'Confirm Action' : ''}
-            </DialogTitle>
+            <DialogTitle>{actionDialog ? ACTION_LABEL[actionDialog] ?? 'Confirm Action' : ''}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {requiresNote && (
               <div className="space-y-1.5">
-                <Label required>
-                  {actionDialog === 'reject' ? 'Rejection Reason' : 'What changes are required?'}
-                </Label>
+                <Label required>{actionDialog === 'reject' ? 'Rejection Reason' : 'What changes are required?'}</Label>
                 <textarea
                   className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 min-h-[90px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                   placeholder="Provide details for the programme creator…"
@@ -488,36 +475,14 @@ export default function ProgrammeDetailPage() {
                 />
               </div>
             )}
-            {actionDialog === 'submit' && (
-              <p className="text-ink-600 text-sm">
-                Submitting sends this programme to the Tenant Administrator for review.
-              </p>
-            )}
-            {actionDialog === 'approve' && (
-              <p className="text-ink-600 text-sm">
-                Approve this programme so it can be published and linked to transport requests.
-              </p>
-            )}
-            {actionDialog === 'publish' && (
-              <p className="text-ink-600 text-sm">
-                Publishing makes this programme selectable when creating transport requests.
-              </p>
-            )}
-            {actionDialog === 'archive' && (
-              <p className="text-ink-600 text-sm">
-                Archive this programme. Archived programmes are hidden from request creation.
-              </p>
-            )}
-            {actionDialog === 'complete' && (
-              <p className="text-ink-600 text-sm">
-                Mark this programme as completed.
-              </p>
-            )}
+            {actionDialog === 'submit' && <p className="text-ink-600 text-sm">Submitting sends this programme to an independent Tenant Administrator for review.</p>}
+            {actionDialog === 'approve' && <p className="text-ink-600 text-sm">Approve this programme so it can be published and linked to transport requests.</p>}
+            {actionDialog === 'publish' && <p className="text-ink-600 text-sm">Publishing makes this programme selectable when creating transport requests.</p>}
+            {actionDialog === 'archive' && <p className="text-ink-600 text-sm">Archive this programme. Archived programmes are hidden from request creation.</p>}
+            {actionDialog === 'complete' && <p className="text-ink-600 text-sm">Mark this programme as completed.</p>}
 
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setActionDialog(null)}>
-                Cancel
-              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setActionDialog(null)}>Cancel</Button>
               <Button
                 variant={actionDialog === 'reject' ? 'destructive' : 'primary'}
                 size="sm"
