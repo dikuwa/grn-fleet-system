@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees } from '@/db/schema/people';
@@ -83,14 +83,31 @@ export async function processDriverAcknowledgement(input: {
     .where(and(
       eq(transportRequests.id, instance.requestId),
       eq(transportRequests.tenantId, session.tenantId),
+      eq(vehicleAllocations.state, 'confirmed'),
       eq(trips.tenantId, session.tenantId),
       eq(tripAuthorities.tenantId, session.tenantId),
     ))
+    .orderBy(desc(vehicleAllocations.updatedAt), desc(vehicleAllocations.createdAt))
     .limit(1);
   if (!context) {
     return {
       ok: false,
-      error: NextResponse.json({ error: 'The authorised trip, allocation or driver assignment could not be found.' }, { status: 409 }),
+      error: NextResponse.json({ error: 'The current confirmed trip, allocation or driver assignment could not be found.' }, { status: 409 }),
+    };
+  }
+
+  const expectedTripId = typeof acceptanceData?.tripId === 'string' ? acceptanceData.tripId : null;
+  const expectedAuthorityId = typeof acceptanceData?.authorityId === 'string' ? acceptanceData.authorityId : null;
+  if (
+    (expectedTripId && expectedTripId !== context.tripId) ||
+    (expectedAuthorityId && expectedAuthorityId !== context.authorityId)
+  ) {
+    return {
+      ok: false,
+      error: NextResponse.json(
+        { error: 'The trip assignment changed before acknowledgement. Refresh the Driver Console and review the current trip.' },
+        { status: 409 },
+      ),
     };
   }
   if (!context.driverUserId || context.driverUserId !== session.user.id) {
