@@ -4,9 +4,11 @@ import { programmes } from '@/db/schema/programmes';
 import { transportRequests } from '@/db/schema/requests';
 import { employees, departments, offices } from '@/db/schema/people';
 import { regions } from '@/db/schema/fleet';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { hasPermission, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, or, sql } from 'drizzle-orm';
+import { resolveActiveRoleRecipients } from '@/lib/notification-service';
+import { SystemRoles } from '@/lib/workspaces';
 import {
   isProgrammeOwnedByUser,
   resolveProgrammeAccess,
@@ -98,6 +100,53 @@ export async function GET(
       return NextResponse.json({ error: 'Programme not found' }, { status: 404 });
     }
 
+    const [
+      canEditOwn,
+      canEditAny,
+      canSubmitPermission,
+      canReview,
+      canApprove,
+      canReject,
+      canPublish,
+      canArchive,
+    ] = await Promise.all([
+      hasPermission(session, Permissions.PROGRAMME_EDIT_OWN),
+      hasPermission(session, Permissions.PROGRAMME_EDIT_ANY),
+      hasPermission(session, Permissions.PROGRAMME_SUBMIT),
+      hasPermission(session, Permissions.PROGRAMME_REVIEW),
+      hasPermission(session, Permissions.PROGRAMME_APPROVE),
+      hasPermission(session, Permissions.PROGRAMME_REJECT),
+      hasPermission(session, Permissions.PROGRAMME_PUBLISH),
+      hasPermission(session, Permissions.PROGRAMME_ARCHIVE),
+    ]);
+
+    const editableState = ['draft', 'changes_requested'].includes(programme.status);
+    const canEdit = editableState && (isOwner ? canEditOwn : canEditAny);
+    const canDelete = programme.status === 'draft' && (isOwner ? canEditOwn : canEditAny);
+    const allowedActions: string[] = [];
+
+    if (['draft', 'changes_requested'].includes(programme.status)) {
+      if (canSubmitPermission && (isOwner || canEditAny)) {
+        const reviewers = await resolveActiveRoleRecipients(session.tenantId, [SystemRoles.TENANT_ADMIN]);
+        if (reviewers.some((recipientUserId) => recipientUserId !== session.user.id)) {
+          allowedActions.push('submit');
+        }
+      }
+      if (canArchive) allowedActions.push('archive');
+    } else if (programme.status === 'submitted' && !isOwner) {
+      if (canApprove) allowedActions.push('approve');
+      if (canReview) allowedActions.push('request_changes');
+      if (canReject) allowedActions.push('reject');
+    } else if (programme.status === 'approved') {
+      if (canPublish) allowedActions.push('publish');
+      if (canArchive) allowedActions.push('archive');
+    } else if (programme.status === 'published') {
+      if (canPublish) allowedActions.push('complete');
+      if (canArchive) allowedActions.push('archive');
+    } else if (programme.status === 'completed' && canArchive) {
+      allowedActions.push('archive');
+    }
+
     const linkedConditions = [
       eq(transportRequests.programmeId, id),
       eq(transportRequests.tenantId, session.tenantId),
@@ -123,7 +172,14 @@ export async function GET(
       .where(and(...linkedConditions))
       .orderBy(sql`${transportRequests.createdAt} DESC`);
 
-    return NextResponse.json({ success: true, data: { programme, linkedRequests } });
+    return NextResponse.json({
+      success: true,
+      data: {
+        programme,
+        linkedRequests,
+        capabilities: { canEdit, canDelete, allowedActions },
+      },
+    });
   } catch (error) {
     console.error('[Programmes] GET detail failed:', error);
     return NextResponse.json({ error: 'Failed to load programme' }, { status: 500 });
@@ -154,11 +210,11 @@ export async function PATCH(
 
     const isOwner = isProgrammeOwnedByUser(existing, userId, access.employeeId);
     if (isOwner) {
-      const permCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_OWN);
-      if (permCheck instanceof NextResponse) return permCheck;
+      const editCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_OWN);
+      if (editCheck instanceof NextResponse) return editCheck;
     } else {
-      const permCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_ANY);
-      if (permCheck instanceof NextResponse) return permCheck;
+      const editCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_ANY);
+      if (editCheck instanceof NextResponse) return editCheck;
     }
 
     if (!['draft', 'changes_requested'].includes(existing.status)) {
@@ -430,11 +486,11 @@ export async function DELETE(
 
     const isOwner = isProgrammeOwnedByUser(existing, userId, access.employeeId);
     if (isOwner) {
-      const permCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_OWN);
-      if (permCheck instanceof NextResponse) return permCheck;
+      const editCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_OWN);
+      if (editCheck instanceof NextResponse) return editCheck;
     } else {
-      const permCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_ANY);
-      if (permCheck instanceof NextResponse) return permCheck;
+      const editCheck = await requirePermission(session, Permissions.PROGRAMME_EDIT_ANY);
+      if (editCheck instanceof NextResponse) return editCheck;
     }
 
     const beforeAudit = JSON.stringify({
