@@ -25,6 +25,35 @@ import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
+const LOG_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const LOG_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const WINDHOEK_OFFSET = '+02:00';
+
+function parseLogDate(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const match = LOG_DATE_PATTERN.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  if (
+    utc.getUTCFullYear() !== year ||
+    utc.getUTCMonth() !== month - 1 ||
+    utc.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return new Date(`${value}T00:00:00${WINDHOEK_OFFSET}`);
+}
+
+function parseLogTime(logDate: string, value: unknown): Date | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string' || !LOG_TIME_PATTERN.test(value)) return null;
+  const parsed = new Date(`${logDate}T${value}:00${WINDHOEK_OFFSET}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 /**
  * GET /api/trip-logs
  * List log entries for a specific trip, or all recent entries.
@@ -146,6 +175,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Log date is required' }, { status: 400 });
     }
 
+    const parsedLogDate = parseLogDate(logDate);
+    if (!parsedLogDate) {
+      return NextResponse.json(
+        { error: 'Log date must be a valid date in YYYY-MM-DD format' },
+        { status: 422 },
+      );
+    }
+
+    const parsedDeparture = parseLogTime(logDate, departureTime);
+    if (departureTime && !parsedDeparture) {
+      return NextResponse.json(
+        { error: 'Departure time must be a valid 24-hour time in HH:mm format' },
+        { status: 422 },
+      );
+    }
+    const parsedArrival = parseLogTime(logDate, arrivalTime);
+    if (arrivalTime && !parsedArrival) {
+      return NextResponse.json(
+        { error: 'Arrival time must be a valid 24-hour time in HH:mm format' },
+        { status: 422 },
+      );
+    }
+    if (parsedDeparture && parsedArrival && parsedArrival < parsedDeparture) {
+      return NextResponse.json(
+        { error: 'Arrival time cannot be earlier than departure time for the same daily log' },
+        { status: 422 },
+      );
+    }
+
     const db = getDb();
 
     // Verify the trip exists and belongs to the tenant
@@ -237,12 +295,26 @@ export async function POST(request: NextRequest) {
         { error: 'Odometer-in cannot be lower than odometer-out' },
         { status: 422 },
       );
+
+    const submittedDistance =
+      distanceKm === null || distanceKm === undefined || distanceKm === ''
+        ? null
+        : Number(distanceKm);
+    if (
+      submittedDistance !== null &&
+      (!Number.isInteger(submittedDistance) || submittedDistance < 0)
+    ) {
+      return NextResponse.json(
+        { error: 'Distance must be a non-negative whole number' },
+        { status: 422 },
+      );
+    }
+
     const calculatedDistance = out !== null && incoming !== null ? incoming - out : null;
     if (
-      distanceKm !== null &&
-      distanceKm !== undefined &&
+      submittedDistance !== null &&
       calculatedDistance !== null &&
-      Number(distanceKm) !== calculatedDistance
+      submittedDistance !== calculatedDistance
     ) {
       return NextResponse.json(
         { error: 'Distance must match the submitted odometer readings' },
@@ -272,14 +344,14 @@ export async function POST(request: NextRequest) {
         tripId,
         clientSyncId: clientSyncId || null,
         driverEmployeeId: employee.id,
-        logDate: new Date(logDate),
+        logDate: parsedLogDate,
         odometerOut: out,
         odometerIn: incoming,
-        departureTime: departureTime ? new Date(`${logDate}T${departureTime}`) : null,
-        arrivalTime: arrivalTime ? new Date(`${logDate}T${arrivalTime}`) : null,
+        departureTime: parsedDeparture,
+        arrivalTime: parsedArrival,
         origin: origin || null,
         destination: destination || null,
-        distanceKm: calculatedDistance ?? (distanceKm ? Number(distanceKm) : null),
+        distanceKm: calculatedDistance ?? submittedDistance,
         remarks: remarks || null,
         isSynced: true,
         syncState: 'synced',
