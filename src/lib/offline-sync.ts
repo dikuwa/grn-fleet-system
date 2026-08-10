@@ -241,7 +241,11 @@ export async function syncSingleDraft(
         });
         if (!receiptResponse.ok) {
           const receiptError = await receiptResponse.json().catch(() => ({ error: 'Receipt sync failed' }));
-          throw new Error(receiptError.error || 'Receipt sync failed');
+          const duplicateRecovered =
+            receiptResponse.status === 409 && typeof receiptError.duplicateReceiptId === 'string';
+          if (!duplicateRecovered) {
+            throw new Error(receiptError.error || 'Receipt sync failed');
+          }
         }
       }
     }
