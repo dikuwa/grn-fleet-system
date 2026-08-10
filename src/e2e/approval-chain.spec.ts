@@ -183,18 +183,37 @@ test.describe('Full regional approval chain', () => {
     });
     expect(assignRes.status(), await assignRes.text()).toBe(200);
 
-    // ── 4. Transport review → release → authorise → driver acknowledge ───
+    // ── 4. Approval workspace handles review/release/authorisation only ───
     for (const [api, label] of [
       [transport, 'transport review'],
       [release, 'release'],
       [authoriser, 'authorise'],
-      [driver, 'driver ack'],
     ] as const) {
       const res = await api.post(`/api/approvals/${requestData.workflowInstanceId}/action`, {
         data: { actionType: 'approved', comment: `E2E chain: ${label}` },
       });
       expect(res.status(), `${label}: ${await res.text()}`).toBe(200);
     }
+
+    // Driver acknowledgement is deliberately not a generic approval. Exercise
+    // the production Driver Console endpoint so vehicle/authority/route/
+    // passenger/licence confirmations and the atomic acknowledgement helper
+    // are covered end-to-end.
+    expect(tripId).toBeTruthy();
+    const driverAck = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+      data: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+        conditionsReviewed: true,
+        signature: 'E2E driver acknowledgement',
+        comment: 'E2E chain: driver acknowledgement',
+      },
+    });
+    expect(driverAck.status(), `driver ack: ${await driverAck.text()}`).toBe(200);
 
     // ── 5. Request detail page shows the terminal status 'Authorised' ─────
     // Reuse the transport-admin API session we already hold.
