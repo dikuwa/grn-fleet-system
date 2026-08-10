@@ -293,9 +293,12 @@ export async function syncPendingDrafts(filters?: {
     }
   }
 
-  // Clean up successfully synced drafts
-  if (result.synced > 0) {
-    await removeSyncedDrafts();
+  // Clean up successfully synced drafts only when the caller supplied a full
+  // identity scope. This preserves the shared-device safety rule in
+  // removeSyncedDrafts while allowing the dashboard sync handler to actually
+  // remove the current user's completed drafts.
+  if (result.synced > 0 && filters?.userId && filters?.tenantId) {
+    await removeSyncedDrafts({ userId: filters.userId, tenantId: filters.tenantId });
   }
 
   return result;
