@@ -86,10 +86,35 @@ export interface PredictionSummary {
 const DEFAULT_SERVICE_INTERVAL_KM = 15000;
 const DEFAULT_SERVICE_INTERVAL_DAYS = 180; // 6 months
 
-export async function generatePredictions(tenantId: string): Promise<PredictionSummary> {
+/**
+ * Generate predictions for active tenant vehicles.
+ *
+ * `allowedVehicleIds` is an authorization boundary supplied by the caller.
+ * - undefined: all active tenant vehicles (tenant-wide administrative callers)
+ * - []: no vehicles are visible
+ * - populated array: only those tenant vehicles are scored
+ */
+export async function generatePredictions(
+  tenantId: string,
+  allowedVehicleIds?: readonly string[],
+): Promise<PredictionSummary> {
   const db = getDb();
 
-  // Get all active vehicles
+  if (allowedVehicleIds && allowedVehicleIds.length === 0) {
+    return {
+      predictions: [],
+      summary: { total: 0, urgent: 0, soon: 0, normal: 0, averageUrgency: 0 },
+    };
+  }
+
+  const vehicleConditions = [
+    eq(vehicles.tenantId, tenantId),
+    eq(vehicles.isActive, true),
+  ];
+  if (allowedVehicleIds) {
+    vehicleConditions.push(inArray(vehicles.id, [...allowedVehicleIds]));
+  }
+
   const vehicleRows = await db
     .select({
       id: vehicles.id,
@@ -103,9 +128,8 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
       licenceExpiryDate: vehicles.licenceExpiryDate,
     })
     .from(vehicles)
-    .where(and(eq(vehicles.tenantId, tenantId), eq(vehicles.isActive, true)));
+    .where(and(...vehicleConditions));
 
-  // Get latest maintenance events per vehicle
   const vehicleIds = vehicleRows.map((v) => v.id);
   const latestMaintenance: Array<{
     vehicleId: string;
@@ -117,7 +141,6 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
   }> = [];
 
   if (vehicleIds.length > 0) {
-    // Get the most recent maintenance event per vehicle using Drizzle
     const rows = await db
       .select({
         vehicleId: maintenanceEvents.vehicleId,
@@ -131,7 +154,6 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
       .where(inArray(maintenanceEvents.vehicleId, vehicleIds))
       .orderBy(desc(maintenanceEvents.serviceDate));
 
-    // Drizzle doesn't support DISTINCT ON via query builder, so we dedupe post-query
     const seen = new Set<string>();
     for (const row of rows) {
       if (!seen.has(row.vehicleId)) {
@@ -157,7 +179,6 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
     const complianceFlags: string[] = [];
     const recommendations: string[] = [];
 
-    // --- Factor 1: Odometer-based prediction ---
     let kmSinceLastService: number | null = null;
     if (lastService?.serviceOdometer != null) {
       kmSinceLastService = v.currentOdometer - lastService.serviceOdometer;
@@ -183,7 +204,6 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
     }
     factors.push({ name: 'Odometer Interval', score: odometerScore, weight: 0.35, detail: odometerDetail });
 
-    // --- Factor 2: Time-based prediction ---
     let daysSinceLastService: number | null = null;
     if (lastService?.serviceDate) {
       daysSinceLastService = Math.floor((now.getTime() - new Date(lastService.serviceDate).getTime()) / (1000 * 60 * 60 * 24));
@@ -210,7 +230,6 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
     }
     factors.push({ name: 'Time Interval', score: timeScore, weight: 0.30, detail: timeDetail });
 
-    // --- Factor 3: Compliance risk ---
     let complianceScore = 0;
     const complianceDetails: string[] = [];
     if (v.licenceExpiryDate) {
@@ -242,7 +261,6 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
     if (complianceDetails.length === 0) complianceDetails.push('All compliance items valid');
     factors.push({ name: 'Compliance', score: complianceScore, weight: 0.20, detail: complianceDetails.join('; ') });
 
-    // --- Factor 4: Usage intensity ---
     let usageScore = 0;
     let usageDetail = '';
     const age = v.manufactureYear ? now.getFullYear() - v.manufactureYear : 0;
@@ -265,18 +283,15 @@ export async function generatePredictions(tenantId: string): Promise<PredictionS
     }
     factors.push({ name: 'Usage Intensity', score: usageScore, weight: 0.15, detail: usageDetail });
 
-    // --- Calculate average km/day ---
     let averageKmPerDay: number | null = null;
     if (kmSinceLastService != null && daysSinceLastService != null && daysSinceLastService > 0) {
       averageKmPerDay = Math.round((kmSinceLastService / daysSinceLastService) * 10) / 10;
     }
 
-    // --- Weighted urgency score ---
     const urgencyScore = Math.min(100, Math.round(
       factors.reduce((sum, f) => sum + f.score * f.weight, 0),
     ));
 
-    // --- Predicted next service ---
     let predictedServiceDate: string | null = null;
     let predictedServiceOdometer: number | null = null;
 
