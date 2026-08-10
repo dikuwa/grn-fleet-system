@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
-import {requireRequestAuth} from '@/lib/auth-helpers';
+import { requireRequestAuth } from '@/lib/auth-helpers';
 
 import { eq, and, desc } from 'drizzle-orm';
 
+const SELF_SERVICE_TERMINAL_HISTORY = new Set(['superseded', 'rejected']);
+
 /**
  * GET /api/drivers/me
- * Returns the current user's driver profile, licences, and employee info.
- * Used by the Driver Self-Service Portal.
+ * Returns the current user's driver profile, current/reviewable licences, and employee info.
+ * Superseded/rejected licence versions remain preserved in the database and Transport review
+ * history, but are deliberately omitted from the Driver's current compliance feed so an old
+ * expired version cannot produce a false "licence expired" alert after renewal.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -41,7 +45,10 @@ export async function GET(req: NextRequest) {
       .then((r) => r[0] ?? null);
 
     if (!employee) {
-      return NextResponse.json({ driver: null, error: 'No employee profile linked to your account' }, { status: 200 });
+      return NextResponse.json(
+        { driver: null, error: 'No employee profile linked to your account' },
+        { status: 200 },
+      );
     }
 
     // Get driver profile
@@ -60,12 +67,17 @@ export async function GET(req: NextRequest) {
       }, { status: 200 });
     }
 
-    // Get driver licences
-    const licences = await db
+    // Preserve all versions in storage/database, but expose only records that are relevant
+    // to the Driver's current compliance or an in-flight renewal submission.
+    const allLicences = await db
       .select()
       .from(driverLicences)
       .where(eq(driverLicences.driverProfileId, profile.id))
-      .orderBy(desc(driverLicences.expiryDate));
+      .orderBy(desc(driverLicences.version));
+
+    const licences = allLicences.filter(
+      (licence) => licence.isActive || !SELF_SERVICE_TERMINAL_HISTORY.has(licence.verificationStatus),
+    );
 
     return NextResponse.json({
       driver: {
@@ -90,7 +102,10 @@ export async function GET(req: NextRequest) {
           expiryDate: l.expiryDate,
           allowedVehicleCategories: l.allowedVehicleCategories,
           verificationStatus: l.verificationStatus,
+          isActive: l.isActive,
+          version: l.version,
         })),
+        licenceHistoryCount: allLicences.length,
       },
     });
   } catch (error) {
