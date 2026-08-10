@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
@@ -236,6 +236,11 @@ export async function processAuthorisationDecision(input: {
     };
   }
 
+  // Final authorisation must be tied to the current operational assignment.
+  // Reallocations preserve historical allocation rows, so an unordered request
+  // lookup could provision the authority against a cancelled/stale vehicle or
+  // driver. Only a confirmed allocation is eligible; if defensive duplicate
+  // confirmed rows exist, prefer the most recently updated assignment.
   const [allocationContext] = await db
     .select({
       allocationId: vehicleAllocations.id,
@@ -246,12 +251,19 @@ export async function processAuthorisationDecision(input: {
     .from(vehicleAllocations)
     .innerJoin(trips, eq(trips.allocationId, vehicleAllocations.id))
     .leftJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
-    .where(and(eq(vehicleAllocations.requestId, instance.requestId), eq(trips.tenantId, session.tenantId)))
+    .where(
+      and(
+        eq(vehicleAllocations.requestId, instance.requestId),
+        eq(vehicleAllocations.state, 'confirmed'),
+        eq(trips.tenantId, session.tenantId),
+      ),
+    )
+    .orderBy(desc(vehicleAllocations.updatedAt), desc(vehicleAllocations.createdAt))
     .limit(1);
   if (!allocationContext?.driverEmployeeId || !allocationContext.driverUserId) {
     return {
       ok: false,
-      error: NextResponse.json({ error: 'A vehicle and linked eligible driver must be allocated before final authorisation.' }, { status: 409 }),
+      error: NextResponse.json({ error: 'A current confirmed vehicle allocation and linked eligible driver are required before final authorisation.' }, { status: 409 }),
     };
   }
 
