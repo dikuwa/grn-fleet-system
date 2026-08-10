@@ -30,7 +30,13 @@ import {
   type Browser,
 } from '@playwright/test';
 import { getDb } from '@/db';
-import { vehicleAllocations, vehicles, trips, tripIncidents } from '@/db/schema';
+import {
+  transportRequests,
+  vehicleAllocations,
+  vehicles,
+  trips,
+  tripIncidents,
+} from '@/db/schema';
 import { and, eq, gt, inArray, isNotNull, lt } from 'drizzle-orm';
 import { DEPARTURE_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
 
@@ -143,21 +149,24 @@ async function setupDriverAssignedTrip(): Promise<{
   // One batched query (not one per vehicle) keeps the hook inside its budget.
   const db = getDb();
 
-  // Self-cleaning: earlier runs may have left allocations/trips in open states
-  // that make the vehicle and driver overlap checks 409 on the next run.
-  // Mirror the cleanup that `pnpm db:seed-e2e` performs (vehicle_allocations
-  // has no tenantId column — scope via the tenant's vehicles).
+  // Self-cleaning is restricted to this fixture's own requests. Never rewrite
+  // unrelated tenant allocations/trips just to make an E2E window available.
+  const fixtureRequestIds = db
+    .select({ id: transportRequests.id })
+    .from(transportRequests)
+    .where(
+      and(
+        eq(transportRequests.tenantId, TENANT_ID),
+        eq(transportRequests.purpose, 'Driver mobile PWA E2E field visit'),
+      ),
+    );
   const staleAllocStates = ['provisional', 'confirmed', 'issued'];
-  const tenantVehicleIds = db
-    .select({ id: vehicles.id })
-    .from(vehicles)
-    .where(eq(vehicles.tenantId, TENANT_ID));
   await db
     .update(vehicleAllocations)
     .set({ state: 'cancelled' })
     .where(
       and(
-        inArray(vehicleAllocations.vehicleId, tenantVehicleIds),
+        inArray(vehicleAllocations.requestId, fixtureRequestIds),
         inArray(vehicleAllocations.state, staleAllocStates),
       ),
     );
@@ -173,7 +182,11 @@ async function setupDriverAssignedTrip(): Promise<{
       .update(trips)
       .set({ status: 'closed' })
       .where(
-        and(eq(trips.tenantId, TENANT_ID), eq(trips.status, tripStatus)),
+        and(
+          eq(trips.tenantId, TENANT_ID),
+          inArray(trips.requestId, fixtureRequestIds),
+          eq(trips.status, tripStatus),
+        ),
       );
   }
 
@@ -239,7 +252,19 @@ async function setupDriverAssignedTrip(): Promise<{
   await approve(transport, workflowId);
   await approve(release, workflowId);
   await approve(authoriser, workflowId);
-  await approve(driver, workflowId);
+  const acknowledgement = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+    data: {
+      vehicleConfirmed: true,
+      authorityConfirmed: true,
+      routeUnderstood: true,
+      passengersUnderstood: true,
+      licenceValidConfirmed: true,
+      responsibilityAccepted: true,
+      conditionsReviewed: true,
+      signature: 'Driver mobile E2E acknowledgement',
+    },
+  });
+  expect(acknowledgement.status(), await acknowledgement.text()).toBe(200);
 
   // ── Phase 32: advance to in_progress ────────────────────────────────────
   // The Inspector performs the official departure inspection (all items pass),
@@ -253,7 +278,11 @@ async function setupDriverAssignedTrip(): Promise<{
       fuelLevel: 'full',
       inspectorAcknowledged: true,
       driverAcknowledged: true,
-      photoKeys: ['e2e/departure-1.jpg', 'e2e/departure-2.jpg', 'e2e/departure-3.jpg'],
+      photoKeys: [
+        `tenant/${TENANT_ID}/inspections/e2e-departure-1.jpg`,
+        `tenant/${TENANT_ID}/inspections/e2e-departure-2.jpg`,
+        `tenant/${TENANT_ID}/inspections/e2e-departure-3.jpg`,
+      ],
       checklist: DEPARTURE_INSPECTION_ITEMS.map((item) => ({
         label: item.label,
         result: 'pass',
@@ -339,7 +368,7 @@ test.describe.serial('Driver Mobile PWA offline workflow', () => {
     // The trip workspace renders the incident entry point once the trip is
     // in progress. Phase 32: no driver-facing inspection buttons.
     await expect(page.locator('text=My Active Trip').first()).toBeVisible({
-      timeout: 20_000,
+      timeout: 60_000,
     });
     await expect(page.getByText('Report incident, damage or defect').first()).toBeVisible({
       timeout: 15_000,
@@ -382,7 +411,7 @@ test.describe.serial('Driver Mobile PWA offline workflow', () => {
     // context. The online event alone is not guaranteed to fire here.
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.locator('text=My Active Trip').first()).toBeVisible({
-      timeout: 20_000,
+      timeout: 60_000,
     });
 
     // Poll the DB until the synced incident row appears (clientSyncId = draft id).

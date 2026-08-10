@@ -415,7 +415,7 @@ export async function replaceVehicle(
         FROM allocation_claim
         RETURNING id
       )
-      SELECT CASE
+      SELECT CAST(CASE
         WHEN (SELECT count(*) FROM candidate_lock) = 1
          AND (SELECT count(*) FROM allocation_claim) = 1
          AND CASE WHEN ${Boolean(context.tripId)} THEN (SELECT count(*) FROM trip_update) = 1 ELSE true END
@@ -432,9 +432,9 @@ export async function replaceVehicle(
            AND (SELECT count(*) FROM replacement_status_event) = 1
            ELSE true END
          AND (SELECT count(*) FROM audit_insert) = 1
-        THEN 1
-        ELSE CAST('atomic_vehicle_replacement_failed' AS integer)
-      END AS committed
+        THEN '1'
+        ELSE 'atomic_vehicle_replacement_failed_' || (SELECT count(*) FROM allocation_claim)::text
+      END AS integer) AS committed
     `);
   } catch (error) {
     if (String(error).includes('atomic_vehicle_replacement_failed')) {

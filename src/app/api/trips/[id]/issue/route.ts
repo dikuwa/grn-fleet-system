@@ -194,14 +194,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         FROM request_claim
         RETURNING id
       )
-      SELECT CASE
+      -- Keep the rollback sentinel dependent on the data-changing CTE results.
+      -- A constant invalid cast in the ELSE branch may be folded by PostgreSQL
+      -- while planning, which aborts even a fully successful issue operation.
+      SELECT CAST(CASE
         WHEN (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM issue_insert) = 1
          AND (SELECT count(*) FROM request_claim) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
-        THEN 1
-        ELSE CAST('atomic_trip_issue_failed' AS integer)
-      END AS committed
+        THEN '1'
+        ELSE 'atomic_trip_issue_failed_'
+          || (SELECT count(*) FROM trip_claim)::text
+          || (SELECT count(*) FROM issue_insert)::text
+          || (SELECT count(*) FROM request_claim)::text
+          || (SELECT count(*) FROM audit_insert)::text
+      END AS integer) AS committed
     `);
 
     const [issue] = await db
