@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicles, vehicleDocuments } from '@/db/schema/fleet';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import {eq, sql} from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 /**
  * GET /api/fleet/compliance
- * Returns vehicles with compliance status, expiry tracking, and upcoming items
+ * Returns vehicles with compliance status, expiry tracking, and upcoming items.
+ * Access is intentionally limited to workspaces registered for the Compliance
+ * Reports route; VEHICLE_VIEW alone must not widen an assigned/related workspace
+ * into a tenant-wide compliance feed.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -15,12 +18,17 @@ export async function GET(req: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    const routeCheck = await requireDashboardAction(session, '/dashboard/fleet/compliance', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
+
     const permCheck = await requirePermission(session, Permissions.VEHICLE_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
 
-    // Get all vehicles for this tenant with expiry data
+    // Get all vehicles for this tenant with expiry data. This endpoint is
+    // tenant-wide by design, but only for the explicitly tenant-wide Compliance
+    // Reports workspaces guarded above.
     const vehicleRows = await db
       .select({
         id: vehicles.id,
@@ -36,7 +44,7 @@ export async function GET(req: NextRequest) {
       .where(eq(vehicles.tenantId, session.tenantId))
       .orderBy(vehicles.licenceNumber);
 
-    // Get all vehicle documents with expiry dates
+    // Get all vehicle documents with expiry dates for this tenant's vehicles.
     const documentRows = await db
       .select({
         id: vehicleDocuments.id,
@@ -52,10 +60,8 @@ export async function GET(req: NextRequest) {
         sql`${vehicleDocuments.vehicleId} IN (SELECT id FROM vehicles WHERE tenant_id = ${session.tenantId})`,
       );
 
-    // Compile compliance status for each vehicle
+    // Compile compliance status for each vehicle.
     const today = new Date();
-    const thirtyDaysFromNow = new Date();
-    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
 
     const complianceData = vehicleRows.map((v) => {
       const docItems = documentRows.filter((d) => d.vehicleId === v.id);
@@ -67,7 +73,7 @@ export async function GET(req: NextRequest) {
         daysRemaining: number | null;
       }> = [];
 
-      // Licence expiry
+      // Licence expiry.
       if (v.licenceExpiryDate) {
         const expiry = new Date(v.licenceExpiryDate);
         const days = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -79,10 +85,16 @@ export async function GET(req: NextRequest) {
           daysRemaining: days,
         });
       } else {
-        items.push({ type: 'licence', name: 'Vehicle Licence', expiryDate: null, status: 'unknown', daysRemaining: null });
+        items.push({
+          type: 'licence',
+          name: 'Vehicle Licence',
+          expiryDate: null,
+          status: 'unknown',
+          daysRemaining: null,
+        });
       }
 
-      // Roadworthy
+      // Roadworthy.
       if (v.roadworthyTestDate) {
         const expiry = new Date(v.roadworthyTestDate);
         expiry.setFullYear(expiry.getFullYear() + 1);
@@ -95,10 +107,16 @@ export async function GET(req: NextRequest) {
           daysRemaining: days,
         });
       } else {
-        items.push({ type: 'roadworthy', name: 'Roadworthy Test', expiryDate: null, status: 'unknown', daysRemaining: null });
+        items.push({
+          type: 'roadworthy',
+          name: 'Roadworthy Test',
+          expiryDate: null,
+          status: 'unknown',
+          daysRemaining: null,
+        });
       }
 
-      // Insurance (from vehicle documents)
+      // Insurance (from vehicle documents).
       const insuranceDocs = docItems.filter((d) => d.documentType === 'insurance');
       if (insuranceDocs.length > 0) {
         for (const doc of insuranceDocs) {
@@ -113,18 +131,36 @@ export async function GET(req: NextRequest) {
               daysRemaining: days,
             });
           } else {
-            items.push({ type: 'insurance', name: doc.documentName, expiryDate: null, status: 'unknown', daysRemaining: null });
+            items.push({
+              type: 'insurance',
+              name: doc.documentName,
+              expiryDate: null,
+              status: 'unknown',
+              daysRemaining: null,
+            });
           }
         }
       } else {
-        items.push({ type: 'insurance', name: 'Insurance', expiryDate: null, status: 'unknown', daysRemaining: null });
+        items.push({
+          type: 'insurance',
+          name: 'Insurance',
+          expiryDate: null,
+          status: 'unknown',
+          daysRemaining: null,
+        });
       }
 
-      // Overall compliance status
       const expiredCount = items.filter((i) => i.status === 'expired').length;
       const expiringCount = items.filter((i) => i.status === 'expiring_soon').length;
       const unknownCount = items.filter((i) => i.status === 'unknown').length;
-      const overallStatus = expiredCount > 0 ? 'non_compliant' : expiringCount > 0 ? 'attention_needed' : unknownCount > 0 ? 'incomplete' : 'compliant';
+      const overallStatus =
+        expiredCount > 0
+          ? 'non_compliant'
+          : expiringCount > 0
+            ? 'attention_needed'
+            : unknownCount > 0
+              ? 'incomplete'
+              : 'compliant';
 
       return {
         vehicleId: v.id,
@@ -141,13 +177,11 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // Summary
     const compliant = complianceData.filter((c) => c.overallStatus === 'compliant').length;
     const attentionNeeded = complianceData.filter((c) => c.overallStatus === 'attention_needed').length;
     const nonCompliant = complianceData.filter((c) => c.overallStatus === 'non_compliant').length;
     const incomplete = complianceData.filter((c) => c.overallStatus === 'incomplete').length;
 
-    // Upcoming expiries
     const upcomingExpiries = complianceData
       .flatMap((c) =>
         c.items
@@ -166,7 +200,13 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       vehicles: complianceData,
-      summary: { total: complianceData.length, compliant, attentionNeeded, nonCompliant, incomplete },
+      summary: {
+        total: complianceData.length,
+        compliant,
+        attentionNeeded,
+        nonCompliant,
+        incomplete,
+      },
       upcomingExpiries,
     });
   } catch (error) {
