@@ -88,7 +88,9 @@ test.describe.serial('Driver acknowledgment queue', () => {
       },
     });
     expect(allocationResponse.status(), await allocationResponse.text()).toBe(200);
-    const allocationId = (await allocationResponse.json()).allocation.id as string;
+    const allocationBody = await allocationResponse.json();
+    const allocationId = allocationBody.allocation.id as string;
+    const tripId = allocationBody.trip.id as string;
 
     const driversResponse = await transport.get('/api/drivers');
     const driverRows = (await driversResponse.json()).data;
@@ -139,13 +141,13 @@ test.describe.serial('Driver acknowledgment queue', () => {
 
     // 6. Action-gate negative: the transport admin is blocked from acting on
     //    the driver step even though the approvals route admits them.  The
-    //    engine rejects at the driver:log-create permission gate — pin the
-    //    message so a future gate reorder cannot silently change the reason.
+    //    generic endpoint is disabled for every actor because the canonical
+    //    Trip Console route performs the operational acknowledgement checks.
     const blocked = await transport.post(`/api/approvals/${workflowId}/action`, {
       data: { actionType: 'approved' },
     });
-    expect(blocked.status()).toBe(403);
-    expect(await blocked.text()).toContain('permission');
+    expect(blocked.status()).toBe(409);
+    expect(await blocked.text()).toContain('Driver Console');
 
     // 7. The driver's own queue surface — the Driver Console — lists the trip
     //    awaiting acknowledgment.  This implicitly relies on the trip still
@@ -163,8 +165,17 @@ test.describe.serial('Driver acknowledgment queue', () => {
 
     // 8. Positive: the allocated driver completes the acknowledgment; the
     //    workflow finishes and the request is authorised.
-    const acknowledged = await driver.post(`/api/approvals/${workflowId}/action`, {
-      data: { actionType: 'approved' },
+    const acknowledged = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+      data: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+        conditionsReviewed: true,
+        signature: 'Driver queue E2E acknowledgement',
+      },
     });
     expect(acknowledged.status(), await acknowledged.text()).toBe(200);
 

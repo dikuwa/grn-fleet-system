@@ -25,6 +25,29 @@ import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
+const LOG_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
+function isValidLogDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !LOG_DATE_PATTERN.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function isValidOptionalTime(value: unknown): value is string | null | undefined {
+  return value === null || value === undefined || value === '' ||
+    (typeof value === 'string' && TIME_PATTERN.test(value));
+}
+
+function windhoekDateTime(logDate: string, time: string): Date {
+  return new Date(`${logDate}T${time}:00+02:00`);
+}
+
 /**
  * GET /api/trip-logs
  * List log entries for a specific trip, or all recent entries.
@@ -145,6 +168,30 @@ export async function POST(request: NextRequest) {
     if (!logDate) {
       return NextResponse.json({ error: 'Log date is required' }, { status: 400 });
     }
+    if (!isValidLogDate(logDate)) {
+      return NextResponse.json(
+        { error: 'Log date must be a valid date in YYYY-MM-DD format' },
+        { status: 422 },
+      );
+    }
+    if (!isValidOptionalTime(departureTime) || !isValidOptionalTime(arrivalTime)) {
+      return NextResponse.json(
+        { error: 'Departure and arrival times must use 24-hour HH:mm format' },
+        { status: 422 },
+      );
+    }
+    if (departureTime && arrivalTime && arrivalTime < departureTime) {
+      return NextResponse.json(
+        { error: 'Arrival time cannot be earlier than departure time' },
+        { status: 422 },
+      );
+    }
+
+    const syncId =
+      typeof clientSyncId === 'string' && clientSyncId.trim() ? clientSyncId.trim() : null;
+    if (syncId && syncId.length > 128) {
+      return NextResponse.json({ error: 'Client sync ID is too long' }, { status: 422 });
+    }
 
     const db = getDb();
 
@@ -238,11 +285,23 @@ export async function POST(request: NextRequest) {
         { status: 422 },
       );
     const calculatedDistance = out !== null && incoming !== null ? incoming - out : null;
+    const submittedDistance =
+      distanceKm === null || distanceKm === undefined || distanceKm === ''
+        ? null
+        : Number(distanceKm);
     if (
-      distanceKm !== null &&
-      distanceKm !== undefined &&
+      submittedDistance !== null &&
+      (!Number.isInteger(submittedDistance) || submittedDistance < 0)
+    ) {
+      return NextResponse.json(
+        { error: 'Distance must be a non-negative whole number' },
+        { status: 422 },
+      );
+    }
+    if (
+      submittedDistance !== null &&
       calculatedDistance !== null &&
-      Number(distanceKm) !== calculatedDistance
+      submittedDistance !== calculatedDistance
     ) {
       return NextResponse.json(
         { error: 'Distance must match the submitted odometer readings' },
@@ -250,13 +309,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (clientSyncId) {
+    if (syncId) {
       const [existing] = await db
         .select()
         .from(tripLogEntries)
-        .where(
-          and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, clientSyncId)),
-        )
+        .where(and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, syncId)))
         .limit(1);
       if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
     }
@@ -265,37 +322,52 @@ export async function POST(request: NextRequest) {
     // prevents a late audit failure from returning HTTP 500 after the log was
     // already saved, which could otherwise produce a duplicate on retry.
     const entryId = randomUUID();
-    const sourceChannel = clientSyncId ? 'offline_sync' : 'web';
-    await runAtomicMutations((tx) => [
-      tx.insert(tripLogEntries).values({
-        id: entryId,
-        tripId,
-        clientSyncId: clientSyncId || null,
-        driverEmployeeId: employee.id,
-        logDate: new Date(logDate),
-        odometerOut: out,
-        odometerIn: incoming,
-        departureTime: departureTime ? new Date(`${logDate}T${departureTime}`) : null,
-        arrivalTime: arrivalTime ? new Date(`${logDate}T${arrivalTime}`) : null,
-        origin: origin || null,
-        destination: destination || null,
-        distanceKm: calculatedDistance ?? (distanceKm ? Number(distanceKm) : null),
-        remarks: remarks || null,
-        isSynced: true,
-        syncState: 'synced',
-      }),
-      tx.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'trip_log_created',
-        actorUserId: session.user.id,
-        action: 'create',
-        entityType: 'trip_log_entry',
-        entityId: entryId,
-        summary: `Driver trip log recorded for ${logDate}`,
-        sourceChannel,
-      }),
-    ]);
+    const sourceChannel = syncId ? 'offline_sync' : 'web';
+    try {
+      await runAtomicMutations((tx) => [
+        tx.insert(tripLogEntries).values({
+          id: entryId,
+          tripId,
+          clientSyncId: syncId,
+          driverEmployeeId: employee.id,
+          logDate: new Date(`${logDate}T00:00:00+02:00`),
+          odometerOut: out,
+          odometerIn: incoming,
+          departureTime: departureTime ? windhoekDateTime(logDate, departureTime) : null,
+          arrivalTime: arrivalTime ? windhoekDateTime(logDate, arrivalTime) : null,
+          origin: origin || null,
+          destination: destination || null,
+          distanceKm: calculatedDistance ?? submittedDistance,
+          remarks: remarks || null,
+          isSynced: true,
+          syncState: 'synced',
+        }),
+        tx.insert(auditEvents).values({
+          tenantId: session.tenantId,
+          tenantSequence: Date.now(),
+          eventType: 'trip_log_created',
+          actorUserId: session.user.id,
+          action: 'create',
+          entityType: 'trip_log_entry',
+          entityId: entryId,
+          summary: `Driver trip log recorded for ${logDate}`,
+          sourceChannel,
+        }),
+      ]);
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (code === '23505' && syncId) {
+        const [existing] = await db
+          .select()
+          .from(tripLogEntries)
+          .where(and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, syncId)))
+          .limit(1);
+        if (existing) {
+          return NextResponse.json({ success: true, data: existing, idempotent: true });
+        }
+      }
+      throw error;
+    }
 
     const [entry] = await db
       .select()

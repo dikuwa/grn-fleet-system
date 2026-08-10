@@ -192,32 +192,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           'Trip returned: awaiting arrival inspection',
           jsonb_build_object(
             'authorityId', ${trip.authorityId}::text,
-            'endingOdometer', ${endingOdometer},
-            'fuelLevel', ${fuelLevel},
-            'returnLocation', ${returnLocation},
-            'incidentDeclared', ${body.incidentDeclared},
-            'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}
+            'endingOdometer', ${endingOdometer}::integer,
+            'fuelLevel', ${fuelLevel}::text,
+            'returnLocation', ${returnLocation}::text,
+            'incidentDeclared', ${body.incidentDeclared}::boolean,
+            'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}::boolean
           ),
           'web'
         FROM vehicle_claim
         RETURNING id
       )
-      SELECT CASE
+      SELECT CAST(CASE
         WHEN (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM odometer_insert) = 1
          AND (SELECT count(*) FROM vehicle_claim) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
-        THEN 1
-        ELSE CAST('atomic_trip_return_failed' AS integer)
-      END AS committed
+        THEN '1'
+        ELSE 'atomic_trip_return_failed_' || (SELECT count(*) FROM trip_claim)::text
+      END AS integer) AS committed
     `);
 
     await recordTenantRequestActivity({
       tenantId: session.tenantId,
       requestId: trip.trip.requestId,
       reference: trip.requestReference,
-      stage: 'completed',
+      stage: 'return_inspection',
       officeLabel: 'Return inspection',
     }).catch((error) => console.warn('[trips/return] Post-commit activity failed:', error));
 

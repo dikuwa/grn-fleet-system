@@ -96,17 +96,8 @@ export async function GET(
       .where(eq(workflowInstances.requestId, trip.requestId))
       .limit(1);
 
-    const requestApproved = workflow?.status === 'approved' || workflow?.status === 'completed';
-    gates.push({
-      key: 'request_approvals',
-      label: 'Transport request approvals completed',
-      status: requestApproved ? 'pass' : 'blocking',
-      detail: requestApproved
-        ? 'All required approvals have been obtained.'
-        : `Awaiting approval (workflow: ${workflow?.status || 'not started'}).`,
-      required: true,
-    });
-
+    let releaseAction: { id: string } | null = null;
+    let releaseStepExists = false;
     if (workflow?.id && workflow.definitionId) {
       const [releaseStep] = await db
         .select({ stepOrder: workflowSteps.stepOrder })
@@ -119,26 +110,49 @@ export async function GET(
         .limit(1);
 
       if (releaseStep) {
-        const [releaseAction] = await db
+        releaseStepExists = true;
+        [releaseAction] = await db
           .select({ id: workflowActions.id })
           .from(workflowActions)
           .where(and(
             eq(workflowActions.instanceId, workflow.id),
             eq(workflowActions.stepOrder, releaseStep.stepOrder),
             eq(workflowActions.actionType, 'release'),
-            eq(workflowActions.result, 'approved'),
+            sql`${workflowActions.result} IN ('released', 'approved')`,
           ))
           .limit(1);
-        gates.push({
-          key: 'releasing_officer_acted',
-          label: 'Releasing officer has acted',
-          status: releaseAction ? 'pass' : 'blocking',
-          detail: releaseAction
-            ? 'The releasing officer has performed the release action.'
-            : 'The release step has not been completed yet.',
-          required: true,
-        });
       }
+    }
+
+    // After final release the workflow may intentionally remain active while the
+    // assigned driver acknowledgement step is pending. A recorded successful
+    // release action is therefore authoritative evidence that request approvals
+    // and release are complete; requiring workflow.status=completed here creates
+    // a false blocker for correctly authorised trips.
+    const requestApproved =
+      workflow?.status === 'approved' ||
+      workflow?.status === 'completed' ||
+      Boolean(releaseAction);
+    gates.push({
+      key: 'request_approvals',
+      label: 'Transport request approvals completed',
+      status: requestApproved ? 'pass' : 'blocking',
+      detail: requestApproved
+        ? 'All required approvals have been obtained.'
+        : `Awaiting approval (workflow: ${workflow?.status || 'not started'}).`,
+      required: true,
+    });
+
+    if (releaseStepExists) {
+      gates.push({
+        key: 'releasing_officer_acted',
+        label: 'Releasing officer has acted',
+        status: releaseAction ? 'pass' : 'blocking',
+        detail: releaseAction
+          ? 'The releasing officer has performed the release action.'
+          : 'The release step has not been completed yet.',
+        required: true,
+      });
     }
 
     gates.push({

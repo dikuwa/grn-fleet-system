@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type SQL } from 'drizzle-orm';
-import { activeApprovalVisibleTo } from './approval-queue';
+import { activeApprovalVisibleTo, resolveActionableApprovalInstanceIds } from './approval-queue';
 import { Permissions } from './permissions';
+import { WorkflowEngine } from './workflow-engine';
 
 /** Render a drizzle SQL condition to a readable string for assertions. */
 function render(condition: SQL): string {
@@ -60,5 +61,82 @@ describe('activeApprovalVisibleTo', () => {
     const permissionIndex = sql.indexOf('required_permission');
     expect(assignedIndex).toBeGreaterThanOrEqual(0);
     expect(permissionIndex).toBeGreaterThan(assignedIndex);
+  });
+});
+
+describe('resolveActionableApprovalInstanceIds', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function candidateDb(ids: string[]) {
+    const db = {
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue(ids.map((id) => ({ id }))),
+    };
+    return db;
+  }
+
+  it('includes a runtime acting holder even when the static candidate assignment is stale', async () => {
+    const db = candidateDb(['workflow-acting']);
+    vi.spyOn(WorkflowEngine.prototype, 'getWorkflowStatus').mockResolvedValue({
+      instance: { status: 'active' },
+      currentStep: {
+        actionType: 'release',
+        assignedUserId: 'acting-user',
+        requiredPermission: Permissions.VEHICLE_RELEASE_REGIONAL,
+      },
+    } as never);
+
+    await expect(
+      resolveActionableApprovalInstanceIds({
+        db: db as never,
+        tenantId: 'tenant-1',
+        userId: 'acting-user',
+        permissionCodes: [Permissions.VEHICLE_RELEASE_REGIONAL],
+      }),
+    ).resolves.toEqual(['workflow-acting']);
+  });
+
+  it('does not fan an explicitly resolved approval out to unrelated permission holders', async () => {
+    const db = candidateDb(['workflow-holder']);
+    vi.spyOn(WorkflowEngine.prototype, 'getWorkflowStatus').mockResolvedValue({
+      instance: { status: 'active' },
+      currentStep: {
+        actionType: 'release',
+        assignedUserId: 'responsible-user',
+        requiredPermission: Permissions.VEHICLE_RELEASE_REGIONAL,
+      },
+    } as never);
+
+    await expect(
+      resolveActionableApprovalInstanceIds({
+        db: db as never,
+        tenantId: 'tenant-1',
+        userId: 'unrelated-user',
+        permissionCodes: [Permissions.VEHICLE_RELEASE_REGIONAL],
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('never includes acknowledgement stages in generic approvals', async () => {
+    const db = candidateDb(['workflow-ack']);
+    vi.spyOn(WorkflowEngine.prototype, 'getWorkflowStatus').mockResolvedValue({
+      instance: { status: 'active' },
+      currentStep: {
+        actionType: 'acknowledge',
+        assignedUserId: 'driver-user',
+        requiredPermission: Permissions.DRIVER_LOG_CREATE,
+      },
+    } as never);
+
+    await expect(
+      resolveActionableApprovalInstanceIds({
+        db: db as never,
+        tenantId: 'tenant-1',
+        userId: 'driver-user',
+        permissionCodes: [Permissions.DRIVER_LOG_CREATE],
+      }),
+    ).resolves.toEqual([]);
   });
 });

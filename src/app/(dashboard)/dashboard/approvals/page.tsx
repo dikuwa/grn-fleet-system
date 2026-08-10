@@ -1,11 +1,10 @@
 import Link from 'next/link';
-import { and, desc, eq, ne, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import { getDb, isDbConnected } from '@/db';
 import {
   workflowActions,
   workflowDefinitions,
   workflowInstances,
-  workflowSteps,
 } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
@@ -28,7 +27,7 @@ import type { PermissionCode } from '@/lib/permissions';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { getSessionPermissions } from '@/lib/auth-helpers';
-import { activeApprovalVisibleTo } from '@/lib/approval-queue';
+import { resolveActionableApprovalInstanceIds } from '@/lib/approval-queue';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { groupedCountMap } from '@/lib/statistics';
@@ -44,6 +43,19 @@ const WORKFLOW_STATUS_LABELS: Record<string, string> = {
   overridden: 'Overridden',
 };
 
+async function resolveVisibleActiveInstanceIds(
+  tenantId: string,
+  userId: string,
+  permissionCodes: readonly PermissionCode[],
+) {
+  return resolveActionableApprovalInstanceIds({
+    db: getDb(),
+    tenantId,
+    userId,
+    permissionCodes,
+  });
+}
+
 async function fetchApprovals(
   sp: Record<string, string | undefined>,
   tenantId: string,
@@ -57,6 +69,14 @@ async function fetchApprovals(
   const status = normalizeOptionalFilter(sp.status);
   const history = sp.view === 'history' || Boolean(status && status !== 'active');
 
+  const visibleActiveIds = history
+    ? []
+    : await resolveVisibleActiveInstanceIds(tenantId, userId, permissionCodes);
+
+  const activeVisibility: SQL = visibleActiveIds.length > 0
+    ? inArray(workflowInstances.id, visibleActiveIds)
+    : sql`false`;
+
   const baseConditions: SQL[] = [
     eq(transportRequests.tenantId, tenantId),
     history
@@ -68,10 +88,7 @@ async function fetchApprovals(
               and ${workflowActions.actorUserId} = ${userId}
           )`,
         )!
-      : and(
-          eq(workflowInstances.status, 'active'),
-          activeApprovalVisibleTo(userId, permissionCodes),
-        )!,
+      : and(eq(workflowInstances.status, 'active'), activeVisibility)!,
   ];
   const baseWhere = and(...baseConditions);
   const conditions = [...baseConditions];
@@ -99,13 +116,6 @@ async function fetchApprovals(
       .from(workflowInstances)
       .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
       .leftJoin(workflowDefinitions, eq(workflowInstances.definitionId, workflowDefinitions.id))
-      .leftJoin(
-        workflowSteps,
-        and(
-          eq(workflowSteps.definitionId, workflowInstances.definitionId),
-          eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
-        ),
-      )
       .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
       .where(where)
       .orderBy(desc(workflowInstances.createdAt))
@@ -115,25 +125,11 @@ async function fetchApprovals(
       .select({ count: sql<number>`count(*)` })
       .from(workflowInstances)
       .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-      .leftJoin(
-        workflowSteps,
-        and(
-          eq(workflowSteps.definitionId, workflowInstances.definitionId),
-          eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
-        ),
-      )
       .where(where),
     db
       .select({ key: workflowInstances.status, count: sql<number>`count(*)` })
       .from(workflowInstances)
       .leftJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-      .leftJoin(
-        workflowSteps,
-        and(
-          eq(workflowSteps.definitionId, workflowInstances.definitionId),
-          eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
-        ),
-      )
       .where(baseWhere)
       .groupBy(workflowInstances.status),
   ]);

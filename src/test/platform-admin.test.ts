@@ -40,6 +40,7 @@ function createMockDb() {
 
   // Build the MockDb type from method names
   type MockDb = Record<(typeof methods)[number], ReturnType<typeof vi.fn>> & {
+    batch: ReturnType<typeof vi.fn>;
     then: (onfulfilled: (v: unknown) => void) => void;
     pushResult: (data: unknown[]) => void;
   };
@@ -49,6 +50,8 @@ function createMockDb() {
   for (const method of methods) {
     (db as Record<string, ReturnType<typeof vi.fn>>)[method] = vi.fn(() => db);
   }
+
+  db.batch = vi.fn(async (queries: Array<PromiseLike<unknown>>) => Promise.all(queries));
 
   db.then = (resolve: (v: unknown) => void) => {
     resolve(queue.shift() || []);
@@ -361,10 +364,16 @@ describe('Platform Tenants API — GET /api/platform/tenants/[id]', () => {
 
     // Tenant query
     mockDb.pushResult([tenant]);
+    // The deletion-assessment Promise resolves its six count queries before
+    // the sibling branding thenable in this lightweight Drizzle mock.
+    mockDb.pushResult([{ count: 7 }]);
+    mockDb.pushResult([{ count: 0 }]);
+    mockDb.pushResult([{ count: 0 }]);
+    mockDb.pushResult([{ count: 0 }]);
+    mockDb.pushResult([{ count: 0 }]);
+    mockDb.pushResult([{ count: 0 }]);
     // Branding query
     mockDb.pushResult([branding]);
-    // Member count
-    mockDb.pushResult([{ count: 7 }]);
 
     vi.mocked(getDb).mockReturnValue(mockDb as never);
 
@@ -557,10 +566,12 @@ describe('Trip Logs API — POST /api/trip-logs', () => {
     mockDb.pushResult([trip]);
     // Authenticated employee lookup
     mockDb.pushResult([{ id: 'employee-1' }]);
-    // Insert returning
+    // Atomic log insert
     mockDb.pushResult([newEntry]);
-    // Audit insert
+    // Atomic audit insert
     mockDb.pushResult([]);
+    // Reload committed log
+    mockDb.pushResult([newEntry]);
 
     vi.mocked(getDb).mockReturnValue(mockDb as never);
 

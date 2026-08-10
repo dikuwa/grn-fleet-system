@@ -25,7 +25,7 @@ import crypto from 'node:crypto';
 
 const ROOT = process.cwd(); // run from the project root
 const allowMissingDb = process.argv.includes('--allow-missing-db');
-const envFile = process.argv.find((a) => !a.startsWith('-') && a !== process.argv[1]) || '.env.local';
+const envFile = process.argv.slice(2).find((argument) => !argument.startsWith('-')) || '.env.local';
 
 function loadEnv(file) {
   const out = {};

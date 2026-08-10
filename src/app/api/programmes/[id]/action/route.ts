@@ -228,12 +228,12 @@ export async function POST(
         FROM programme_claim
         RETURNING id
       )
-      SELECT CASE
+      SELECT CAST(CASE
         WHEN (SELECT count(*) FROM programme_claim) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
-        THEN 1
-        ELSE CAST('atomic_programme_action_failed' AS integer)
-      END AS committed
+        THEN '1'
+        ELSE 'atomic_programme_action_failed_' || (SELECT count(*) FROM programme_claim)::text
+      END AS integer) AS committed
     `);
 
     const [updated] = await db

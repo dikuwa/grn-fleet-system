@@ -200,35 +200,86 @@ export async function syncSingleDraft(
       payload.attachmentHashes = attachmentHashes;
       delete payload.attachmentFiles;
     }
+
     if (draft.draftType === 'inspection_departure' || draft.draftType === 'inspection_return') {
       const files = fd<File[]>(draft.formData, 'photos', []);
-      const photoKeys: string[] = [];
-      for (const file of files) {
+      const photoKeys = fd<string[]>(draft.formData, 'photoKeys', []);
+      for (let index = photoKeys.length; index < files.length; index++) {
+        const file = files[index];
         const form = new FormData();
         form.append('file', file);
         form.append('category', 'inspection');
         const upload = await fetch('/api/upload', { method: 'POST', body: form });
         if (!upload.ok) throw new Error('Inspection photo upload failed during sync');
         const uploaded = await upload.json();
-        if (uploaded.data?.key) photoKeys.push(uploaded.data.key);
+        if (!uploaded.data?.key) throw new Error('Inspection photo upload returned no storage key');
+
+        photoKeys.push(uploaded.data.key);
+        // Persist each successful object key immediately. If the later inspection
+        // POST fails, the next reconnect reuses already-uploaded photos instead of
+        // producing duplicate R2 objects for the same local draft.
+        await updateDraft(draft.id, {
+          formData: {
+            ...draft.formData,
+            photos: files,
+            photoKeys: [...photoKeys],
+          },
+        });
       }
       payload.photoKeys = photoKeys;
     }
+
     const res = await fetch(endpoint.url, {
       method: endpoint.method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
+    let responseData: Record<string, unknown> | null = null;
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      const errorMsg = err.error || `HTTP ${res.status}`;
-      await markDraftFailed(draft.id, errorMsg);
-      return { synced: false, error: errorMsg };
+
+      // A Fuel POST may lose a race against another retry carrying the same
+      // clientSyncId. The database correctly returns 409, but the winning row
+      // already represents this exact offline draft. Recover that row through a
+      // tenant/user-scoped lookup so receipt sync can continue against its ID.
+      if (draft.draftType === 'fuel' && res.status === 409) {
+        const recovery = await fetch(`/api/fuel/sync/${encodeURIComponent(draft.id)}`, {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        if (recovery.ok) {
+          responseData = await recovery.json();
+        }
+      }
+
+      // Inspection writes are also idempotent by clientSyncId. A simultaneous
+      // retry can lose the unique-index race after another request has committed.
+      // Recover only a record created by this same inspector and tenant.
+      if (
+        !responseData &&
+        (draft.draftType === 'inspection_departure' || draft.draftType === 'inspection_return')
+      ) {
+        const recovery = await fetch(`/api/inspections/sync/${encodeURIComponent(draft.id)}`, {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        if (recovery.ok) {
+          responseData = await recovery.json();
+        }
+      }
+
+      if (!responseData) {
+        const errorMsg = err.error || `HTTP ${res.status}`;
+        await markDraftFailed(draft.id, errorMsg);
+        return { synced: false, error: errorMsg };
+      }
+    } else {
+      responseData = await res.json();
     }
 
-    const responseData = await res.json();
-    const entityId = responseData?.data?.id || responseData?.id || null;
+    const entityId = (responseData as { data?: { id?: string }; id?: string })?.data?.id ||
+      (responseData as { id?: string })?.id || null;
     if (draft.draftType === 'fuel') {
       const receiptFile = fd<File | null>(draft.formData, 'receiptFile', null);
       if (receiptFile && entityId) {
@@ -241,7 +292,11 @@ export async function syncSingleDraft(
         });
         if (!receiptResponse.ok) {
           const receiptError = await receiptResponse.json().catch(() => ({ error: 'Receipt sync failed' }));
-          throw new Error(receiptError.error || 'Receipt sync failed');
+          const duplicateRecovered =
+            receiptResponse.status === 409 && typeof receiptError.duplicateReceiptId === 'string';
+          if (!duplicateRecovered) {
+            throw new Error(receiptError.error || 'Receipt sync failed');
+          }
         }
       }
     }
@@ -293,9 +348,12 @@ export async function syncPendingDrafts(filters?: {
     }
   }
 
-  // Clean up successfully synced drafts
-  if (result.synced > 0) {
-    await removeSyncedDrafts();
+  // Clean up successfully synced drafts only when the caller supplied a full
+  // identity scope. This preserves the shared-device safety rule in
+  // removeSyncedDrafts while allowing the dashboard sync handler to actually
+  // remove the current user's completed drafts.
+  if (result.synced > 0 && filters?.userId && filters?.tenantId) {
+    await removeSyncedDrafts({ userId: filters.userId, tenantId: filters.tenantId });
   }
 
   return result;

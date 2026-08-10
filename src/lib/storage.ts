@@ -13,6 +13,7 @@
  * Falls back gracefully when credentials are not configured.
  */
 
+import { randomUUID } from 'node:crypto';
 import {
   S3Client,
   PutObjectCommand,
@@ -144,7 +145,13 @@ export function sanitiseKey(filename: string): string {
 }
 
 /**
- * Build a namespaced object key: `{tenantPrefix}/{type}/{sanitised-name}-{timestamp}`
+ * Build a namespaced object key: `{tenantPrefix}/{type}/{timestamp}-{uuid}-{sanitised-name}`.
+ *
+ * The UUID is intentional: timestamp-only keys can collide when two requests
+ * upload the same filename within the same millisecond. A collision would
+ * overwrite the earlier object before the database can reject a duplicate
+ * submission. Keep object identity independent from business-record/version
+ * identity so concurrent uploads are always isolated in storage.
  */
 export function buildKey(
   filename: string,
@@ -153,7 +160,8 @@ export function buildKey(
 ): string {
   const base = sanitiseKey(filename);
   const ts = Date.now();
-  const name = `${ts}-${base}`;
+  const nonce = randomUUID();
+  const name = `${ts}-${nonce}-${base}`;
   const parts = [tenantPrefix, type, name].filter(Boolean);
   return parts.join('/');
 }
