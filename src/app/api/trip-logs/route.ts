@@ -187,6 +187,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const syncId =
+      typeof clientSyncId === 'string' && clientSyncId.trim() ? clientSyncId.trim() : null;
+    if (syncId && syncId.length > 128) {
+      return NextResponse.json({ error: 'Client sync ID is too long' }, { status: 422 });
+    }
+
     const db = getDb();
 
     // Verify the trip exists and belongs to the tenant
@@ -303,13 +309,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (clientSyncId) {
+    if (syncId) {
       const [existing] = await db
         .select()
         .from(tripLogEntries)
-        .where(
-          and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, clientSyncId)),
-        )
+        .where(and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, syncId)))
         .limit(1);
       if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
     }
@@ -318,37 +322,52 @@ export async function POST(request: NextRequest) {
     // prevents a late audit failure from returning HTTP 500 after the log was
     // already saved, which could otherwise produce a duplicate on retry.
     const entryId = randomUUID();
-    const sourceChannel = clientSyncId ? 'offline_sync' : 'web';
-    await runAtomicMutations((tx) => [
-      tx.insert(tripLogEntries).values({
-        id: entryId,
-        tripId,
-        clientSyncId: clientSyncId || null,
-        driverEmployeeId: employee.id,
-        logDate: new Date(`${logDate}T00:00:00+02:00`),
-        odometerOut: out,
-        odometerIn: incoming,
-        departureTime: departureTime ? windhoekDateTime(logDate, departureTime) : null,
-        arrivalTime: arrivalTime ? windhoekDateTime(logDate, arrivalTime) : null,
-        origin: origin || null,
-        destination: destination || null,
-        distanceKm: calculatedDistance ?? submittedDistance,
-        remarks: remarks || null,
-        isSynced: true,
-        syncState: 'synced',
-      }),
-      tx.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'trip_log_created',
-        actorUserId: session.user.id,
-        action: 'create',
-        entityType: 'trip_log_entry',
-        entityId: entryId,
-        summary: `Driver trip log recorded for ${logDate}`,
-        sourceChannel,
-      }),
-    ]);
+    const sourceChannel = syncId ? 'offline_sync' : 'web';
+    try {
+      await runAtomicMutations((tx) => [
+        tx.insert(tripLogEntries).values({
+          id: entryId,
+          tripId,
+          clientSyncId: syncId,
+          driverEmployeeId: employee.id,
+          logDate: new Date(`${logDate}T00:00:00+02:00`),
+          odometerOut: out,
+          odometerIn: incoming,
+          departureTime: departureTime ? windhoekDateTime(logDate, departureTime) : null,
+          arrivalTime: arrivalTime ? windhoekDateTime(logDate, arrivalTime) : null,
+          origin: origin || null,
+          destination: destination || null,
+          distanceKm: calculatedDistance ?? submittedDistance,
+          remarks: remarks || null,
+          isSynced: true,
+          syncState: 'synced',
+        }),
+        tx.insert(auditEvents).values({
+          tenantId: session.tenantId,
+          tenantSequence: Date.now(),
+          eventType: 'trip_log_created',
+          actorUserId: session.user.id,
+          action: 'create',
+          entityType: 'trip_log_entry',
+          entityId: entryId,
+          summary: `Driver trip log recorded for ${logDate}`,
+          sourceChannel,
+        }),
+      ]);
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (code === '23505' && syncId) {
+        const [existing] = await db
+          .select()
+          .from(tripLogEntries)
+          .where(and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, syncId)))
+          .limit(1);
+        if (existing) {
+          return NextResponse.json({ success: true, data: existing, idempotent: true });
+        }
+      }
+      throw error;
+    }
 
     const [entry] = await db
       .select()
