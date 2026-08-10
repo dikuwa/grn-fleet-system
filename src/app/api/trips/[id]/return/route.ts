@@ -192,11 +192,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           'Trip returned: awaiting arrival inspection',
           jsonb_build_object(
             'authorityId', ${trip.authorityId}::text,
-            'endingOdometer', ${endingOdometer},
-            'fuelLevel', ${fuelLevel},
-            'returnLocation', ${returnLocation},
-            'incidentDeclared', ${body.incidentDeclared},
-            'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}
+            'endingOdometer', ${endingOdometer}::integer,
+            'fuelLevel', ${fuelLevel}::text,
+            'returnLocation', ${returnLocation}::text,
+            'incidentDeclared', ${body.incidentDeclared}::boolean,
+            'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}::boolean
           ),
           'web'
         FROM vehicle_claim

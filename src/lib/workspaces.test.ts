@@ -25,6 +25,17 @@ describe('active workspace resolution', () => {
     expect(resolveActiveWorkspace([R.INSPECTOR], W.DRIVER)).toBe(W.INSPECTOR);
   });
 
+  it('lets release officers switch to inspections while keeping approvals as their default', () => {
+    const roles = [R.RELEASE_OFFICER];
+    expect(getEligibleWorkspaces(roles).map(({ id }) => id)).toEqual([
+      W.PERSONAL,
+      W.APPROVER,
+      W.INSPECTOR,
+    ]);
+    expect(resolveActiveWorkspace(roles)).toBe(W.APPROVER);
+    expect(resolveActiveWorkspace(roles, W.INSPECTOR)).toBe(W.INSPECTOR);
+  });
+
   it('isolates platform administrators from tenant workspaces', () => {
     expect(getEligibleWorkspaces([R.PLATFORM_ADMIN]).map(({ id }) => id)).toEqual([
       W.PLATFORM_ADMIN,
