@@ -71,7 +71,7 @@ export const workspaceRegistry: readonly WorkspaceDefinition[] = [
   {
     id: WorkspaceIds.INSPECTOR,
     label: 'Inspections',
-    roleNames: [R.INSPECTOR],
+    roleNames: [R.INSPECTOR, R.RELEASE_OFFICER],
     tenantWorkspace: true,
     order: 40,
   },
@@ -151,6 +151,17 @@ export function resolveActiveWorkspace(
   if (storedWorkspace && isWorkspaceId(storedWorkspace)) {
     const stored = eligible.find((workspace) => workspace.id === storedWorkspace);
     if (stored) return stored.id;
+  }
+
+  // Control Administrative Officers have two legitimate operational surfaces:
+  // their core release decisions live in Approvals, while official vehicle
+  // inspections are performed from the dedicated Inspections workspace. Keep
+  // Approvals as the default unless they explicitly switch to Inspections.
+  if (
+    roleNames.includes(R.RELEASE_OFFICER) &&
+    eligible.some((workspace) => workspace.id === WorkspaceIds.APPROVER)
+  ) {
+    return WorkspaceIds.APPROVER;
   }
 
   const primary = [...eligible]
