@@ -133,6 +133,18 @@ export async function processAuthorisationDecision(input: {
     return { ok: false, error: forbiddenResponse('The officer who released this trip cannot also give final authorisation.') };
   }
 
+  // Resolve acting/delegation evidence before branching so every final
+  // decision outcome preserves the same responsible-capacity audit context.
+  const resolution = (currentStep.config || {}) as Record<string, unknown>;
+  const roleAssignmentId = typeof resolution.delegationId === 'string' ? resolution.delegationId : null;
+  const isActing = resolution.isActing === true;
+  const actionMetadata = JSON.stringify({
+    resolvedCapacity: resolution.resolvedCapacity,
+    resolvedRoleId: resolution.resolvedRoleId,
+    resolvedEmployeeId: resolution.resolvedEmployeeId,
+    isActing,
+  });
+
   // Reject/return have no authority side effect, so commit them in one DB statement.
   if (result === 'rejected' || result === 'returned') {
     const actionId = randomUUID();
@@ -163,11 +175,13 @@ export async function processAuthorisationDecision(input: {
       action_inserted AS (
         INSERT INTO workflow_actions (
           id, instance_id, step_order, action_type, result,
-          actor_user_id, actor_employee_id, comment, created_at
+          actor_user_id, actor_employee_id, role_assignment_id,
+          is_acting, comment, metadata, created_at
         )
         SELECT
           ${actionId}::uuid, c.id, ${currentStep.stepOrder}, 'authorise', ${result},
-          ${session.user.id}, ${actorEmployee?.id ?? null}::uuid, ${comment?.trim() || null}, now()
+          ${session.user.id}, ${actorEmployee?.id ?? null}::uuid, ${roleAssignmentId}::uuid,
+          ${isActing}, ${comment?.trim() || null}, ${actionMetadata}::jsonb, now()
         FROM claimed c
         INNER JOIN request_updated ru ON ru.id = c.request_id
         RETURNING id
@@ -175,13 +189,13 @@ export async function processAuthorisationDecision(input: {
       audit_inserted AS (
         INSERT INTO audit_events (
           id, tenant_id, tenant_sequence, event_type, actor_user_id,
-          actor_employee_id, action, entity_type, entity_id,
-          source_channel, summary, reason, created_at
+          actor_employee_id, role_assignment_id, is_acting, action,
+          entity_type, entity_id, source_channel, summary, reason, created_at
         )
         SELECT
           ${auditId}::uuid, ${session.tenantId}::uuid, ${Date.now()}, ${`workflow_${result}`},
-          ${session.user.id}, ${actorEmployee?.id ?? null}::uuid, ${`workflow.${result}`},
-          'workflow_action', ${instanceId}::uuid, 'web',
+          ${session.user.id}, ${actorEmployee?.id ?? null}::uuid, ${roleAssignmentId}::uuid,
+          ${isActing}, ${`workflow.${result}`}, 'workflow_action', ${instanceId}::uuid, 'web',
           ${`Final authorisation: ${result}`}, ${comment?.trim() || null}, now()
         FROM action_inserted
         RETURNING id
@@ -277,9 +291,6 @@ export async function processAuthorisationDecision(input: {
     .from(userProfiles)
     .where(eq(userProfiles.userId, session.user.id))
     .limit(1);
-  const resolution = (currentStep.config || {}) as Record<string, unknown>;
-  const roleAssignmentId = typeof resolution.delegationId === 'string' ? resolution.delegationId : null;
-  const isActing = resolution.isActing === true;
   const signatureRef = signatureProfile?.confirmedAt
     ? signatureProfile.type === 'typed'
       ? `typed:${signatureProfile.typedName || session.user.name || 'Authorised'}`
