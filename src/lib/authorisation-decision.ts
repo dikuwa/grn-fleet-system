@@ -446,7 +446,7 @@ export async function processAuthorisationDecision(input: {
     body: `Transport request ${requestRecord.reference} has been authorised. Review the trip and acknowledge your assignment.`,
     entityType: 'workflow_instance',
     entityId: instanceId,
-    actionUrl: `/dashboard/approvals/${instanceId}`,
+    actionUrl: `/dashboard/trips/${allocationContext.tripId}`,
     workspace: WorkspaceIds.DRIVER,
     workflowStage: String(nextStep.stepOrder),
     priority: 'high',
