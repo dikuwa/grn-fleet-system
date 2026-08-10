@@ -200,17 +200,31 @@ export async function syncSingleDraft(
       payload.attachmentHashes = attachmentHashes;
       delete payload.attachmentFiles;
     }
+
     if (draft.draftType === 'inspection_departure' || draft.draftType === 'inspection_return') {
       const files = fd<File[]>(draft.formData, 'photos', []);
-      const photoKeys: string[] = [];
-      for (const file of files) {
+      const photoKeys = fd<string[]>(draft.formData, 'photoKeys', []);
+      for (let index = photoKeys.length; index < files.length; index++) {
+        const file = files[index];
         const form = new FormData();
         form.append('file', file);
         form.append('category', 'inspection');
         const upload = await fetch('/api/upload', { method: 'POST', body: form });
         if (!upload.ok) throw new Error('Inspection photo upload failed during sync');
         const uploaded = await upload.json();
-        if (uploaded.data?.key) photoKeys.push(uploaded.data.key);
+        if (!uploaded.data?.key) throw new Error('Inspection photo upload returned no storage key');
+
+        photoKeys.push(uploaded.data.key);
+        // Persist each successful object key immediately. If the later inspection
+        // POST fails, the next reconnect reuses already-uploaded photos instead of
+        // producing duplicate R2 objects for the same local draft.
+        await updateDraft(draft.id, {
+          formData: {
+            ...draft.formData,
+            photos: files,
+            photoKeys: [...photoKeys],
+          },
+        });
       }
       payload.photoKeys = photoKeys;
     }
