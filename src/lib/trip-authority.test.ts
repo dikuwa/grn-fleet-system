@@ -1,9 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertTripAuthorityProvisioningInvariants,
   assertAuthorityTransition,
   canTransitionAuthority,
   maskLicenceNumber,
 } from '@/lib/trip-authority';
+
+const validProvisioningContext = {
+  tenantId: 'tenant-1',
+  requestId: 'request-1',
+  allocationId: 'allocation-1',
+  tripId: 'trip-1',
+  actorUserId: 'authoriser-1',
+  trip: {
+    id: 'trip-1',
+    tenantId: 'tenant-1',
+    requestId: 'request-1',
+    allocationId: 'allocation-1',
+    vehicleId: 'vehicle-1',
+  },
+  allocation: {
+    id: 'allocation-1',
+    requestId: 'request-1',
+    vehicleId: 'vehicle-1',
+    driverEmployeeId: 'driver-1',
+    state: 'confirmed',
+    endAt: new Date('2027-01-10T12:00:00Z'),
+  },
+  currentAllocationId: 'allocation-1',
+  vehicle: { id: 'vehicle-1', tenantId: 'tenant-1', seatedCapacity: 5 },
+  driver: {
+    employeeId: 'driver-1',
+    tenantId: 'tenant-1',
+    licenceExpiry: '2027-01-10',
+    verificationStatus: 'verified',
+  },
+  recordedAuthoriserUserId: 'authoriser-1',
+  passengerCount: 4,
+};
 
 describe('Trip Authority lifecycle', () => {
   it('enforces the normal driver lifecycle', () => {
@@ -30,5 +64,27 @@ describe('Trip Authority lifecycle', () => {
   it('masks licence numbers for official presentation', () => {
     expect(maskLicenceNumber('N12345678')).toBe('*****5678');
     expect(maskLicenceNumber('1234')).toBe('****');
+  });
+
+  it('accepts one exact current assignment with a valid driver, capacity, and recorded authoriser', () => {
+    expect(() => assertTripAuthorityProvisioningInvariants(validProvisioningContext)).not.toThrow();
+  });
+
+  it.each([
+    ['cross-tenant trip', { trip: { ...validProvisioningContext.trip, tenantId: 'tenant-2' } }],
+    ['mismatched allocation', { trip: { ...validProvisioningContext.trip, allocationId: 'old-allocation' } }],
+    ['cancelled allocation', { allocation: { ...validProvisioningContext.allocation, state: 'cancelled' } }],
+    ['superseded allocation', { currentAllocationId: 'allocation-2' }],
+    ['wrong tenant driver', { driver: { ...validProvisioningContext.driver, tenantId: 'tenant-2' } }],
+    ['expired licence', { driver: { ...validProvisioningContext.driver, licenceExpiry: '2027-01-09' } }],
+    ['capacity overflow', { passengerCount: 5 }],
+    ['wrong authoriser', { recordedAuthoriserUserId: 'authoriser-2' }],
+  ])('rejects %s', (_label, patch) => {
+    expect(() =>
+      assertTripAuthorityProvisioningInvariants({
+        ...validProvisioningContext,
+        ...patch,
+      }),
+    ).toThrow();
   });
 });

@@ -7,6 +7,7 @@ import {
   tripAuthoritySequences,
   tripAuthorityVersions,
   tripAuthorisedDrivers,
+  trips,
   vehicleAllocations,
 } from '@/db/schema/trips';
 import {
@@ -122,6 +123,62 @@ export interface ProvisionAuthorityResult {
   verificationToken: string | null;
 }
 
+export function assertTripAuthorityProvisioningInvariants(input: {
+  tenantId: string;
+  requestId: string;
+  allocationId: string;
+  tripId: string;
+  actorUserId: string;
+  trip: { id: string; tenantId: string; requestId: string; allocationId: string; vehicleId: string };
+  allocation: {
+    id: string;
+    requestId: string;
+    vehicleId: string;
+    driverEmployeeId: string | null;
+    state: string;
+    endAt: Date;
+  };
+  currentAllocationId: string | null;
+  vehicle: { id: string; tenantId: string; seatedCapacity: number | null };
+  driver: { employeeId: string; tenantId: string; licenceExpiry: string; verificationStatus: string } | null;
+  recordedAuthoriserUserId: string | null;
+  passengerCount: number;
+}) {
+  const exactAssignment =
+    input.trip.id === input.tripId &&
+    input.trip.tenantId === input.tenantId &&
+    input.trip.requestId === input.requestId &&
+    input.trip.allocationId === input.allocationId &&
+    input.allocation.id === input.allocationId &&
+    input.allocation.requestId === input.requestId &&
+    input.allocation.vehicleId === input.trip.vehicleId &&
+    input.vehicle.id === input.trip.vehicleId &&
+    input.vehicle.tenantId === input.tenantId;
+  if (!exactAssignment) {
+    throw new Error('Trip Authority input does not match one exact tenant request allocation and vehicle');
+  }
+  if (input.allocation.state !== 'confirmed' || input.currentAllocationId !== input.allocationId) {
+    throw new Error('Trip Authority requires the latest current confirmed allocation');
+  }
+  if (
+    !input.driver ||
+    !input.allocation.driverEmployeeId ||
+    input.driver.employeeId !== input.allocation.driverEmployeeId ||
+    input.driver.tenantId !== input.tenantId ||
+    input.driver.verificationStatus !== 'verified' ||
+    new Date(`${input.driver.licenceExpiry}T23:59:59Z`) < input.allocation.endAt
+  ) {
+    throw new Error('The allocated tenant driver requires a verified licence valid through the end of the trip');
+  }
+  const capacity = input.vehicle.seatedCapacity ?? 1;
+  if (input.passengerCount + 1 > capacity) {
+    throw new Error(`Passenger manifest exceeds the vehicle capacity of ${capacity}`);
+  }
+  if (!input.recordedAuthoriserUserId || input.recordedAuthoriserUserId !== input.actorUserId) {
+    throw new Error('Trip Authority authoriser must match the recorded final workflow authoriser');
+  }
+}
+
 /**
  * Provision the one canonical authority for an operational trip.
  *
@@ -139,42 +196,9 @@ export async function provisionTripAuthority(input: {
   actorUserId: string;
 }): Promise<ProvisionAuthorityResult> {
   const db = getDb();
-  const [existing] = await db
-    .select()
-    .from(tripAuthorities)
-    .where(and(eq(tripAuthorities.tripId, input.tripId), eq(tripAuthorities.tenantId, input.tenantId)))
-    .limit(1);
-  if (existing) {
-    const [existingDriver, existingVersion] = await Promise.all([
-      db
-        .select({ id: tripAuthorisedDrivers.id })
-        .from(tripAuthorisedDrivers)
-        .where(and(
-          eq(tripAuthorisedDrivers.authorityId, existing.id),
-          eq(tripAuthorisedDrivers.driverType, 'primary'),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null),
-      db
-        .select({ id: tripAuthorityVersions.id })
-        .from(tripAuthorityVersions)
-        .where(and(
-          eq(tripAuthorityVersions.authorityId, existing.id),
-          eq(tripAuthorityVersions.version, 1),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null),
-    ]);
-    if (!existingDriver || !existingVersion) {
-      throw new Error(
-        'An incomplete Trip Authority already exists for this trip. It requires administrative repair before authorisation can continue.',
-      );
-    }
-    return { authority: existing, verificationToken: null };
-  }
-
   const [context] = await db
     .select({
+      trip: trips,
       request: transportRequests,
       allocation: vehicleAllocations,
       vehicle: vehicles,
@@ -182,21 +206,57 @@ export async function provisionTripAuthority(input: {
       tenantName: tenants.name,
       driverId: vehicleAllocations.driverEmployeeId,
     })
-    .from(transportRequests)
-    .innerJoin(vehicleAllocations, eq(vehicleAllocations.requestId, transportRequests.id))
-    .innerJoin(vehicles, eq(vehicles.id, vehicleAllocations.vehicleId))
+    .from(trips)
+    .innerJoin(
+      vehicleAllocations,
+      and(
+        eq(vehicleAllocations.id, trips.allocationId),
+        eq(vehicleAllocations.requestId, trips.requestId),
+      ),
+    )
+    .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
+    .innerJoin(
+      vehicles,
+      and(eq(vehicles.id, vehicleAllocations.vehicleId), eq(vehicles.id, trips.vehicleId)),
+    )
     .innerJoin(tenants, eq(tenants.id, transportRequests.tenantId))
     .where(and(
+      eq(trips.id, input.tripId),
+      eq(trips.tenantId, input.tenantId),
+      eq(trips.requestId, input.requestId),
+      eq(trips.allocationId, input.allocationId),
       eq(transportRequests.id, input.requestId),
       eq(vehicleAllocations.id, input.allocationId),
       eq(transportRequests.tenantId, input.tenantId),
+      eq(vehicleAllocations.state, 'confirmed'),
+      eq(vehicles.tenantId, input.tenantId),
     ))
     .limit(1);
 
-  if (!context) throw new Error('Approved request, allocation, or vehicle was not found');
+  if (!context) {
+    throw new Error(
+      'The trip, request, current confirmed allocation, vehicle, and tenant do not form one valid operational assignment',
+    );
+  }
   if (!context.driverId) throw new Error('A driver must be assigned before issuing a Trip Authority');
+  if (!context.request.workflowInstanceId) {
+    throw new Error('The request has no workflow instance recording final authorisation');
+  }
 
-  const [[route], [resolvedAuthoriser], passengerRows, [driver]] = await Promise.all([
+  const [[currentAllocation], [route], [resolvedAuthoriser], passengerRows, [driver]] = await Promise.all([
+    db
+      .select({ id: vehicleAllocations.id })
+      .from(vehicleAllocations)
+      .innerJoin(transportRequests, eq(transportRequests.id, vehicleAllocations.requestId))
+      .innerJoin(vehicles, eq(vehicles.id, vehicleAllocations.vehicleId))
+      .where(and(
+        eq(vehicleAllocations.requestId, input.requestId),
+        eq(vehicleAllocations.state, 'confirmed'),
+        eq(transportRequests.tenantId, input.tenantId),
+        eq(vehicles.tenantId, input.tenantId),
+      ))
+      .orderBy(desc(vehicleAllocations.updatedAt), desc(vehicleAllocations.createdAt))
+      .limit(1),
     db
       .select()
       .from(requestRoutes)
@@ -214,8 +274,10 @@ export async function provisionTripAuthority(input: {
       .from(workflowActions)
       .innerJoin(workflowInstances, eq(workflowInstances.id, workflowActions.instanceId))
       .where(and(
+        eq(workflowInstances.id, context.request.workflowInstanceId),
         eq(workflowInstances.requestId, input.requestId),
         eq(workflowActions.actionType, 'authorise'),
+        eq(workflowActions.result, 'authorised'),
       ))
       .orderBy(desc(workflowActions.createdAt))
       .limit(1),
@@ -238,10 +300,12 @@ export async function provisionTripAuthority(input: {
     db
       .select({
         employeeId: employees.id,
+        tenantId: employees.tenantId,
         employeeNumber: employees.employeeNumber,
         licenceNumber: driverLicences.licenceNumber,
         licenceClass: driverLicences.licenceClass,
         licenceExpiry: driverLicences.expiryDate,
+        verificationStatus: driverLicences.verificationStatus,
       })
       .from(employees)
       .innerJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
@@ -255,12 +319,90 @@ export async function provisionTripAuthority(input: {
       .limit(1),
   ]);
 
-  const capacity = context.vehicle.seatedCapacity ?? 1;
-  if (passengerRows.length + 1 > capacity) {
-    throw new Error(`Passenger manifest exceeds the vehicle capacity of ${capacity}`);
+  assertTripAuthorityProvisioningInvariants({
+    ...input,
+    trip: {
+      id: context.trip.id,
+      tenantId: context.trip.tenantId,
+      requestId: context.trip.requestId,
+      allocationId: context.trip.allocationId,
+      vehicleId: context.trip.vehicleId,
+    },
+    allocation: {
+      id: context.allocation.id,
+      requestId: context.allocation.requestId,
+      vehicleId: context.allocation.vehicleId,
+      driverEmployeeId: context.allocation.driverEmployeeId,
+      state: context.allocation.state,
+      endAt: context.allocation.endAt,
+    },
+    currentAllocationId: currentAllocation?.id ?? null,
+    vehicle: {
+      id: context.vehicle.id,
+      tenantId: context.vehicle.tenantId,
+      seatedCapacity: context.vehicle.seatedCapacity,
+    },
+    driver: driver ?? null,
+    recordedAuthoriserUserId: resolvedAuthoriser?.userId ?? null,
+    passengerCount: passengerRows.length,
+  });
+
+  const [existing] = await db
+    .select()
+    .from(tripAuthorities)
+    .where(
+      and(
+        eq(tripAuthorities.tripId, input.tripId),
+        eq(tripAuthorities.tenantId, input.tenantId),
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    if (existing.requestId !== input.requestId || existing.allocationId !== input.allocationId) {
+      throw new Error('The existing Trip Authority does not match the requested operational assignment');
+    }
+    const [existingDriver, existingVersion] = await Promise.all([
+      db
+        .select({ employeeId: tripAuthorisedDrivers.employeeId })
+        .from(tripAuthorisedDrivers)
+        .where(and(
+          eq(tripAuthorisedDrivers.authorityId, existing.id),
+          eq(tripAuthorisedDrivers.driverType, 'primary'),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({ id: tripAuthorityVersions.id })
+        .from(tripAuthorityVersions)
+        .where(and(
+          eq(tripAuthorityVersions.authorityId, existing.id),
+          eq(tripAuthorityVersions.version, 1),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+    ]);
+    if (existingDriver?.employeeId !== driver.employeeId || !existingVersion) {
+      throw new Error(
+        'An incomplete or mismatched Trip Authority already exists for this trip. It requires administrative repair before authorisation can continue.',
+      );
+    }
+    return { authority: existing, verificationToken: null };
   }
-  if (!driver || new Date(`${driver.licenceExpiry}T23:59:59Z`) < context.allocation.endAt) {
-    throw new Error('The assigned driver requires a verified licence valid through the end of the trip');
+
+  const [authorityForAllocation] = await db
+    .select({ id: tripAuthorities.id, tripId: tripAuthorities.tripId })
+    .from(tripAuthorities)
+    .where(
+      and(
+        eq(tripAuthorities.tenantId, input.tenantId),
+        eq(tripAuthorities.allocationId, input.allocationId),
+      ),
+    )
+    .limit(1);
+  if (authorityForAllocation) {
+    throw new Error(
+      `Allocation already has a Trip Authority for trip ${authorityForAllocation.tripId ?? 'unknown'}`,
+    );
   }
 
   const rawToken = randomBytes(32).toString('base64url');
@@ -289,17 +431,15 @@ export async function provisionTripAuthority(input: {
     specialAuthorityGranted: context.request.specialAuthorityApproved === true,
     specialConditions: context.request.specialAuthorityReason,
     issuedAt,
-    authorisedAt: resolvedAuthoriser?.createdAt || null,
-    authorisedByUserId: resolvedAuthoriser?.userId || input.actorUserId,
-    authoriserSnapshot: resolvedAuthoriser
-      ? {
-          employeeId: resolvedAuthoriser.employeeId,
-          isActing: resolvedAuthoriser.isActing,
-          capacity: resolvedAuthoriser.metadata?.resolvedCapacity,
-          roleId: resolvedAuthoriser.metadata?.resolvedRoleId,
-          authorisedAt: resolvedAuthoriser.createdAt.toISOString(),
-        }
-      : null,
+    authorisedAt: resolvedAuthoriser.createdAt,
+    authorisedByUserId: resolvedAuthoriser.userId,
+    authoriserSnapshot: {
+      employeeId: resolvedAuthoriser.employeeId,
+      isActing: resolvedAuthoriser.isActing,
+      capacity: resolvedAuthoriser.metadata?.resolvedCapacity,
+      roleId: resolvedAuthoriser.metadata?.resolvedRoleId,
+      authorisedAt: resolvedAuthoriser.createdAt.toISOString(),
+    },
     documentVersion: 1,
     version: 1,
     data: {
@@ -352,24 +492,65 @@ export async function provisionTripAuthority(input: {
     primaryDriverEmployeeId: driver.employeeId,
   };
 
-  await runAtomicMutations((tx) => {
-    const mutations = [tx.insert(tripAuthorities).values(authorityValues)];
-    if (passengerValues.length) {
-      mutations.push(tx.insert(tripAuthorityPassengers).values(passengerValues));
-    }
-    mutations.push(
-      tx.insert(tripAuthorisedDrivers).values(driverValues),
-      tx.insert(tripAuthorityVersions).values({
-        authorityId,
-        version: 1,
-        status: 'awaiting_driver_acceptance',
-        snapshot,
-        reason: 'Initial Trip Authority issue',
-        createdByUserId: input.actorUserId,
-      }),
-    );
-    return mutations;
-  });
+  try {
+    await runAtomicMutations((tx) => {
+      const mutations = [tx.insert(tripAuthorities).values(authorityValues)];
+      if (passengerValues.length) {
+        mutations.push(tx.insert(tripAuthorityPassengers).values(passengerValues));
+      }
+      mutations.push(
+        tx.insert(tripAuthorisedDrivers).values(driverValues),
+        tx.insert(tripAuthorityVersions).values({
+          authorityId,
+          version: 1,
+          status: 'awaiting_driver_acceptance',
+          snapshot,
+          reason: 'Initial Trip Authority issue',
+          createdByUserId: input.actorUserId,
+        }),
+      );
+      return mutations;
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code !== '23505') throw error;
+
+    // A concurrent retry may win the unique trip constraint. Treat it as the
+    // same idempotent operation only when the committed authority and its
+    // mandatory child records exactly match this assignment.
+    const [raced] = await db
+      .select()
+      .from(tripAuthorities)
+      .where(
+        and(
+          eq(tripAuthorities.tripId, input.tripId),
+          eq(tripAuthorities.tenantId, input.tenantId),
+          eq(tripAuthorities.requestId, input.requestId),
+          eq(tripAuthorities.allocationId, input.allocationId),
+        ),
+      )
+      .limit(1);
+    if (!raced) throw error;
+    const [[racedDriver], [racedVersion]] = await Promise.all([
+      db
+        .select({ employeeId: tripAuthorisedDrivers.employeeId })
+        .from(tripAuthorisedDrivers)
+        .where(and(
+          eq(tripAuthorisedDrivers.authorityId, raced.id),
+          eq(tripAuthorisedDrivers.driverType, 'primary'),
+        ))
+        .limit(1),
+      db
+        .select({ id: tripAuthorityVersions.id })
+        .from(tripAuthorityVersions)
+        .where(and(
+          eq(tripAuthorityVersions.authorityId, raced.id),
+          eq(tripAuthorityVersions.version, 1),
+        ))
+        .limit(1),
+    ]);
+    if (racedDriver?.employeeId !== driver.employeeId || !racedVersion) throw error;
+    return { authority: raced, verificationToken: null };
+  }
 
   const [authority] = await db
     .select()

@@ -212,6 +212,32 @@ describe('WorkflowEngine — Action processing', () => {
       expect(result.error.status).toBe(400);
     }
   });
+
+  it('rejects legacy generic acknowledgement in favour of the canonical trip route', async () => {
+    const { WorkflowEngine } = await import('@/lib/workflow-engine');
+    const mockDb = createMockDbForProcessAction({ currentStepOrder: 5 });
+    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
+
+    const result = await engine.processAction(
+      {
+        instanceId: 'wf-instance-1',
+        action: 'acknowledge',
+        result: 'acknowledged',
+        actorUserId: 'user-actor',
+      },
+      MOCK_SESSION,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.status).toBe(409);
+      await expect(result.error.json()).resolves.toMatchObject({
+        actionUrl: '/dashboard/trips',
+      });
+    }
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(mockDb.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('WorkflowEngine — Emergency override', () => {
@@ -342,10 +368,10 @@ describe('WorkflowEngine — Built-in step definitions', () => {
     expect(steps).toHaveLength(5);
   });
 
-  it('national workflow has exactly 6 steps', async () => {
+  it('national workflow has exactly 5 steps', async () => {
     const { NATIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
     const steps = NATIONAL_WORKFLOW_STEPS as unknown as unknown[];
-    expect(steps).toHaveLength(6);
+    expect(steps).toHaveLength(5);
   });
 
   it('regional steps start with supervisor_approve and end with acknowledge', async () => {
@@ -362,11 +388,11 @@ describe('WorkflowEngine — Built-in step definitions', () => {
     expect(steps[steps.length - 1].actionType).toBe('acknowledge');
   });
 
-  it('national has one more step than regional (+1 Director release)', async () => {
+  it('national uses the same five-stage contract with national release and authorisation permissions', async () => {
     const { REGIONAL_WORKFLOW_STEPS, NATIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
     const r = REGIONAL_WORKFLOW_STEPS as unknown as unknown[];
     const n = NATIONAL_WORKFLOW_STEPS as unknown as unknown[];
-    expect(n.length - r.length).toBe(1);
+    expect(n).toHaveLength(r.length);
   });
 
   it('regional workflow has release (step 3) then authorise (step 4)', async () => {
@@ -376,11 +402,12 @@ describe('WorkflowEngine — Built-in step definitions', () => {
     expect(steps[3].actionType).toBe('authorise');
   });
 
-  it('national workflow has two release steps (steps 3 and 4)', async () => {
+  it('national workflow has one national release followed by final authorisation', async () => {
     const { NATIONAL_WORKFLOW_STEPS } = await import('@/lib/workflow-engine');
-    const steps = NATIONAL_WORKFLOW_STEPS as unknown as { actionType: string }[];
+    const steps = NATIONAL_WORKFLOW_STEPS as unknown as { actionType: string; stepOrder: number }[];
     const releaseSteps = steps.filter((s) => s.actionType === 'release');
-    expect(releaseSteps).toHaveLength(2);
+    expect(releaseSteps).toEqual([expect.objectContaining({ stepOrder: 3 })]);
+    expect(steps[3]).toMatchObject({ stepOrder: 4, actionType: 'authorise' });
   });
 
   it('regional step 3 (release) requires VEHICLE_RELEASE_REGIONAL permission', async () => {
@@ -599,6 +626,8 @@ describe('WorkflowEngine — getCurrentStepRecipients (reminder/escalation recip
     // The permission fallback must NOT be consulted — the driver is the
     // sole recipient of acknowledge reminders.
     expect(mockDb.limit).toHaveBeenCalledTimes(1);
+    expect(mockDb.innerJoin).toHaveBeenCalledTimes(2);
+    expect(mockDb.orderBy).toHaveBeenCalledTimes(1);
   });
 
   it('fans out to every permission holder for an unassigned, permission-routed step', async () => {

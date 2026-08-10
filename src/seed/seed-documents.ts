@@ -625,7 +625,7 @@ async function seedDocuments() {
 
   await db.update(transportRequests).set({ workflowInstanceId: wfInstance3.id }).where(eq(transportRequests.id, req3.id));
 
-  // National workflow: supervisor_approve (1) → transport_review (2) → release (3) → national_release (4) → national_authorise (5) → acknowledge (6)
+  // National workflow: supervisor_approve (1) → transport_review (2) → national_release (3) → national_authorise (4) → acknowledge (5)
   // Currently at step 5 awaiting acknowledge
   const nat1 = empMap['KERC007']; // Rafael Kasume — Chief Regional Officer
   const nat2 = empMap['KERC006']; // Tomas Sikongo — Director
@@ -633,9 +633,8 @@ async function seedDocuments() {
   await db.insert(workflowActions).values([
     { instanceId: wfInstance3.id, stepOrder: 1, actionType: 'supervisor_approve', result: 'approved', actorUserId: supervisor.userId!, actorEmployeeId: supervisor.id, createdAt: new Date(now.getTime() - 6 * 86400000 + 3600000) },
     { instanceId: wfInstance3.id, stepOrder: 2, actionType: 'transport_review', result: 'approved', actorUserId: transportAdmin.userId!, actorEmployeeId: transportAdmin.id, createdAt: new Date(now.getTime() - 6 * 86400000 + 7200000) },
-    { instanceId: wfInstance3.id, stepOrder: 3, actionType: 'release', result: 'released', actorUserId: releaseOff.userId!, actorEmployeeId: releaseOff.id, signatureRef: 'typed:Erastus Hausiku', createdAt: new Date(now.getTime() - 5 * 86400000 + 3600000) },
-    { instanceId: wfInstance3.id, stepOrder: 4, actionType: 'release', result: 'released', actorUserId: nat2?.userId ?? transportAdmin.userId!, actorEmployeeId: nat2?.id, signatureRef: 'typed:Tomas Sikongo', createdAt: new Date(now.getTime() - 5 * 86400000 + 7200000) },
-    { instanceId: wfInstance3.id, stepOrder: 5, actionType: 'authorise', result: 'authorised', actorUserId: nat1?.userId ?? transportAdmin.userId!, actorEmployeeId: nat1?.id, comment: 'Authorised for national delegation. Ensure travel itinerary is followed.', signatureRef: 'typed:Rafael Kasume', createdAt: new Date(now.getTime() - 4 * 86400000 + 3600000) },
+    { instanceId: wfInstance3.id, stepOrder: 3, actionType: 'release', result: 'released', actorUserId: nat2?.userId ?? transportAdmin.userId!, actorEmployeeId: nat2?.id, signatureRef: 'typed:Tomas Sikongo', createdAt: new Date(now.getTime() - 5 * 86400000 + 7200000) },
+    { instanceId: wfInstance3.id, stepOrder: 4, actionType: 'authorise', result: 'authorised', actorUserId: nat1?.userId ?? transportAdmin.userId!, actorEmployeeId: nat1?.id, comment: 'Authorised for national delegation. Ensure travel itinerary is followed.', signatureRef: 'typed:Rafael Kasume', createdAt: new Date(now.getTime() - 4 * 86400000 + 3600000) },
   ]);
 
   const [alloc3] = await db

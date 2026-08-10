@@ -27,13 +27,11 @@ import {
   vehicleDefects,
   vehicleInspections,
   vehicles,
-  workflowInstances,
-  workflowSteps,
 } from '@/db/schema';
 import { getServerSession } from '@/lib/session';
 import { getSessionPermissions, getSessionWorkspace } from '@/lib/auth-helpers';
 import { getWorkspaceNavigation } from '@/lib/dashboard-access';
-import { activeApprovalVisibleTo } from '@/lib/approval-queue';
+import { resolveActionableApprovalInstanceIds } from '@/lib/approval-queue';
 import type { PermissionCode } from '@/lib/permissions';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -377,26 +375,14 @@ async function getWorkspaceMetrics(
   return [
     {
       label: 'Assigned approvals',
-      value: await countRows(
-        db
-          .select({ count })
-          .from(workflowInstances)
-          .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-          .leftJoin(
-            workflowSteps,
-            and(
-              eq(workflowSteps.definitionId, workflowInstances.definitionId),
-              eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
-            ),
-          )
-          .where(
-            and(
-              eq(transportRequests.tenantId, tenantId),
-              eq(workflowInstances.status, 'active'),
-              activeApprovalVisibleTo(userId, permissionCodes),
-            ),
-          ),
-      ),
+      value: (
+        await resolveActionableApprovalInstanceIds({
+          db,
+          tenantId,
+          userId,
+          permissionCodes,
+        })
+      ).length,
       href: '/dashboard/approvals',
       icon: <Shield className="h-5 w-5" />,
     },

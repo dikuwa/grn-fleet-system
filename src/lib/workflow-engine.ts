@@ -28,11 +28,10 @@ import {
   vehicleAllocations,
   employees,
   trips,
-  tripAuthorities,
   rolePermissions,
   roles,
 } from '@/db/schema';
-import { eq, and, sql, lte, or, isNull, gt, ne } from 'drizzle-orm';
+import { eq, and, desc, sql, lte, or, isNull, gt, ne } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import type { AuthSession } from '@/lib/auth-helpers';
 import { requirePermission, forbiddenResponse } from '@/lib/auth-helpers';
@@ -42,7 +41,7 @@ import { tenantMemberships, roleAssignments } from '@/db/schema';
 import { workflowStepToStatus, workflowCompletedStatus } from '@/lib/request-status';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { resolveRoleHolder } from '@/lib/employee-lifecycle';
-import { provisionTripAuthority, setAuthorityStatus } from '@/lib/trip-authority';
+import { provisionTripAuthority } from '@/lib/trip-authority';
 import { userProfiles } from '@/db/schema/auth';
 import {
   createScopedNotifications,
@@ -409,6 +408,24 @@ export class WorkflowEngine {
       };
     }
 
+    // Driver acknowledgement is an operational acceptance of a specific
+    // current trip/allocation, not a generic workflow decision. Keeping it in
+    // this legacy path would bypass the canonical route's manifest, licence,
+    // declaration and atomic-state checks.
+    if (currentStep.actionType === 'acknowledge') {
+      return {
+        ok: false,
+        error: NextResponse.json(
+          {
+            error:
+              'Driver acknowledgement must be completed from the assigned trip in Driver Console.',
+            actionUrl: '/dashboard/trips',
+          },
+          { status: 409 },
+        ),
+      };
+    }
+
     // Validate: comment required
     if (currentStep.requiresComment && !comment?.trim()) {
       return {
@@ -536,20 +553,6 @@ export class WorkflowEngine {
         };
       }
     }
-    if (currentStep.actionType === 'acknowledge') {
-      const [assignedDriver] = await this.db
-        .select({ userId: employees.userId })
-        .from(vehicleAllocations)
-        .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
-        .where(eq(vehicleAllocations.requestId, instance.requestId))
-        .limit(1);
-      if (!assignedDriver?.userId || assignedDriver.userId !== session.user.id) {
-        return {
-          ok: false,
-          error: forbiddenResponse('Only the driver assigned to this request may acknowledge it.'),
-        };
-      }
-    }
     let authorityContext: {
       allocationId: string;
       tripId: string;
@@ -656,48 +659,6 @@ export class WorkflowEngine {
         allocationId: authorityContext.allocationId,
         actorUserId: session.user.id,
       });
-    }
-
-    if (currentStep.actionType === 'acknowledge') {
-      const [actorEmployee] = await this.db
-        .select({ id: employees.id })
-        .from(employees)
-        .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId)))
-        .limit(1);
-      if (actorEmployee) {
-        const [allocation] = await this.db
-          .select({
-            id: vehicleAllocations.id,
-            authorityId: tripAuthorities.id,
-            authorityStatus: tripAuthorities.status,
-          })
-          .from(vehicleAllocations)
-          .innerJoin(trips, eq(trips.allocationId, vehicleAllocations.id))
-          .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
-          .where(eq(vehicleAllocations.requestId, instance.requestId))
-          .limit(1);
-        if (allocation) {
-          await this.db
-            .update(trips)
-            .set({
-              driverAcknowledgedAt: new Date(),
-              driverAcknowledgedByEmployeeId: actorEmployee.id,
-              updatedAt: new Date(),
-            })
-            .where(eq(trips.allocationId, allocation.id));
-          if (allocation.authorityStatus === 'awaiting_driver_acceptance') {
-            await setAuthorityStatus({
-              authorityId: allocation.authorityId,
-              tenantId: session.tenantId,
-              next: 'driver_accepted',
-              patch: {
-                acceptedAt: new Date(),
-                acceptedByEmployeeId: actorEmployee.id,
-              },
-            });
-          }
-        }
-      }
     }
 
     await this.logAuditEvent(
@@ -993,8 +954,8 @@ export class WorkflowEngine {
   /**
    * Resolve the users who can currently act on a workflow's active step.
    *
-   * Mirrors the approvals queue visibility model (`activeApprovalVisibleTo`)
-   * and the action-time authorization gates:
+   * Mirrors the runtime-resolved approvals queue and action-time authorization
+   * gates:
    *   1. A runtime-resolved explicit holder (delegation / acting role) wins.
    *   2. The acknowledge step is never pre-assigned in the DB — the allocated
    *      driver is resolved dynamically from the vehicle allocation.
@@ -1015,9 +976,29 @@ export class WorkflowEngine {
       const [allocated] = await this.db
         .select({ userId: employees.userId })
         .from(vehicleAllocations)
-        .innerJoin(employees, eq(vehicleAllocations.driverEmployeeId, employees.id))
-        .where(eq(vehicleAllocations.requestId, status.instance.requestId))
-        .orderBy(vehicleAllocations.createdAt)
+        .innerJoin(
+          trips,
+          and(
+            eq(trips.allocationId, vehicleAllocations.id),
+            eq(trips.requestId, vehicleAllocations.requestId),
+          ),
+        )
+        .innerJoin(
+          employees,
+          and(
+            eq(vehicleAllocations.driverEmployeeId, employees.id),
+            eq(employees.tenantId, tenantId),
+          ),
+        )
+        .where(
+          and(
+            eq(vehicleAllocations.requestId, status.instance.requestId),
+            eq(vehicleAllocations.state, 'confirmed'),
+            eq(trips.tenantId, tenantId),
+            eq(trips.requestId, status.instance.requestId),
+          ),
+        )
+        .orderBy(desc(vehicleAllocations.updatedAt), desc(vehicleAllocations.createdAt))
         .limit(1);
       return allocated?.userId ? [allocated.userId] : [];
     }

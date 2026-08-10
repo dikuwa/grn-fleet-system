@@ -5,7 +5,6 @@ import {
   workflowActions,
   workflowDefinitions,
   workflowInstances,
-  workflowSteps,
 } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
@@ -28,8 +27,7 @@ import type { PermissionCode } from '@/lib/permissions';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { getSessionPermissions } from '@/lib/auth-helpers';
-import { activeApprovalVisibleTo } from '@/lib/approval-queue';
-import { WorkflowEngine } from '@/lib/workflow-engine';
+import { resolveActionableApprovalInstanceIds } from '@/lib/approval-queue';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { groupedCountMap } from '@/lib/statistics';
@@ -50,55 +48,12 @@ async function resolveVisibleActiveInstanceIds(
   userId: string,
   permissionCodes: readonly PermissionCode[],
 ) {
-  const db = getDb();
-
-  // First use the indexed/static workflow fields as a cheap candidate filter.
-  // Permission-routed steps are frequently unassigned in the definition because
-  // the workflow engine resolves the responsible employee/acting delegate at
-  // runtime. Candidate selection therefore must remain broader than the final
-  // visibility decision.
-  const candidates = await db
-    .select({ id: workflowInstances.id })
-    .from(workflowInstances)
-    .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
-    .leftJoin(
-      workflowSteps,
-      and(
-        eq(workflowSteps.definitionId, workflowInstances.definitionId),
-        eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
-      ),
-    )
-    .where(
-      and(
-        eq(transportRequests.tenantId, tenantId),
-        eq(workflowInstances.status, 'active'),
-        activeApprovalVisibleTo(userId, permissionCodes),
-      ),
-    );
-
-  if (candidates.length === 0) return [] as string[];
-
-  const engine = new WorkflowEngine({ db });
-  const permissionSet = new Set<PermissionCode>(permissionCodes);
-  const statuses = await Promise.all(
-    candidates.map(async ({ id }) => ({ id, status: await engine.getWorkflowStatus(id) })),
-  );
-
-  return statuses
-    .filter(({ status }) => {
-      const step = status?.currentStep;
-      if (!status || status.instance.status !== 'active' || !step) return false;
-
-      // Driver acknowledgement belongs in Driver Trips/Driver Console. It is
-      // deliberately not an approval-workspace item and must never be exposed
-      // to every driver merely because they share DRIVER_LOG_CREATE.
-      if (step.actionType === 'acknowledge') return false;
-
-      if (step.assignedUserId) return step.assignedUserId === userId;
-      if (!step.requiredPermission) return false;
-      return permissionSet.has(step.requiredPermission as PermissionCode);
-    })
-    .map(({ id }) => id);
+  return resolveActionableApprovalInstanceIds({
+    db: getDb(),
+    tenantId,
+    userId,
+    permissionCodes,
+  });
 }
 
 async function fetchApprovals(

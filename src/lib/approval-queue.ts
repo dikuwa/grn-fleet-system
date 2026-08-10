@@ -1,6 +1,9 @@
-import { and, eq, inArray, isNotNull, isNull, or, type SQL } from 'drizzle-orm';
-import { workflowSteps } from '@/db/schema/workflows';
+import { and, eq, inArray, isNotNull, isNull, ne, or, type SQL } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { transportRequests } from '@/db/schema/requests';
+import { workflowInstances, workflowSteps } from '@/db/schema/workflows';
 import type { PermissionCode } from '@/lib/permissions';
+import { WorkflowEngine } from '@/lib/workflow-engine';
 
 /**
  * Predicate for the active approvals a user should see in their queue.
@@ -33,4 +36,73 @@ export function activeApprovalVisibleTo(
     inArray(workflowSteps.requiredPermission, [...permissionCodes]),
   );
   return or(assignedToMe, unassignedWithPermission) ?? assignedToMe;
+}
+
+/**
+ * Resolve the active approval instances a user can actually act on.
+ *
+ * Definition-level `assignedUserId` values are only a candidate hint: the
+ * workflow engine may replace them with the current substantive or acting
+ * holder at runtime. Candidate selection therefore permits a matching step
+ * permission even when a stale static assignment is non-null, then the final
+ * filter applies the runtime assignment. This is not permission fan-out; an
+ * explicit runtime holder always wins and unrelated holders are excluded.
+ */
+export async function resolveActionableApprovalInstanceIds(input: {
+  tenantId: string;
+  userId: string;
+  permissionCodes: readonly PermissionCode[];
+  db?: ReturnType<typeof getDb>;
+}): Promise<string[]> {
+  const db = input.db ?? getDb();
+  const assignedToUser = eq(workflowSteps.assignedUserId, input.userId);
+  const candidateVisibility = input.permissionCodes.length > 0
+    ? or(
+        assignedToUser,
+        and(
+          isNotNull(workflowSteps.requiredPermission),
+          inArray(workflowSteps.requiredPermission, [...input.permissionCodes]),
+        ),
+      )
+    : assignedToUser;
+  const candidates = await db
+    .select({ id: workflowInstances.id })
+    .from(workflowInstances)
+    .innerJoin(transportRequests, eq(workflowInstances.requestId, transportRequests.id))
+    .innerJoin(
+      workflowSteps,
+      and(
+        eq(workflowSteps.definitionId, workflowInstances.definitionId),
+        eq(workflowSteps.stepOrder, workflowInstances.currentStepOrder),
+      ),
+    )
+    .where(
+      and(
+        eq(transportRequests.tenantId, input.tenantId),
+        eq(workflowInstances.status, 'active'),
+        ne(workflowSteps.actionType, 'acknowledge'),
+        candidateVisibility,
+      ),
+    );
+
+  if (candidates.length === 0) return [];
+
+  const engine = new WorkflowEngine({ db });
+  const permissionSet = new Set<PermissionCode>(input.permissionCodes);
+  const statuses = await Promise.all(
+    candidates.map(async ({ id }) => ({ id, status: await engine.getWorkflowStatus(id) })),
+  );
+
+  return statuses
+    .filter(({ status }) => {
+      const step = status?.currentStep;
+      if (!status || status.instance.status !== 'active' || !step) return false;
+      if (step.actionType === 'acknowledge') return false;
+      if (step.assignedUserId) return step.assignedUserId === input.userId;
+      return Boolean(
+        step.requiredPermission &&
+          permissionSet.has(step.requiredPermission as PermissionCode),
+      );
+    })
+    .map(({ id }) => id);
 }
