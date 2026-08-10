@@ -62,7 +62,7 @@ export async function GET(
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const canReview = await canReviewLicence(auth.session);
+    const hasReviewAuthority = await canReviewLicence(auth.session);
 
     const db = getDb();
     const [licence] = await db
@@ -92,6 +92,8 @@ export async function GET(
       return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
     }
 
+    const reviewable = REVIEWABLE_STATUSES.has(licence.licence.verificationStatus);
+    const canReview = hasReviewAuthority && reviewable;
     const profileId = licence.profileId;
     const [frontUrl, backUrl, pdfUrl] = await Promise.all([
       licence.licence.frontImageKey
@@ -173,7 +175,7 @@ export async function GET(
       success: true,
       data: {
         canReview,
-        reviewable: REVIEWABLE_STATUSES.has(licence.licence.verificationStatus),
+        reviewable,
         licence: {
           ...licence.licence,
           ocrText: rawOcr.text ?? null,
