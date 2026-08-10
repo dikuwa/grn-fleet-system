@@ -13,7 +13,6 @@ import { workflowCompletedStatus, workflowStepToStatus } from '@/lib/request-sta
 import {
   createScopedNotifications,
   resolveActionNotifications,
-  resolvePermissionRecipients,
 } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 import {
@@ -364,11 +363,9 @@ export async function processSupervisorDecisionAtomic(input: {
   }
 
   if (result === 'approved' && nextStep) {
-    const recipients = nextStep.assignedUserId
-      ? [nextStep.assignedUserId]
-      : nextStep.requiredPermission
-        ? await resolvePermissionRecipients(session.tenantId, nextStep.requiredPermission).catch(() => [])
-        : [];
+    const recipients = await engine
+      .getCurrentStepRecipients(instanceId, session.tenantId)
+      .catch(() => []);
     const nextRecipients = recipients.filter((userId) => userId !== requestRecord.requesterUserId);
     if (nextRecipients.length > 0) {
       await createScopedNotifications({
