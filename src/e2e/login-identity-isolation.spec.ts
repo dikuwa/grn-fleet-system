@@ -73,7 +73,7 @@ test.describe('seeded login identity isolation', () => {
     await page.getByRole('button', { name: 'Open account menu' }).click();
     await expect(page.getByText('Michael Mwala').first()).toBeVisible();
     await expect(page.locator('a[href="/dashboard/driver-mobile"]').first()).toBeVisible();
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await page.getByRole('menuitem', { name: /sign out/i }).click();
     await page.waitForURL(/\/login/, { timeout: 30_000 });
 
     await signIn('requester@kavangoeast.test');
