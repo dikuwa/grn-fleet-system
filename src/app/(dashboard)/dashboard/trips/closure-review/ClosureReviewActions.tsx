@@ -69,7 +69,12 @@ export function ClosureReviewActions({ tripId, tripStatus, hasReturnInspection }
     );
   }
 
-  const canReview = tripStatus === 'closure_review' || hasReturnInspection;
+  // Administrative closure is never available before the official return
+  // inspection exists. The API enforces the same rule, but keeping the UI in
+  // sync prevents Transport Officers from seeing a Close action that can only
+  // return a 409. Further reconciliation gates (fuel/expenses/incidents) remain
+  // server-authoritative and their exact error is surfaced if they are pending.
+  const canReview = tripStatus === 'closure_review' && hasReturnInspection;
 
   return (
     <div className="min-w-[240px] space-y-2" onClick={(event) => event.stopPropagation()}>
