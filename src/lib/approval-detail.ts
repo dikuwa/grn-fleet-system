@@ -22,6 +22,7 @@ import {
   workflowSteps,
 } from '@/db/schema/workflows';
 import type { PermissionCode } from '@/lib/permissions';
+import { WorkflowEngine } from '@/lib/workflow-engine';
 
 export async function getApprovalDetail(input: {
   instanceId: string;
@@ -81,6 +82,10 @@ export async function getApprovalDetail(input: {
     .then((rows) => rows[0] ?? null);
 
   if (!instance) return null;
+
+  const engine = new WorkflowEngine({ db });
+  const resolvedStatus = await engine.getWorkflowStatus(input.instanceId);
+  if (!resolvedStatus || resolvedStatus.instance.requestId !== instance.requestId) return null;
 
   const [
     steps,
@@ -191,16 +196,20 @@ export async function getApprovalDetail(input: {
       .then((rows) => rows[0] ?? null),
   ]);
 
-  const currentStep = steps.find((step) => step.stepOrder === instance.currentStepOrder) ?? null;
+  // `workflowSteps.assignedUserId` is definition-level data. Runtime role-holder
+  // resolution (including acting delegations and availability) happens in the
+  // workflow engine, so eligibility must use the resolved current step rather
+  // than granting every holder of the permission an action button.
+  const currentStep = resolvedStatus.currentStep;
   const hasStepPermission = Boolean(
     currentStep?.requiredPermission &&
-    input.permissionCodes.includes(currentStep.requiredPermission as PermissionCode),
+      input.permissionCodes.includes(currentStep.requiredPermission as PermissionCode),
   );
   const canViewActive = Boolean(
     instance.status === 'active' &&
-    currentStep &&
-    (currentStep.assignedUserId === input.userId ||
-      (!currentStep.assignedUserId && hasStepPermission)),
+      currentStep &&
+      (currentStep.assignedUserId === input.userId ||
+        (!currentStep.assignedUserId && hasStepPermission)),
   );
   const canAct = canViewActive;
   const actedPreviously = actions.some((action) => action.actorUserId === input.userId);
@@ -209,7 +218,9 @@ export async function getApprovalDetail(input: {
   return {
     instance,
     currentStep,
-    nextStep: steps.find((step) => step.stepOrder === instance.currentStepOrder + 1) ?? null,
+    nextStep: resolvedStatus.definition.steps.find(
+      (step) => step.stepOrder === instance.currentStepOrder + 1,
+    ) ?? null,
     steps,
     actions,
     activities,
