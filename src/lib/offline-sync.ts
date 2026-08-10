@@ -253,6 +253,22 @@ export async function syncSingleDraft(
         }
       }
 
+      // Inspection writes are also idempotent by clientSyncId. A simultaneous
+      // retry can lose the unique-index race after another request has committed.
+      // Recover only a record created by this same inspector and tenant.
+      if (
+        !responseData &&
+        (draft.draftType === 'inspection_departure' || draft.draftType === 'inspection_return')
+      ) {
+        const recovery = await fetch(`/api/inspections/sync/${encodeURIComponent(draft.id)}`, {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        if (recovery.ok) {
+          responseData = await recovery.json();
+        }
+      }
+
       if (!responseData) {
         const errorMsg = err.error || `HTTP ${res.status}`;
         await markDraftFailed(draft.id, errorMsg);
