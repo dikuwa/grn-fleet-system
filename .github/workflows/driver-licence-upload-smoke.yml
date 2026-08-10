@@ -1,0 +1,114 @@
+name: Driver licence upload smoke
+
+on:
+  push:
+    branches:
+      - audit/driver-operations-batch-20260810
+    paths:
+      - 'src/app/api/drivers/**'
+      - 'src/app/(dashboard)/dashboard/driver-self-service/**'
+      - 'src/app/(dashboard)/dashboard/staff/**/LicenceUploadPanel.tsx'
+      - 'src/lib/storage.ts'
+      - 'src/e2e/driver-licence-upload-review.smoke.spec.ts'
+      - '.github/workflows/driver-licence-upload-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  upload-review-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: grn_fleet_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d grn_fleet_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/grn_fleet_test
+      DATABASE_DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/grn_fleet_test
+      BETTER_AUTH_SECRET: test-secret-thirty-two-characters-long!
+      BETTER_AUTH_URL: http://127.0.0.1:3000
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
+      NEXT_PUBLIC_APP_NAME: GovFleet Namibia
+      R2_ACCOUNT_ID: local-test
+      R2_ACCESS_KEY_ID: minioadmin
+      R2_SECRET_ACCESS_KEY: minioadmin
+      R2_BUCKET_NAME: grn-fleet
+      R2_ENDPOINT: http://127.0.0.1:9000
+      SEED_ADMIN_PASSWORD: changeme
+
+    steps:
+      - name: Checkout audit branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start local S3-compatible storage
+        run: |
+          docker run -d --name grn-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:latest server /data
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs grn-minio
+          exit 1
+
+      - name: Create test storage bucket
+        run: |
+          node --input-type=module <<'NODE'
+          import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
+          const client = new S3Client({
+            region: 'auto',
+            endpoint: process.env.R2_ENDPOINT,
+            forcePathStyle: true,
+            credentials: {
+              accessKeyId: process.env.R2_ACCESS_KEY_ID,
+              secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+            },
+          });
+          await client.send(new CreateBucketCommand({ Bucket: process.env.R2_BUCKET_NAME }));
+          console.log('Created test bucket');
+          NODE
+
+      - name: Apply migrations and seed test accounts
+        run: |
+          pnpm db:migrate
+          pnpm db:seed
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run licence upload/review smoke test
+        run: pnpm exec playwright test src/e2e/driver-licence-upload-review.smoke.spec.ts --project=chromium
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-licence-upload-playwright-report
+          path: playwright-report
+          if-no-files-found: ignore
