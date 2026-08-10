@@ -214,21 +214,42 @@ export async function syncSingleDraft(
       }
       payload.photoKeys = photoKeys;
     }
+
     const res = await fetch(endpoint.url, {
       method: endpoint.method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
+    let responseData: Record<string, unknown> | null = null;
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      const errorMsg = err.error || `HTTP ${res.status}`;
-      await markDraftFailed(draft.id, errorMsg);
-      return { synced: false, error: errorMsg };
+
+      // A Fuel POST may lose a race against another retry carrying the same
+      // clientSyncId. The database correctly returns 409, but the winning row
+      // already represents this exact offline draft. Recover that row through a
+      // tenant/user-scoped lookup so receipt sync can continue against its ID.
+      if (draft.draftType === 'fuel' && res.status === 409) {
+        const recovery = await fetch(`/api/fuel/sync/${encodeURIComponent(draft.id)}`, {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        if (recovery.ok) {
+          responseData = await recovery.json();
+        }
+      }
+
+      if (!responseData) {
+        const errorMsg = err.error || `HTTP ${res.status}`;
+        await markDraftFailed(draft.id, errorMsg);
+        return { synced: false, error: errorMsg };
+      }
+    } else {
+      responseData = await res.json();
     }
 
-    const responseData = await res.json();
-    const entityId = responseData?.data?.id || responseData?.id || null;
+    const entityId = (responseData as { data?: { id?: string }; id?: string })?.data?.id ||
+      (responseData as { id?: string })?.id || null;
     if (draft.draftType === 'fuel') {
       const receiptFile = fd<File | null>(draft.formData, 'receiptFile', null);
       if (receiptFile && entityId) {
