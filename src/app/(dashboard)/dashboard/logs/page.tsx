@@ -121,8 +121,6 @@ export default function DailyLogsPage() {
     setTimeout(() => setSubmitMessage(null), 3000);
   }, [formData, draftId, profile]);
 
-
-
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.tripId) {
@@ -140,7 +138,9 @@ export default function DailyLogsPage() {
     setSubmitMessage(null);
 
     try {
-      // POST to trip log entries API
+      // POST to trip log entries API. If the form came from a saved local draft,
+      // reuse that draft UUID as the server idempotency token. This makes a manual
+      // online submit and an automatic reconnect sync the same logical operation.
       const res = await fetch('/api/trip-logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -155,6 +155,7 @@ export default function DailyLogsPage() {
           destination: formData.destination || null,
           distanceKm: formData.distanceKm ? Number(formData.distanceKm) : null,
           remarks: formData.remarks || null,
+          clientSyncId: draftId || undefined,
         }),
       });
 
@@ -234,7 +235,6 @@ export default function DailyLogsPage() {
         </div>
       )}
 
-      {/* Offline Banner */}
       {!isOnline && (
         <Card className="border-status-error-border bg-status-error-bg/30">
           <CardContent className="pt-4">
@@ -251,7 +251,6 @@ export default function DailyLogsPage() {
         </Card>
       )}
 
-      {/* Quick Stats */}
       <div className="grid grid-cols-3 gap-3">
         <Card>
           <CardContent className="pt-4 text-center">
@@ -276,14 +275,12 @@ export default function DailyLogsPage() {
         </Card>
       </div>
 
-      {/* Main Form */}
       <Card>
         <CardHeader>
           <CardTitle>Log Entry</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Trip Selection */}
             <div className="space-y-1.5">
               <Label required>Trip / Vehicle</Label>
               <StyledSelect
@@ -302,7 +299,6 @@ export default function DailyLogsPage() {
               </StyledSelect>
             </div>
 
-            {/* Date */}
             <div className="space-y-1.5">
               <Label required>Log Date</Label>
               <StyledDateInput
@@ -312,7 +308,6 @@ export default function DailyLogsPage() {
               />
             </div>
 
-            {/* Odometer Readings */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Odometer Out</Label>
@@ -342,27 +337,25 @@ export default function DailyLogsPage() {
               </div>
             </div>
 
-            {/* Times */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Departure Time</Label>
-                  <StyledDateInput
-                    type="time"
-                    value={formData.departureTime}
-                    onChange={(e) => updateField('departureTime', e.target.value)}
-                  />
+                <StyledDateInput
+                  type="time"
+                  value={formData.departureTime}
+                  onChange={(e) => updateField('departureTime', e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Arrival Time</Label>
-                  <StyledDateInput
-                    type="time"
-                    value={formData.arrivalTime}
-                    onChange={(e) => updateField('arrivalTime', e.target.value)}
-                  />
+                <StyledDateInput
+                  type="time"
+                  value={formData.arrivalTime}
+                  onChange={(e) => updateField('arrivalTime', e.target.value)}
+                />
               </div>
             </div>
 
-            {/* Route */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Origin</Label>
@@ -390,7 +383,6 @@ export default function DailyLogsPage() {
               </div>
             </div>
 
-            {/* Distance */}
             <div className="space-y-1.5">
               <Label>Distance (km)</Label>
               <Input
@@ -402,7 +394,6 @@ export default function DailyLogsPage() {
               />
             </div>
 
-            {/* Remarks */}
             <div className="space-y-1.5">
               <Label>Remarks / Notes</Label>
               <textarea
@@ -413,7 +404,6 @@ export default function DailyLogsPage() {
               />
             </div>
 
-            {/* Submit */}
             <div className="flex gap-2 pt-2">
               <Button
                 variant="primary"
@@ -452,7 +442,6 @@ export default function DailyLogsPage() {
         </CardContent>
       </Card>
 
-      {/* Trip Quick Reference (mobile-friendly cards) */}
       {trips.filter((t) => t.status === 'in_progress' || t.status === 'pending').length > 0 && (
         <Card>
           <CardHeader>
@@ -489,7 +478,6 @@ export default function DailyLogsPage() {
         </Card>
       )}
 
-      {/* Drafts List */}
       <DraftListSection
         show={showDrafts}
         userId={profile?.id}
@@ -502,7 +490,6 @@ export default function DailyLogsPage() {
         }}
       />
 
-      {/* Mobile-friendly tips */}
       <Card className="bg-brand-50/30 border-brand-100">
         <CardContent className="pt-4">
           <div className="flex items-start gap-3">
@@ -524,10 +511,6 @@ export default function DailyLogsPage() {
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Draft List Section
-// ---------------------------------------------------------------------------
 
 function DraftListSection({
   show,
