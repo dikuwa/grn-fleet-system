@@ -3,10 +3,10 @@
  */
 import { randomUUID } from 'node:crypto';
 import { getDb } from '@/db';
-import { tripIncidentSequences, tripIncidents, trips } from '@/db/schema/trips';
+import { tripAuthorities, tripIncidentSequences, tripIncidents, trips } from '@/db/schema/trips';
 import { vehicles, vehicleStatusEvents, vehicleDefects, maintenanceEvents } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 import { generateDocument } from '@/lib/document-generator';
@@ -249,12 +249,21 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             continuationState: input.continuationState,
             detailsRequired: needsMvaDetails,
             maintenanceAssigneeUserId,
+            journeyHeldForCriticalIncident: input.severity === 'critical',
           },
         }),
       ];
 
       if (input.severity === 'critical') {
         mutations.push(
+          tx
+            .update(tripAuthorities)
+            .set({ status: 'incident_reported', version: sql`${tripAuthorities.version} + 1`, updatedAt: new Date() })
+            .where(and(
+              eq(tripAuthorities.tripId, input.tripId),
+              eq(tripAuthorities.tenantId, input.tenantId),
+              inArray(tripAuthorities.status, ['in_progress', 'delayed', 'route_deviation_pending_review']),
+            )),
           tx
             .update(vehicles)
             .set({ status: 'maintenance', updatedAt: new Date() })

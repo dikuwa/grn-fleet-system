@@ -21,7 +21,7 @@ import {
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
-import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
+import { buildKey, deleteFile, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { licenceOcrConfidence, parseNamibianLicenceOcr } from '@/lib/driver-licence-ocr';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { runAtomicMutations } from '@/lib/db-atomic';
@@ -186,6 +186,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const uploadedKeys: string[] = [];
+  let submissionCommitted = false;
+
   try {
     const { id } = await params;
     const auth = await access(request, id);
@@ -234,22 +237,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       .orderBy(desc(driverLicences.version))
       .limit(1);
     const version = (latest?.version || 0) + 1;
-    const tenantPrefix = `tenant/${auth.session.tenantId}`;
-    const uploaded: Record<string, string> = {};
-    for (const [side, value] of [
-      ['front', front],
-      ['back', back],
-      ['sourcePdf', sourcePdf],
-    ] as const) {
-      if (!(value instanceof File) || !value.size) continue;
-      const key = buildKey(value.name, `driver-licences/${id}/v${version}/${side}`, tenantPrefix);
-      await uploadFile(Buffer.from(await value.arrayBuffer()), key, {
-        contentType: value.type,
-        tenantPrefix,
-      });
-      uploaded[side] = key;
-    }
 
+    // OCR and structural validation happen before storage writes. A bad date,
+    // malformed submission or OCR-processing problem therefore cannot leave
+    // unattached licence objects in R2.
     let rawText = '';
     let meanConfidence = 0;
     const qualityWarnings: string[] = [];
@@ -313,6 +304,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const licenceId = randomUUID();
     const verificationStatus = rawText ? 'awaiting_review' : 'needs_correction';
 
+    // Only structurally valid submissions reach object storage. Track every key
+    // as it succeeds so a partial upload or rolled-back database transaction can
+    // clean up only the objects created by this request.
+    const tenantPrefix = `tenant/${auth.session.tenantId}`;
+    const uploaded: Record<string, string> = {};
+    for (const [side, value] of [
+      ['front', front],
+      ['back', back],
+      ['sourcePdf', sourcePdf],
+    ] as const) {
+      if (!(value instanceof File) || !value.size) continue;
+      const key = buildKey(value.name, `driver-licences/${id}/v${version}/${side}`, tenantPrefix);
+      await uploadFile(Buffer.from(await value.arrayBuffer()), key, {
+        contentType: value.type,
+        tenantPrefix,
+      });
+      uploaded[side] = key;
+      uploadedKeys.push(key);
+    }
+
     await runAtomicMutations((executor) => {
       const mutations = [
         executor.insert(driverLicences).values({
@@ -369,6 +380,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
       return mutations;
     });
+    submissionCommitted = true;
 
     const [licence] = await db
       .select()
@@ -390,6 +402,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       { status: 201 },
     );
   } catch (error) {
+    if (!submissionCommitted && uploadedKeys.length) {
+      const cleanup = await Promise.allSettled(uploadedKeys.map((key) => deleteFile(key)));
+      if (cleanup.some((result) => result.status === 'rejected')) {
+        console.warn('[licences] Failed to clean up one or more uncommitted licence uploads');
+      }
+    }
     if ((error as { code?: string })?.code === '23505') {
       return NextResponse.json(
         { error: 'A newer licence submission was created at the same time. Refresh and upload again.' },
