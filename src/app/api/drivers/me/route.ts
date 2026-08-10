@@ -5,14 +5,14 @@ import { requireRequestAuth } from '@/lib/auth-helpers';
 
 import { eq, and, desc } from 'drizzle-orm';
 
-const SELF_SERVICE_TERMINAL_HISTORY = new Set(['superseded', 'rejected']);
+const SELF_SERVICE_TERMINAL_HISTORY = new Set(['superseded', 'rejected', 'expired']);
 
 /**
  * GET /api/drivers/me
  * Returns the current user's driver profile, current/reviewable licences, and employee info.
- * Superseded/rejected licence versions remain preserved in the database and Transport review
- * history, but are deliberately omitted from the Driver's current compliance feed so an old
- * expired version cannot produce a false "licence expired" alert after renewal.
+ * Superseded/rejected/expired historical licence versions remain preserved in the database
+ * and Transport review history, but are deliberately omitted from the Driver's current
+ * compliance feed so an old terminal version cannot produce a false expiry alert after renewal.
  */
 export async function GET(req: NextRequest) {
   try {
