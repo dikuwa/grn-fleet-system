@@ -52,6 +52,7 @@
     { "idx": 47, "version": "7", "when": 1786472400000, "tag": "0047_inspection_template_versioning", "breakpoints": true },
     { "idx": 48, "version": "7", "when": 1786476000000, "tag": "0048_reconcile_driver_acknowledgement", "breakpoints": true },
     { "idx": 49, "version": "7", "when": 1786479600000, "tag": "0049_request_reference_sequence", "breakpoints": true },
-    { "idx": 50, "version": "7", "when": 1786483200000, "tag": "0050_trip_log_idempotency", "breakpoints": true }
+    { "idx": 50, "version": "7", "when": 1786483200000, "tag": "0050_trip_log_idempotency", "breakpoints": true },
+    { "idx": 51, "version": "7", "when": 1786486800000, "tag": "0051_allocation_concurrency_guard", "breakpoints": true }
   ]
 }
