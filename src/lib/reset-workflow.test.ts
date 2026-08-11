@@ -4,6 +4,8 @@ import {
   matchesTenantResetRequestPhrase,
   tenantExecutionResetPhrase,
   TENANT_RESET_REQUEST_PHRASE,
+  PLATFORM_EXECUTION_RESET_PHRASE,
+  matchesPlatformExecutionResetPhrase,
 } from './reset-workflow';
 
 describe('tenant-to-platform reset confirmation phrases', () => {
@@ -19,5 +21,12 @@ describe('tenant-to-platform reset confirmation phrases', () => {
     expect(matchesTenantExecutionResetPhrase('RESET KERC', 'KERC')).toBe(true);
     expect(matchesTenantExecutionResetPhrase('RESET OTHER', 'KERC')).toBe(false);
     expect(matchesTenantExecutionResetPhrase('reset KERC', 'KERC')).toBe(false);
+  });
+
+  it('requires the exact platform operational reset phrase', () => {
+    expect(PLATFORM_EXECUTION_RESET_PHRASE).toBe('RESET PLATFORM');
+    expect(matchesPlatformExecutionResetPhrase('RESET PLATFORM')).toBe(true);
+    expect(matchesPlatformExecutionResetPhrase('reset platform')).toBe(false);
+    expect(matchesPlatformExecutionResetPhrase('RESET KERC')).toBe(false);
   });
 });

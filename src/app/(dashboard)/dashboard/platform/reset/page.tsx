@@ -35,6 +35,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
 import { normalizeResetPreview, type ResetPreviewData } from '@/lib/reset-preview';
 import { tenantExecutionResetPhrase } from '@/lib/reset-workflow';
+import { PlatformOperationalReset } from './platform-operational-reset';
 
 interface TenantOption {
   id: string;
@@ -425,6 +426,8 @@ export default function PlatformResetPage() {
           </div>
         </div>
       </section>
+
+      <PlatformOperationalReset />
 
       <section
         aria-label="Reset summary"
