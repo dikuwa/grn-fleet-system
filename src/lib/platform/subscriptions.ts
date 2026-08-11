@@ -38,11 +38,43 @@ export type SubscriptionStatus =
 export type BillingInterval = 'monthly' | 'quarterly' | 'annually';
 export type PaymentMethod = 'bank_transfer' | 'mobile_payment' | 'card' | 'invoice' | 'other';
 
+export type UsageCounters = {
+  vehicles: number;
+  users: number;
+  drivers: number;
+  departments: number;
+  offices: number;
+  storageGb: number;
+};
+
+type PackageUsageLimits = {
+  maxVehicles: number | null;
+  maxUsers: number | null;
+  maxDrivers: number | null;
+  maxDepartments: number | null;
+  maxOffices: number | null;
+};
+
 export type SubscriptionWithDetails = typeof tenantSubscriptions.$inferSelect & {
   packageName: string;
   packageCode: string;
   tenantName: string;
 };
+
+/** Return live usage categories that do not fit within a package's limits. */
+export function getExceededPackageLimits(
+  usage: UsageCounters,
+  limits: PackageUsageLimits,
+): string[] {
+  return [
+    ['vehicles', usage.vehicles, limits.maxVehicles],
+    ['users', usage.users, limits.maxUsers],
+    ['drivers', usage.drivers, limits.maxDrivers],
+    ['departments', usage.departments, limits.maxDepartments],
+    ['offices', usage.offices, limits.maxOffices],
+  ].filter(([, used, limit]) => typeof limit === 'number' && Number(used) > Number(limit))
+    .map(([label]) => String(label));
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle helpers
@@ -149,6 +181,12 @@ export async function createSubscription(input: CreateSubscriptionInput): Promis
     throw new Error(`Package "${pkg.name}" is not available on ${input.billingInterval} billing`);
   }
 
+  const usage = await countTenantUsage(input.tenantId);
+  const exceeded = getExceededPackageLimits(usage, pkg);
+  if (exceeded.length) {
+    throw new Error(`Package assignment blocked: current usage exceeds this package for ${exceeded.join(', ')}`);
+  }
+
   const now = new Date();
   const trialDays = input.trialDays ?? pkg.trialDays ?? 0;
 
@@ -180,6 +218,12 @@ export async function createSubscription(input: CreateSubscriptionInput): Promis
       trialEndsAt,
       gracePeriodEndsAt: input.gracePeriodDays ? addDays(periodEnd, input.gracePeriodDays) : null,
       nextPaymentDueAt: periodEnd,
+      currentVehicles: usage.vehicles,
+      currentUsers: usage.users,
+      currentDrivers: usage.drivers,
+      currentDepartments: usage.departments,
+      currentOffices: usage.offices,
+      currentStorageGb: usage.storageGb,
     })
     .returning();
 
@@ -284,15 +328,12 @@ export async function changeSubscriptionPackage(
   }
   const billingPeriods = Math.max(1, Math.min(36, Math.trunc(input.billingPeriods)));
 
-  const exceeded = [
-    ['vehicles', current.currentVehicles, pkg.maxVehicles],
-    ['users', current.currentUsers, pkg.maxUsers],
-    ['drivers', current.currentDrivers, pkg.maxDrivers],
-    ['departments', current.currentDepartments, pkg.maxDepartments],
-    ['offices', current.currentOffices, pkg.maxOffices],
-  ].filter(([, used, limit]) => typeof limit === 'number' && Number(used) > Number(limit));
+  // Always validate a downgrade against the live tenant tables. Stored usage
+  // counters are a cache and may be stale after imports, resets, or onboarding.
+  const usage = await countTenantUsage(current.tenantId);
+  const exceeded = getExceededPackageLimits(usage, pkg);
   if (exceeded.length) {
-    throw new Error(`Downgrade blocked: current usage exceeds the new package for ${exceeded.map(([label]) => label).join(', ')}`);
+    throw new Error(`Downgrade blocked: current usage exceeds the new package for ${exceeded.join(', ')}`);
   }
 
   const periodStart = new Date();
@@ -311,6 +352,12 @@ export async function changeSubscriptionPackage(
       cancelAtPeriodEnd: false,
       cancelledAt: null,
       updatedAt: periodStart,
+      currentVehicles: usage.vehicles,
+      currentUsers: usage.users,
+      currentDrivers: usage.drivers,
+      currentDepartments: usage.departments,
+      currentOffices: usage.offices,
+      currentStorageGb: usage.storageGb,
       metadata: {
         ...((current.metadata ?? {}) as Record<string, unknown>),
         billingPeriods,
@@ -535,15 +582,6 @@ export async function upsertBillingSettings(
 // ---------------------------------------------------------------------------
 // Usage counters
 // ---------------------------------------------------------------------------
-
-export type UsageCounters = {
-  vehicles: number;
-  users: number;
-  drivers: number;
-  departments: number;
-  offices: number;
-  storageGb: number;
-};
 
 /**
  * Count live usage for a tenant across vehicles, users, drivers,

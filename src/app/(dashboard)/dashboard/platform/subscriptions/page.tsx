@@ -81,6 +81,16 @@ interface PackageOption {
   priceQuarterlyCents: number | null;
   priceAnnuallyCents: number | null;
   defaultBillingInterval: 'monthly' | 'quarterly' | 'annually';
+  trialDays: number;
+  maxVehicles: number | null;
+  maxUsers: number | null;
+}
+
+interface TenantOption {
+  id: string;
+  name: string;
+  code: string;
+  status: string;
 }
 
 type BadgeVariant = NonNullable<BadgeProps['variant']>;
@@ -136,6 +146,7 @@ export default function PlatformSubscriptionsPage() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [stats, setStats] = useState<SubscriptionStats | null>(null);
   const [packages, setPackages] = useState<PackageOption[]>([]);
+  const [unsubscribedTenants, setUnsubscribedTenants] = useState<TenantOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -148,6 +159,8 @@ export default function PlatformSubscriptionsPage() {
     subscription: Subscription | null;
   }>({ open: false, subscription: null });
   const [transitioning, setTransitioning] = useState(false);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
+  const [assigning, setAssigning] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 250);
@@ -172,6 +185,7 @@ export default function PlatformSubscriptionsPage() {
       if (!res.ok) throw new Error(json.error || 'Failed to fetch subscriptions');
       if (!packagesRes.ok) throw new Error(packagesJson.error || 'Failed to fetch packages');
       setSubscriptions(json.data.subscriptions ?? []);
+      setUnsubscribedTenants(json.data.unsubscribedTenants ?? []);
       setPackages((packagesJson.data?.packages ?? []).filter((pkg: PackageOption) => pkg.status === 'active'));
       setStats(json.data.stats ?? null);
       setTotalPages(json.data.totalPages ?? 1);
@@ -221,6 +235,43 @@ export default function PlatformSubscriptionsPage() {
     [transitionModal.subscription, toast, fetchSubscriptions],
   );
 
+  const handleAssignment = useCallback(
+    async (assignment: {
+      tenantId: string;
+      packageId: string;
+      billingInterval: string;
+      trialDays: number;
+      startNow: boolean;
+    }) => {
+      setAssigning(true);
+      try {
+        const res = await fetch('/api/platform/subscriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(assignment),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to assign subscription');
+        toast({
+          title: 'Package assigned',
+          description: `${json.data.packageName} is now assigned to ${json.data.tenantName}.`,
+          variant: 'success',
+        });
+        setAssignmentOpen(false);
+        await fetchSubscriptions();
+      } catch (err) {
+        toast({
+          title: 'Assignment failed',
+          description: err instanceof Error ? err.message : 'Could not assign the package',
+          variant: 'error',
+        });
+      } finally {
+        setAssigning(false);
+      }
+    },
+    [fetchSubscriptions, toast],
+  );
+
   const formatCurrency = (cents: number, currency = 'NAD') =>
     new Intl.NumberFormat('en-NA', {
       style: 'currency',
@@ -248,9 +299,12 @@ export default function PlatformSubscriptionsPage() {
 
       <PageHeader
         title="Subscription Management"
-        description="Manage tenant subscription states, billing periods, and payment readiness."
+        description="Assign packages to existing tenants and manage upgrades, downgrades, billing periods, and payment readiness."
       >
-        <Button asChild size="sm">
+        <Button size="sm" onClick={() => setAssignmentOpen(true)} disabled={unsubscribedTenants.length === 0 || packages.length === 0}>
+          <Plus className="h-4 w-4" aria-hidden="true" /> Assign package
+        </Button>
+        <Button asChild size="sm" variant="secondary">
           <Link href="/dashboard/platform/onboard">
             <Plus className="h-4 w-4" aria-hidden="true" /> New Tenant
           </Link>
@@ -324,7 +378,8 @@ export default function PlatformSubscriptionsPage() {
         <EmptyState
           icon={<CreditCard className="h-6 w-6" />}
           title="No subscriptions found"
-          description={debouncedSearch || statusFilter !== 'all' ? 'Adjust the current filters to see other subscriptions.' : 'Tenant subscriptions will appear here after onboarding.'}
+          description={debouncedSearch || statusFilter !== 'all' ? 'Adjust the current filters to see other subscriptions.' : unsubscribedTenants.length > 0 ? 'Choose an existing tenant and assign its first package.' : 'Subscriptions are created as part of tenant onboarding.'}
+          action={!debouncedSearch && statusFilter === 'all' && unsubscribedTenants.length > 0 && packages.length > 0 ? { label: 'Assign package', onClick: () => setAssignmentOpen(true) } : undefined}
         />
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
@@ -416,7 +471,146 @@ export default function PlatformSubscriptionsPage() {
         onTransition={handleTransition}
         onClose={() => setTransitionModal({ open: false, subscription: null })}
       />
+      <AssignmentDialog
+        open={assignmentOpen}
+        tenants={unsubscribedTenants}
+        packages={packages}
+        assigning={assigning}
+        onAssign={handleAssignment}
+        onClose={() => setAssignmentOpen(false)}
+      />
     </div>
+  );
+}
+
+function AssignmentDialog({
+  open,
+  tenants,
+  packages,
+  assigning,
+  onAssign,
+  onClose,
+}: {
+  open: boolean;
+  tenants: TenantOption[];
+  packages: PackageOption[];
+  assigning: boolean;
+  onAssign: (assignment: {
+    tenantId: string;
+    packageId: string;
+    billingInterval: string;
+    trialDays: number;
+    startNow: boolean;
+  }) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [tenantId, setTenantId] = useState('');
+  const [packageId, setPackageId] = useState('');
+  const [billingInterval, setBillingInterval] = useState<'monthly' | 'quarterly' | 'annually'>('annually');
+  const [startMode, setStartMode] = useState<'active' | 'trial' | 'pending'>('active');
+
+  useEffect(() => {
+    if (!open) return;
+    const firstPackage = packages[0];
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTenantId(tenants[0]?.id ?? '');
+    setPackageId(firstPackage?.id ?? '');
+    setBillingInterval(firstPackage?.defaultBillingInterval ?? 'annually');
+    setStartMode('active');
+  }, [open, packages, tenants]);
+
+  const selectedPackage = packages.find((pkg) => pkg.id === packageId);
+  const selectedPrice = billingInterval === 'monthly'
+    ? selectedPackage?.priceMonthlyCents
+    : billingInterval === 'quarterly'
+      ? selectedPackage?.priceQuarterlyCents
+      : selectedPackage?.priceAnnuallyCents;
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !assigning && !nextOpen && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Assign a subscription package</DialogTitle>
+          <DialogDescription>
+            Apply the first subscription to a tenant that already exists. Future package changes use Manage.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Tenant</Label>
+            <Select value={tenantId} onValueChange={setTenantId} disabled={assigning}>
+              <SelectTrigger aria-label="Tenant without a subscription"><SelectValue placeholder="Select tenant" /></SelectTrigger>
+              <SelectContent>{tenants.map((tenant) => <SelectItem key={tenant.id} value={tenant.id}>{tenant.name} ({tenant.code})</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Package</Label>
+            <Select value={packageId} onValueChange={(value) => {
+              setPackageId(value);
+              const pkg = packages.find((item) => item.id === value);
+              if (pkg) setBillingInterval(pkg.defaultBillingInterval);
+            }} disabled={assigning}>
+              <SelectTrigger aria-label="Subscription package"><SelectValue placeholder="Select package" /></SelectTrigger>
+              <SelectContent>{packages.map((pkg) => <SelectItem key={pkg.id} value={pkg.id}>{pkg.name} ({pkg.code})</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Billing interval</Label>
+              <Select value={billingInterval} onValueChange={(value) => setBillingInterval(value as typeof billingInterval)} disabled={assigning}>
+                <SelectTrigger aria-label="Billing interval"><SelectValue /></SelectTrigger>
+                <SelectContent>{(['monthly', 'quarterly', 'annually'] as const).map((interval) => {
+                  const price = interval === 'monthly' ? selectedPackage?.priceMonthlyCents : interval === 'quarterly' ? selectedPackage?.priceQuarterlyCents : selectedPackage?.priceAnnuallyCents;
+                  return <SelectItem key={interval} value={interval} disabled={price == null}>{interval.charAt(0).toUpperCase() + interval.slice(1)}</SelectItem>;
+                })}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Start subscription</Label>
+              <Select value={startMode} onValueChange={(value) => setStartMode(value as typeof startMode)} disabled={assigning}>
+                <SelectTrigger aria-label="Subscription start mode"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active now</SelectItem>
+                  <SelectItem value="trial" disabled={!selectedPackage?.trialDays}>Package trial ({selectedPackage?.trialDays ?? 0} days)</SelectItem>
+                  <SelectItem value="pending">Pending payment</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {selectedPackage && (
+            <div className="rounded-[8px] border border-border bg-muted/40 p-3 text-xs text-ink-600">
+              <p className="font-medium text-ink-950">
+                {selectedPrice == null ? 'Unavailable interval' : new Intl.NumberFormat('en-NA', { style: 'currency', currency: 'NAD' }).format(selectedPrice / 100)} · {billingInterval}
+              </p>
+              <p className="mt-1">
+                Limits: {selectedPackage.maxVehicles ?? 'Unlimited'} vehicles · {selectedPackage.maxUsers ?? 'Unlimited'} users
+              </p>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="mobile-action-bar">
+          <Button variant="secondary" onClick={onClose} disabled={assigning}>Cancel</Button>
+          <Button
+            onClick={() => onAssign({
+              tenantId,
+              packageId,
+              billingInterval,
+              trialDays: startMode === 'trial' ? selectedPackage?.trialDays ?? 0 : 0,
+              startNow: startMode === 'active',
+            })}
+            loading={assigning}
+            disabled={!tenantId || !packageId || selectedPrice == null}
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" /> Assign package
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

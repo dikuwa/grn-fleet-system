@@ -148,6 +148,11 @@ export function PlatformOperationalReset() {
               notifications. It never resets tenants and never deletes platform users, billing,
               configuration, CMS content, backups or audit history.
             </p>
+            <p className="text-ink-500 mt-2 max-w-3xl text-xs leading-relaxed">
+              Dashboard effect: Demo Requests and Public Enquiries return to zero. Tenant requests
+              and trips require a tenant operational reset; memberships, fleet vehicles and vehicle
+              maintenance statuses are protected and do not reset.
+            </p>
           </div>
         </div>
         <Button
