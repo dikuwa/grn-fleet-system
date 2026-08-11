@@ -14,6 +14,10 @@ import {
 import { criticalChecksPassed, runIntegrityChecks } from '@/lib/data-reset/integrity';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { readBackupPayload } from './backup-service';
+import {
+  matchesTenantExecutionResetPhrase,
+  tenantExecutionResetPhrase,
+} from '@/lib/reset-workflow';
 
 export interface ResetPreview {
   tenantId: string;
@@ -128,8 +132,8 @@ export async function executeApprovedTenantOperationalReset(input: {
   if (resetRequest.status !== 'approved')
     throw new Error('Reset request must be approved before execution');
 
-  const expectedPhrase = `RESET ${requestRow.tenantCode}`;
-  if (input.confirmationPhrase.trim() !== expectedPhrase) {
+  const expectedPhrase = tenantExecutionResetPhrase(requestRow.tenantCode);
+  if (!matchesTenantExecutionResetPhrase(input.confirmationPhrase, requestRow.tenantCode)) {
     throw new Error(`Confirmation phrase is incorrect. Type exactly: ${expectedPhrase}`);
   }
 

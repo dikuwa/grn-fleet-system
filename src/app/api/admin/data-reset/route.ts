@@ -10,6 +10,10 @@ import {
   notifyPlatformResetRequested,
   resolvePlatformResetRequestNotification,
 } from '@/lib/platform/reset-notifications';
+import {
+  matchesTenantResetRequestPhrase,
+  tenantExecutionResetPhrase,
+} from '@/lib/reset-workflow';
 
 const OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
 
@@ -73,7 +77,7 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    if (acknowledgement !== 'REQUEST RESET') {
+    if (!matchesTenantResetRequestPhrase(acknowledgement)) {
       return NextResponse.json(
         { error: 'Type REQUEST RESET to confirm this request.' },
         { status: 400 },
@@ -116,7 +120,7 @@ export async function POST(request: NextRequest) {
         tenantId: tenant.id,
         scope: 'operational',
         reason,
-        confirmationPhrase: `RESET ${tenant.code}`,
+        confirmationPhrase: tenantExecutionResetPhrase(tenant.code),
         requestedByUserId: auth.session.user.id,
         status: 'pending_review',
         backupRequired: true,

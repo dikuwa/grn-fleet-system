@@ -73,7 +73,11 @@ export function ConfirmDialog({
         {requireTypedConfirm && (
           <div className="space-y-2">
             <label htmlFor="confirm-dialog-value" className="text-xs text-ink-500">
-              Type <span className="font-semibold text-ink-700">{requireTypedConfirm}</span> to confirm:
+              Type{' '}
+              <span className="font-semibold text-status-error-text">
+                &quot;{requireTypedConfirm}&quot;
+              </span>{' '}
+              to confirm:
             </label>
             <Input
               id="confirm-dialog-value"
