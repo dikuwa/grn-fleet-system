@@ -14,6 +14,7 @@ import {
   matchesTenantResetRequestPhrase,
   tenantExecutionResetPhrase,
 } from '@/lib/reset-workflow';
+import { normalizeResetSpec, resetScopeForSpec } from '@/lib/reset-catalog';
 
 const OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
 
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
         failureReason: tenantResetRequests.failureReason,
         validationResults: tenantResetRequests.validationResults,
         results: tenantResetRequests.results,
+        metadata: tenantResetRequests.metadata,
         startedAt: tenantResetRequests.startedAt,
         completedAt: tenantResetRequests.completedAt,
         createdAt: tenantResetRequests.createdAt,
@@ -71,6 +73,12 @@ export async function POST(request: NextRequest) {
     const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
     const acknowledgement =
       typeof body.acknowledgement === 'string' ? body.acknowledgement.trim() : '';
+    let resetSpec;
+    try {
+      resetSpec = normalizeResetSpec(body.resetSpec, { target: 'tenant' });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid reset selection' }, { status: 400 });
+    }
     if (reason.length < 20) {
       return NextResponse.json(
         { error: 'Explain the operational reason in at least 20 characters.' },
@@ -118,7 +126,7 @@ export async function POST(request: NextRequest) {
       .insert(tenantResetRequests)
       .values({
         tenantId: tenant.id,
-        scope: 'operational',
+        scope: resetScopeForSpec(resetSpec),
         reason,
         confirmationPhrase: tenantExecutionResetPhrase(tenant.code),
         requestedByUserId: auth.session.user.id,
@@ -129,6 +137,7 @@ export async function POST(request: NextRequest) {
           createdFrom: 'tenant_admin',
           productionSafeFlow: true,
           submittedAt: new Date().toISOString(),
+          resetSpec,
         },
       })
       .returning();
@@ -140,8 +149,8 @@ export async function POST(request: NextRequest) {
         action: 'reset_request.submitted',
         entityType: 'reset_request',
         entityId: created.id,
-        summary: `${tenant.name} requested a platform-admin operational reset.`,
-        after: { status: 'pending_review', scope: 'operational', reason },
+        summary: `${tenant.name} requested a platform-admin reset plan.`,
+        after: { status: 'pending_review', scope: resetScopeForSpec(resetSpec), resetSpec, reason },
       }),
       notifyPlatformResetRequested({
         requestId: created.id,
@@ -218,7 +227,7 @@ export async function PATCH(request: NextRequest) {
         action: 'reset_request.cancelled',
         entityType: 'reset_request',
         entityId: id,
-        summary: 'Tenant Administrator cancelled the operational reset request before approval.',
+        summary: 'Tenant Administrator cancelled the reset request before approval.',
         before: { status: current.status },
         after: { status: 'cancelled' },
       }),

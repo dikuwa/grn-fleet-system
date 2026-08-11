@@ -32,4 +32,18 @@ describe('normalizeResetPreview', () => {
     });
     expect(result).toMatchObject({ steps: [], preserved: [], review: [] });
   });
+
+  it('carries versioned category and protected-data details to the approval UI', () => {
+    const result = normalizeResetPreview({
+      ...VALID,
+      resetSpec: { version: 1, target: 'tenant', preset: 'selective', categories: ['documents'] },
+      categoryCounts: { documents: 4 },
+      protected: ['Audit history'],
+    });
+    expect(result).toMatchObject({
+      resetSpec: { preset: 'selective', categories: ['documents'] },
+      categoryCounts: { documents: 4 },
+      protected: ['Audit history'],
+    });
+  });
 });

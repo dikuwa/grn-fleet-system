@@ -165,7 +165,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         const validation = (current.validationResults ?? {}) as Record<string, unknown>;
         if (typeof validation.fingerprint !== 'string') {
           return NextResponse.json(
-            { error: 'Run and review the operational impact preview before approval' },
+            { error: 'Run and review the reset impact preview before approval' },
             { status: 409 },
           );
         }

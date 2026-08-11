@@ -11,6 +11,8 @@ import {
   type ResetPlan,
 } from '@/lib/data-reset/plan';
 import { quoteTable } from '@/lib/data-reset/config';
+import { exportAdvancedResetRows, type AdvancedResetPlan } from './advanced-reset-plan';
+import type { ResetSpec } from '@/lib/reset-catalog';
 import {
   downloadFile,
   getSignedFileUrl,
@@ -29,10 +31,11 @@ interface CreateBackupInput {
   resetRequestId?: string | null;
   retentionDays?: number;
   plan?: ResetPlan;
+  advancedPlan?: AdvancedResetPlan;
 }
 
 interface BackupPayload {
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   type: 'govfleet-tenant-operational-backup';
   snapshotId: string;
   createdAt: string;
@@ -41,6 +44,8 @@ interface BackupPayload {
   mode: 'operational';
   fileObjectsPreserved: true;
   preserved: ResetPlan['preserved'];
+  resetSpec?: ResetSpec;
+  advancedTableOrder?: string[];
   tables: Array<{ table: string; label: string; rows: Array<Record<string, unknown>> }>;
 }
 
@@ -74,6 +79,15 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
     .limit(1);
   if (!tenant) throw new Error('Tenant not found');
 
+  const [linkedResetRequest] = input.resetRequestId
+    ? await db
+        .select({ metadata: tenantResetRequests.metadata })
+        .from(tenantResetRequests)
+        .where(eq(tenantResetRequests.id, input.resetRequestId))
+        .limit(1)
+    : [];
+  const linkedResetMetadata = (linkedResetRequest?.metadata ?? {}) as Record<string, unknown>;
+
   const retentionDays = Math.min(
     3650,
     Math.max(1, input.retentionDays ?? (input.source === 'pre_reset' ? 90 : 30)),
@@ -84,7 +98,7 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
     .values({
       tenantId: tenant.id,
       resetRequestId: input.resetRequestId ?? null,
-      scope: 'tenant_operational',
+      scope: input.advancedPlan?.steps.length ? 'tenant_selective' : 'tenant_operational',
       source: input.source,
       reason: input.reason ?? null,
       status: 'creating',
@@ -108,6 +122,7 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
     const tables: BackupPayload['tables'] = [];
     let recordCount = 0;
     for (const step of plan.steps) {
+      if (input.advancedPlan && !input.advancedPlan.resetSpec.categories.includes('operations')) break;
       if (step.before === 0) continue;
       const rows = await exportRows(db as unknown as ResetDb, plan, step.table);
       if (!rows.length) continue;
@@ -115,8 +130,23 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
       tables.push({ table: step.table, label: step.label, rows });
     }
 
+    if (input.advancedPlan) {
+      const advancedTables = await exportAdvancedResetRows(input.advancedPlan);
+      for (const entry of advancedTables) {
+        const existing = tables.find((table) => table.table === entry.table);
+        if (existing) {
+          const ids = new Set(existing.rows.map((row) => row.id).filter(Boolean));
+          existing.rows.push(...entry.rows.filter((row) => !row.id || !ids.has(row.id)));
+          existing.label = entry.label;
+        } else {
+          tables.push(entry);
+        }
+      }
+      recordCount = tables.reduce((sum, table) => sum + table.rows.length, 0);
+    }
+
     const payload: BackupPayload = {
-      formatVersion: 1,
+      formatVersion: input.advancedPlan ? 2 : 1,
       type: 'govfleet-tenant-operational-backup',
       snapshotId: snapshot.id,
       createdAt: new Date().toISOString(),
@@ -125,6 +155,8 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
       mode: 'operational',
       fileObjectsPreserved: true,
       preserved: plan.preserved,
+      resetSpec: input.advancedPlan?.resetSpec,
+      advancedTableOrder: input.advancedPlan?.steps.map((step) => step.table),
       tables,
     };
 
@@ -146,9 +178,14 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
         sizeBytes: upload.size,
         recordCount,
         metadata: {
-          formatVersion: 1,
+          formatVersion: input.advancedPlan ? 2 : 1,
+          resetSpec: input.advancedPlan?.resetSpec,
           fileObjectsPreserved: true,
-          plannedRows: plan.steps.reduce((sum, step) => sum + step.before, 0),
+          plannedRows:
+            (input.advancedPlan?.resetSpec.categories.includes('operations') === false
+              ? 0
+              : plan.steps.reduce((sum, step) => sum + step.before, 0)) +
+            (input.advancedPlan?.total ?? 0),
         },
         updatedAt: new Date(),
       })
@@ -165,6 +202,7 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
           backupRecordCount: recordCount,
           rollbackPossible: true,
           metadata: {
+            ...linkedResetMetadata,
             backupSnapshotId: snapshot.id,
             backupChecksum: checksum,
             backupCreatedAt: new Date().toISOString(),
@@ -288,7 +326,7 @@ export async function readBackupPayload(
   if (backup.checksum && checksum !== backup.checksum)
     throw new Error('Backup integrity check failed: checksum mismatch');
   const payload = JSON.parse(text) as BackupPayload;
-  if (payload.formatVersion !== 1 || payload.type !== 'govfleet-tenant-operational-backup')
+  if (![1, 2].includes(payload.formatVersion) || payload.type !== 'govfleet-tenant-operational-backup')
     throw new Error('Unsupported backup format');
   if (backup.tenantId && payload.tenant.id !== backup.tenantId)
     throw new Error('Backup tenant identity mismatch');
