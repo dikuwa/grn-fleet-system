@@ -3,7 +3,7 @@ import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { employees, driverProfiles } from '@/db/schema/people';
-import { eq, desc, asc, and, sql, like, or, type SQL } from 'drizzle-orm';
+import { eq, desc, asc, and, sql, ilike, or, type SQL } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadgeWithIcon } from '@/components/ui/status-badge-icon';
@@ -93,9 +93,9 @@ async function fetchTrips(
   if (search) {
     conditions.push(
       or(
-        like(vehicles.licenceNumber, `%${search}%`),
-        like(vehicles.vehicleRegisterNumber, `%${search}%`),
-        like(vehicles.make, `%${search}%`),
+        ilike(vehicles.licenceNumber, `%${search}%`),
+        ilike(vehicles.vehicleRegisterNumber, `%${search}%`),
+        ilike(vehicles.make, `%${search}%`),
       )!,
     );
   }

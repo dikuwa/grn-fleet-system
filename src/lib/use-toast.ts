@@ -12,7 +12,7 @@
  *   toast({ title: 'Saved', description: 'Changes applied.', variant: 'success' });
  */
 
-import React from 'react';
+import React, { useCallback, useMemo } from 'react';
 import hotToast from 'react-hot-toast';
 
 export interface ToastOptions {
@@ -35,7 +35,7 @@ function buildContent(title: string, description?: string): React.ReactElement {
 }
 
 export function useToast() {
-  const toast = ({ title, description, variant = 'default', duration = 4000 }: ToastOptions) => {
+  const toast = useCallback(({ title, description, variant = 'default', duration = 4000 }: ToastOptions) => {
     const content = buildContent(title, description);
     switch (variant) {
       case 'success':
@@ -47,10 +47,7 @@ export function useToast() {
       default:
         return hotToast(content, { duration });
     }
-  };
+  }, []);
 
-  return {
-    toast,
-    dismiss: hotToast.dismiss,
-  };
+  return useMemo(() => ({ toast, dismiss: hotToast.dismiss }), [toast]);
 }

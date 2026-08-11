@@ -8,9 +8,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tenants, tenantBranding, tenantMemberships } from '@/db/schema/tenants';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, desc, count, or, like, and } from 'drizzle-orm';
+import { eq, desc, count, or, ilike, and } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // GET — List all tenants
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
+    const permCheck = await requireAnyPermission(session, [Permissions.PLATFORM_ADMIN, Permissions.TENANT_VIEW]);
     if (permCheck instanceof NextResponse) return permCheck;
 
 
@@ -40,9 +40,9 @@ export async function GET(request: NextRequest) {
     if (q) {
       conditions.push(
         or(
-          like(tenants.name, `%${q}%`),
-          like(tenants.code, `%${q}%`),
-          like(tenants.slug, `%${q}%`),
+          ilike(tenants.name, `%${q}%`),
+          ilike(tenants.code, `%${q}%`),
+          ilike(tenants.slug, `%${q}%`),
         )!,
       );
     }

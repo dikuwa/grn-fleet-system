@@ -505,7 +505,7 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
         <Archive className="h-3.5 w-3.5" /> {office.isActive ? 'Archive' : 'Restore'}
       </Button>
       <Button
-        variant="destructive"
+        variant="ghost"
         size="sm"
         onClick={() => confirm({
           title: 'Delete Office',
@@ -514,7 +514,7 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
           variant: 'destructive',
           onConfirm: () => deleteRecord('office', office.id, office.name),
         })}
-        className={compact ? 'col-span-2 w-full' : undefined}
+        className={`text-status-error-text ${compact ? 'col-span-2 w-full' : ''}`}
       >
         <Trash2 className="h-3.5 w-3.5" /> Delete
       </Button>
@@ -546,7 +546,7 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
         <Archive className="h-3.5 w-3.5" /> {department.isActive ? 'Archive' : 'Restore'}
       </Button>
       <Button
-        variant="destructive"
+        variant="ghost"
         size="sm"
         onClick={() => confirm({
           title: 'Delete Organisation Unit',
@@ -555,7 +555,7 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
           variant: 'destructive',
           onConfirm: () => deleteRecord('department', department.id, department.name),
         })}
-        className={compact ? 'col-span-2 w-full' : undefined}
+        className={`text-status-error-text ${compact ? 'col-span-2 w-full' : ''}`}
       >
         <Trash2 className="h-3.5 w-3.5" /> Delete
       </Button>

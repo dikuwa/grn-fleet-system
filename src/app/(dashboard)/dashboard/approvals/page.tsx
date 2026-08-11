@@ -245,7 +245,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
               <Link
                 key={workflow.id}
                 href={`/dashboard/approvals/${workflow.id}`}
-                className="focus-ring group border-border hover:bg-muted/40 block border-b px-4 py-4 transition-colors motion-reduce:transition-none last:border-b-0 sm:px-5"
+                className="focus-ring group border-border hover:bg-muted/40 block cursor-pointer border-b px-4 py-4 transition-colors motion-reduce:transition-none last:border-b-0 sm:px-5"
               >
                 <div className="flex items-start gap-3 sm:items-center sm:gap-4">
                   <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] sm:mt-0 ${workflow.status === 'completed' ? 'bg-status-success-bg text-status-success-text' : workflow.status === 'cancelled' ? 'bg-status-cancelled-bg text-status-cancelled-text' : 'bg-status-info-bg text-status-info-text'}`}>

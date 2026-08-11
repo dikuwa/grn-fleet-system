@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { and, desc, eq, like, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { getDb, isDbConnected } from '@/db';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
@@ -49,10 +49,10 @@ async function fetchAllocations(sp: Record<string, string | undefined>, tenantId
   if (search) {
     conditions.push(
       or(
-        like(vehicles.licenceNumber, `%${search}%`),
-        like(vehicles.make, `%${search}%`),
-        like(vehicles.model, `%${search}%`),
-        like(transportRequests.reference, `%${search}%`),
+        ilike(vehicles.licenceNumber, `%${search}%`),
+        ilike(vehicles.make, `%${search}%`),
+        ilike(vehicles.model, `%${search}%`),
+        ilike(transportRequests.reference, `%${search}%`),
       )!,
     );
   }

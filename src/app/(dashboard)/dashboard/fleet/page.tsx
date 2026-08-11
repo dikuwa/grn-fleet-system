@@ -1,7 +1,7 @@
 import { getDb, isDbConnected } from '@/db';
 import { vehicles, vehicleCategories, vehicleDefects, maintenanceEvents } from '@/db/schema/fleet';
 import { offices } from '@/db/schema/people';
-import { eq, and, sql, like, or, isNull, inArray, type SQL } from 'drizzle-orm';
+import { eq, and, sql, ilike, or, isNull, inArray, type SQL } from 'drizzle-orm';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -98,12 +98,12 @@ async function fetchFleetData(
   if (search) {
     conditions.push(
       or(
-        like(vehicles.licenceNumber, `%${search}%`),
-        like(vehicles.vehicleRegisterNumber, `%${search}%`),
-        like(vehicles.make, `%${search}%`),
-        like(vehicles.model, `%${search}%`),
-        like(vehicles.vin, `%${search}%`),
-        like(vehicles.engineNumber, `%${search}%`),
+        ilike(vehicles.licenceNumber, `%${search}%`),
+        ilike(vehicles.vehicleRegisterNumber, `%${search}%`),
+        ilike(vehicles.make, `%${search}%`),
+        ilike(vehicles.model, `%${search}%`),
+        ilike(vehicles.vin, `%${search}%`),
+        ilike(vehicles.engineNumber, `%${search}%`),
       )!,
     );
   }

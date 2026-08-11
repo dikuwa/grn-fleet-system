@@ -12,7 +12,7 @@ import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
 import { account } from '@/db/schema/better-auth';
 import { userProfiles } from '@/db/schema/auth';
-import { eq, and, like, desc, count, or, inArray, ne, isNull, type SQL } from 'drizzle-orm';
+import { eq, and, ilike, desc, count, or, inArray, ne, isNull, type SQL } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import bcrypt from 'bcryptjs';
@@ -81,9 +81,9 @@ export async function GET(request: NextRequest) {
     if (q) {
       conditions.push(
         or(
-          like(user.email, `%${q}%`),
-          like(user.name, `%${q}%`),
-          like(user.username, `%${q}%`),
+          ilike(user.email, `%${q}%`),
+          ilike(user.name, `%${q}%`),
+          ilike(user.username, `%${q}%`),
         )!,
       );
     }

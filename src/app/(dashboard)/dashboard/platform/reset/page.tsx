@@ -5,7 +5,6 @@ import Link from 'next/link';
 import {
   ArchiveRestore,
   CheckCircle2,
-  Clock,
   Database,
   Eye,
   HardDriveDownload,
@@ -103,6 +102,7 @@ export default function PlatformResetPage() {
   const [rejectionReason, setRejectionReason] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [createTenantId, setCreateTenantId] = useState('');
+  const [createTarget, setCreateTarget] = useState<'tenant' | 'platform'>('tenant');
   const [createReason, setCreateReason] = useState('Clear test operational records and start this tenant from a clean operational state.');
 
   const load = useCallback(async () => {
@@ -120,7 +120,7 @@ export default function PlatformResetPage() {
       if (!resetRes.ok) throw new Error(resetJson.error || 'Failed to load reset requests');
       if (!tenantRes.ok) throw new Error(tenantJson.error || 'Failed to load tenants');
       setRequests(resetJson.data?.requests ?? []);
-      setStats(resetJson.data?.stats ?? stats);
+      setStats((current) => resetJson.data?.stats ?? current);
       const tenantRows = (tenantJson.data?.tenants ?? []) as TenantOption[];
       const realTenants = tenantRows.filter((tenant) => tenant.type !== 'demo_sandbox');
       setTenants(realTenants);
@@ -154,16 +154,16 @@ export default function PlatformResetPage() {
   };
 
   const createReset = async () => {
-    if (!createTenantId || !createReason.trim()) return;
+    if ((createTarget === 'tenant' && !createTenantId) || !createReason.trim()) return;
     setProcessingId('create');
     try {
       const res = await fetch('/api/platform/reset', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId: createTenantId, scope: 'operational', reason: createReason.trim(), backupRequired: true }),
+        body: JSON.stringify({ target: createTarget, tenantId: createTarget === 'tenant' ? createTenantId : undefined, scope: 'operational', reason: createReason.trim(), backupRequired: true }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Could not create reset request');
-      toast({ title: 'Operational reset drafted', description: 'Submit it for review, run a dry run, and create a verified recovery point before execution.', variant: 'success' });
+      toast({ title: createTarget === 'platform' ? `${json.data.createdCount} tenant reset drafts created` : 'Operational reset drafted', description: 'Each tenant must pass review, dry run, and verified recovery-point checks before execution.', variant: 'success' });
       setCreateOpen(false);
       await load();
     } catch (error) {
@@ -268,7 +268,7 @@ export default function PlatformResetPage() {
 
       {loading ? <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-ink-500"><Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" /> Loading reset requests…</div> : requests.length === 0 ? <EmptyState icon={<Database className="h-6 w-6" />} title="No reset requests" description="Create an operational reset when a tenant needs a clean operational starting point." action={{ label: 'New operational reset', onClick: () => setCreateOpen(true) }} /> : <div className="overflow-hidden rounded-[10px] border border-border bg-surface">{requests.map((request) => { const config = STATUS_CONFIG[request.status] ?? { label: request.status, variant: 'default' as const }; return <article key={request.id} className="grid gap-4 border-b border-border px-4 py-4 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold text-ink-950">{request.tenantName || request.tenantId}</p><Badge variant={config.variant} size="sm">{config.label}</Badge><Badge variant={request.scope === 'operational' ? 'info' : 'warning'} size="sm">{request.scope.replace(/_/g, ' ')}</Badge>{request.backupCreated && <Badge variant="success" size="sm">recovery point ready</Badge>}</div><p className="mt-1 line-clamp-2 text-sm text-ink-600">{request.reason}</p><p className="mt-2 text-xs text-ink-400">Created {formatDate(request.createdAt)}{request.validationResults?.dryRunSummary ? ` · dry run ${request.validationResults.dryRunSummary.total} rows` : ''}{request.rollbackPerformed ? ' · restored from recovery point' : ''}</p></div><div className="flex flex-wrap gap-2 lg:justify-end"><Button variant="secondary" size="sm" onClick={() => void openDetails(request)}><Eye className="h-4 w-4" /> Details</Button>{request.status === 'draft' && <Button size="sm" onClick={() => void patchRequest(request, 'submit')} loading={processingId === request.id}>Submit</Button>}</div></article>; })}</div>}
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Start tenant operational reset</DialogTitle><DialogDescription>This creates a controlled reset request. Nothing is deleted until review, dry run, durable recovery-point verification and typed final confirmation are complete.</DialogDescription></DialogHeader><div className="space-y-4"><div className="space-y-1.5"><Label>Tenant</Label><StyledSelect value={createTenantId} onChange={(event) => setCreateTenantId(event.target.value)}>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name} ({tenant.code})</option>)}</StyledSelect></div><div className="rounded-[8px] border border-brand-200 bg-brand-50/40 p-3 dark:bg-brand-950/20"><p className="text-sm font-semibold text-ink-950">Preset: Start operational data from scratch</p><p className="mt-1 text-xs leading-relaxed text-ink-600">Removes transport operations and their generated history. Preserves tenant, branding, staff, users, roles, departments/offices, vehicles, programmes, workflow definitions and audit history.</p></div><div className="space-y-1.5"><Label>Reason</Label><Textarea rows={3} value={createReason} onChange={(event) => setCreateReason(event.target.value)} /></div>{selectedTenant && <p className="text-xs text-ink-500">Final execution confirmation will require: <strong>RESET {selectedTenant.code}</strong></p>}</div><DialogFooter><Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button><Button onClick={() => void createReset()} loading={processingId === 'create'} disabled={!createTenantId || !createReason.trim()}><Database className="h-4 w-4" /> Create reset request</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Start operational reset</DialogTitle><DialogDescription>This creates controlled reset requests. Nothing is deleted until each tenant passes review, dry run, durable recovery-point verification and typed final confirmation.</DialogDescription></DialogHeader><div className="space-y-4"><div className="space-y-1.5"><Label>Target</Label><StyledSelect value={createTarget} onChange={(event) => setCreateTarget(event.target.value as 'tenant' | 'platform')}><option value="tenant">One tenant</option><option value="platform">All production tenants</option></StyledSelect></div>{createTarget === 'tenant' && <div className="space-y-1.5"><Label>Tenant</Label><StyledSelect value={createTenantId} onChange={(event) => setCreateTenantId(event.target.value)}>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name} ({tenant.code})</option>)}</StyledSelect></div>}<div className="rounded-[8px] border border-brand-200 bg-brand-50/40 p-3 dark:bg-brand-950/20"><p className="text-sm font-semibold text-ink-950">Preset: Start operational data from scratch</p><p className="mt-1 text-xs leading-relaxed text-ink-600">Removes transport operations and their generated history. Preserves tenant, branding, staff, users, roles, departments/offices, vehicles, programmes, workflow definitions and audit history.</p></div><div className="space-y-1.5"><Label>Reason</Label><Textarea rows={3} value={createReason} onChange={(event) => setCreateReason(event.target.value)} /></div>{createTarget === 'tenant' && selectedTenant && <p className="text-xs text-ink-500">Final execution confirmation will require: <strong>RESET {selectedTenant.code}</strong></p>}{createTarget === 'platform' && <p className="text-xs text-ink-500">A separate draft is created per production tenant. Tenants with an open reset request are skipped; no batch executes automatically.</p>}</div><DialogFooter><Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button><Button onClick={() => void createReset()} loading={processingId === 'create'} disabled={(createTarget === 'tenant' && !createTenantId) || !createReason.trim()}><Database className="h-4 w-4" /> {createTarget === 'platform' ? 'Create platform reset drafts' : 'Create reset request'}</Button></DialogFooter></DialogContent></Dialog>
 
       <Dialog open={detailOpen} onOpenChange={(open) => { if (!processingId) { setDetailOpen(open); if (!open) setSelected(null); } }}><DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-3xl">{selected && <><DialogHeader><div className="flex flex-wrap items-center gap-2"><DialogTitle>{selected.tenantName || 'Tenant'} reset</DialogTitle><Badge variant={STATUS_CONFIG[selected.status]?.variant}>{STATUS_CONFIG[selected.status]?.label || selected.status}</Badge></div><DialogDescription>{selected.reason}</DialogDescription></DialogHeader><div className="space-y-5">
         {legacyUnsupported && <div className="rounded-[8px] border border-status-warning-text/20 bg-status-warning-bg/20 p-3"><div className="flex gap-2"><TriangleAlert className="mt-0.5 h-4 w-4 text-status-warning-text" /><p className="text-sm text-ink-700">This is a legacy <strong>{selected.scope.replace(/_/g, ' ')}</strong> request. Production execution is disabled. Create a new operational reset request instead.</p></div></div>}

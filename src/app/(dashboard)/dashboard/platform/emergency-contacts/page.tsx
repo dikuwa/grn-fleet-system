@@ -183,6 +183,30 @@ export default function PlatformEmergencyContactsPage() {
     onError: (error) => toast({ title: 'Could not delete contact', description: error instanceof Error ? error.message : 'Delete failed', variant: 'error' }),
   });
 
+  const defaultsMutation = useMutation({
+    mutationFn: async () => {
+      if (!tenantId) throw new Error('Select a tenant first');
+      const defaults = [
+        { name: 'Namibian Police Emergency', phone: '10111', role: 'police', region: null, sortOrder: 10 },
+        { name: 'MVA Fund Accident Response', phone: '9682', role: 'insurance', region: null, sortOrder: 20 },
+      ];
+      for (const contact of defaults) {
+        const res = await fetch('/api/emergency-contacts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenantId, ...contact }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || `Could not add ${contact.name}`);
+      }
+    },
+    onSuccess: async () => {
+      toast({ title: 'National contacts added', description: 'Police 10111 and MVA Fund 9682 are now available to this tenant.', variant: 'success' });
+      await invalidateContacts();
+    },
+    onError: (error) => toast({ title: 'Could not add defaults', description: error instanceof Error ? error.message : 'Default contact setup failed', variant: 'error' }),
+  });
+
   const openCreate = () => {
     setEditing(null);
     setForm({ ...EMPTY_FORM });
@@ -218,8 +242,8 @@ export default function PlatformEmergencyContactsPage() {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Emergency Contacts' }]} />
-      <PageHeader title="Emergency Contacts" description="Maintain tenant-specific emergency service contacts used during incident response.">
-        <Button size="sm" onClick={openCreate} disabled={!tenantId}><Plus className="h-4 w-4" /> Add contact</Button>
+      <PageHeader title="Emergency Contacts" description="Contacts are tenant-specific and appear in the driver incident workspace for the selected tenant.">
+        <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" onClick={() => defaultsMutation.mutate()} loading={defaultsMutation.isPending} disabled={!tenantId}>Add Namibia defaults</Button><Button size="sm" onClick={openCreate} disabled={!tenantId}><Plus className="h-4 w-4" /> Add contact</Button></div>
       </PageHeader>
 
       <section className="grid gap-3 border-y border-border py-4 sm:grid-cols-2 lg:grid-cols-[minmax(260px,1fr)_220px_auto_auto] lg:items-end" aria-label="Emergency contact filters">

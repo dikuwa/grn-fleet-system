@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight,
@@ -143,6 +143,14 @@ export default function PlatformDemoRequestsPage() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
+  const openDetails = useCallback((request: DemoRequest) => {
+    setSelected(request);
+    setScheduleAt(toLocalDateTime(request.scheduledDemoAt));
+    setScheduleLink(request.scheduledDemoLink ?? '');
+    setContactNotes(request.contactNotes ?? '');
+    setNextContactAt(toLocalDateTime(request.nextContactAt));
+  }, []);
+
   const loadRequests = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -166,10 +174,12 @@ export default function PlatformDemoRequestsPage() {
     } finally {
       setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, status]);
+  }, [debouncedSearch, openDetails, status]);
 
-  useEffect(() => { void loadRequests(); }, [loadRequests]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadRequests(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadRequests]);
 
   useEffect(() => {
     void fetch('/api/platform/onboard')
@@ -181,14 +191,6 @@ export default function PlatformDemoRequestsPage() {
       })
       .catch(() => {});
   }, []);
-
-  const openDetails = (request: DemoRequest) => {
-    setSelected(request);
-    setScheduleAt(toLocalDateTime(request.scheduledDemoAt));
-    setScheduleLink(request.scheduledDemoLink ?? '');
-    setContactNotes(request.contactNotes ?? '');
-    setNextContactAt(toLocalDateTime(request.nextContactAt));
-  };
 
   const updateRequest = async (patch: Record<string, unknown>, successMessage: string) => {
     if (!selected) return;
@@ -273,6 +275,31 @@ export default function PlatformDemoRequestsPage() {
     });
   };
 
+  const deleteRequest = () => {
+    if (!selected || selected.status !== 'cancelled') return;
+    confirm({
+      title: `Delete ${selected.company} demo request?`,
+      description: 'This permanently removes the cancelled lead and any inactive sandbox record. This cannot be undone.',
+      confirmLabel: 'Delete request',
+      variant: 'destructive',
+      onConfirm: async () => {
+        setSaving(true);
+        try {
+          const res = await fetch(`/api/platform/demo-requests?id=${encodeURIComponent(selected.id)}`, { method: 'DELETE' });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error || 'Demo request could not be deleted');
+          setSelected(null);
+          toast({ title: 'Demo request deleted', variant: 'success' });
+          await loadRequests();
+        } catch (err) {
+          toast({ title: 'Could not delete demo request', description: err instanceof Error ? err.message : 'Delete failed', variant: 'error' });
+        } finally {
+          setSaving(false);
+        }
+      },
+    });
+  };
+
   const selectedConfig = selected ? STATUS_CONFIG[selected.status] ?? { label: selected.status, variant: 'default' as BadgeVariant } : null;
   const canSandbox = selected && ['qualified', 'scheduled', 'completed'].includes(selected.status) && (!selected.sandbox || selected.sandbox.status === 'deleted');
 
@@ -310,6 +337,7 @@ export default function PlatformDemoRequestsPage() {
           {selected.status === 'scheduled' && <Button size="sm" onClick={() => void updateRequest({ status: 'completed', lastContactAt: new Date().toISOString(), contactNotes }, 'Demo marked completed')} loading={saving}><CheckCircle2 className="h-4 w-4" /> Mark walkthrough completed</Button>}
           {['qualified', 'scheduled', 'completed'].includes(selected.status) && <section className="flex flex-col gap-3 rounded-[8px] border border-status-success-text/20 bg-status-success-bg/20 p-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-sm font-semibold text-ink-950">Ready to become a tenant?</h3><p className="mt-1 text-xs text-ink-500">Start the real onboarding wizard with this organisation/contact prefilled. The lead is marked converted only after tenant creation succeeds.</p></div><Button asChild size="sm"><Link href={`/dashboard/platform/onboard?demoRequest=${selected.id}`}>Onboard organisation <ArrowRight className="h-4 w-4" /></Link></Button></section>}
           {!['converted', 'cancelled'].includes(selected.status) && <Button variant="ghost" size="sm" className="text-status-error-text" onClick={() => void updateRequest({ status: 'cancelled' }, 'Demo request cancelled')} loading={saving}>Cancel request</Button>}
+          {selected.status === 'cancelled' && <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" onClick={() => void updateRequest({ status: 'new' }, 'Demo request reactivated')} loading={saving}><RefreshCw className="h-4 w-4" /> Reactivate</Button><Button variant="ghost" size="sm" className="text-status-error-text" onClick={deleteRequest} loading={saving}><Trash2 className="h-4 w-4" /> Delete request</Button></div>}
         </div></>}</DialogContent>
       </Dialog>
 

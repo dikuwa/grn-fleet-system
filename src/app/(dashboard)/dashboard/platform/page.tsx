@@ -28,6 +28,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatDate } from '@/lib/utils';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
+import { SystemRoles } from '@/lib/workspaces';
 
 interface DashboardData {
   tenants: { total: number; active: number; suspended: number; trial: number };
@@ -61,6 +63,7 @@ function tenantStatusVariant(status: string) {
 }
 
 export default function PlatformDashboardPage() {
+  const profileQuery = useQuery({ queryKey: userProfileQueryKey, queryFn: ({ signal }) => fetchUserProfile(signal) });
   const dashboardQuery = useQuery<DashboardData>({
     queryKey: ['platform-dashboard-v2'],
     queryFn: async () => {
@@ -87,12 +90,16 @@ export default function PlatformDashboardPage() {
   }
 
   const data = dashboardQuery.data;
+  const roleNames = profileQuery.data?.roles.map((role) => role.roleName) ?? [];
+  const isAdmin = roleNames.includes(SystemRoles.PLATFORM_ADMIN);
+  const canHandleIntake = isAdmin || roleNames.includes(SystemRoles.PLATFORM_SUPPORT);
+  const canAudit = isAdmin || roleNames.includes(SystemRoles.PLATFORM_AUDITOR);
   const metricItems = [
     { label: 'Tenants', value: data.tenants.total, detail: `${data.tenants.active} active`, icon: Building2, href: '/dashboard/platform/tenants' },
-    { label: 'Platform members', value: data.totalMembers, detail: 'Across tenant memberships', icon: Users, href: '/dashboard/platform/users' },
+    { label: 'Platform members', value: data.totalMembers, detail: 'Across tenant memberships', icon: Users, href: isAdmin ? '/dashboard/platform/users' : '/dashboard/platform/tenants' },
     { label: 'Fleet vehicles', value: data.vehicles.total, detail: `${data.vehicles.available} available`, icon: Car, href: '/dashboard/platform/tenants' },
-    { label: 'Transport requests', value: data.requests.total, detail: 'Across all tenants', icon: Activity, href: '/dashboard/platform/audit' },
-    { label: 'Trips', value: data.trips.total, detail: `${data.trips.active} active`, icon: Truck, href: '/dashboard/platform/audit' },
+    { label: 'Transport requests', value: data.requests.total, detail: 'Across all tenants', icon: Activity, href: canAudit ? '/dashboard/platform/audit' : '/dashboard/platform/tenants' },
+    { label: 'Trips', value: data.trips.total, detail: `${data.trips.active} active`, icon: Truck, href: canAudit ? '/dashboard/platform/audit' : '/dashboard/platform/tenants' },
     { label: 'Maintenance', value: data.vehicles.maintenance, detail: 'Vehicles in maintenance', icon: Wrench, href: '/dashboard/platform/tenants' },
   ];
 
@@ -108,14 +115,14 @@ export default function PlatformDashboardPage() {
       <Breadcrumbs items={[{ label: 'Platform Administration' }]} />
       <PageHeader title="Platform Administration" description="Operate tenant onboarding, public enquiries, demonstrations and platform-wide controls.">
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" asChild><Link href="/dashboard/platform/onboard"><UserPlus className="h-4 w-4" /> Onboard tenant</Link></Button>
-          <Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/users"><UserCog className="h-4 w-4" /> Platform users</Link></Button>
-          <Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/packages"><Package className="h-4 w-4" /> Packages</Link></Button>
+          {isAdmin && <Button size="sm" asChild><Link href="/dashboard/platform/onboard"><UserPlus className="h-4 w-4" /> Onboard tenant</Link></Button>}
+          {isAdmin && <Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/users"><UserCog className="h-4 w-4" /> Platform users</Link></Button>}
+          {isAdmin && <Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/packages"><Package className="h-4 w-4" /> Packages</Link></Button>}
           <Button variant="secondary" size="sm" onClick={() => void dashboardQuery.refetch()} loading={dashboardQuery.isFetching}><RefreshCw className="h-4 w-4" /> Refresh</Button>
         </div>
       </PageHeader>
 
-      <section aria-labelledby="platform-intake-title" className="space-y-3">
+      {canHandleIntake && <section aria-labelledby="platform-intake-title" className="space-y-3">
         <div><h2 id="platform-intake-title" className="text-base font-semibold text-ink-950">Public intake</h2><p className="mt-0.5 text-xs text-ink-500">Submissions from the public website that need Platform Administrator attention.</p></div>
         <div className="grid gap-3 lg:grid-cols-2">
           <Link href="/dashboard/platform/demo-requests" className="focus-ring group rounded-[10px] border border-brand-200 bg-surface p-5 transition-[transform,box-shadow,border-color] hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-sm motion-reduce:transform-none motion-reduce:transition-none dark:border-brand-900/70">
@@ -128,7 +135,7 @@ export default function PlatformDashboardPage() {
             <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-3 text-xs"><div><p className="text-lg font-semibold tabular-nums text-status-pending-text">{data.intake.enquiries.total}</p><p className="text-ink-500">Total</p></div><div><p className="text-lg font-semibold tabular-nums text-brand-700 dark:text-brand-300">{data.intake.enquiries.new}</p><p className="text-ink-500">New</p></div><div><p className="text-lg font-semibold tabular-nums text-status-warning-text">{data.intake.enquiries.inProgress}</p><p className="text-ink-500">In progress</p></div></div>
           </Link>
         </div>
-      </section>
+      </section>}
 
       <section aria-labelledby="platform-overview-title" className="space-y-3">
         <h2 id="platform-overview-title" className="text-base font-semibold text-ink-950">Platform overview</h2>
@@ -152,7 +159,7 @@ export default function PlatformDashboardPage() {
         <Card>
           <CardHeader><CardTitle>Recent tenants</CardTitle></CardHeader>
           <CardContent className="p-0">
-            {data.recentTenants.length === 0 ? <div className="p-5"><EmptyState icon={<Building2 className="h-6 w-6" />} title="No tenants yet" description="Onboard the first organisation or convert a qualified demo request." action={{ label: 'Onboard tenant', href: '/dashboard/platform/onboard' }} /></div> : <div className="divide-y divide-border">{data.recentTenants.map((tenant) => <Link key={tenant.id} href={`/dashboard/platform/tenants/${tenant.id}`} className="focus-ring flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between motion-reduce:transition-none"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-semibold text-ink-950">{tenant.name}</p><Badge variant={tenantStatusVariant(tenant.status)} size="sm">{tenant.status.toLowerCase()}</Badge></div><p className="mt-1 text-xs text-ink-500">{tenant.code} · {tenant.type.replace(/_/g, ' ')} · created {formatDate(tenant.createdAt)}</p></div><Badge variant="default" size="sm">{tenant.lifecycleStatus.replace(/_/g, ' ').toLowerCase()}</Badge></Link>)}</div>}
+            {data.recentTenants.length === 0 ? <div className="p-5"><EmptyState icon={<Building2 className="h-6 w-6" />} title="No tenants yet" description="No tenant organisations are currently configured." action={isAdmin ? { label: 'Onboard tenant', href: '/dashboard/platform/onboard' } : undefined} /></div> : <div className="divide-y divide-border">{data.recentTenants.map((tenant) => <Link key={tenant.id} href={`/dashboard/platform/tenants/${tenant.id}`} className="focus-ring flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between motion-reduce:transition-none"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-semibold text-ink-950">{tenant.name}</p><Badge variant={tenantStatusVariant(tenant.status)} size="sm">{tenant.status.toLowerCase()}</Badge></div><p className="mt-1 text-xs text-ink-500">{tenant.code} · {tenant.type.replace(/_/g, ' ')} · created {formatDate(tenant.createdAt)}</p></div><Badge variant="default" size="sm">{tenant.lifecycleStatus.replace(/_/g, ' ').toLowerCase()}</Badge></Link>)}</div>}
           </CardContent>
         </Card>
 
@@ -160,7 +167,7 @@ export default function PlatformDashboardPage() {
           <CardHeader><CardTitle>Platform services</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             {health.map(([label, online]) => <div key={label} className="flex items-center justify-between gap-3 rounded-[8px] border border-border px-3 py-2.5"><div className="flex items-center gap-2">{online ? <CheckCircle2 className="h-4 w-4 text-status-success-text" /> : <CircleAlert className="h-4 w-4 text-status-warning-text" />}<span className="text-sm text-ink-700">{label}</span></div><Badge variant={online ? 'success' : 'warning'} size="sm">{online ? 'Configured' : 'Attention'}</Badge></div>)}
-            <div className="pt-2"><Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/billing"><Settings className="h-4 w-4" /> Billing settings</Link></Button></div>
+            {isAdmin && <div className="pt-2"><Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/billing"><Settings className="h-4 w-4" /> Billing settings</Link></Button></div>}
           </CardContent>
         </Card>
       </div>
@@ -168,7 +175,7 @@ export default function PlatformDashboardPage() {
       {data.vehicles.total === 0 && data.trips.total === 0 && (
         <section className="grid gap-4 lg:grid-cols-2" aria-label="Operational data status">
           <div className="rounded-[10px] border border-border bg-surface p-5"><div className="flex items-start gap-3"><Database className="mt-0.5 h-5 w-5 text-brand-700 dark:text-brand-300" /><div><h3 className="text-sm font-semibold text-ink-950">No fleet data yet</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">This is expected for a new platform or empty tenants. Fleet records are created inside each tenant workspace, not from the Platform Dashboard.</p><Button variant="ghost" size="sm" className="mt-2" asChild><Link href="/dashboard/platform/tenants">Open tenant management</Link></Button></div></div></div>
-          <div className="rounded-[10px] border border-border bg-surface p-5"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 h-5 w-5 text-status-success-text" /><div><h3 className="text-sm font-semibold text-ink-950">No active trip activity</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">Trip activity appears after tenants complete setup and begin operational use. Nothing is missing from this Platform Admin view.</p><Button variant="ghost" size="sm" className="mt-2" asChild><Link href="/dashboard/platform/demo-requests">Review demo pipeline</Link></Button></div></div></div>
+          <div className="rounded-[10px] border border-border bg-surface p-5"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 h-5 w-5 text-status-success-text" /><div><h3 className="text-sm font-semibold text-ink-950">No active trip activity</h3><p className="mt-1 text-xs leading-relaxed text-ink-500">Trip activity appears after tenants complete setup and begin operational use. Nothing is missing from this Platform Admin view.</p>{canHandleIntake && <Button variant="ghost" size="sm" className="mt-2" asChild><Link href="/dashboard/platform/demo-requests">Review demo pipeline</Link></Button>}</div></div></div>
         </section>
       )}
     </div>

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { regions } from '@/db/schema/fleet';
 import { notifications } from '@/db/schema/notifications';
-import { eq, and, like, or, ne, type SQL } from 'drizzle-orm';
+import { eq, and, ilike, or, ne, type SQL } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     const search = new URL(req.url).searchParams.get('search')?.trim();
     const conditions: SQL[] = [eq(regions.tenantId, session.tenantId)];
     if (search) {
-      conditions.push(or(like(regions.name, `%${search}%`), like(regions.code, `%${search}%`))!);
+      conditions.push(or(ilike(regions.name, `%${search}%`), ilike(regions.code, `%${search}%`))!);
     }
 
     const rows = await db.select().from(regions).where(and(...conditions)).orderBy(regions.sortOrder, regions.name);

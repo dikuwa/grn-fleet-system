@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { and, desc, eq, like, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { getDb, isDbConnected } from '@/db';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
@@ -51,9 +51,9 @@ async function fetchRequests(
   if (search) {
     conditions.push(
       or(
-        like(transportRequests.reference, `%${search}%`),
-        like(transportRequests.purpose, `%${search}%`),
-        like(transportRequests.department, `%${search}%`),
+        ilike(transportRequests.reference, `%${search}%`),
+        ilike(transportRequests.purpose, `%${search}%`),
+        ilike(transportRequests.department, `%${search}%`),
       )!,
     );
   }

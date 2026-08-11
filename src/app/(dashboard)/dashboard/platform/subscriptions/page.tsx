@@ -72,6 +72,17 @@ interface SubscriptionStats {
   expired: number;
 }
 
+interface PackageOption {
+  id: string;
+  name: string;
+  code: string;
+  status: string;
+  priceMonthlyCents: number | null;
+  priceQuarterlyCents: number | null;
+  priceAnnuallyCents: number | null;
+  defaultBillingInterval: 'monthly' | 'quarterly' | 'annually';
+}
+
 type BadgeVariant = NonNullable<BadgeProps['variant']>;
 
 const STATUS_CONFIG: Record<string, { label: string; variant: BadgeVariant; icon: LucideIcon }> = {
@@ -124,6 +135,7 @@ export default function PlatformSubscriptionsPage() {
   const { toast } = useToast();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [stats, setStats] = useState<SubscriptionStats | null>(null);
+  const [packages, setPackages] = useState<PackageOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -152,10 +164,15 @@ export default function PlatformSubscriptionsPage() {
       params.set('page', String(page));
       params.set('limit', '25');
 
-      const res = await fetch(`/api/platform/subscriptions?${params}`);
-      const json = await res.json();
+      const [res, packagesRes] = await Promise.all([
+        fetch(`/api/platform/subscriptions?${params}`),
+        fetch('/api/platform/packages'),
+      ]);
+      const [json, packagesJson] = await Promise.all([res.json(), packagesRes.json()]);
       if (!res.ok) throw new Error(json.error || 'Failed to fetch subscriptions');
+      if (!packagesRes.ok) throw new Error(packagesJson.error || 'Failed to fetch packages');
       setSubscriptions(json.data.subscriptions ?? []);
+      setPackages((packagesJson.data?.packages ?? []).filter((pkg: PackageOption) => pkg.status === 'active'));
       setStats(json.data.stats ?? null);
       setTotalPages(json.data.totalPages ?? 1);
     } catch (err) {
@@ -171,20 +188,22 @@ export default function PlatformSubscriptionsPage() {
   }, [fetchSubscriptions]);
 
   const handleTransition = useCallback(
-    async (newStatus: string, reason: string) => {
+    async (change: { status?: string; reason: string; packageId?: string; billingInterval?: string; billingPeriods?: number }) => {
       if (!transitionModal.subscription) return;
       setTransitioning(true);
       try {
         const res = await fetch(`/api/platform/subscriptions/${transitionModal.subscription.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: newStatus, reason }),
+          body: JSON.stringify(change),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Failed to transition subscription');
         toast({
           title: 'Subscription updated',
-          description: `Subscription transitioned to ${STATUS_CONFIG[newStatus]?.label ?? newStatus}.`,
+          description: change.packageId
+            ? 'The tenant package, price and billing duration are now updated.'
+            : `Subscription transitioned to ${STATUS_CONFIG[change.status ?? '']?.label ?? change.status}.`,
           variant: 'success',
         });
         setTransitionModal({ open: false, subscription: null });
@@ -324,7 +343,6 @@ export default function PlatformSubscriptionsPage() {
               variant: 'default' as BadgeVariant,
               icon: CreditCard,
             };
-            const availableTransitions = TRANSITION_OPTIONS[subscription.status] ?? [];
             return (
               <article
                 key={subscription.id}
@@ -365,15 +383,13 @@ export default function PlatformSubscriptionsPage() {
                   )}
                 </div>
                 <div className="flex xl:justify-end">
-                  {availableTransitions.length > 0 && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setTransitionModal({ open: true, subscription })}
-                    >
-                      <ArrowRightLeft className="h-4 w-4" aria-hidden="true" /> Change Status
-                    </Button>
-                  )}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setTransitionModal({ open: true, subscription })}
+                  >
+                    <ArrowRightLeft className="h-4 w-4" aria-hidden="true" /> Manage
+                  </Button>
                 </div>
               </article>
             );
@@ -395,6 +411,7 @@ export default function PlatformSubscriptionsPage() {
         open={transitionModal.open}
         subscription={transitionModal.subscription}
         availableStatuses={transitionModal.subscription ? TRANSITION_OPTIONS[transitionModal.subscription.status] ?? [] : []}
+        packages={packages}
         transitioning={transitioning}
         onTransition={handleTransition}
         onClose={() => setTransitionModal({ open: false, subscription: null })}
@@ -410,32 +427,40 @@ function TransitionDialog({
   transitioning,
   onTransition,
   onClose,
+  packages,
 }: {
   open: boolean;
   subscription: Subscription | null;
   availableStatuses: string[];
   transitioning: boolean;
-  onTransition: (status: string, reason: string) => void | Promise<void>;
+  packages: PackageOption[];
+  onTransition: (change: { status?: string; reason: string; packageId?: string; billingInterval?: string; billingPeriods?: number }) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedPackageId, setSelectedPackageId] = useState('');
+  const [billingInterval, setBillingInterval] = useState<'monthly' | 'quarterly' | 'annually'>('annually');
+  const [billingPeriods, setBillingPeriods] = useState('1');
   const [reason, setReason] = useState('');
 
   useEffect(() => {
     if (open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSelectedStatus(availableStatuses[0] ?? '');
+      setSelectedStatus('keep');
+      setSelectedPackageId(subscription?.packageId ?? '');
+      setBillingInterval((subscription?.billingInterval as typeof billingInterval) ?? 'annually');
+      setBillingPeriods('1');
       setReason('');
     }
-  }, [open, subscription?.id, availableStatuses]);
+  }, [availableStatuses, open, subscription?.billingInterval, subscription?.id, subscription?.packageId]);
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !transitioning && !nextOpen && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Change subscription status</DialogTitle>
+          <DialogTitle>Manage tenant subscription</DialogTitle>
           <DialogDescription>
-            Apply an allowed lifecycle transition and keep the reason with the subscription history.
+            Upgrade or downgrade the package, set its billing duration, and optionally change lifecycle status.
           </DialogDescription>
         </DialogHeader>
 
@@ -448,13 +473,43 @@ function TransitionDialog({
           </div>
         )}
 
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Subscription package</Label>
+            <Select value={selectedPackageId} onValueChange={(value) => {
+              setSelectedPackageId(value);
+              const pkg = packages.find((item) => item.id === value);
+              if (pkg) setBillingInterval(pkg.defaultBillingInterval);
+            }} disabled={transitioning}>
+              <SelectTrigger aria-label="Subscription package"><SelectValue placeholder="Select package" /></SelectTrigger>
+              <SelectContent>{packages.map((pkg) => <SelectItem key={pkg.id} value={pkg.id}>{pkg.name} ({pkg.code})</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Billing interval</Label>
+            <Select value={billingInterval} onValueChange={(value) => setBillingInterval(value as typeof billingInterval)} disabled={transitioning}>
+              <SelectTrigger aria-label="Billing interval"><SelectValue /></SelectTrigger>
+              <SelectContent>{(['monthly', 'quarterly', 'annually'] as const).map((interval) => {
+                const pkg = packages.find((item) => item.id === selectedPackageId);
+                const price = interval === 'monthly' ? pkg?.priceMonthlyCents : interval === 'quarterly' ? pkg?.priceQuarterlyCents : pkg?.priceAnnuallyCents;
+                return <SelectItem key={interval} value={interval} disabled={price == null}>{interval.charAt(0).toUpperCase() + interval.slice(1)}</SelectItem>;
+              })}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="billing-periods">Duration (billing periods)</Label>
+            <Input id="billing-periods" type="number" min={1} max={36} value={billingPeriods} onChange={(event) => setBillingPeriods(event.target.value)} disabled={transitioning} />
+          </div>
+        </div>
+
         <div className="space-y-1.5">
-          <Label>New Status</Label>
+          <Label>Lifecycle status <span className="font-normal text-ink-400">(optional)</span></Label>
           <Select value={selectedStatus} onValueChange={setSelectedStatus} disabled={transitioning}>
             <SelectTrigger aria-label="New subscription status">
               <SelectValue placeholder="Select status" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="keep">Keep current status</SelectItem>
               {availableStatuses.map((status) => (
                 <SelectItem key={status} value={status}>{STATUS_CONFIG[status]?.label ?? status}</SelectItem>
               ))}
@@ -476,11 +531,17 @@ function TransitionDialog({
         <DialogFooter className="mobile-action-bar">
           <Button variant="secondary" onClick={onClose} disabled={transitioning}>Cancel</Button>
           <Button
-            onClick={() => onTransition(selectedStatus, reason.trim())}
+            onClick={() => onTransition({
+              status: selectedStatus === 'keep' ? undefined : selectedStatus,
+              reason: reason.trim(),
+              packageId: selectedPackageId !== subscription?.packageId || billingInterval !== subscription?.billingInterval || billingPeriods !== '1' ? selectedPackageId : undefined,
+              billingInterval,
+              billingPeriods: Number(billingPeriods),
+            })}
             loading={transitioning}
-            disabled={!selectedStatus}
+            disabled={!selectedPackageId || Number(billingPeriods) < 1 || Number(billingPeriods) > 36 || (selectedStatus === 'keep' && selectedPackageId === subscription?.packageId && billingInterval === subscription?.billingInterval && billingPeriods === '1')}
           >
-            <ArrowRightLeft className="h-4 w-4" aria-hidden="true" /> Transition
+            <ArrowRightLeft className="h-4 w-4" aria-hidden="true" /> Apply changes
           </Button>
         </DialogFooter>
       </DialogContent>

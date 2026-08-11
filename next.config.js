@@ -35,7 +35,7 @@ const nextConfig = {
             "default-src 'self'",
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://js.sentry-cdn.com",
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-            "img-src 'self' data: blob: https://*.r2.cloudflarestorage.com https://maps.gstatic.com https://*.googleapis.com https://img.clerk.com",
+            "img-src 'self' data: blob: https://*.r2.cloudflarestorage.com https://maps.gstatic.com https://*.googleapis.com https://*.tile.openstreetmap.org https://img.clerk.com",
             "font-src 'self' data: https://fonts.gstatic.com",
             "connect-src 'self' https://*.ingest.sentry.io https://*.r2.cloudflarestorage.com https://maps.googleapis.com https://routes.googleapis.com",
             "frame-ancestors 'none'",

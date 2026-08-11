@@ -4,7 +4,7 @@ import { transportRequests } from '@/db/schema/requests';
 import { vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
 import { generatedDocuments } from '@/db/schema/documents';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, isNull } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -101,6 +101,7 @@ async function fetchAllocationDetail(id: string, tenantId: string) {
       .where(and(
         eq(vehicleDefects.vehicleId, allocation.vehicleId),
         eq(vehicles.tenantId, tenantId),
+        isNull(vehicleDefects.resolvedAt),
       )),
     db
       .select({ id: generatedDocuments.id, status: generatedDocuments.status })

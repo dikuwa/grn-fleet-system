@@ -62,6 +62,12 @@ function nextPeriod(interval: BillingInterval, from: Date): Date {
   }
 }
 
+function addBillingPeriods(interval: BillingInterval, from: Date, periods: number): Date {
+  let result = new Date(from);
+  for (let index = 0; index < periods; index += 1) result = nextPeriod(interval, result);
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -249,6 +255,85 @@ export async function transitionSubscription(
       subscriptionStatus: mapSubscriptionToTenantStatus(status),
     })
     .where(eq(tenants.id, tenantId));
+}
+
+export type ChangeSubscriptionPackageInput = {
+  packageId: string;
+  billingInterval: BillingInterval;
+  billingPeriods: number;
+};
+
+/** Upgrade or downgrade a tenant and reset the paid period deliberately. */
+export async function changeSubscriptionPackage(
+  subscriptionId: string,
+  input: ChangeSubscriptionPackageInput,
+): Promise<SubscriptionWithDetails> {
+  const db = getDb();
+  const [current] = await db
+    .select()
+    .from(tenantSubscriptions)
+    .where(eq(tenantSubscriptions.id, subscriptionId))
+    .limit(1);
+  if (!current) throw new Error('Subscription not found');
+
+  const pkg = await getPackageById(input.packageId);
+  if (!pkg || pkg.status !== 'active') throw new Error('Select an active subscription package');
+  const priceCents = getPackagePrice(pkg, input.billingInterval);
+  if (priceCents === null) {
+    throw new Error(`Package "${pkg.name}" is not available on ${input.billingInterval} billing`);
+  }
+  const billingPeriods = Math.max(1, Math.min(36, Math.trunc(input.billingPeriods)));
+
+  const exceeded = [
+    ['vehicles', current.currentVehicles, pkg.maxVehicles],
+    ['users', current.currentUsers, pkg.maxUsers],
+    ['drivers', current.currentDrivers, pkg.maxDrivers],
+    ['departments', current.currentDepartments, pkg.maxDepartments],
+    ['offices', current.currentOffices, pkg.maxOffices],
+  ].filter(([, used, limit]) => typeof limit === 'number' && Number(used) > Number(limit));
+  if (exceeded.length) {
+    throw new Error(`Downgrade blocked: current usage exceeds the new package for ${exceeded.map(([label]) => label).join(', ')}`);
+  }
+
+  const periodStart = new Date();
+  const periodEnd = addBillingPeriods(input.billingInterval, periodStart, billingPeriods);
+  await db
+    .update(tenantSubscriptions)
+    .set({
+      packageId: pkg.id,
+      billingInterval: input.billingInterval,
+      priceCents: priceCents * billingPeriods,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+      nextPaymentDueAt: periodEnd,
+      trialEndsAt: null,
+      gracePeriodEndsAt: null,
+      cancelAtPeriodEnd: false,
+      cancelledAt: null,
+      updatedAt: periodStart,
+      metadata: {
+        ...((current.metadata ?? {}) as Record<string, unknown>),
+        billingPeriods,
+        unitPriceCents: priceCents,
+        packageChangedAt: periodStart.toISOString(),
+      },
+    })
+    .where(eq(tenantSubscriptions.id, subscriptionId));
+
+  await db
+    .update(tenants)
+    .set({
+      planCode: pkg.code,
+      vehicleLimit: pkg.maxVehicles,
+      userLimit: pkg.maxUsers,
+      storageLimit: pkg.maxStorageGb,
+      updatedAt: periodStart,
+    })
+    .where(eq(tenants.id, current.tenantId));
+
+  const updated = await getTenantSubscription(current.tenantId);
+  if (!updated) throw new Error('Subscription changed but could not be reloaded');
+  return updated;
 }
 
 /** Evaluate and enforce subscription lifecycle (call periodically / on login). */

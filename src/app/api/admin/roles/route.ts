@@ -3,12 +3,12 @@
  *
  * GET   /api/admin/roles — List tenant roles with permissions
  * POST  /api/admin/roles — Create a tenant custom role
- * PATCH /api/admin/roles — Update a tenant custom role
+ * PATCH /api/admin/roles — Update a tenant role
  *
- * Built-in system roles are platform-defined contracts. Tenant Administrators
- * may assign them to people, but may not rename them or mutate their permission
- * sets. Custom roles remain tenant-editable and are restricted to permissions
- * that are valid in the Tenant Administrator workspace.
+ * Built-in tenant role names are routing contracts and cannot be renamed.
+ * Tenant Administrators may still tailor their descriptions and stored
+ * permission sets. Custom roles remain fully tenant-editable. Every grant is
+ * restricted to permissions valid in the Tenant Administrator workspace.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -92,7 +92,8 @@ export async function GET(request: NextRequest) {
       isSystem: role.isSystem,
       memberCount: memberCountByRole.get(role.id) || 0,
       permissionCodes: permsByRole.get(role.id) || [],
-      editable: !role.isSystem,
+      editable: true,
+      nameEditable: !role.isSystem,
     }));
 
     return NextResponse.json({ success: true, data: { roles: enrichedRoles } });
@@ -203,13 +204,6 @@ export async function PATCH(request: NextRequest) {
       .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
       .limit(1);
     if (!existing) return NextResponse.json({ error: 'Role not found' }, { status: 404 });
-    if (existing.isSystem) {
-      return NextResponse.json(
-        { error: 'Built-in system roles are managed by GovFleet and cannot be edited. Assign or remove the role from users instead.' },
-        { status: 409 },
-      );
-    }
-
     const name = body?.name === undefined ? undefined : typeof body.name === 'string' ? body.name.trim() : '';
     const description = body?.description === undefined
       ? undefined
@@ -219,6 +213,12 @@ export async function PATCH(request: NextRequest) {
       : normalizePermissionCodes(body.permissionCodes);
 
     if (name !== undefined && !name) return NextResponse.json({ error: 'Role name cannot be empty' }, { status: 400 });
+    if (existing.isSystem && name !== undefined && name !== existing.name) {
+      return NextResponse.json(
+        { error: 'Built-in role names are used for workspace routing and cannot be renamed.' },
+        { status: 409 },
+      );
+    }
     if (permissionCodes === null) {
       return NextResponse.json(
         { error: 'One or more selected permissions are not available to tenant roles.' },
@@ -243,7 +243,7 @@ export async function PATCH(request: NextRequest) {
       .where(eq(rolePermissions.roleId, roleId));
 
     await runAtomicMutations((executor) => {
-      const mutations = [] as any[];
+      const mutations: Array<PromiseLike<unknown>> = [];
       const updateData: Record<string, unknown> = { updatedAt: new Date() };
       if (name !== undefined) updateData.name = name;
       if (description !== undefined) updateData.description = description || null;

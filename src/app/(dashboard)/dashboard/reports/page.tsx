@@ -272,7 +272,7 @@ export default function ReportsPage() {
       {/* Report Type Selector */}
       <Card className="no-print">
         <CardContent className="pt-4">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-3">
             {reportTypes.map((r) => (
               <button
                 key={r.value}
@@ -287,7 +287,6 @@ export default function ReportsPage() {
                 {r.label}
               </button>
             ))}
-          </div>
           <Link
             href="/dashboard/reports/licence-expiry"
             className="inline-flex items-center gap-2 rounded-[8px] bg-muted px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-border"
@@ -295,6 +294,7 @@ export default function ReportsPage() {
             <Shield className="h-4 w-4" />
             Licence Expiry
           </Link>
+          </div>
           {activeReport && (
             <p className="mt-2 text-xs text-ink-500">{activeReport.description}</p>
           )}
@@ -330,7 +330,7 @@ export default function ReportsPage() {
       </div>
 
       {/* ============================== PRINTABLE REPORT ============================== */}
-      <main id="print-report" className="space-y-6">
+      <main id="print-report" className="report-surface space-y-7">
       {/* Loading State */}
       {isLoading && (
         <div className="flex items-center justify-center py-16">
@@ -594,8 +594,9 @@ function ReportTrips({ data }: { data: Record<string, unknown> | null }) {
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-ink-700 capitalize">{s.status.replace(/_/g, ' ')}</span>
                     <span className="font-medium text-ink-950">{s.totalTrips} ({total > 0 ? Math.round((s.totalTrips / total) * 100) : 0}%)</span>
-                  </div>                    <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-                    <div className="h-full rounded-full transition-all bg-brand-600"                    style={{ width: `${total > 0 ? (s.totalTrips / total) * 100 : 0}%` }} />
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${total > 0 ? (s.totalTrips / total) * 100 : 0}%` }} />
                   </div>
                 </div>
               ))}
@@ -1061,7 +1062,7 @@ function ReportRequests({ data }: { data: Record<string, unknown> | null }) {
                     <span className="font-medium text-ink-950">{s.totalRequests} ({total > 0 ? Math.round((s.totalRequests / total) * 100) : 0}%)</span>
                   </div>
                   <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-                    <div className="h-full rounded-full transition-all bg-brand-600"                    style={{ width: `${total > 0 ? (s.totalRequests / total) * 100 : 0}%` }} />
+                    <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${total > 0 ? (s.totalRequests / total) * 100 : 0}%` }} />
                   </div>
                 </div>
               ))}

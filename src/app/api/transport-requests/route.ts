@@ -437,7 +437,7 @@ export async function POST(req: NextRequest) {
 
     try {
       await runAtomicMutations((tx) => {
-        const mutations: any[] = [
+        const mutations: Array<PromiseLike<unknown>> = [
           tx.insert(transportRequests).values({
             id: requestId,
             tenantId,
@@ -528,7 +528,7 @@ export async function POST(req: NextRequest) {
           mutations.push(
             tx.insert(requestRoutes).values(
               routes.map(
-                (route: { originName: string; destinationName: string; estimatedKm?: number; originPlaceId?: string; destinationPlaceId?: string; originCoordinates?: { lat: number; lng: number }; destinationCoordinates?: { lat: number; lng: number } }) => ({
+                (route: { originName: string; destinationName: string; estimatedKm?: number; estimatedMinutes?: number; routePolyline?: string; routeStatus?: string; calculatedAt?: string; originPlaceId?: string; destinationPlaceId?: string; originCoordinates?: { lat: number; lng: number }; destinationCoordinates?: { lat: number; lng: number } }) => ({
                   requestId,
                   originName: route.originName.trim(),
                   destinationName: route.destinationName.trim(),
@@ -536,9 +536,13 @@ export async function POST(req: NextRequest) {
                   destinationPlaceId: route.destinationPlaceId || null,
                   originCoordinates: route.originCoordinates || null,
                   destinationCoordinates: route.destinationCoordinates || null,
+                  mappedDistanceKm: route.routeStatus === 'calculated' ? route.estimatedKm || 0 : null,
+                  mappedDurationMinutes: route.estimatedMinutes || null,
+                  routePolyline: route.routePolyline || null,
                   totalKilometres: route.estimatedKm || 0,
                   additionalKilometres: 0,
-                  isVerified: false,
+                  isVerified: route.routeStatus === 'calculated',
+                  calculationTimestamp: route.calculatedAt ? new Date(route.calculatedAt) : null,
                 }),
               ),
             ),

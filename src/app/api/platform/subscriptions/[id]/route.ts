@@ -12,7 +12,11 @@ import { tenants } from '@/db/schema/tenants';
 import { subscriptionPackages } from '@/db/schema/packages';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { transitionSubscription } from '@/lib/platform/subscriptions';
+import {
+  changeSubscriptionPackage,
+  transitionSubscription,
+  type BillingInterval,
+} from '@/lib/platform/subscriptions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { eq } from 'drizzle-orm';
 
@@ -85,10 +89,10 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
-    const { status, reason } = body;
+    const { status, reason, packageId, billingInterval, billingPeriods } = body;
 
-    if (!status) {
-      return NextResponse.json({ error: 'Status is required' }, { status: 400 });
+    if (!status && !packageId) {
+      return NextResponse.json({ error: 'Choose a new status or subscription package' }, { status: 400 });
     }
 
     const validStatuses = [
@@ -103,14 +107,29 @@ export async function PATCH(
       'restricted',
     ];
 
-    if (!validStatuses.includes(status)) {
+    if (status && !validStatuses.includes(status)) {
       return NextResponse.json(
         { error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` },
         { status: 400 },
       );
     }
 
-    await transitionSubscription(id, status, { reason });
+    let packageChange = null;
+    if (packageId) {
+      if (!['monthly', 'quarterly', 'annually'].includes(billingInterval)) {
+        return NextResponse.json({ error: 'Choose a valid billing interval' }, { status: 400 });
+      }
+      const periods = Number(billingPeriods);
+      if (!Number.isInteger(periods) || periods < 1 || periods > 36) {
+        return NextResponse.json({ error: 'Duration must be between 1 and 36 billing periods' }, { status: 400 });
+      }
+      packageChange = await changeSubscriptionPackage(id, {
+        packageId,
+        billingInterval: billingInterval as BillingInterval,
+        billingPeriods: periods,
+      });
+    }
+    if (status) await transitionSubscription(id, status, { reason });
 
     // Audit the transition
     await recordAuditEvent({
@@ -119,13 +138,26 @@ export async function PATCH(
       action: 'subscription.status_changed',
       entityType: 'subscription',
       entityId: id,
-      summary: `Subscription status changed to ${status}`,
-      after: { newStatus: status, reason: reason || null },
+      summary: packageId
+        ? `Subscription package changed to ${packageChange?.packageName}${status ? ` and status changed to ${status}` : ''}`
+        : `Subscription status changed to ${status}`,
+      after: {
+        newStatus: status || undefined,
+        packageId: packageId || undefined,
+        packageCode: packageChange?.packageCode,
+        billingInterval: packageChange?.billingInterval,
+        currentPeriodEnd: packageChange?.currentPeriodEnd,
+        reason: reason || null,
+      },
     });
 
     return NextResponse.json({
       success: true,
-      data: { status, message: `Subscription transitioned to ${status}` },
+      data: {
+        status: status || packageChange?.status,
+        subscription: packageChange,
+        message: packageId ? 'Subscription package and duration updated' : `Subscription transitioned to ${status}`,
+      },
     });
   } catch (error) {
     console.error('[Platform Subscription] PATCH failed:', error);

@@ -33,7 +33,7 @@ import {
 import { useToast } from '@/lib/use-toast';
 
 interface BillingSettings {
-  id: string;
+  id: string | null;
   tenantId: string;
   tenantName: string;
   tenantCode: string;
@@ -261,7 +261,7 @@ export default function PlatformBillingPage() {
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
           {settingsList.map((settings) => (
-            <article key={settings.id} className="border-b border-border p-4 last:border-b-0 sm:p-5">
+            <article key={settings.tenantId} className="border-b border-border p-4 last:border-b-0 sm:p-5">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex min-w-0 items-start gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-600">

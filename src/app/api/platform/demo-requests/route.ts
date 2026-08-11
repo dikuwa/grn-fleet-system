@@ -126,3 +126,34 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to update demo request' }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const permCheck = await requirePermission(session, Permissions.DEMO_MANAGE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
+    const id = new URL(request.url).searchParams.get('id')?.trim() || '';
+    if (!id) return NextResponse.json({ error: 'Demo request ID is required' }, { status: 400 });
+
+    const db = getDb();
+    const [existing] = await db.select().from(demoRequests).where(eq(demoRequests.id, id)).limit(1);
+    if (!existing) return NextResponse.json({ error: 'Demo request not found' }, { status: 404 });
+    if (existing.status !== 'cancelled') {
+      return NextResponse.json({ error: 'Cancel the demo request before deleting it.' }, { status: 409 });
+    }
+
+    const [sandbox] = await db.select({ status: demoSandboxes.status }).from(demoSandboxes).where(eq(demoSandboxes.demoRequestId, id)).limit(1);
+    if (sandbox && !['revoked', 'deleted', 'expired'].includes(sandbox.status)) {
+      return NextResponse.json({ error: 'Revoke or remove the active sandbox before deleting this request.' }, { status: 409 });
+    }
+
+    await db.delete(demoRequests).where(eq(demoRequests.id, id));
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('[Platform Demo Requests] DELETE failed:', error);
+    return NextResponse.json({ error: 'Failed to delete demo request' }, { status: 500 });
+  }
+}

@@ -77,6 +77,7 @@ interface Route {
   originCoordinates?: { lat: number; lng: number };
   destinationCoordinates?: { lat: number; lng: number };
   estimatedMinutes?: number;
+  routePolyline?: string;
   routeStatus?: 'idle' | 'calculating' | 'calculated' | 'failed' | 'manual';
   calculatedAt?: string;
 }
@@ -757,10 +758,11 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
     onChange(routes.filter((r) => r.id !== id));
   };
 
-  const handleCalculateAll = useCallback(async (automatic = false) => {
+  const handleCalculateAll = useCallback(async (automatic = false, routeId?: string) => {
     const currentRoutes = routesRef.current;
     const validRoutes = currentRoutes.filter(
       (r) =>
+        (!routeId || r.id === routeId) &&
         r.originName.trim() &&
         r.destinationName.trim() &&
         (!automatic || isRouteReadyForAutomaticCalculation(r)),
@@ -816,6 +818,15 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
               ...updates[idx],
               estimatedKm: Math.round(distance),
               estimatedMinutes: Number(calc.durationMinutes) || undefined,
+              routePolyline: typeof calc.routePolyline === 'string' ? calc.routePolyline : undefined,
+              originPlaceId: calc.originPlaceId || updates[idx]?.originPlaceId,
+              destinationPlaceId: calc.destinationPlaceId || updates[idx]?.destinationPlaceId,
+              originCoordinates: Number(calc.originLat) && Number(calc.originLng)
+                ? { lat: Number(calc.originLat), lng: Number(calc.originLng) }
+                : updates[idx]?.originCoordinates,
+              destinationCoordinates: Number(calc.destLat) && Number(calc.destLng)
+                ? { lat: Number(calc.destLat), lng: Number(calc.destLng) }
+                : updates[idx]?.destinationCoordinates,
               routeStatus: 'calculated',
               calculatedAt: new Date().toISOString(),
             };
@@ -858,16 +869,6 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
           are configured.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          {routes.filter((r) => r.originName.trim() && r.destinationName.trim()).length > 0 && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void handleCalculateAll(false)}
-              disabled={calculating}
-            >
-              {calculating ? 'Calculating distance…' : 'Calculate distance'}
-            </Button>
-          )}
           <Button variant="secondary" size="sm" onClick={addRoute}>
             <Plus className="h-4 w-4" /> Add Route
           </Button>
@@ -892,11 +893,14 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
           {routes.map((r, i) => (
             <Card key={r.id}>
               <CardContent className="pt-4">
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-ink-500 text-xs font-medium">Route {i + 1}</span>
-                  <Button variant="secondary" size="sm" onClick={() => removeRoute(r.id)}>
-                    <Trash2 className="text-status-error-text h-3.5 w-3.5" />
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {r.originName.trim() && r.destinationName.trim() && <Button variant="secondary" size="sm" onClick={() => void handleCalculateAll(false, r.id)} disabled={calculating}>{r.routeStatus === 'calculating' ? 'Calculating…' : 'Calculate distance'}</Button>}
+                    <Button variant="ghost" size="sm" className="text-status-error-text" onClick={() => removeRoute(r.id)} aria-label={`Delete route ${i + 1}`}>
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </Button>
+                  </div>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>

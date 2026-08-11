@@ -437,7 +437,7 @@ export default async function DashboardPage() {
     workspaceContext.eligibleWorkspaces.find(
       (workspace) => workspace.id === workspaceContext.activeWorkspace,
     )?.label ?? 'Personal Requester';
-  const links = getWorkspaceNavigation(workspaceContext.activeWorkspace)
+  const links = getWorkspaceNavigation(workspaceContext.activeWorkspace, workspaceContext.roleNames)
     .filter((route) => !['dashboard', 'profile', 'notifications'].includes(route.id))
     .slice(0, 9)
     .map((route) => [route.href, route.label] as const);

@@ -92,6 +92,15 @@ function reviewBadge(status: string): { variant: 'success' | 'warning' | 'emerge
   }
 }
 
+function tabTone(tab: QueueTab, active: boolean) {
+  if (!active) return 'border-border bg-surface text-ink-600 hover:border-ink-300 hover:bg-muted';
+  if (tab === 'approved') return 'border-status-success-text/25 bg-status-success-bg text-status-success-text';
+  if (tab === 'expired' || tab === 'rejected') return 'border-status-error-text/25 bg-status-error-bg text-status-error-text';
+  if (tab === 'changes_requested') return 'border-status-emergency-text/25 bg-status-emergency-bg text-status-emergency-text';
+  if (tab === 'pending' || tab === 'expiring') return 'border-status-warning-text/25 bg-status-warning-bg text-status-warning-text';
+  return 'border-brand-700 bg-brand-700 text-white';
+}
+
 export default function LicenceVerificationQueuePage() {
   const [tab, setTab] = useState<QueueTab>('pending');
   const [rows, setRows] = useState<QueueRow[]>([]);
@@ -234,11 +243,7 @@ export default function LicenceVerificationQueuePage() {
               role="tab"
               aria-selected={active}
               onClick={() => switchTab(item.key)}
-              className={`focus-ring rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
-                active
-                  ? 'bg-brand-600 text-white'
-                  : 'border-border bg-surface text-ink-600 hover:border-brand-200 hover:text-ink-950'
-              }`}
+              className={`focus-ring rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${tabTone(item.key, active)}`}
             >
               {item.label}
             </button>
