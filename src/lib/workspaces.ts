@@ -16,6 +16,21 @@ export const SystemRoles = {
   AUDITOR: 'Tenant Auditor',
 } as const;
 
+export const PlatformSystemRoles = [
+  SystemRoles.PLATFORM_ADMIN,
+  SystemRoles.PLATFORM_SUPPORT,
+  SystemRoles.PLATFORM_AUDITOR,
+] as const;
+
+export type PlatformSystemRole = (typeof PlatformSystemRoles)[number];
+
+export function isPlatformSystemRole(roleName: string): boolean {
+  const normalized = roleName.trim().toLocaleLowerCase();
+  return PlatformSystemRoles.some(
+    (platformRole) => platformRole.toLocaleLowerCase() === normalized,
+  );
+}
+
 export const WorkspaceIds = {
   PERSONAL: 'personal',
   APPROVER: 'approver',
