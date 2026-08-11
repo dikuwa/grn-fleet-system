@@ -45,6 +45,7 @@ export interface DriverLicenceData {
   verificationCode: string;
   /** Verification URL for QR */
   verificationUrl?: string;
+  documentHash?: string;
   /** QR code as data-URI */
   qrCode?: string;
   /** Document version */
@@ -70,6 +71,7 @@ export function DriverLicenceDocument({ data }: { data: DriverLicenceData }) {
     branding,
     verificationCode,
     verificationUrl,
+    documentHash,
     qrCode,
     documentVersion,
     generatedAt,
@@ -109,11 +111,24 @@ export function DriverLicenceDocument({ data }: { data: DriverLicenceData }) {
               { label: 'Licence Class', value: licenceClass },
               { label: 'Issue Date', value: issueDate },
               { label: 'Expiry Date', value: expiryDate },
-              { label: 'Status', value: isExpired ? 'Expired' : daysLeft <= 30 ? `Expiring (${daysLeft} days)` : 'Valid' },
+              {
+                label: 'Status',
+                value: isExpired
+                  ? 'Expired'
+                  : daysLeft <= 30
+                    ? `Expiring (${daysLeft} days)`
+                    : 'Valid',
+              },
               ...(issueNumber ? [{ label: 'Issue Number', value: issueNumber }] : []),
-              ...(driverRestrictionCode ? [{ label: 'Restriction Code', value: driverRestrictionCode }] : []),
-              ...(allowedVehicleCategories ? [{ label: 'Vehicle Categories', value: allowedVehicleCategories }] : []),
-              ...(nationalIdNumber ? [{ label: 'National ID', value: `••••${nationalIdNumber.slice(-4)}` }] : []),
+              ...(driverRestrictionCode
+                ? [{ label: 'Restriction Code', value: driverRestrictionCode }]
+                : []),
+              ...(allowedVehicleCategories
+                ? [{ label: 'Vehicle Categories', value: allowedVehicleCategories }]
+                : []),
+              ...(nationalIdNumber
+                ? [{ label: 'National ID', value: `••••${nationalIdNumber.slice(-4)}` }]
+                : []),
             ]}
           />
         </DocumentSection>
@@ -122,7 +137,10 @@ export function DriverLicenceDocument({ data }: { data: DriverLicenceData }) {
         <DocumentSection title="Issuing Information">
           <DocumentFieldGrid
             fields={[
-              { label: 'Issuing Authority', value: branding?.organisationName || tenantName || 'Government of Namibia' },
+              {
+                label: 'Issuing Authority',
+                value: branding?.organisationName || tenantName || 'Government of Namibia',
+              },
               { label: 'Document Generated', value: generatedAt },
               { label: 'Version', value: String(documentVersion) },
             ]}
@@ -134,6 +152,7 @@ export function DriverLicenceDocument({ data }: { data: DriverLicenceData }) {
           branding={branding}
           verificationCode={verificationCode}
           verificationUrl={verificationUrl}
+          documentHash={documentHash}
           qrCode={qrCode}
         />
 

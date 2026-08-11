@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import { getDb } from '@/db';
 import { fuelTransactions, reimbursements, tripAuthorities, trips, tripClosures } from '@/db/schema/trips';
 import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
@@ -9,6 +10,7 @@ import { offices } from '@/db/schema/people';
 import { regions } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -96,7 +98,7 @@ async function buildFuelRows(db: ReturnType<typeof getDb>, tenantId: string, sta
     })
     .from(fuelTransactions)
     .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-    .where(and(eq(vehicles.tenantId, tenantId), gte(fuelTransactions.createdAt, startDate)))
+    .where(and(eq(vehicles.tenantId, tenantId), gte(fuelTransactions.transactionAt, startDate)))
     .orderBy(sql`fuel_transactions.transaction_at DESC`);
 }
 
@@ -388,8 +390,10 @@ export async function GET(request: NextRequest) {
         .where(eq(sql`id`, tenantId))
         .limit(1)) as unknown as { name: string }[];
 
-      const element = React.createElement(ReportDocument as never, {
-        data: {
+      const generatedAt = new Date().toLocaleDateString('en-NA', {
+        weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+      });
+      const reportPayload = {
           title,
           period:
             period === '7d'
@@ -400,16 +404,19 @@ export async function GET(request: NextRequest) {
                   ? 'Last Quarter'
                   : 'Year to Date',
           tenantName: tenant?.name || 'Fleet Management',
-          generatedAt: new Date().toLocaleDateString('en-NA', {
-            weekday: 'short',
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-          }),
+          generatedAt,
           summary,
           columns,
           rows,
           totalRowCount: rows.length,
+      };
+      const documentHash = createHash('sha256').update(JSON.stringify(reportPayload)).digest('hex');
+      const element = React.createElement(ReportDocument as never, {
+        data: {
+          ...reportPayload,
+          branding: await resolveTenantDocumentBranding(tenantId),
+          verificationCode: documentHash.slice(0, 8).toUpperCase(),
+          documentHash,
         },
       }) as never;
 

@@ -17,6 +17,7 @@ import {
   DocumentTable,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
+  DocumentExecutiveCertification,
   documentStyles,
 } from './document-system';
 
@@ -49,6 +50,7 @@ export interface InspectionReportData {
   items?: InspectionItemResult[];
   verificationCode?: string;
   verificationUrl?: string;
+  documentHash?: string;
   qrCodeDataUrl?: string;
 }
 
@@ -89,7 +91,10 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
                 { label: 'Status', value: formatDocumentStatus(data.status) },
                 { label: 'Inspector', value: data.inspectorName || 'Not recorded' },
                 { label: 'Driver', value: data.driverName || 'Not recorded' },
-                { label: 'Inspected at', value: formatHumanDate(data.inspectedAt, branding?.locale) },
+                {
+                  label: 'Inspected at',
+                  value: formatHumanDate(data.inspectedAt, branding?.locale),
+                },
               ]}
             />
           </DocumentSection>
@@ -176,14 +181,24 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           </DocumentSection>
         )}
 
+        <DocumentExecutiveCertification
+          branding={branding}
+          generatedAt={data.inspectedAt}
+          statement="I certify that this inspection report is a true system record."
+        />
         {/* Verification block */}
         <DocumentVerificationBlock
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
           qrCode={data.qrCodeDataUrl}
         />
-        <DocumentVerificationFooter branding={branding} />
+        <DocumentVerificationFooter
+          branding={branding}
+          verificationCode={data.verificationCode}
+          verificationUrl={data.verificationUrl}
+        />
       </DocumentPage>
     </Document>
   );

@@ -67,6 +67,13 @@ interface Driver {
   sortOrder: number;
 }
 
+interface GoodsEquipmentItem {
+  id: string;
+  description: string;
+  quantity: string;
+  purpose: string;
+}
+
 interface Route {
   id: string;
   originName: string;
@@ -95,6 +102,7 @@ interface RequestFormData {
   passengers: Passenger[];
   drivers: Driver[];
   routes: Route[];
+  goodsAndEquipment: GoodsEquipmentItem[];
   driverPreference: string;
   programmeId: string;
 }
@@ -120,6 +128,7 @@ const EMPTY_FORM: RequestFormData = {
   passengers: [],
   drivers: [],
   routes: [],
+  goodsAndEquipment: [],
   driverPreference: 'transport_admin_assign',
   programmeId: '',
 };
@@ -145,13 +154,7 @@ function generateReference(): string {
 // Step Components
 // ---------------------------------------------------------------------------
 
-function ProgrammeSelector({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (id: string) => void;
-}) {
+function ProgrammeSelector({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const [options, setOptions] = useState<{ id: string; reference: string; title: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -312,6 +315,96 @@ function BasicInfoStep({
           placeholder="e.g. Technical Services, Community Development"
           className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
         />
+      </div>
+
+      <div className="border-border rounded-[8px] border p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-ink-950 text-sm font-medium">Goods and equipment</p>
+            <p className="text-ink-500 text-xs">
+              Optional items that must travel under this authority.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              onChange({
+                goodsAndEquipment: [
+                  ...data.goodsAndEquipment,
+                  { id: nextId(), description: '', quantity: '', purpose: '' },
+                ],
+              })
+            }
+          >
+            <Plus className="h-4 w-4" /> Add item
+          </Button>
+        </div>
+        {data.goodsAndEquipment.length === 0 ? (
+          <p className="text-ink-400 border-border rounded-[8px] border border-dashed px-3 py-4 text-center text-xs">
+            No goods or equipment added.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {data.goodsAndEquipment.map((item) => (
+              <div key={item.id} className="grid gap-2 sm:grid-cols-[1.4fr_0.7fr_1.4fr_auto]">
+                <input
+                  aria-label="Goods or equipment description"
+                  value={item.description}
+                  onChange={(event) =>
+                    onChange({
+                      goodsAndEquipment: data.goodsAndEquipment.map((row) =>
+                        row.id === item.id ? { ...row, description: event.target.value } : row,
+                      ),
+                    })
+                  }
+                  placeholder="Description"
+                  className="border-border bg-surface text-ink-950 h-10 rounded-[8px] border px-3 text-sm"
+                />
+                <input
+                  aria-label="Goods or equipment quantity"
+                  value={item.quantity}
+                  onChange={(event) =>
+                    onChange({
+                      goodsAndEquipment: data.goodsAndEquipment.map((row) =>
+                        row.id === item.id ? { ...row, quantity: event.target.value } : row,
+                      ),
+                    })
+                  }
+                  placeholder="Quantity"
+                  className="border-border bg-surface text-ink-950 h-10 rounded-[8px] border px-3 text-sm"
+                />
+                <input
+                  aria-label="Goods or equipment purpose"
+                  value={item.purpose}
+                  onChange={(event) =>
+                    onChange({
+                      goodsAndEquipment: data.goodsAndEquipment.map((row) =>
+                        row.id === item.id ? { ...row, purpose: event.target.value } : row,
+                      ),
+                    })
+                  }
+                  placeholder="Purpose"
+                  className="border-border bg-surface text-ink-950 h-10 rounded-[8px] border px-3 text-sm"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Remove goods or equipment item"
+                  onClick={() =>
+                    onChange({
+                      goodsAndEquipment: data.goodsAndEquipment.filter((row) => row.id !== item.id),
+                    })
+                  }
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="border-border flex items-start gap-3 rounded-[8px] border p-4">
@@ -818,15 +911,18 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
               ...updates[idx],
               estimatedKm: Math.round(distance),
               estimatedMinutes: Number(calc.durationMinutes) || undefined,
-              routePolyline: typeof calc.routePolyline === 'string' ? calc.routePolyline : undefined,
+              routePolyline:
+                typeof calc.routePolyline === 'string' ? calc.routePolyline : undefined,
               originPlaceId: calc.originPlaceId || updates[idx]?.originPlaceId,
               destinationPlaceId: calc.destinationPlaceId || updates[idx]?.destinationPlaceId,
-              originCoordinates: Number(calc.originLat) && Number(calc.originLng)
-                ? { lat: Number(calc.originLat), lng: Number(calc.originLng) }
-                : updates[idx]?.originCoordinates,
-              destinationCoordinates: Number(calc.destLat) && Number(calc.destLng)
-                ? { lat: Number(calc.destLat), lng: Number(calc.destLng) }
-                : updates[idx]?.destinationCoordinates,
+              originCoordinates:
+                Number(calc.originLat) && Number(calc.originLng)
+                  ? { lat: Number(calc.originLat), lng: Number(calc.originLng) }
+                  : updates[idx]?.originCoordinates,
+              destinationCoordinates:
+                Number(calc.destLat) && Number(calc.destLng)
+                  ? { lat: Number(calc.destLat), lng: Number(calc.destLng) }
+                  : updates[idx]?.destinationCoordinates,
               routeStatus: 'calculated',
               calculatedAt: new Date().toISOString(),
             };
@@ -896,8 +992,23 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-ink-500 text-xs font-medium">Route {i + 1}</span>
                   <div className="flex flex-wrap items-center gap-2">
-                    {r.originName.trim() && r.destinationName.trim() && <Button variant="secondary" size="sm" onClick={() => void handleCalculateAll(false, r.id)} disabled={calculating}>{r.routeStatus === 'calculating' ? 'Calculating…' : 'Calculate distance'}</Button>}
-                    <Button variant="ghost" size="sm" className="text-status-error-text" onClick={() => removeRoute(r.id)} aria-label={`Delete route ${i + 1}`}>
+                    {r.originName.trim() && r.destinationName.trim() && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void handleCalculateAll(false, r.id)}
+                        disabled={calculating}
+                      >
+                        {r.routeStatus === 'calculating' ? 'Calculating…' : 'Calculate distance'}
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-status-error-text"
+                      onClick={() => removeRoute(r.id)}
+                      aria-label={`Delete route ${i + 1}`}
+                    >
                       <Trash2 className="h-3.5 w-3.5" /> Delete
                     </Button>
                   </div>
@@ -1102,7 +1213,8 @@ export default function NewRequestPage() {
     if (step === 0)
       return (
         formData.purpose.trim().length > 0 &&
-        (!formData.requesterEmployee || formData.assistedReason.trim().length > 0)
+        (!formData.requesterEmployee || formData.assistedReason.trim().length > 0) &&
+        formData.goodsAndEquipment.every((item) => item.description.trim().length > 0)
       );
     if (step === 1) {
       return formData.activities.every((activity) =>
@@ -1154,6 +1266,9 @@ export default function NewRequestPage() {
           driverPreference: formData.driverPreference,
           preferredDriverEmployeeId: formData.drivers[0]?.employeeId,
           routes: formData.routes,
+          goodsAndEquipment: formData.goodsAndEquipment.map(
+            ({ description, quantity, purpose }) => ({ description, quantity, purpose }),
+          ),
           clientSubmissionId,
         }),
       });

@@ -15,7 +15,7 @@ import { tenants } from '@/db/schema/tenants';
 import { requireRequestAuth, hasPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq } from 'drizzle-orm';
-import { resolveTenantBranding } from '@/lib/tenant-branding';
+import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { DriverLicenceDocument, type DriverLicenceData } from '@/lib/pdf/driver-licence';
 
 export async function GET(
@@ -70,7 +70,7 @@ export async function GET(
     }
 
     // Resolve tenant branding
-    const resolvedBranding = await resolveTenantBranding(licence.tenantId);
+    const resolvedBranding = await resolveTenantDocumentBranding(licence.tenantId);
     const [tenant] = await db
       .select({ name: tenants.name, id: tenants.id })
       .from(tenants)

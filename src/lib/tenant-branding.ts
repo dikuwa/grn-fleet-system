@@ -21,6 +21,9 @@ export interface ResolvedTenantBranding {
   primaryColor: string;
   accentColor: string;
   documentFooter?: string;
+  executiveSignatoryName?: string;
+  executiveSignatoryTitle?: string;
+  executiveSignatureUrl?: string;
 }
 
 export async function resolveTenantBranding(
@@ -42,6 +45,9 @@ export async function resolveTenantBranding(
       phone: tenantBranding.contactPhone,
       email: tenantBranding.contactEmail,
       documentFooter: tenantBranding.documentFooter,
+      executiveSignatoryName: tenantBranding.executiveSignatoryName,
+      executiveSignatoryTitle: tenantBranding.executiveSignatoryTitle,
+      executiveSignatureUrl: tenantBranding.executiveSignatureUrl,
     })
     .from(tenants)
     .leftJoin(tenantBranding, eq(tenantBranding.tenantId, tenants.id))
@@ -72,5 +78,42 @@ export async function resolveTenantBranding(
     phone: row.phone || undefined,
     email: row.email || undefined,
     documentFooter: row.documentFooter || undefined,
+    executiveSignatoryName: row.executiveSignatoryName || undefined,
+    executiveSignatoryTitle: row.executiveSignatoryTitle || 'Chief Executive Officer',
+    executiveSignatureUrl: row.executiveSignatureUrl || undefined,
+  };
+}
+
+const documentImageCache = new Map<string, { value: string; expiresAt: number }>();
+
+async function embedDocumentImage(source?: string): Promise<string | undefined> {
+  if (!source || source.startsWith('data:')) return source;
+  const cached = documentImageCache.get(source);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  try {
+    const response = await fetch(source, { signal: AbortSignal.timeout(5_000) });
+    const contentType = response.headers.get('content-type') || '';
+    if (!response.ok || !contentType.startsWith('image/')) return source;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > 3_000_000) return source;
+    const value = `data:${contentType.split(';')[0]};base64,${Buffer.from(bytes).toString('base64')}`;
+    documentImageCache.set(source, { value, expiresAt: Date.now() + 5 * 60_000 });
+    return value;
+  } catch {
+    return source;
+  }
+}
+
+/** Resolve tenant branding with render-safe, self-contained image sources. */
+export async function resolveTenantDocumentBranding(
+  tenantId: string,
+): Promise<ResolvedTenantBranding | null> {
+  const branding = await resolveTenantBranding(tenantId);
+  if (!branding) return null;
+  return {
+    ...branding,
+    logoUrl: await embedDocumentImage(branding.logoUrl),
+    sealUrl: await embedDocumentImage(branding.sealUrl),
+    executiveSignatureUrl: await embedDocumentImage(branding.executiveSignatureUrl),
   };
 }

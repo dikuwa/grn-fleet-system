@@ -1,5 +1,5 @@
 import React from 'react';
-import {Document, Text} from '@react-pdf/renderer';
+import { Document, Text } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 import {
   formatDocumentStatus,
@@ -17,7 +17,6 @@ import {
   DocumentTable,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
-
 } from './document-system';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +42,7 @@ export interface TransportRequestData {
   verificationCode?: string;
   verificationUrl?: string;
   qrCodeDataUrl?: string;
+  documentHash?: string;
 
   requester: {
     name: string;
@@ -94,6 +94,12 @@ export interface TransportRequestData {
     mimeType?: string;
   }>;
 
+  goodsAndEquipment?: Array<{
+    description: string;
+    quantity?: string;
+    purpose?: string;
+  }>;
+
   approvalWorkflow?: Array<{
     stage?: number;
     action?: string;
@@ -140,8 +146,7 @@ export const TransportRequestDocument: React.FC<{
   const status = data.status || 'draft';
 
   // Compute total traveller count
-  const travellerCount =
-    data.travellerCount ?? (data.passengers ? data.passengers.length + 1 : 1);
+  const travellerCount = data.travellerCount ?? (data.passengers ? data.passengers.length + 1 : 1);
 
   // Derive estimated costs from activities if available
   const totalRouteKm =
@@ -175,17 +180,26 @@ export const TransportRequestDocument: React.FC<{
               fields={[
                 { label: 'Reference', value: data.reference || 'Not recorded' },
                 { label: 'Scope', value: humanizeKey(data.scope || 'regional') },
-                { label: 'Department', value: data.department || data.requester?.department || 'Not recorded' },
+                {
+                  label: 'Department',
+                  value: data.department || data.requester?.department || 'Not recorded',
+                },
                 { label: 'Purpose', value: data.purpose || 'Not recorded' },
                 { label: 'Status', value: formatDocumentStatus(status) },
                 { label: 'Revision', value: data.revision != null ? String(data.revision) : '1' },
                 {
                   label: 'Estimated distance',
-                  value: totalRouteKm != null ? `${totalRouteKm.toLocaleString('en-NA')} km` : 'Not estimated',
+                  value:
+                    totalRouteKm != null
+                      ? `${totalRouteKm.toLocaleString('en-NA')} km`
+                      : 'Not estimated',
                 },
                 {
                   label: 'Special authority',
-                  value: formatHumanValue(data.specialAuthorityRequired, 'specialAuthorityRequired'),
+                  value: formatHumanValue(
+                    data.specialAuthorityRequired,
+                    'specialAuthorityRequired',
+                  ),
                 },
               ]}
             />
@@ -195,7 +209,10 @@ export const TransportRequestDocument: React.FC<{
             <DocumentFieldGrid
               fields={[
                 { label: 'Name', value: data.requester?.name || 'Not recorded' },
-                { label: 'Employee number', value: data.requester?.employeeNumber || 'Not recorded' },
+                {
+                  label: 'Employee number',
+                  value: data.requester?.employeeNumber || 'Not recorded',
+                },
                 { label: 'Designation', value: data.requester?.designation || 'Not recorded' },
                 { label: 'Office', value: data.requester?.office || 'Not recorded' },
                 { label: 'Phone', value: data.requester?.phone || 'Not recorded' },
@@ -330,13 +347,31 @@ export const TransportRequestDocument: React.FC<{
         <DocumentRow>
           {/* Left: Goods & Equipment */}
           <DocumentSection title="Goods and equipment">
-            <Text style={{ color: '#4B5563', fontSize: 7 }}>Not specified</Text>
+            <DocumentTable
+              columns={[
+                { key: 'description', label: 'Description', width: '42%' },
+                { key: 'quantity', label: 'Quantity', width: '20%' },
+                { key: 'purpose', label: 'Purpose', width: '38%' },
+              ]}
+              rows={(data.goodsAndEquipment || []).map((item) => ({
+                description: item.description,
+                quantity: item.quantity,
+                purpose: item.purpose,
+              }))}
+              emptyLabel="No goods or equipment requested"
+            />
           </DocumentSection>
           {/* Right: Estimated Resources */}
           <DocumentSection title="Estimated resources">
             <DocumentFieldGrid
               fields={[
-                { label: 'Total distance', value: totalRouteKm != null ? `${totalRouteKm.toLocaleString('en-NA')} km` : 'Not estimated' },
+                {
+                  label: 'Total distance',
+                  value:
+                    totalRouteKm != null
+                      ? `${totalRouteKm.toLocaleString('en-NA')} km`
+                      : 'Not estimated',
+                },
                 { label: 'Estimated fuel', value: 'Not estimated' },
                 { label: 'Accommodation', value: 'Not estimated' },
                 { label: 'Meals', value: 'Not estimated' },
@@ -362,10 +397,15 @@ export const TransportRequestDocument: React.FC<{
                 { key: 'comment', label: 'Comment' },
               ]}
               rows={data.approvalWorkflow.map((approval) => ({
-                stage: approval.stage != null ? String(approval.stage) : humanizeKey(approval.action || 'action'),
+                stage:
+                  approval.stage != null
+                    ? String(approval.stage)
+                    : humanizeKey(approval.action || 'action'),
                 officer: approval.officer || 'Not recorded',
                 decision: approval.decision ? humanizeKey(approval.decision) : 'Pending',
-                date: approval.dateTime ? formatHumanDateTime(approval.dateTime, branding?.locale) : '—',
+                date: approval.dateTime
+                  ? formatHumanDateTime(approval.dateTime, branding?.locale)
+                  : '—',
                 comment: approval.comment || '—',
               }))}
               emptyLabel="No approvals recorded"
@@ -380,17 +420,33 @@ export const TransportRequestDocument: React.FC<{
           <DocumentSection title="Request outcome" wrap={false}>
             <DocumentFieldGrid
               fields={[
-                { label: 'Final status', value: formatDocumentStatus(data.outcome.finalStatus || status) },
-                { label: 'Linked trip authority', value: data.outcome.linkedAuthorityReference || 'Not issued' },
-                { label: 'Allocated vehicle', value: data.outcome.allocatedVehicle || 'Not allocated' },
-                { label: 'Allocated driver', value: data.outcome.allocatedDriver || 'Not allocated' },
+                {
+                  label: 'Final status',
+                  value: formatDocumentStatus(data.outcome.finalStatus || status),
+                },
+                {
+                  label: 'Linked trip authority',
+                  value: data.outcome.linkedAuthorityReference || 'Not issued',
+                },
+                {
+                  label: 'Allocated vehicle',
+                  value: data.outcome.allocatedVehicle || 'Not allocated',
+                },
+                {
+                  label: 'Allocated driver',
+                  value: data.outcome.allocatedDriver || 'Not allocated',
+                },
                 {
                   label: 'Allocation date',
-                  value: data.outcome.allocationDate ? formatHumanDate(data.outcome.allocationDate, branding?.locale) : 'Not recorded',
+                  value: data.outcome.allocationDate
+                    ? formatHumanDate(data.outcome.allocationDate, branding?.locale)
+                    : 'Not recorded',
                 },
                 {
                   label: 'Approval date',
-                  value: data.outcome.approvalDate ? formatHumanDate(data.outcome.approvalDate, branding?.locale) : 'Not recorded',
+                  value: data.outcome.approvalDate
+                    ? formatHumanDate(data.outcome.approvalDate, branding?.locale)
+                    : 'Not recorded',
                 },
               ]}
             />
@@ -402,6 +458,7 @@ export const TransportRequestDocument: React.FC<{
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
           qrCode={data.qrCodeDataUrl}
         />
 

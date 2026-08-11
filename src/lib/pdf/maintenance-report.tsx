@@ -17,6 +17,7 @@ import {
   DocumentTable,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
+  DocumentExecutiveCertification,
 } from './document-system';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,7 @@ export interface MaintenanceReportData {
   status?: string;
   verificationCode?: string;
   verificationUrl?: string;
+  documentHash?: string;
   qrCodeDataUrl?: string;
 
   // Enriched fields
@@ -61,9 +63,7 @@ export interface MaintenanceReportData {
 // Component
 // ---------------------------------------------------------------------------
 
-export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }> = ({
-  data,
-}) => {
+export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }> = ({ data }) => {
   const branding =
     data.branding ||
     (data.tenantName
@@ -104,9 +104,18 @@ export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }
           <DocumentSection title="Vehicle information">
             <DocumentFieldGrid
               fields={[
-                { label: 'Vehicle', value: data.vehicle || [data.make, data.model].filter(Boolean).join(' ') || 'Not recorded' },
+                {
+                  label: 'Vehicle',
+                  value:
+                    data.vehicle ||
+                    [data.make, data.model].filter(Boolean).join(' ') ||
+                    'Not recorded',
+                },
                 { label: 'Registration', value: data.licenceNumber || 'Not recorded' },
-                { label: 'Asset register number', value: data.vehicleRegisterNumber || 'Not recorded' },
+                {
+                  label: 'Asset register number',
+                  value: data.vehicleRegisterNumber || 'Not recorded',
+                },
                 { label: 'Status', value: formatDocumentStatus(status) },
               ]}
             />
@@ -147,7 +156,10 @@ export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }
                 date: ev.date ? formatHumanDate(ev.date, branding?.locale) : 'Not recorded',
                 type: ev.type ? humanizeKey(ev.type) : 'Not recorded',
                 description: ev.description || 'Not recorded',
-                odometer: ev.odometer != null ? `${ev.odometer.toLocaleString('en-NA')} km` : 'Not recorded',
+                odometer:
+                  ev.odometer != null
+                    ? `${ev.odometer.toLocaleString('en-NA')} km`
+                    : 'Not recorded',
                 cost: ev.cost != null ? formatMoney(ev.cost, branding?.locale) : 'Not recorded',
                 vendor: ev.vendor || 'Not recorded',
               }))}
@@ -156,11 +168,13 @@ export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }
           </DocumentSection>
         )}
 
+        <DocumentExecutiveCertification branding={branding} generatedAt={data.generatedAt} />
         {/* Verification block */}
         <DocumentVerificationBlock
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
           qrCode={data.qrCodeDataUrl}
         />
 

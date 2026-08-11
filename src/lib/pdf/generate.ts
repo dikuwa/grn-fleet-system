@@ -7,6 +7,7 @@
  */
 
 import React from 'react';
+import QRCode from 'qrcode';
 import { renderToStream } from '@react-pdf/renderer';
 import { TripAuthorityDocument, type TripAuthorityData } from './trip-authority';
 import { TransportRequestDocument, type TransportRequestData } from './transport-request';
@@ -15,6 +16,7 @@ import { TripCompletionDocument, type TripCompletionData } from './trip-completi
 import { MaintenanceReportDocument, type MaintenanceReportData } from './maintenance-report';
 import { InspectionReportDocument, type InspectionReportData } from './inspection-report';
 import { MvaReportDocument, type MvaReportData } from './mva-report';
+import { IncidentRecordDocument, type IncidentRecordData } from './operational-records';
 import { SnapshotDocument, type SnapshotDocumentData } from './snapshot-document';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
@@ -28,12 +30,36 @@ import {
   inspectionItemResults,
   inspectionTemplateItems,
 } from '@/db/schema/trips';
-import {transportRequests, requestRoutes} from '@/db/schema/requests';
+import { transportRequests, requestGoodsEquipment, requestRoutes } from '@/db/schema/requests';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { employees } from '@/db/schema/people';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { resolveTenantBranding } from '@/lib/tenant-branding';
+import { resolveTenantDocumentBranding, type ResolvedTenantBranding } from '@/lib/tenant-branding';
+
+function applySnapshotIdentity(
+  current: ResolvedTenantBranding | null,
+  snapshot: Record<string, unknown>,
+): ResolvedTenantBranding | null {
+  const identity = snapshot.documentIdentity as Partial<ResolvedTenantBranding> | undefined;
+  if (!identity) return current;
+  return {
+    ...(current || {
+      tenantId: '',
+      organisationName: 'Government Fleet',
+      code: '',
+      locale: 'en-NA',
+      timezone: 'Africa/Windhoek',
+      primaryColor: '#245B9E',
+      accentColor: '#0F766E',
+    }),
+    ...Object.fromEntries(
+      Object.entries(identity).filter(
+        ([, value]) => value !== null && value !== undefined && value !== '',
+      ),
+    ),
+  } as ResolvedTenantBranding;
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -43,9 +69,7 @@ import { resolveTenantBranding } from '@/lib/tenant-branding';
  * Generate a PDF buffer for a Transport Request document using snapshot data
  * from the generated document record, with optional enriched relations.
  */
-export async function generateTransportRequestPdf(
-  documentId: string,
-): Promise<Uint8Array | null> {
+export async function generateTransportRequestPdf(documentId: string): Promise<Uint8Array | null> {
   const db = getDb();
 
   const [doc] = await db
@@ -62,7 +86,10 @@ export async function generateTransportRequestPdf(
     .from(tenantBranding)
     .where(eq(tenantBranding.tenantId, doc.tenantId))
     .limit(1);
-  const resolvedBranding = await resolveTenantBranding(doc.tenantId);
+  const resolvedBranding = applySnapshotIdentity(
+    await resolveTenantDocumentBranding(doc.tenantId),
+    snapshot,
+  );
 
   // Try to enrich with outcome data (linked trip authority, allocated vehicle, etc.)
   let outcome: TransportRequestData['outcome'] = undefined;
@@ -79,7 +106,9 @@ export async function generateTransportRequestPdf(
         .from(vehicleAllocations)
         .leftJoin(vehicles, eq(vehicles.id, vehicleAllocations.vehicleId))
         .leftJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
-        .where(and(eq(vehicleAllocations.requestId, doc.entityId), eq(vehicles.tenantId, doc.tenantId)))
+        .where(
+          and(eq(vehicleAllocations.requestId, doc.entityId), eq(vehicles.tenantId, doc.tenantId)),
+        )
         .orderBy(desc(vehicleAllocations.createdAt))
         .limit(1);
 
@@ -98,10 +127,12 @@ export async function generateTransportRequestPdf(
           .select({ createdAt: workflowActions.createdAt })
           .from(workflowActions)
           .innerJoin(workflowInstances, eq(workflowInstances.id, workflowActions.instanceId))
-          .where(and(
-            eq(workflowInstances.requestId, doc.entityId),
-            eq(workflowActions.actionType, 'authorise'),
-          ))
+          .where(
+            and(
+              eq(workflowInstances.requestId, doc.entityId),
+              eq(workflowActions.actionType, 'authorise'),
+            ),
+          )
           .orderBy(desc(workflowActions.createdAt))
           .limit(1);
 
@@ -140,6 +171,8 @@ export async function generateTransportRequestPdf(
     routes: snapshot.routes as TransportRequestData['routes'],
     attachments: snapshot.attachments as TransportRequestData['attachments'],
     approvalWorkflow: snapshot.approvalWorkflow as TransportRequestData['approvalWorkflow'],
+    goodsAndEquipment: snapshot.goodsAndEquipment as TransportRequestData['goodsAndEquipment'],
+    documentHash: doc.hash || undefined,
     outcome,
   };
 
@@ -156,6 +189,7 @@ export async function generateTransportRequestPdf(
 export async function generateTripAuthorityPdf(
   allocationId: string,
   tenantId: string,
+  documentMeta?: { hash?: string | null; verificationCode?: string },
 ): Promise<Uint8Array | null> {
   const db = getDb();
 
@@ -185,7 +219,7 @@ export async function generateTripAuthorityPdf(
     .from(tenantBranding)
     .where(eq(tenantBranding.tenantId, tenantId))
     .limit(1);
-  const resolvedBranding = await resolveTenantBranding(tenantId);
+  const resolvedBranding = await resolveTenantDocumentBranding(tenantId);
 
   // Build route summary and journey legs
   let routeSummary: string | undefined;
@@ -210,7 +244,9 @@ export async function generateTripAuthorityPdf(
   const [authority] = await db
     .select()
     .from(tripAuthorities)
-    .where(and(eq(tripAuthorities.allocationId, allocationId), eq(tripAuthorities.tenantId, tenantId)))
+    .where(
+      and(eq(tripAuthorities.allocationId, allocationId), eq(tripAuthorities.tenantId, tenantId)),
+    )
     .orderBy(desc(tripAuthorities.createdAt))
     .limit(1);
 
@@ -220,7 +256,22 @@ export async function generateTripAuthorityPdf(
   let authoriser: TripAuthorityData['authoriser'] | undefined;
   let transportOfficer: TripAuthorityData['transportOfficer'] | undefined;
   let specialConditions: string | undefined;
-  let goodsAndEquipment: TripAuthorityData['goodsAndEquipment'] | undefined;
+  const goodsRows = req
+    ? await db
+        .select({
+          description: requestGoodsEquipment.description,
+          quantity: requestGoodsEquipment.quantity,
+          purpose: requestGoodsEquipment.purpose,
+        })
+        .from(requestGoodsEquipment)
+        .where(eq(requestGoodsEquipment.requestId, req.id))
+        .orderBy(requestGoodsEquipment.sortOrder)
+    : [];
+  const goodsAndEquipment: TripAuthorityData['goodsAndEquipment'] = goodsRows.map((item) => ({
+    description: item.description,
+    quantity: item.quantity || undefined,
+    purpose: item.purpose || undefined,
+  }));
   let preDepartureInspection: TripAuthorityData['preDepartureInspection'] | undefined;
   let fuelInformation: TripAuthorityData['fuelInformation'] | undefined;
 
@@ -251,6 +302,7 @@ export async function generateTripAuthorityPdf(
         lastName: employees.lastName,
         jobTitle: employees.jobTitle,
         phone: employees.phone,
+        nationalIdNumber: employees.nationalIdNumber,
         licenceClass: tripAuthorisedDrivers.licenceClass,
         licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
       })
@@ -263,6 +315,7 @@ export async function generateTripAuthorityPdf(
       driver = {
         name: `${primary.firstName} ${primary.lastName}`,
         employeeNumber: primary.employeeNumber || undefined,
+        idNumber: primary.nationalIdNumber || undefined,
         designation: primary.jobTitle || undefined,
         contactNumber: primary.phone || undefined,
         acceptedAt: authority.acceptedAt?.toLocaleString('en-NA'),
@@ -274,6 +327,7 @@ export async function generateTripAuthorityPdf(
       .map((d) => ({
         name: `${d.firstName} ${d.lastName}`,
         employeeNumber: d.employeeNumber || undefined,
+        idNumber: d.nationalIdNumber || undefined,
         licenceClass: d.licenceClass || undefined,
         licenceExpiry: d.licenceExpiry?.toLocaleDateString('en-NA'),
       }));
@@ -282,10 +336,12 @@ export async function generateTripAuthorityPdf(
     const [depInsp] = await db
       .select()
       .from(vehicleInspections)
-      .where(and(
-        eq(vehicleInspections.vehicleId, alloc.vehicleId),
-        eq(vehicleInspections.type, 'departure'),
-      ))
+      .where(
+        and(
+          eq(vehicleInspections.vehicleId, alloc.vehicleId),
+          eq(vehicleInspections.type, 'departure'),
+        ),
+      )
       .orderBy(desc(vehicleInspections.createdAt))
       .limit(1);
 
@@ -297,19 +353,23 @@ export async function generateTripAuthorityPdf(
           label: inspectionTemplateItems.label,
         })
         .from(inspectionItemResults)
-        .innerJoin(inspectionTemplateItems, eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId))
+        .innerJoin(
+          inspectionTemplateItems,
+          eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId),
+        )
         .where(eq(inspectionItemResults.inspectionId, depInsp.id));
 
       preDepartureInspection = {
         status: depInsp.status,
         odometer: depInsp.odometerReading || undefined,
-        items: inspResults.length > 0
-          ? inspResults.map((item) => ({
-              label: item.label,
-              result: item.result,
-              comment: item.comment || undefined,
-            }))
-          : undefined,
+        items:
+          inspResults.length > 0
+            ? inspResults.map((item) => ({
+                label: item.label,
+                result: item.result,
+                comment: item.comment || undefined,
+              }))
+            : undefined,
         notes: depInsp.notes || undefined,
         completedAt: depInsp.createdAt.toLocaleString('en-NA'),
       };
@@ -363,6 +423,16 @@ export async function generateTripAuthorityPdf(
     }
   }
 
+  const verificationToken = (authority?.data as { verificationToken?: string } | null)
+    ?.verificationToken;
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const verificationUrl = verificationToken
+    ? `${baseUrl}/verify/authority/${encodeURIComponent(verificationToken)}`
+    : undefined;
+  const qrCodeDataUrl = verificationUrl
+    ? await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 })
+    : undefined;
+
   const data: TripAuthorityData = {
     reference: alloc.id.slice(0, 8).toUpperCase(),
     tenantName: tenant?.name,
@@ -396,15 +466,20 @@ export async function generateTripAuthorityPdf(
     routeSummary,
     totalKm,
     journeyLegs: journeyLegs.length > 0 ? journeyLegs : undefined,
-    authorisation: (authoriser || transportOfficer) ? {
-      authoriserName: authoriser?.name || 'Authorising officer',
-      authoriserRole: authoriser?.designation || 'Authorising Officer',
-      authorisedAt: authoriser?.authorisedAt,
-      transportOfficerName: transportOfficer?.name || 'Transport Officer',
-      transportOfficerRole: transportOfficer?.designation || 'Transport Officer',
-      issueDate: authority?.issuedAt?.toLocaleString('en-NA') || new Date().toISOString().split('T')[0],
-      approvalMethod: 'Digitally authorised',
-    } : undefined,
+    authorisation:
+      authoriser || transportOfficer
+        ? {
+            authoriserName: authoriser?.name || 'Authorising officer',
+            authoriserRole: authoriser?.designation || 'Authorising Officer',
+            authorisedAt: authoriser?.authorisedAt,
+            transportOfficerName: transportOfficer?.name || 'Transport Officer',
+            transportOfficerRole: transportOfficer?.designation || 'Transport Officer',
+            issueDate:
+              authority?.issuedAt?.toLocaleString('en-NA') ||
+              new Date().toISOString().split('T')[0],
+            approvalMethod: 'Digitally authorised',
+          }
+        : undefined,
     specialConditions,
     driver,
     passengers,
@@ -417,6 +492,10 @@ export async function generateTripAuthorityPdf(
     authorityStatus: authority?.status || 'issued',
     documentVersion: authority?.documentVersion || 1,
     issuedAt: authority?.issuedAt?.toISOString(),
+    verificationCode: documentMeta?.verificationCode || authority?.authorityNumber || undefined,
+    verificationUrl,
+    documentHash: documentMeta?.hash || undefined,
+    qrCodeDataUrl,
   };
 
   const element = React.createElement(
@@ -432,20 +511,21 @@ export async function generateTripAuthorityPdf(
 export async function generateInspectionReportPdf(
   inspectionId: string,
   tenantId: string,
+  documentMeta?: { hash?: string | null; verificationCode?: string },
 ): Promise<Uint8Array | null> {
   const db = getDb();
 
   const [insp] = await db
     .select()
     .from(vehicleInspections)
-    .where(eq(vehicleInspections.id, inspectionId))
+    .where(and(eq(vehicleInspections.id, inspectionId), eq(vehicleInspections.tenantId, tenantId)))
     .limit(1);
   if (!insp) return null;
 
   const [vehicle] = await db
     .select()
     .from(vehicles)
-    .where(eq(vehicles.id, insp.vehicleId))
+    .where(and(eq(vehicles.id, insp.vehicleId), eq(vehicles.tenantId, tenantId)))
     .limit(1);
 
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
@@ -455,7 +535,40 @@ export async function generateInspectionReportPdf(
     .from(tenantBranding)
     .where(eq(tenantBranding.tenantId, tenantId))
     .limit(1);
-  const resolvedBranding = await resolveTenantBranding(tenantId);
+  const resolvedBranding = await resolveTenantDocumentBranding(tenantId);
+
+  const [items, inspector, driver] = await Promise.all([
+    db
+      .select({
+        label: inspectionTemplateItems.label,
+        category: inspectionTemplateItems.category,
+        result: inspectionItemResults.result,
+        comment: inspectionItemResults.comment,
+      })
+      .from(inspectionItemResults)
+      .innerJoin(
+        inspectionTemplateItems,
+        eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId),
+      )
+      .where(eq(inspectionItemResults.inspectionId, inspectionId))
+      .orderBy(inspectionTemplateItems.sortOrder),
+    insp.inspectorEmployeeId
+      ? db
+          .select({ firstName: employees.firstName, lastName: employees.lastName })
+          .from(employees)
+          .where(and(eq(employees.id, insp.inspectorEmployeeId), eq(employees.tenantId, tenantId)))
+          .limit(1)
+          .then((rows) => rows[0])
+      : Promise.resolve(undefined),
+    insp.driverEmployeeId
+      ? db
+          .select({ firstName: employees.firstName, lastName: employees.lastName })
+          .from(employees)
+          .where(and(eq(employees.id, insp.driverEmployeeId), eq(employees.tenantId, tenantId)))
+          .limit(1)
+          .then((rows) => rows[0])
+      : Promise.resolve(undefined),
+  ]);
 
   const data: InspectionReportData = {
     inspectionId: insp.id,
@@ -473,9 +586,18 @@ export async function generateInspectionReportPdf(
     tenantName: tenant?.name,
     tenantDocumentFooter: branding?.documentFooter || undefined,
     branding: resolvedBranding,
-    inspectorName: undefined,
-    driverName: undefined,
-    items: [],
+    inspectorName: inspector ? `${inspector.firstName} ${inspector.lastName}` : undefined,
+    driverName: driver ? `${driver.firstName} ${driver.lastName}` : undefined,
+    inspectorSignedAt: insp.signatureInspector ? insp.updatedAt.toISOString() : undefined,
+    driverSignedAt: insp.signatureDriver ? insp.updatedAt.toISOString() : undefined,
+    verificationCode: documentMeta?.verificationCode,
+    documentHash: documentMeta?.hash || undefined,
+    items: items.map((item) => ({
+      label: item.label,
+      category: item.category,
+      result: item.result as 'pass' | 'fail' | 'not_applicable',
+      comment: item.comment || undefined,
+    })),
   };
 
   const element = React.createElement(
@@ -505,13 +627,19 @@ export async function generateDocumentPdf(
   switch (doc.documentType) {
     case 'trip_authority': {
       if (doc.entityType === 'vehicle_allocation') {
-        buffer = await generateTripAuthorityPdf(doc.entityId, doc.tenantId);
+        buffer = await generateTripAuthorityPdf(doc.entityId, doc.tenantId, {
+          hash: doc.hash,
+          verificationCode: doc.id.slice(0, 8).toUpperCase(),
+        });
       }
       break;
     }
     case 'inspection_report': {
       if (doc.entityType === 'inspection') {
-        buffer = await generateInspectionReportPdf(doc.entityId, doc.tenantId);
+        buffer = await generateInspectionReportPdf(doc.entityId, doc.tenantId, {
+          hash: doc.hash,
+          verificationCode: doc.id.slice(0, 8).toUpperCase(),
+        });
       }
       break;
     }
@@ -535,19 +663,28 @@ export async function generateDocumentPdf(
       buffer = await generateDocumentPdfFromSnapshot(documentId);
       break;
     }
+    case 'trip_incident_report': {
+      buffer = await generateDocumentPdfFromSnapshot(documentId);
+      break;
+    }
     default: {
       // Use the generic snapshot PDF for all other document types
       if (doc.snapshotData) {
         const [t] = await db.select().from(tenants).where(eq(tenants.id, doc.tenantId)).limit(1);
+        const snapshot = doc.snapshotData as Record<string, unknown>;
         const snapshotData: SnapshotDocumentData = {
           documentType: doc.documentType,
           documentVersion: doc.documentVersion,
           tenantName: t?.name,
-          branding: await resolveTenantBranding(doc.tenantId),
+          branding: applySnapshotIdentity(
+            await resolveTenantDocumentBranding(doc.tenantId),
+            snapshot,
+          ),
           tenantDocumentFooter: undefined,
-          snapshotData: doc.snapshotData as Record<string, unknown>,
+          snapshotData: snapshot,
           generatedAt: doc.createdAt.toISOString(),
           status: doc.status,
+          documentHash: doc.hash || undefined,
         };
         const element = React.createElement(
           SnapshotDocument as React.ComponentType<{ data: SnapshotDocumentData }>,
@@ -574,9 +711,7 @@ export async function generateDocumentPdf(
  * Generate a typed PDF from a stored snapshot for fuel_summary, trip_completion,
  * or maintenance_report document types.
  */
-async function generateDocumentPdfFromSnapshot(
-  documentId: string,
-): Promise<Uint8Array | null> {
+async function generateDocumentPdfFromSnapshot(documentId: string): Promise<Uint8Array | null> {
   const db = getDb();
 
   const [doc] = await db
@@ -588,7 +723,10 @@ async function generateDocumentPdfFromSnapshot(
 
   const snapshot = doc.snapshotData as Record<string, unknown>;
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, doc.tenantId)).limit(1);
-  const resolvedBranding = await resolveTenantBranding(doc.tenantId);
+  const resolvedBranding = applySnapshotIdentity(
+    await resolveTenantDocumentBranding(doc.tenantId),
+    snapshot,
+  );
   const generatedAt = doc.createdAt.toISOString();
 
   let element: React.ReactElement | null = null;
@@ -609,6 +747,7 @@ async function generateDocumentPdfFromSnapshot(
         generatedAt,
         status: doc.status,
         verificationCode: doc.id.slice(0, 8).toUpperCase(),
+        documentHash: doc.hash || undefined,
         transactions: snapshot.transactions as FuelSummaryData['transactions'],
       };
       element = React.createElement(
@@ -618,20 +757,27 @@ async function generateDocumentPdfFromSnapshot(
       break;
     }
     case 'trip_completion': {
-      const vehicleSnapshot = snapshot.vehicle as { licenceNumber?: string; registrationNumber?: string } | undefined;
-      const closureSnapshot = snapshot.closure as {
-        authorisedKm?: number | null;
-        actualKm?: number | null;
-        variance?: number | null;
-        decision?: string;
-        notes?: string | null;
-      } | null | undefined;
-      const fuelSnap = snapshot.fuelSummary as {
-        totalLitres?: number;
-        totalCost?: number;
-        transactionCount?: number;
-        pendingReimbursements?: number;
-      } | null | undefined;
+      const vehicleSnapshot = snapshot.vehicle as
+        { licenceNumber?: string; registrationNumber?: string } | undefined;
+      const closureSnapshot = snapshot.closure as
+        | {
+            authorisedKm?: number | null;
+            actualKm?: number | null;
+            variance?: number | null;
+            decision?: string;
+            notes?: string | null;
+          }
+        | null
+        | undefined;
+      const fuelSnap = snapshot.fuelSummary as
+        | {
+            totalLitres?: number;
+            totalCost?: number;
+            transactionCount?: number;
+            pendingReimbursements?: number;
+          }
+        | null
+        | undefined;
       const eventSummary = snapshot.eventSummary as TripCompletionData['eventSummary'];
 
       const data: TripCompletionData = {
@@ -670,6 +816,7 @@ async function generateDocumentPdfFromSnapshot(
         generatedAt,
         statusText: doc.status,
         verificationCode: doc.id.slice(0, 8).toUpperCase(),
+        documentHash: doc.hash || undefined,
       };
       element = React.createElement(
         TripCompletionDocument as React.ComponentType<{ data: TripCompletionData }>,
@@ -678,14 +825,16 @@ async function generateDocumentPdfFromSnapshot(
       break;
     }
     case 'maintenance_report': {
-      const eventsSnapshot = snapshot.events as Array<{
-        date?: string;
-        type?: string;
-        description?: string;
-        cost?: number | null;
-        vendor?: string | null;
-        odometer?: number | null;
-      }> | undefined;
+      const eventsSnapshot = snapshot.events as
+        | Array<{
+            date?: string;
+            type?: string;
+            description?: string;
+            cost?: number | null;
+            vendor?: string | null;
+            odometer?: number | null;
+          }>
+        | undefined;
 
       const data: MaintenanceReportData = {
         vehicleId: doc.entityId || doc.id,
@@ -700,6 +849,7 @@ async function generateDocumentPdfFromSnapshot(
         generatedAt,
         status: doc.status,
         verificationCode: doc.id.slice(0, 8).toUpperCase(),
+        documentHash: doc.hash || undefined,
         events: (eventsSnapshot || []).map((e) => ({
           date: e.date,
           type: e.type,
@@ -735,12 +885,22 @@ async function generateDocumentPdfFromSnapshot(
         emergencyServicesContacted: Boolean(snapshot.emergencyServicesContacted),
         detailsRequired: Boolean(snapshot.detailsRequired),
         tripReferences: {
-          transportRequest: String((snapshot.tripReferences as { transportRequest?: string } | undefined)?.transportRequest ?? '—'),
-          tripAuthority: String((snapshot.tripReferences as { tripAuthority?: string } | undefined)?.tripAuthority ?? '—'),
+          transportRequest: String(
+            (snapshot.tripReferences as { transportRequest?: string } | undefined)
+              ?.transportRequest ?? '—',
+          ),
+          tripAuthority: String(
+            (snapshot.tripReferences as { tripAuthority?: string } | undefined)?.tripAuthority ??
+              '—',
+          ),
         },
         vehicle: {
-          registration: String((snapshot.vehicle as { registration?: string } | undefined)?.registration ?? ''),
-          registerNumber: String((snapshot.vehicle as { registerNumber?: string } | undefined)?.registerNumber ?? ''),
+          registration: String(
+            (snapshot.vehicle as { registration?: string } | undefined)?.registration ?? '',
+          ),
+          registerNumber: String(
+            (snapshot.vehicle as { registerNumber?: string } | undefined)?.registerNumber ?? '',
+          ),
           make: String((snapshot.vehicle as { make?: string } | undefined)?.make ?? ''),
           model: String((snapshot.vehicle as { model?: string } | undefined)?.model ?? ''),
         },
@@ -748,13 +908,15 @@ async function generateDocumentPdfFromSnapshot(
         investigationStatus: String(snapshot.investigationStatus ?? 'pending'),
         investigationNotes: (snapshot.investigationNotes as string | null) ?? null,
         investigationClosedAt: (snapshot.investigationClosedAt as string | null) ?? null,
-        witnessStatements: (snapshot.witnessStatements as Array<Record<string, unknown>> | null) ?? [],
+        witnessStatements:
+          (snapshot.witnessStatements as Array<Record<string, unknown>> | null) ?? [],
         thirdPartyDetails: (snapshot.thirdPartyDetails as Record<string, unknown> | null) ?? null,
         insuranceClaimReference: (snapshot.insuranceClaimReference as string | null) ?? null,
         insuranceNotified: Boolean(snapshot.insuranceNotified),
         insuranceNotifiedAt: (snapshot.insuranceNotifiedAt as string | null) ?? null,
         policeReportFiled: Boolean(snapshot.policeReportFiled),
-        thirdPartyInsuranceDetails: (snapshot.thirdPartyInsuranceDetails as Record<string, unknown> | null) ?? null,
+        thirdPartyInsuranceDetails:
+          (snapshot.thirdPartyInsuranceDetails as Record<string, unknown> | null) ?? null,
         technicalClearanceStatus: String(snapshot.technicalClearanceStatus ?? 'pending'),
         technicalClearanceAt: (snapshot.technicalClearanceAt as string | null) ?? null,
         technicalClearanceByUserId: (snapshot.technicalClearanceByUserId as string | null) ?? null,
@@ -763,9 +925,48 @@ async function generateDocumentPdfFromSnapshot(
         documentVersion: doc.documentVersion,
         generatedAt,
         verificationCode: doc.id.slice(0, 8).toUpperCase(),
+        documentHash: doc.hash || undefined,
       };
       element = React.createElement(
         MvaReportDocument as React.ComponentType<{ data: MvaReportData }>,
+        { data },
+      ) as React.ReactElement;
+      break;
+    }
+    case 'trip_incident_report': {
+      const vehicle = snapshot.vehicle as
+        | { registration?: string; registerNumber?: string; make?: string; model?: string }
+        | undefined;
+      const tripReferences = snapshot.tripReferences as
+        { tripAuthority?: string; transportRequest?: string } | undefined;
+      const vehicleSafe = snapshot.vehicleSafe as boolean | null | undefined;
+      const passengerSafe = snapshot.passengerSafe as boolean | null | undefined;
+      const data: IncidentRecordData = {
+        reference: String(snapshot.reference ?? doc.entityId ?? doc.id),
+        type: String(snapshot.eventType ?? 'incident'),
+        severity: String(snapshot.severity ?? 'not_recorded'),
+        status: String(snapshot.status ?? doc.status ?? 'reported'),
+        vehicle: [vehicle?.registration, vehicle?.make, vehicle?.model].filter(Boolean).join(' · '),
+        tripAuthority: tripReferences?.tripAuthority,
+        occurredAt: String(snapshot.occurredAt ?? generatedAt),
+        location: (snapshot.location as string | null | undefined) ?? null,
+        description: String(snapshot.description ?? ''),
+        damageOrDefects: Boolean(snapshot.vehicleDamage)
+          ? 'Vehicle damage or defects were reported. Refer to the incident description and evidence.'
+          : null,
+        evidence: (snapshot.attachments as string[] | undefined) ?? [],
+        responseOrAction: (snapshot.immediateAction as string | null | undefined) ?? null,
+        safeDetermination:
+          vehicleSafe === undefined && passengerSafe === undefined
+            ? null
+            : `Vehicle ${vehicleSafe ? 'safe' : 'unsafe'}; passengers ${passengerSafe ? 'safe' : 'not confirmed safe'}`,
+        branding: resolvedBranding,
+        generatedAt,
+        verificationCode: doc.id.slice(0, 8).toUpperCase(),
+        documentHash: doc.hash || undefined,
+      };
+      element = React.createElement(
+        IncidentRecordDocument as React.ComponentType<{ data: IncidentRecordData }>,
         { data },
       ) as React.ReactElement;
       break;
