@@ -8,6 +8,7 @@ import { tenantResetRequests } from '@/db/schema/reset-requests';
 import { createTenantOperationalBackup } from '@/lib/data-protection/backup-service';
 import { previewTenantOperationalReset } from '@/lib/data-protection/reset-service';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { normalizeResetSpec } from '@/lib/reset-catalog';
 
 export const maxDuration = 300;
 
@@ -27,7 +28,8 @@ export async function POST(
     const [resetRequest] = await db.select().from(tenantResetRequests).where(eq(tenantResetRequests.id, id)).limit(1);
     if (!resetRequest) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
     if (resetRequest.status !== 'approved') return NextResponse.json({ error: 'Approve the reset request before creating its recovery point' }, { status: 400 });
-    if (resetRequest.scope !== 'operational') return NextResponse.json({ error: 'Only operational resets support production recovery points' }, { status: 400 });
+    const requestMetadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
+    const resetSpec = normalizeResetSpec(requestMetadata.resetSpec, { target: 'tenant' });
 
     const validation = (resetRequest.validationResults ?? {}) as Record<string, unknown>;
     const storedFingerprint = typeof validation.fingerprint === 'string' ? validation.fingerprint : null;
@@ -36,9 +38,9 @@ export async function POST(
       return NextResponse.json({ error: 'Run a fresh dry run before creating a recovery point' }, { status: 409 });
     }
 
-    const { preview, plan } = await previewTenantOperationalReset(resetRequest.tenantId);
+    const { preview, plan, advancedPlan } = await previewTenantOperationalReset(resetRequest.tenantId, resetSpec);
     if (preview.fingerprint !== storedFingerprint || preview.dryRunSummary.total !== Number(storedSummary.total ?? -1)) {
-      return NextResponse.json({ error: 'Operational data changed after the dry run. Run the dry run again before creating the recovery point.' }, { status: 409 });
+      return NextResponse.json({ error: 'Selected data changed after the dry run. Run the dry run again before creating the recovery point.' }, { status: 409 });
     }
 
     const backup = await createTenantOperationalBackup({
@@ -49,6 +51,7 @@ export async function POST(
       resetRequestId: resetRequest.id,
       retentionDays: 90,
       plan,
+      advancedPlan,
     });
 
     if (backup.recordCount !== preview.dryRunSummary.total) {

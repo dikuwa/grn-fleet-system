@@ -24,13 +24,23 @@ export async function restoreTenantOperationalBackup(input: {
 
   // Never merge a historical snapshot over new operations. The tenant must be
   // operationally clean first so UUIDs/references cannot collide with new work.
-  const { preview } = await previewTenantOperationalReset(backup.tenantId);
+  const { preview } = await previewTenantOperationalReset(backup.tenantId, payload.resetSpec);
   if (preview.dryRunSummary.total > 0) {
     throw new Error(`Restore blocked: ${preview.dryRunSummary.total} current operational rows exist. Clear the tenant operational data through the reset workflow before restoring this recovery point.`);
   }
 
   const rowsByTable = new Map(payload.tables.map((entry) => [entry.table, entry.rows]));
   const restored: Array<{ table: string; records: number }> = [];
+
+  // Advanced domain parents must exist before operational history is restored.
+  for (const table of [...new Set(payload.advancedTableOrder ?? [])].reverse()) {
+    const rows = rowsByTable.get(table) ?? [];
+    if (!rows.length) continue;
+    const json = JSON.stringify(rows, (_key, value) => typeof value === 'bigint' ? value.toString() : value);
+    await db.execute(sql.raw(`INSERT INTO ${quoteTable(table)} SELECT * FROM json_populate_recordset(NULL::${quoteTable(table)}, '${json.replace(/'/g, "''")}'::json) ON CONFLICT DO NOTHING`));
+    restored.push({ table, records: rows.length });
+    rowsByTable.delete(table);
+  }
 
   // Deletion registry is children→parents. Restore is the exact reverse so
   // parent rows exist before children with foreign-key dependencies.
@@ -40,7 +50,7 @@ export async function restoreTenantOperationalBackup(input: {
     const json = JSON.stringify(rows, (_key, value) => typeof value === 'bigint' ? value.toString() : value);
     // PostgreSQL table row types let us safely reconstruct every original
     // column without hard-coding schema-specific insert lists.
-    await db.execute(sql.raw(`INSERT INTO ${quoteTable(step.table)} SELECT * FROM json_populate_recordset(NULL::${quoteTable(step.table)}, '${json.replace(/'/g, "''")}'::json)`));
+    await db.execute(sql.raw(`INSERT INTO ${quoteTable(step.table)} SELECT * FROM json_populate_recordset(NULL::${quoteTable(step.table)}, '${json.replace(/'/g, "''")}'::json) ON CONFLICT DO NOTHING`));
     restored.push({ table: step.table, records: rows.length });
   }
 

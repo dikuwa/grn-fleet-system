@@ -234,7 +234,7 @@ export function resolveStepCondition(
   if (!scopeValue || scopeValue.values.length === 0) return null;
 
   if (step.table === 'transport_requests') {
-    return sql`tenant_id = ${tenantId}`;
+    return sql`tenant_id = ${tenantId} AND id = ANY(${sql.raw(uuidArrayLiteral(requestIds))})`;
   }
   if (step.table === 'trips') {
     // trips.scope is request-based (trips.request_id IN tenant request ids)
@@ -260,10 +260,12 @@ export function resolveStepCondition(
 // Plan building
 // ---------------------------------------------------------------------------
 
-async function collectEntityIds(db: ResetDb, tenantId: string): Promise<EntityIdSets> {
+async function collectEntityIds(db: ResetDb, tenantId: string, cutoff?: Date | null): Promise<EntityIdSets> {
   const requestIds = await collectIds(
     db,
-    sql`SELECT id FROM ${sql.raw(quoteTable('transport_requests'))} WHERE tenant_id = ${tenantId}`,
+    cutoff
+      ? sql`SELECT id FROM ${sql.raw(quoteTable('transport_requests'))} WHERE tenant_id = ${tenantId} AND created_at < ${cutoff}`
+      : sql`SELECT id FROM ${sql.raw(quoteTable('transport_requests'))} WHERE tenant_id = ${tenantId}`,
   );
 
   // No operational requests → nothing further to collect.
@@ -524,7 +526,7 @@ function assertTenantId(tenantId: string): void {
 
 export async function buildResetPlan(
   db: ResetDb,
-  opts: { tenantId: string; mode: ResetMode; dryRun: boolean; timestamp: string },
+  opts: { tenantId: string; mode: ResetMode; dryRun: boolean; timestamp: string; cutoff?: Date | null },
 ): Promise<ResetPlan> {
   const { tenantId, mode, dryRun, timestamp } = opts;
   assertTenantId(tenantId);
@@ -546,7 +548,7 @@ export async function buildResetPlan(
     database = databaseUrl ? 'unparsable-url' : 'not-configured';
   }
 
-  const ids = await collectEntityIds(db, tenantId);
+  const ids = await collectEntityIds(db, tenantId, opts.cutoff);
 
   // Per-step counts using the same conditions that will drive the deletes.
   const steps: StepPlan[] = [];

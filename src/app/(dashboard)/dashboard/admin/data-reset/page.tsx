@@ -20,6 +20,8 @@ import { Input, Label, Textarea } from '@/components/ui/input';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
 import { TENANT_RESET_REQUEST_PHRASE } from '@/lib/reset-workflow';
+import { ResetSpecBuilder, type ResetBuilderValue } from '@/components/reset/reset-spec-builder';
+import { RESET_CATEGORY_CATALOG, type ResetSpec } from '@/lib/reset-catalog';
 
 interface TenantResetRequest {
   id: string;
@@ -37,6 +39,7 @@ interface TenantResetRequest {
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  metadata: { resetSpec?: ResetSpec } | null;
 }
 
 const STATUS: Record<string, { label: string; variant: BadgeProps['variant']; detail: string }> = {
@@ -59,7 +62,7 @@ const STATUS: Record<string, { label: string; variant: BadgeProps['variant']; de
   completed: {
     label: 'Completed',
     variant: 'success',
-    detail: 'Operational data was reset successfully.',
+    detail: 'The approved reset plan completed successfully.',
   },
   rejected: { label: 'Declined', variant: 'error', detail: 'Review the platform response below.' },
   failed: {
@@ -87,6 +90,11 @@ export default function TenantDataResetPage() {
   const [submitting, setSubmitting] = useState(false);
   const [reason, setReason] = useState('');
   const [acknowledgement, setAcknowledgement] = useState('');
+  const [resetBuilder, setResetBuilder] = useState<ResetBuilderValue>({
+    preset: 'operational',
+    categories: ['operations'],
+    cutoff: '',
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,7 +133,16 @@ export default function TenantDataResetPage() {
       const response = await fetch('/api/admin/data-reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason, acknowledgement }),
+        body: JSON.stringify({
+          reason,
+          acknowledgement,
+          resetSpec: {
+            preset: resetBuilder.preset,
+            categories: resetBuilder.categories,
+            cutoff: resetBuilder.cutoff || null,
+            target: 'tenant',
+          },
+        }),
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'Could not submit reset request');
@@ -152,7 +169,7 @@ export default function TenantDataResetPage() {
     confirm({
       title: 'Cancel reset request?',
       description:
-        'The Platform Administrator will no longer process this request. No operational data will be changed.',
+        'The Platform Administrator will no longer process this request. No selected data will be changed.',
       confirmLabel: 'Cancel request',
       variant: 'destructive',
       onConfirm: async () => {
@@ -186,8 +203,8 @@ export default function TenantDataResetPage() {
         items={[{ label: 'Tenant Administration' }, { label: 'Operational Data Reset' }]}
       />
       <PageHeader
-        title="Operational Data Reset"
-        description="Request a controlled operational reset from the Platform Administrator and follow its progress."
+        title="Data Reset Builder"
+        description="Request an operational cleanup, selected data reset, or protected tenant clean slate from the Platform Administrator."
       >
         <Button variant="secondary" size="sm" onClick={() => void load()} loading={loading}>
           <RefreshCw className="h-4 w-4" /> Refresh
@@ -216,30 +233,7 @@ export default function TenantDataResetPage() {
             <CardTitle>Request a reset</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="border-brand-200 bg-brand-50/40 dark:bg-brand-950/20 rounded-[8px] border p-4">
-              <p className="text-ink-950 text-sm font-semibold">Operational reset preset</p>
-              <p className="text-ink-600 mt-1 text-xs leading-relaxed">
-                Clears requests, workflow instances, allocations, trips, trip logs, fuel
-                transactions, inspections, operational documents, defects and their related
-                notifications.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {[
-                  'Tenant & branding',
-                  'Users & roles',
-                  'Staff',
-                  'Vehicles',
-                  'Programmes',
-                  'Organisation structure',
-                  'Workflow setup',
-                  'Audit history',
-                ].map((item) => (
-                  <Badge key={item} variant="success" size="sm">
-                    Keeps {item}
-                  </Badge>
-                ))}
-              </div>
-            </div>
+            <ResetSpecBuilder value={resetBuilder} onChange={setResetBuilder} />
             {openRequest ? (
               <div className="border-status-info-text/20 bg-status-info-bg/20 rounded-[8px] border p-4">
                 <p className="text-ink-950 text-sm font-semibold">A request is already open</p>
@@ -251,7 +245,7 @@ export default function TenantDataResetPage() {
             ) : (
               <>
                 <div className="space-y-1.5">
-                  <Label htmlFor="reset-reason">Operational reason</Label>
+                  <Label htmlFor="reset-reason">Reset reason</Label>
                   <Textarea
                     id="reset-reason"
                     rows={5}
@@ -305,7 +299,7 @@ export default function TenantDataResetPage() {
               <EmptyState
                 icon={<RotateCcw className="h-6 w-6" />}
                 title="No reset requests"
-                description="Your organisation has not requested an operational reset."
+                description="Your organisation has not requested a reset."
               />
             ) : (
               <div className="space-y-3">
@@ -334,6 +328,15 @@ export default function TenantDataResetPage() {
                         </span>
                       </div>
                       <p className="text-ink-700 mt-3 text-sm">{request.reason}</p>
+                      {request.metadata?.resetSpec?.categories?.length ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {request.metadata.resetSpec.categories.map((id) => (
+                            <Badge key={id} variant="info" size="sm">
+                              {RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label ?? id}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : null}
                       <p className="text-ink-500 mt-2 text-xs">
                         {status.detail}
                         {typeof impact === 'number' ? ` Impact: ${impact} operational rows.` : ''}

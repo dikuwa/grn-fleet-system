@@ -97,11 +97,11 @@ export default function PlatformDashboardPage() {
   const canAudit = isAdmin || roleNames.includes(SystemRoles.PLATFORM_AUDITOR);
   const metricItems = [
     { label: 'Tenants', value: data.tenants.total, detail: `${data.tenants.active} active`, icon: Building2, href: '/dashboard/platform/tenants' },
-    { label: 'Tenant memberships', value: data.totalMembers, detail: 'Protected tenant access records', icon: Users, href: isAdmin ? '/dashboard/platform/users' : '/dashboard/platform/tenants' },
-    { label: 'Fleet vehicles', value: data.vehicles.total, detail: `${data.vehicles.available} available · protected`, icon: Car, href: '/dashboard/platform/tenants' },
+    { label: 'Tenant memberships', value: data.totalMembers, detail: 'Across tenant workspaces', icon: Users, href: isAdmin ? '/dashboard/platform/users' : '/dashboard/platform/tenants' },
+    { label: 'Fleet vehicles', value: data.vehicles.total, detail: `${data.vehicles.available} available`, icon: Car, href: '/dashboard/platform/tenants' },
     { label: 'Transport requests', value: data.requests.total, detail: 'Across all tenants', icon: Activity, href: canAudit ? '/dashboard/platform/audit' : '/dashboard/platform/tenants' },
     { label: 'Trips', value: data.trips.total, detail: `${data.trips.active} active`, icon: Truck, href: canAudit ? '/dashboard/platform/audit' : '/dashboard/platform/tenants' },
-    { label: 'Vehicles in maintenance', value: data.vehicles.maintenance, detail: 'Current protected vehicle status', icon: Wrench, href: '/dashboard/platform/tenants' },
+    { label: 'Vehicles in maintenance', value: data.vehicles.maintenance, detail: 'Current vehicle status', icon: Wrench, href: '/dashboard/platform/tenants' },
   ];
 
   const health = [
@@ -157,7 +157,7 @@ export default function PlatformDashboardPage() {
         <div className="flex items-start gap-2 rounded-[8px] border border-border bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-ink-600">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-status-success-text" />
           <p>
-            Reset-aware totals: tenant operational resets clear requests and trips; the platform operational reset clears demo requests and public enquiries. Tenants, memberships, fleet vehicles and vehicle statuses are protected master data and remain visible.
+            Live reset-aware totals: operational resets change requests and trips; selective and clean-slate plans also change the categories explicitly approved in their dry run. Tenant identity, billing, audit history and recovery points remain protected.
           </p>
         </div>
       </section>

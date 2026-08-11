@@ -1,3 +1,5 @@
+import type { ResetCategoryId, ResetSpec } from '@/lib/reset-catalog';
+
 export interface ResetPreviewData {
   dryRunSummary: {
     requests: number;
@@ -11,6 +13,9 @@ export interface ResetPreviewData {
   review: Array<{ table: string; label: string; reason: string; count: number }>;
   fingerprint: string;
   plannedAt: string;
+  resetSpec?: ResetSpec;
+  categoryCounts?: Partial<Record<ResetCategoryId, number>>;
+  protected?: string[];
 }
 
 function finiteNumber(value: unknown) {
@@ -48,5 +53,10 @@ export function normalizeResetPreview(value: unknown): ResetPreviewData | null {
     review: Array.isArray(candidate.review) ? candidate.review as ResetPreviewData['review'] : [],
     fingerprint: candidate.fingerprint,
     plannedAt: typeof candidate.plannedAt === 'string' ? candidate.plannedAt : '',
+    resetSpec: candidate.resetSpec as ResetSpec | undefined,
+    categoryCounts: candidate.categoryCounts as ResetPreviewData['categoryCounts'],
+    protected: Array.isArray(candidate.protected)
+      ? candidate.protected.filter((item): item is string => typeof item === 'string')
+      : undefined,
   };
 }

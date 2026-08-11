@@ -17,6 +17,7 @@ import {
 } from '@/db/schema/reset-requests';
 import { tenants, user } from '@/db/schema';
 import { eq, and, desc, count, ilike, or, inArray } from 'drizzle-orm';
+import { normalizeResetSpec, resetScopeForSpec } from '@/lib/reset-catalog';
 
 export async function GET(request: NextRequest) {
   try {
@@ -152,7 +153,16 @@ export async function POST(request: NextRequest) {
       reason,
       backupRequired = true,
       target = 'tenant',
+      resetSpec: resetSpecInput,
     } = body;
+    let resetSpec;
+    try {
+      resetSpec = normalizeResetSpec(resetSpecInput ?? { preset: scope === 'full' ? 'clean_slate' : 'operational' }, {
+        target: target === 'platform' ? 'all_tenants' : 'tenant',
+      });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid reset selection' }, { status: 400 });
+    }
     if ((target !== 'platform' && !tenantId) || !scope || !String(reason || '').trim())
       return NextResponse.json(
         { error: 'A reset target, scope, and reason are required' },
@@ -168,12 +178,6 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
     if (target === 'platform') {
-      if (scope !== 'operational') {
-        return NextResponse.json(
-          { error: 'Platform-wide reset supports only the production-safe operational preset.' },
-          { status: 400 },
-        );
-      }
       const [tenantRows, openRows] = await Promise.all([
         db
           .select({ id: tenants.id, name: tenants.name, code: tenants.code, type: tenants.type })
@@ -206,7 +210,7 @@ export async function POST(request: NextRequest) {
         .values(
           candidates.map((tenant) => ({
             tenantId: tenant.id,
-            scope: 'operational' as const,
+            scope: resetScopeForSpec(resetSpec),
             reason: String(reason).trim(),
             requestedByUserId: session.user.id,
             backupRequired: Boolean(backupRequired),
@@ -217,6 +221,7 @@ export async function POST(request: NextRequest) {
               createdFrom: 'platform_admin',
               productionSafeFlow: true,
               platformBatchId: batchId,
+              resetSpec: { ...resetSpec, target: 'all_tenants' },
             },
           })),
         )
@@ -246,14 +251,14 @@ export async function POST(request: NextRequest) {
       .insert(tenantResetRequests)
       .values({
         tenantId,
-        scope,
+        scope: resetScopeForSpec(resetSpec),
         reason: String(reason).trim(),
         requestedByUserId: session.user.id,
         backupRequired: Boolean(backupRequired),
         confirmationPhrase: `RESET ${tenant.code}`,
         status: 'draft',
         rollbackPossible: false,
-        metadata: { createdFrom: 'platform_admin', productionSafeFlow: scope === 'operational' },
+        metadata: { createdFrom: 'platform_admin', productionSafeFlow: true, resetSpec },
       })
       .returning();
 

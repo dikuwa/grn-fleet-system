@@ -36,6 +36,8 @@ import { useToast } from '@/lib/use-toast';
 import { normalizeResetPreview, type ResetPreviewData } from '@/lib/reset-preview';
 import { tenantExecutionResetPhrase } from '@/lib/reset-workflow';
 import { PlatformOperationalReset } from './platform-operational-reset';
+import { ResetSpecBuilder, type ResetBuilderValue } from '@/components/reset/reset-spec-builder';
+import { RESET_CATEGORY_CATALOG, type ResetSpec } from '@/lib/reset-catalog';
 
 interface TenantOption {
   id: string;
@@ -140,6 +142,11 @@ export default function PlatformResetPage() {
   const [createReason, setCreateReason] = useState(
     'Clear test operational records and start this tenant from a clean operational state.',
   );
+  const [createResetBuilder, setCreateResetBuilder] = useState<ResetBuilderValue>({
+    preset: 'operational',
+    categories: ['operations'],
+    cutoff: '',
+  });
   const openedFromNotificationRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -220,6 +227,12 @@ export default function PlatformResetPage() {
           target: createTarget,
           tenantId: createTarget === 'tenant' ? createTenantId : undefined,
           scope: 'operational',
+          resetSpec: {
+            target: createTarget === 'platform' ? 'all_tenants' : 'tenant',
+            preset: createResetBuilder.preset,
+            categories: createResetBuilder.categories,
+            cutoff: createResetBuilder.cutoff || null,
+          },
           reason: createReason.trim(),
           backupRequired: true,
         }),
@@ -230,7 +243,7 @@ export default function PlatformResetPage() {
         title:
           createTarget === 'platform'
             ? `${json.data.createdCount} tenant reset drafts created`
-            : 'Operational reset drafted',
+            : 'Reset plan drafted',
         description:
           'Each tenant must pass review, dry run, and verified recovery-point checks before execution.',
         variant: 'success',
@@ -340,13 +353,18 @@ export default function PlatformResetPage() {
   };
 
   const requestExecution = (request: ResetRequest) => {
-    if (!request.tenantCode || !request.backupCreated || !normalizeResetPreview(request.validationResults)) return;
+    const requestPreview = normalizeResetPreview(request.validationResults);
+    if (!request.tenantCode || !request.backupCreated || !requestPreview) return;
     const phrase = tenantExecutionResetPhrase(request.tenantCode);
+    const selectedCategories = requestPreview.resetSpec?.categories
+      .map((id) => RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label)
+      .filter(Boolean)
+      .join(', ') || 'Requests & operations';
     setDetailOpen(false);
     confirm({
-      title: `Reset operational data for ${request.tenantName || request.tenantCode}?`,
-      description: `This removes only the operational rows shown in the dry run. Tenant, staff, users, roles, vehicles, offices/departments, programmes, workflow configuration and audit history remain. A verified recovery point must remain available. Type ${phrase} to continue.`,
-      confirmLabel: 'Execute operational reset',
+      title: `Execute this reset for ${request.tenantName || request.tenantCode}?`,
+      description: `The verified plan contains ${requestPreview.dryRunSummary.total} rows across: ${selectedCategories}. Protected tenant identity, billing, audit and recovery data remain.`,
+      confirmLabel: 'Execute reset plan',
       variant: 'destructive',
       requireTypedConfirm: phrase,
       onConfirm: async () => {
@@ -360,8 +378,8 @@ export default function PlatformResetPage() {
           const json = await res.json();
           if (!res.ok) throw new Error(json.error || 'Reset execution failed');
           toast({
-            title: 'Operational reset complete',
-            description: `${json.data.totalRemoved} operational rows were removed. The tenant and its master data were preserved.`,
+            title: 'Reset plan complete',
+            description: `${json.data.totalRemoved} planned rows were removed. Protected tenant data and the recovery point remain.`,
             variant: 'success',
           });
           await load();
@@ -383,14 +401,14 @@ export default function PlatformResetPage() {
     [createTenantId, tenants],
   );
   const preview = normalizeResetPreview(selected?.validationResults);
+  const selectedSpec = (preview?.resetSpec ?? selected?.metadata?.resetSpec) as ResetSpec | undefined;
   const canExecute = Boolean(
     selected?.status === 'approved' &&
-    selected?.scope === 'operational' &&
     preview?.fingerprint &&
     selected?.backupCreated &&
     selected?.rollbackPossible,
   );
-  const legacyUnsupported = Boolean(selected && selected.scope !== 'operational');
+  const legacyUnsupported = Boolean(selected && selected.scope !== 'operational' && !selected.metadata?.resetSpec);
 
   return (
     <div className="space-y-6">
@@ -399,11 +417,11 @@ export default function PlatformResetPage() {
       />
       <PageHeader
         title="Reset & Cleanup"
-        description="Return a tenant to a clean operational starting point without deleting its organisation, users, staff, roles, vehicles or configuration."
+        description="Build an operational cleanup, selective reset, or protected clean slate for one tenant or every production tenant."
       >
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" /> New operational reset
+            <Plus className="h-4 w-4" /> New reset plan
           </Button>
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/platform/backups">
@@ -419,9 +437,9 @@ export default function PlatformResetPage() {
           <div>
             <p className="text-ink-950 text-sm font-semibold">Reset never deletes the tenant</p>
             <p className="text-ink-600 mt-1 text-xs leading-relaxed">
-              The production-safe operational preset clears requests, workflows, allocations, trips,
-              logs, fuel, inspections, operational documents, defects and related notifications.
-              Tenant deletion remains a completely separate action in Tenant Management.
+              Every preset preserves tenant identity, subscriptions, billing, audit history,
+              recovery points and at least one Tenant Owner. Tenant deletion remains a completely
+              separate action in Tenant Management.
             </p>
           </div>
         </div>
@@ -481,8 +499,8 @@ export default function PlatformResetPage() {
         <EmptyState
           icon={<Database className="h-6 w-6" />}
           title="No reset requests"
-          description="Create an operational reset when a tenant needs a clean operational starting point."
-          action={{ label: 'New operational reset', onClick: () => setCreateOpen(true) }}
+          description="Create a controlled reset plan when a tenant needs an operational cleanup or protected clean slate."
+          action={{ label: 'New reset plan', onClick: () => setCreateOpen(true) }}
         />
       ) : (
         <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
@@ -551,9 +569,9 @@ export default function PlatformResetPage() {
       )}
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
           <DialogHeader>
-            <DialogTitle>Start operational reset</DialogTitle>
+            <DialogTitle>Build a reset plan</DialogTitle>
             <DialogDescription>
               This creates controlled reset requests. Nothing is deleted until each tenant passes
               review, dry run, durable recovery-point verification and typed final confirmation.
@@ -585,16 +603,7 @@ export default function PlatformResetPage() {
                 </StyledSelect>
               </div>
             )}
-            <div className="border-brand-200 bg-brand-50/40 dark:bg-brand-950/20 rounded-[8px] border p-3">
-              <p className="text-ink-950 text-sm font-semibold">
-                Preset: Start operational data from scratch
-              </p>
-              <p className="text-ink-600 mt-1 text-xs leading-relaxed">
-                Removes transport operations and their generated history. Preserves tenant,
-                branding, staff, users, roles, departments/offices, vehicles, programmes, workflow
-                definitions and audit history.
-              </p>
-            </div>
+            <ResetSpecBuilder value={createResetBuilder} onChange={setCreateResetBuilder} />
             <div className="space-y-1.5">
               <Label>Reason</Label>
               <Textarea
@@ -664,8 +673,8 @@ export default function PlatformResetPage() {
                       <TriangleAlert className="text-status-warning-text mt-0.5 h-4 w-4" />
                       <p className="text-ink-700 text-sm">
                         This is a legacy <strong>{selected.scope.replace(/_/g, ' ')}</strong>{' '}
-                        request. Production execution is disabled. Create a new operational reset
-                        request instead.
+                        request without a versioned reset specification. Production execution is
+                        disabled. Create a new reset plan instead.
                       </p>
                     </div>
                   </div>
@@ -694,12 +703,30 @@ export default function PlatformResetPage() {
                   </div>
                 </section>
 
+                {selectedSpec && (
+                  <section className="border-border rounded-[8px] border p-4">
+                    <h3 className="text-ink-950 text-sm font-semibold">Selected reset categories</h3>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {selectedSpec.categories.map((id) => (
+                        <Badge key={id} variant="warning" size="sm">
+                          {RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label ?? id}
+                        </Badge>
+                      ))}
+                      {selectedSpec.cutoff && (
+                        <Badge variant="info" size="sm">
+                          Older than {new Date(selectedSpec.cutoff).toLocaleDateString('en-NA')}
+                        </Badge>
+                      )}
+                    </div>
+                  </section>
+                )}
+
                 {preview && (
                   <section className="space-y-3">
                     <div>
                       <h3 className="text-ink-950 text-sm font-semibold">Dry-run impact</h3>
                       <p className="text-ink-500 text-xs">
-                        Snapshot calculated {formatDate(preview.plannedAt)}. If operational data
+                        Snapshot calculated {formatDate(preview.plannedAt)}. If selected data
                         changes, execution is blocked until you rerun this step.
                       </p>
                     </div>
@@ -735,19 +762,16 @@ export default function PlatformResetPage() {
                   <section className="border-status-success-text/20 bg-status-success-bg/15 rounded-[8px] border p-4">
                     <h3 className="text-ink-950 text-sm font-semibold">Protected master data</h3>
                     <p className="text-ink-500 mt-1 text-xs">
-                      These records are explicitly outside the operational reset.
+                      These records are explicitly outside every reset plan.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {[
-                        'Tenant & branding',
-                        'Staff & users',
-                        'Roles & permissions',
-                        'Departments & offices',
-                        'Vehicles',
-                        'Programmes',
-                        'Workflow configuration',
+                      {(preview.protected ?? [
+                        'Tenant identity and branding',
+                        'Subscription, billing and payments',
+                        'One Tenant Owner and all Platform Administrators',
                         'Audit history',
-                      ].map((label) => (
+                        'Backups and reset history',
+                      ]).map((label) => (
                         <Badge key={label} variant="success" size="sm">
                           {label}
                         </Badge>

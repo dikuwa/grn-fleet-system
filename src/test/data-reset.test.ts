@@ -213,14 +213,16 @@ describe('confirmation phrase', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveStepCondition', () => {
-  it('scopes transport_requests to the tenant id', () => {
+  it('scopes transport_requests to the tenant and selected request ids', () => {
     const condition = resolveStepCondition(
       { table: 'transport_requests', label: '', scope: 'tenant' },
       IDS,
       TENANT_ID,
     );
     expect(condition).not.toBeNull();
-    expect(sqlText(condition)).toContain('tenant_id');
+    const text = sqlText(condition);
+    expect(text).toContain('tenant_id');
+    expect(text).toMatch(/id = ANY\(ARRAY\['req-1','req-2'\]::uuid\[\]\)/i);
   });
 
   it('scopes request children by request_id', () => {

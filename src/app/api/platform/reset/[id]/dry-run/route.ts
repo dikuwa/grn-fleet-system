@@ -6,6 +6,7 @@ import { getDb } from '@/db';
 import { tenantResetRequests } from '@/db/schema/reset-requests';
 import { previewTenantOperationalReset } from '@/lib/data-protection/reset-service';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { normalizeResetSpec } from '@/lib/reset-catalog';
 
 /**
  * Production-safe dry run. This never mutates tenant operational data and does
@@ -26,15 +27,13 @@ export async function POST(
     const db = getDb();
     const [resetRequest] = await db.select().from(tenantResetRequests).where(eq(tenantResetRequests.id, id)).limit(1);
     if (!resetRequest) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
-    if (resetRequest.scope !== 'operational') {
-      return NextResponse.json({ error: 'Only operational resets are supported for production-safe execution. Create a new operational reset request.' }, { status: 400 });
-    }
     if (!['approved', 'pending_review'].includes(resetRequest.status)) {
       return NextResponse.json({ error: 'Dry run is available after submission/review and before execution.' }, { status: 400 });
     }
 
-    const { preview } = await previewTenantOperationalReset(resetRequest.tenantId);
     const previousMetadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
+    const resetSpec = normalizeResetSpec(previousMetadata.resetSpec, { target: 'tenant' });
+    const { preview } = await previewTenantOperationalReset(resetRequest.tenantId, resetSpec);
 
     // A fresh plan invalidates an earlier recovery point for this request. The
     // old snapshot remains safely retained in Backup & Restore, but execution
@@ -49,6 +48,9 @@ export async function POST(
         errors: [],
         fingerprint: preview.fingerprint,
         plannedAt: preview.plannedAt,
+        resetSpec,
+        categoryCounts: preview.categoryCounts,
+        protected: preview.protected,
       },
       backupCreated: false,
       backupLocation: null,
@@ -61,6 +63,7 @@ export async function POST(
         dryRunFingerprint: preview.fingerprint,
         dryRunTotal: preview.dryRunSummary.total,
         backupSnapshotId: null,
+        resetSpec,
       },
       updatedAt: new Date(),
     }).where(eq(tenantResetRequests.id, id));
@@ -71,9 +74,10 @@ export async function POST(
       action: 'reset_request.dry_run',
       entityType: 'reset_request',
       entityId: id,
-      summary: `Operational reset dry run completed; ${preview.dryRunSummary.total} tenant-scoped rows would be removed.`,
+      summary: `Reset-plan dry run completed; ${preview.dryRunSummary.total} tenant-scoped rows would be removed.`,
       after: {
         scope: resetRequest.scope,
+        resetSpec,
         dryRunSummary: preview.dryRunSummary,
         fingerprint: preview.fingerprint,
       },
