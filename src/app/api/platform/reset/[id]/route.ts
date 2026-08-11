@@ -10,18 +10,19 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { tenantResetRequests, resetRequestSteps } from '@/db/schema/reset-requests';
-import { tenants } from '@/db/schema';
+import { tenants, user } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
+import {
+  notifyResetRequesterOutcome,
+  resolvePlatformResetRequestNotification,
+} from '@/lib/platform/reset-notifications';
 
 // ---------------------------------------------------------------------------
 // GET — Get reset request details with step history
 // ---------------------------------------------------------------------------
 
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(_request);
     if (!auth.ok) return auth.error;
@@ -43,6 +44,8 @@ export async function GET(
         reason: tenantResetRequests.reason,
         status: tenantResetRequests.status,
         requestedByUserId: tenantResetRequests.requestedByUserId,
+        requestedByName: user.name,
+        requestedByEmail: user.email,
         backupRequired: tenantResetRequests.backupRequired,
         backupCreated: tenantResetRequests.backupCreated,
         backupLocation: tenantResetRequests.backupLocation,
@@ -66,6 +69,7 @@ export async function GET(
       })
       .from(tenantResetRequests)
       .leftJoin(tenants, eq(tenantResetRequests.tenantId, tenants.id))
+      .leftJoin(user, eq(tenantResetRequests.requestedByUserId, user.id))
       .where(eq(tenantResetRequests.id, id))
       .limit(1);
 
@@ -94,10 +98,7 @@ export async function GET(
 // PATCH — Update reset request status
 // ---------------------------------------------------------------------------
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -161,6 +162,19 @@ export async function PATCH(
             { status: 400 },
           );
         }
+        const validation = (current.validationResults ?? {}) as Record<string, unknown>;
+        if (typeof validation.fingerprint !== 'string') {
+          return NextResponse.json(
+            { error: 'Run and review the operational impact preview before approval' },
+            { status: 409 },
+          );
+        }
+        if (typeof reviewNotes !== 'string' || reviewNotes.trim().length < 10) {
+          return NextResponse.json(
+            { error: 'Add review notes of at least 10 characters before approval' },
+            { status: 400 },
+          );
+        }
         updates.status = 'approved';
         updates.reviewedByUserId = session.user.id;
         updates.reviewedAt = new Date();
@@ -171,6 +185,12 @@ export async function PATCH(
         if (current.status !== 'pending_review') {
           return NextResponse.json(
             { error: 'Can only reject requests in pending_review status' },
+            { status: 400 },
+          );
+        }
+        if (typeof reason !== 'string' || reason.trim().length < 10) {
+          return NextResponse.json(
+            { error: 'Provide a rejection reason of at least 10 characters' },
             { status: 400 },
           );
         }
@@ -191,7 +211,7 @@ export async function PATCH(
 
     // Record audit event
     await recordAuditEvent({
-      tenantId: session.tenantId,
+      tenantId: current.tenantId,
       actorUserId: session.user.id,
       action: `reset_request.${action}`,
       entityType: 'reset_request',
@@ -204,6 +224,21 @@ export async function PATCH(
         reason: reason || null,
       },
     });
+
+    if (action === 'approve' || action === 'reject') {
+      const tenantOrigin =
+        (current.metadata as Record<string, unknown> | null)?.createdFrom === 'tenant_admin';
+      await resolvePlatformResetRequestNotification(id);
+      if (tenantOrigin) {
+        await notifyResetRequesterOutcome({
+          requestId: id,
+          tenantId: current.tenantId,
+          requesterUserId: current.requestedByUserId,
+          status: action === 'approve' ? 'approved' : 'rejected',
+          notes: action === 'reject' ? String(reason || reviewNotes || '') : reviewNotes,
+        });
+      }
+    }
 
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
