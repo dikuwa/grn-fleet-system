@@ -1,3 +1,4 @@
+/* eslint-disable react/no-unescaped-entities */
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -21,7 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input, Label, Textarea } from '@/components/ui/input';
+import { Label, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
@@ -29,6 +30,7 @@ import { useToast } from '@/lib/use-toast';
 interface TenantOption { id: string; name: string; code: string; status: string; type: string; }
 interface BackupItem {
   id: string;
+  scope: string;
   tenantId: string | null;
   tenantName: string | null;
   tenantCode: string | null;
@@ -109,7 +111,10 @@ export default function PlatformBackupsPage() {
     }
   }, [toast]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
 
   const createManual = async () => {
     if (!tenantId) return;
@@ -190,22 +195,24 @@ export default function PlatformBackupsPage() {
   };
 
   const requestRestore = (backup: BackupItem) => {
-    if (!backup.tenantCode) return;
+    const platformBackup = backup.scope === 'platform_operational';
+    if (!platformBackup && !backup.tenantCode) return;
+    const phrase = platformBackup ? 'RESTORE PLATFORM' : `RESTORE ${backup.tenantCode}`;
     confirm({
-      title: `Restore ${backup.tenantName || backup.tenantCode} from this recovery point?`,
-      description: 'Restore is allowed only when the tenant has no current operational records. Existing tenant configuration, staff, users, roles and vehicles are preserved. The backup checksum is verified before restoration.',
+      title: `Restore ${platformBackup ? 'platform operations' : backup.tenantName || backup.tenantCode} from this recovery point?`,
+      description: platformBackup ? 'Restore is allowed only when no current disposable platform operational records exist. The archive checksum is verified before restoration.' : 'Restore is allowed only when the tenant has no current operational records. Existing tenant configuration, staff, users, roles and vehicles are preserved. The backup checksum is verified before restoration.',
       confirmLabel: 'Restore backup',
       variant: 'destructive',
-      requireTypedConfirm: `RESTORE ${backup.tenantCode}`,
+      requireTypedConfirm: phrase,
       onConfirm: async () => {
         setProcessing(backup.id);
         try {
           const res = await fetch(`/api/platform/backups/${backup.id}/restore`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmationPhrase: `RESTORE ${backup.tenantCode}` }),
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmationPhrase: phrase }),
           });
           const json = await res.json();
           if (!res.ok) throw new Error(json.error || 'Restore failed');
-          toast({ title: 'Tenant operational data restored', description: `${json.data.recordsRestored} records restored.`, variant: 'success' });
+          toast({ title: platformBackup ? 'Platform operational data restored' : 'Tenant operational data restored', description: `${json.data.recordsRestored} records restored.`, variant: 'success' });
           await load();
         } catch (error) {
           toast({ title: 'Restore blocked or failed', description: error instanceof Error ? error.message : 'Restore failed', variant: 'error' });
