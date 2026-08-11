@@ -5,19 +5,16 @@ import { getDb } from '@/db';
 import { account, user } from '@/db/schema/better-auth';
 import { userProfiles } from '@/db/schema/auth';
 import { roleAssignments, rolePermissions, roles, tenantMemberships } from '@/db/schema/tenants';
-import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions, type PermissionCode } from '@/lib/permissions';
-import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
+import {
+  PlatformSystemRoles,
+  SystemRoles,
+  WorkspaceIds,
+  type PlatformSystemRole,
+} from '@/lib/workspaces';
 
-const PLATFORM_ROLE_NAMES = [
-  SystemRoles.PLATFORM_ADMIN,
-  SystemRoles.PLATFORM_SUPPORT,
-  SystemRoles.PLATFORM_AUDITOR,
-] as const;
-
-type PlatformRoleName = (typeof PLATFORM_ROLE_NAMES)[number];
-
-const ROLE_PERMISSIONS: Record<PlatformRoleName, PermissionCode[]> = {
+const ROLE_PERMISSIONS: Record<PlatformSystemRole, PermissionCode[]> = {
   [SystemRoles.PLATFORM_ADMIN]: [
     Permissions.PLATFORM_ADMIN,
     Permissions.PLATFORM_SUPPORT,
@@ -49,10 +46,20 @@ async function requirePlatformAdmin(request: NextRequest) {
   if (!auth.ok) return auth;
   const permission = await requirePermission(auth.session, Permissions.PLATFORM_ADMIN);
   if (permission instanceof NextResponse) return { ok: false as const, error: permission };
+  const roleNames = await getSessionRoleNames(auth.session);
+  if (!roleNames.includes(SystemRoles.PLATFORM_ADMIN)) {
+    return {
+      ok: false as const,
+      error: NextResponse.json(
+        { error: 'Only a Platform Super Administrator can manage platform access.' },
+        { status: 403 },
+      ),
+    };
+  }
   return auth;
 }
 
-async function ensurePlatformRole(tenantId: string, roleName: PlatformRoleName) {
+async function ensurePlatformRole(tenantId: string, roleName: PlatformSystemRole) {
   const db = getDb();
   let [role] = await db
     .select()
@@ -74,7 +81,9 @@ async function ensurePlatformRole(tenantId: string, roleName: PlatformRoleName) 
 
   await db
     .insert(rolePermissions)
-    .values(ROLE_PERMISSIONS[roleName].map((permissionCode) => ({ roleId: role.id, permissionCode })))
+    .values(
+      ROLE_PERMISSIONS[roleName].map((permissionCode) => ({ roleId: role.id, permissionCode })),
+    )
     .onConflictDoNothing();
 
   return role;
@@ -118,19 +127,27 @@ export async function GET(request: NextRequest) {
       .where(
         and(
           eq(tenantMemberships.tenantId, auth.session.tenantId),
-          inArray(roles.name, [...PLATFORM_ROLE_NAMES]),
+          inArray(roles.name, [...PlatformSystemRoles]),
         ),
       );
 
     const userIds = Array.from(new Set(memberships.map((membership) => membership.userId)));
     const users = userIds.length
       ? await db
-          .select({ id: user.id, name: user.name, email: user.email, username: user.username, createdAt: user.createdAt })
+          .select({
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            username: user.username,
+            createdAt: user.createdAt,
+          })
           .from(user)
           .where(inArray(user.id, userIds))
       : [];
 
-    const membershipByUser = new Map(memberships.map((membership) => [membership.userId, membership]));
+    const membershipByUser = new Map(
+      memberships.map((membership) => [membership.userId, membership]),
+    );
     const rows = users.map((platformUser) => ({
       ...platformUser,
       membershipId: membershipByUser.get(platformUser.id)?.membershipId ?? null,
@@ -145,7 +162,7 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         users: rows,
-        roles: PLATFORM_ROLE_NAMES.map((name) => ({ name })),
+        roles: PlatformSystemRoles.map((name) => ({ name })),
         activeSuperAdmins: await activeSuperAdminCount(auth.session.tenantId),
       },
     });
@@ -160,22 +177,39 @@ export async function POST(request: NextRequest) {
     const auth = await requirePlatformAdmin(request);
     if (!auth.ok) return auth.error;
     const body = await request.json().catch(() => null);
-    const email = String(body?.email ?? '').trim().toLowerCase();
+    const email = String(body?.email ?? '')
+      .trim()
+      .toLowerCase();
     const name = String(body?.name ?? '').trim();
-    const roleName = String(body?.roleName ?? '') as PlatformRoleName;
+    const roleName = String(body?.roleName ?? '') as PlatformSystemRole;
 
-    if (!email || !name || !PLATFORM_ROLE_NAMES.includes(roleName)) {
-      return NextResponse.json({ error: 'Name, email and a valid platform role are required.' }, { status: 400 });
+    if (!email || !name || !PlatformSystemRoles.includes(roleName)) {
+      return NextResponse.json(
+        { error: 'Name, email and a valid platform role are required.' },
+        { status: 400 },
+      );
     }
 
     const db = getDb();
-    const [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, email)).limit(1);
-    if (existing) return NextResponse.json({ error: 'A user with this email already exists.' }, { status: 409 });
+    const [existing] = await db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
+    if (existing)
+      return NextResponse.json(
+        { error: 'A user with this email already exists.' },
+        { status: 409 },
+      );
 
     const now = new Date();
     const userId = crypto.randomUUID();
     const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 5);
-    const usernameBase = email.split('@')[0].replace(/[^a-z0-9._-]/gi, '').toLowerCase() || 'platform.user';
+    const usernameBase =
+      email
+        .split('@')[0]
+        .replace(/[^a-z0-9._-]/gi, '')
+        .toLowerCase() || 'platform.user';
     const username = `${usernameBase}.${suffix}`.slice(0, 48);
     const temporaryPassword = `Gf!${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
     const passwordHash = await bcrypt.hash(temporaryPassword, 10);
@@ -220,12 +254,17 @@ export async function POST(request: NextRequest) {
         joinedAt: now,
       })
       .returning();
-    await db.insert(roleAssignments).values({ tenantMembershipId: membership.id, roleId: role.id, startDate: now });
+    await db
+      .insert(roleAssignments)
+      .values({ tenantMembershipId: membership.id, roleId: role.id, startDate: now });
 
-    return NextResponse.json({
-      success: true,
-      data: { id: userId, name, email, username, roleName, temporaryPassword },
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        success: true,
+        data: { id: userId, name, email, username, roleName, temporaryPassword },
+      },
+      { status: 201 },
+    );
   } catch (error) {
     console.error('[Platform Users] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create platform user' }, { status: 500 });
@@ -239,48 +278,72 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json().catch(() => null);
     const userId = String(body?.userId ?? '');
     const nextStatus = body?.status ? String(body.status) : null;
-    const roleName = body?.roleName ? String(body.roleName) as PlatformRoleName : null;
+    const roleName = body?.roleName ? (String(body.roleName) as PlatformSystemRole) : null;
     if (!userId) return NextResponse.json({ error: 'Platform user is required.' }, { status: 400 });
 
     const db = getDb();
     const [membership] = await db
       .select({ id: tenantMemberships.id, status: tenantMemberships.status })
       .from(tenantMemberships)
-      .where(and(eq(tenantMemberships.tenantId, auth.session.tenantId), eq(tenantMemberships.userId, userId)))
+      .where(
+        and(
+          eq(tenantMemberships.tenantId, auth.session.tenantId),
+          eq(tenantMemberships.userId, userId),
+        ),
+      )
       .limit(1);
-    if (!membership) return NextResponse.json({ error: 'Platform user membership not found.' }, { status: 404 });
+    if (!membership)
+      return NextResponse.json({ error: 'Platform user membership not found.' }, { status: 404 });
 
     const [currentRole] = await db
       .select({ name: roles.name })
       .from(roleAssignments)
       .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
-      .where(and(eq(roleAssignments.tenantMembershipId, membership.id), inArray(roles.name, [...PLATFORM_ROLE_NAMES])))
+      .where(
+        and(
+          eq(roleAssignments.tenantMembershipId, membership.id),
+          inArray(roles.name, [...PlatformSystemRoles]),
+        ),
+      )
       .limit(1);
 
-    const removesSuperAdmin = currentRole?.name === SystemRoles.PLATFORM_ADMIN &&
-      ((roleName && roleName !== SystemRoles.PLATFORM_ADMIN) || (nextStatus && nextStatus !== 'active'));
+    const removesSuperAdmin =
+      currentRole?.name === SystemRoles.PLATFORM_ADMIN &&
+      ((roleName && roleName !== SystemRoles.PLATFORM_ADMIN) ||
+        (nextStatus && nextStatus !== 'active'));
     if (removesSuperAdmin && (await activeSuperAdminCount(auth.session.tenantId)) <= 1) {
-      return NextResponse.json({ error: 'At least one active Platform Super Administrator must remain.' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'At least one active Platform Super Administrator must remain.' },
+        { status: 409 },
+      );
     }
 
     if (userId === auth.session.user.id && nextStatus && nextStatus !== 'active') {
-      return NextResponse.json({ error: 'You cannot disable your own active platform access.' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'You cannot disable your own active platform access.' },
+        { status: 409 },
+      );
     }
 
     if (nextStatus) {
       if (!['active', 'suspended'].includes(nextStatus)) {
         return NextResponse.json({ error: 'Invalid platform user status.' }, { status: 400 });
       }
-      await db.update(tenantMemberships).set({ status: nextStatus }).where(eq(tenantMemberships.id, membership.id));
+      await db
+        .update(tenantMemberships)
+        .set({ status: nextStatus })
+        .where(eq(tenantMemberships.id, membership.id));
     }
 
     if (roleName) {
-      if (!PLATFORM_ROLE_NAMES.includes(roleName)) {
+      if (!PlatformSystemRoles.includes(roleName)) {
         return NextResponse.json({ error: 'Invalid platform role.' }, { status: 400 });
       }
       const role = await ensurePlatformRole(auth.session.tenantId, roleName);
       await db.delete(roleAssignments).where(eq(roleAssignments.tenantMembershipId, membership.id));
-      await db.insert(roleAssignments).values({ tenantMembershipId: membership.id, roleId: role.id, startDate: new Date() });
+      await db
+        .insert(roleAssignments)
+        .values({ tenantMembershipId: membership.id, roleId: role.id, startDate: new Date() });
     }
 
     return NextResponse.json({ success: true });
@@ -297,30 +360,53 @@ export async function DELETE(request: NextRequest) {
     const userId = new URL(request.url).searchParams.get('userId') ?? '';
     if (!userId) return NextResponse.json({ error: 'Platform user is required.' }, { status: 400 });
     if (userId === auth.session.user.id) {
-      return NextResponse.json({ error: 'You cannot remove your own platform access.' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'You cannot remove your own platform access.' },
+        { status: 409 },
+      );
     }
 
     const db = getDb();
     const [membership] = await db
       .select({ id: tenantMemberships.id })
       .from(tenantMemberships)
-      .where(and(eq(tenantMemberships.tenantId, auth.session.tenantId), eq(tenantMemberships.userId, userId)))
+      .where(
+        and(
+          eq(tenantMemberships.tenantId, auth.session.tenantId),
+          eq(tenantMemberships.userId, userId),
+        ),
+      )
       .limit(1);
-    if (!membership) return NextResponse.json({ error: 'Platform user membership not found.' }, { status: 404 });
+    if (!membership)
+      return NextResponse.json({ error: 'Platform user membership not found.' }, { status: 404 });
 
     const [currentRole] = await db
       .select({ name: roles.name })
       .from(roleAssignments)
       .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
-      .where(and(eq(roleAssignments.tenantMembershipId, membership.id), inArray(roles.name, [...PLATFORM_ROLE_NAMES])))
+      .where(
+        and(
+          eq(roleAssignments.tenantMembershipId, membership.id),
+          inArray(roles.name, [...PlatformSystemRoles]),
+        ),
+      )
       .limit(1);
 
-    if (currentRole?.name === SystemRoles.PLATFORM_ADMIN && (await activeSuperAdminCount(auth.session.tenantId)) <= 1) {
-      return NextResponse.json({ error: 'The final Platform Super Administrator cannot be removed.' }, { status: 409 });
+    if (
+      currentRole?.name === SystemRoles.PLATFORM_ADMIN &&
+      (await activeSuperAdminCount(auth.session.tenantId)) <= 1
+    ) {
+      return NextResponse.json(
+        { error: 'The final Platform Super Administrator cannot be removed.' },
+        { status: 409 },
+      );
     }
 
     await db.delete(roleAssignments).where(eq(roleAssignments.tenantMembershipId, membership.id));
-    await db.update(tenantMemberships).set({ status: 'access_removed' }).where(eq(tenantMemberships.id, membership.id));
+    await db
+      .update(tenantMemberships)
+      .set({ status: 'access_removed' })
+      .where(eq(tenantMemberships.id, membership.id));
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Platform Users] DELETE failed:', error);

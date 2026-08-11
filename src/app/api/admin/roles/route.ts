@@ -16,8 +16,12 @@ import { getDb } from '@/db';
 import { roles, rolePermissions, roleAssignments, tenantMemberships } from '@/db/schema/tenants';
 import { eq, and, inArray, asc } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
-import { Permissions, isPermissionAvailableInWorkspace, type PermissionCode } from '@/lib/permissions';
-import { WorkspaceIds } from '@/lib/workspaces';
+import {
+  Permissions,
+  isPermissionAvailableInWorkspace,
+  type PermissionCode,
+} from '@/lib/permissions';
+import { isPlatformSystemRole, WorkspaceIds } from '@/lib/workspaces';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
@@ -51,11 +55,17 @@ export async function GET(request: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-    const roleRows = await db.select().from(roles).where(eq(roles.tenantId, session.tenantId)).orderBy(asc(roles.name));
+    const allRoleRows = await db
+      .select()
+      .from(roles)
+      .where(eq(roles.tenantId, session.tenantId))
+      .orderBy(asc(roles.name));
+    const roleRows = allRoleRows.filter((role) => !isPlatformSystemRole(role.name));
     const roleIds = roleRows.map((role) => role.id);
-    const perms = roleIds.length > 0
-      ? await db.select().from(rolePermissions).where(inArray(rolePermissions.roleId, roleIds))
-      : [];
+    const perms =
+      roleIds.length > 0
+        ? await db.select().from(rolePermissions).where(inArray(rolePermissions.roleId, roleIds))
+        : [];
 
     const permsByRole = new Map<string, string[]>();
     for (const permission of perms) {
@@ -64,17 +74,27 @@ export async function GET(request: NextRequest) {
       permsByRole.set(permission.roleId, existing);
     }
 
-    const assignments = roleIds.length > 0
-      ? await db
-          .select({ roleId: roleAssignments.roleId, startDate: roleAssignments.startDate, endDate: roleAssignments.endDate })
-          .from(roleAssignments)
-          .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
-          .where(and(
-            inArray(roleAssignments.roleId, roleIds),
-            eq(tenantMemberships.tenantId, session.tenantId),
-            eq(tenantMemberships.status, 'active'),
-          ))
-      : [];
+    const assignments =
+      roleIds.length > 0
+        ? await db
+            .select({
+              roleId: roleAssignments.roleId,
+              startDate: roleAssignments.startDate,
+              endDate: roleAssignments.endDate,
+            })
+            .from(roleAssignments)
+            .innerJoin(
+              tenantMemberships,
+              eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
+            )
+            .where(
+              and(
+                inArray(roleAssignments.roleId, roleIds),
+                eq(tenantMemberships.tenantId, session.tenantId),
+                eq(tenantMemberships.status, 'active'),
+              ),
+            )
+        : [];
 
     const now = new Date();
     const memberCountByRole = new Map<string, number>();
@@ -118,6 +138,12 @@ export async function POST(request: NextRequest) {
     const permissionCodes = normalizePermissionCodes(body?.permissionCodes ?? []);
 
     if (!name) return NextResponse.json({ error: 'Role name is required' }, { status: 400 });
+    if (isPlatformSystemRole(name)) {
+      return NextResponse.json(
+        { error: 'Platform roles are managed only from Platform Users.' },
+        { status: 403 },
+      );
+    }
     if (permissionCodes === null) {
       return NextResponse.json(
         { error: 'One or more selected permissions are not available to tenant roles.' },
@@ -132,7 +158,10 @@ export async function POST(request: NextRequest) {
       .where(and(eq(roles.tenantId, session.tenantId), eq(roles.name, name)))
       .limit(1);
     if (existing) {
-      return NextResponse.json({ error: `A role named "${name}" already exists in your organisation` }, { status: 409 });
+      return NextResponse.json(
+        { error: `A role named "${name}" already exists in your organisation` },
+        { status: 409 },
+      );
     }
 
     const roleId = crypto.randomUUID();
@@ -148,9 +177,9 @@ export async function POST(request: NextRequest) {
       ];
       if (permissionCodes.length > 0) {
         mutations.push(
-          executor.insert(rolePermissions).values(
-            permissionCodes.map((permissionCode) => ({ roleId, permissionCode })),
-          ),
+          executor
+            .insert(rolePermissions)
+            .values(permissionCodes.map((permissionCode) => ({ roleId, permissionCode }))),
         );
       }
       return mutations;
@@ -178,7 +207,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[Admin Roles] POST failed:', error);
     if (databaseCode(error) === '23505') {
-      return NextResponse.json({ error: 'A role with this name already exists in your organisation' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'A role with this name already exists in your organisation' },
+        { status: 409 },
+      );
     }
     return NextResponse.json({ error: 'Failed to create role' }, { status: 500 });
   }
@@ -204,15 +236,33 @@ export async function PATCH(request: NextRequest) {
       .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
       .limit(1);
     if (!existing) return NextResponse.json({ error: 'Role not found' }, { status: 404 });
-    const name = body?.name === undefined ? undefined : typeof body.name === 'string' ? body.name.trim() : '';
-    const description = body?.description === undefined
-      ? undefined
-      : typeof body.description === 'string' ? body.description.trim() : '';
-    const permissionCodes = body?.permissionCodes === undefined
-      ? undefined
-      : normalizePermissionCodes(body.permissionCodes);
+    if (isPlatformSystemRole(existing.name)) {
+      return NextResponse.json(
+        { error: 'Platform roles cannot be viewed or changed from tenant administration.' },
+        { status: 403 },
+      );
+    }
+    const name =
+      body?.name === undefined ? undefined : typeof body.name === 'string' ? body.name.trim() : '';
+    const description =
+      body?.description === undefined
+        ? undefined
+        : typeof body.description === 'string'
+          ? body.description.trim()
+          : '';
+    const permissionCodes =
+      body?.permissionCodes === undefined
+        ? undefined
+        : normalizePermissionCodes(body.permissionCodes);
 
-    if (name !== undefined && !name) return NextResponse.json({ error: 'Role name cannot be empty' }, { status: 400 });
+    if (name !== undefined && !name)
+      return NextResponse.json({ error: 'Role name cannot be empty' }, { status: 400 });
+    if (name !== undefined && isPlatformSystemRole(name)) {
+      return NextResponse.json(
+        { error: 'Tenant roles cannot use a reserved platform role name.' },
+        { status: 403 },
+      );
+    }
     if (existing.isSystem && name !== undefined && name !== existing.name) {
       return NextResponse.json(
         { error: 'Built-in role names are used for workspace routing and cannot be renamed.' },
@@ -233,7 +283,10 @@ export async function PATCH(request: NextRequest) {
         .where(and(eq(roles.tenantId, session.tenantId), eq(roles.name, name)))
         .limit(1);
       if (duplicate && duplicate.id !== roleId) {
-        return NextResponse.json({ error: `A role named "${name}" already exists in your organisation` }, { status: 409 });
+        return NextResponse.json(
+          { error: `A role named "${name}" already exists in your organisation` },
+          { status: 409 },
+        );
       }
     }
 
@@ -249,7 +302,10 @@ export async function PATCH(request: NextRequest) {
       if (description !== undefined) updateData.description = description || null;
       if (Object.keys(updateData).length > 1) {
         mutations.push(
-          executor.update(roles).set(updateData).where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId))),
+          executor
+            .update(roles)
+            .set(updateData)
+            .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId))),
         );
       }
 
@@ -257,9 +313,9 @@ export async function PATCH(request: NextRequest) {
         mutations.push(executor.delete(rolePermissions).where(eq(rolePermissions.roleId, roleId)));
         if (permissionCodes.length > 0) {
           mutations.push(
-            executor.insert(rolePermissions).values(
-              permissionCodes.map((permissionCode) => ({ roleId, permissionCode })),
-            ),
+            executor
+              .insert(rolePermissions)
+              .values(permissionCodes.map((permissionCode) => ({ roleId, permissionCode }))),
           );
         }
       }
@@ -281,7 +337,8 @@ export async function PATCH(request: NextRequest) {
       after: {
         name: name ?? existing.name,
         description: description === undefined ? existing.description : description || null,
-        permissionCodes: permissionCodes ?? existingPermissions.map((permission) => permission.permissionCode),
+        permissionCodes:
+          permissionCodes ?? existingPermissions.map((permission) => permission.permissionCode),
       },
       summary: `Custom role updated: ${name ?? existing.name}`,
     });
@@ -290,7 +347,10 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     console.error('[Admin Roles] PATCH failed:', error);
     if (databaseCode(error) === '23505') {
-      return NextResponse.json({ error: 'A role with this name already exists in your organisation' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'A role with this name already exists in your organisation' },
+        { status: 409 },
+      );
     }
     return NextResponse.json({ error: 'Failed to update role' }, { status: 500 });
   }

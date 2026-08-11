@@ -76,6 +76,7 @@ interface PackageOption {
   id: string;
   name: string;
   code: string;
+  description: string | null;
   status: string;
   priceMonthlyCents: number | null;
   priceQuarterlyCents: number | null;
@@ -84,6 +85,8 @@ interface PackageOption {
   trialDays: number;
   maxVehicles: number | null;
   maxUsers: number | null;
+  maxDrivers: number | null;
+  features: Record<string, boolean>;
 }
 
 interface TenantOption {
@@ -141,6 +144,101 @@ const SUMMARY_ITEMS: Array<{ key: keyof SubscriptionStats; label: string }> = [
   { key: 'expired', label: 'Expired' },
 ];
 
+type BillingInterval = 'monthly' | 'quarterly' | 'annually';
+
+function packagePrice(pkg: PackageOption, interval: BillingInterval) {
+  return interval === 'monthly'
+    ? pkg.priceMonthlyCents
+    : interval === 'quarterly'
+      ? pkg.priceQuarterlyCents
+      : pkg.priceAnnuallyCents;
+}
+
+function formatPackagePrice(priceCents: number | null, interval: BillingInterval) {
+  if (priceCents == null) return 'Custom pricing';
+  const price = new Intl.NumberFormat('en-NA', { style: 'currency', currency: 'NAD' }).format(
+    priceCents / 100,
+  );
+  return `${price} / ${interval === 'annually' ? 'year' : interval === 'quarterly' ? 'quarter' : 'month'}`;
+}
+
+function packageLimit(value: number | null, label: string) {
+  return `${value ?? 'Unlimited'} ${label}`;
+}
+
+function PackageChoiceList({
+  packages,
+  selectedPackageId,
+  billingInterval,
+  disabled,
+  onSelect,
+}: {
+  packages: PackageOption[];
+  selectedPackageId: string;
+  billingInterval: BillingInterval;
+  disabled: boolean;
+  onSelect: (pkg: PackageOption) => void;
+}) {
+  return (
+    <div
+      className="max-h-72 space-y-2 overflow-y-auto pr-1"
+      role="radiogroup"
+      aria-label="Subscription package"
+    >
+      {packages.map((pkg) => {
+        const selected = pkg.id === selectedPackageId;
+        const price = packagePrice(pkg, selected ? billingInterval : pkg.defaultBillingInterval);
+        const featureCount = Object.values(pkg.features ?? {}).filter(Boolean).length;
+        return (
+          <button
+            key={pkg.id}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            disabled={disabled}
+            onClick={() => onSelect(pkg)}
+            className={`focus-ring w-full rounded-[8px] border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${selected ? 'border-brand-500 bg-brand-50/70 dark:bg-brand-950/25' : 'border-border bg-surface hover:bg-muted/40'}`}
+          >
+            <span className="flex items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-ink-950 text-sm font-semibold">{pkg.name}</span>
+                  <Badge variant={selected ? 'info' : 'default'} size="sm">
+                    {pkg.code}
+                  </Badge>
+                </span>
+                <span className="text-brand-700 dark:text-brand-300 mt-1 block text-xs font-medium">
+                  {formatPackagePrice(
+                    price,
+                    selected ? billingInterval : pkg.defaultBillingInterval,
+                  )}
+                </span>
+              </span>
+              <span
+                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${selected ? 'border-brand-600 bg-brand-600 text-white' : 'border-ink-300 text-transparent'}`}
+              >
+                <CheckCircle className="h-3.5 w-3.5" aria-hidden="true" />
+              </span>
+            </span>
+            {pkg.description && (
+              <span className="text-ink-600 mt-2 line-clamp-2 block text-xs leading-relaxed">
+                {pkg.description}
+              </span>
+            )}
+            <span className="text-ink-500 mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+              <span>{packageLimit(pkg.maxVehicles, 'vehicles')}</span>
+              <span>{packageLimit(pkg.maxUsers, 'users')}</span>
+              <span>{packageLimit(pkg.maxDrivers, 'drivers')}</span>
+              {pkg.trialDays > 0 && <span>{pkg.trialDays}-day trial</span>}
+              {featureCount > 0 && <span>{featureCount} feature groups</span>}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function PlatformSubscriptionsPage() {
   const { toast } = useToast();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
@@ -186,7 +284,9 @@ export default function PlatformSubscriptionsPage() {
       if (!packagesRes.ok) throw new Error(packagesJson.error || 'Failed to fetch packages');
       setSubscriptions(json.data.subscriptions ?? []);
       setUnsubscribedTenants(json.data.unsubscribedTenants ?? []);
-      setPackages((packagesJson.data?.packages ?? []).filter((pkg: PackageOption) => pkg.status === 'active'));
+      setPackages(
+        (packagesJson.data?.packages ?? []).filter((pkg: PackageOption) => pkg.status === 'active'),
+      );
       setStats(json.data.stats ?? null);
       setTotalPages(json.data.totalPages ?? 1);
     } catch (err) {
@@ -202,7 +302,13 @@ export default function PlatformSubscriptionsPage() {
   }, [fetchSubscriptions]);
 
   const handleTransition = useCallback(
-    async (change: { status?: string; reason: string; packageId?: string; billingInterval?: string; billingPeriods?: number }) => {
+    async (change: {
+      status?: string;
+      reason: string;
+      packageId?: string;
+      billingInterval?: string;
+      billingPeriods?: number;
+    }) => {
       if (!transitionModal.subscription) return;
       setTransitioning(true);
       try {
@@ -291,17 +397,18 @@ export default function PlatformSubscriptionsPage() {
   return (
     <div className="space-y-6">
       <Breadcrumbs
-        items={[
-          { label: 'Platform', href: '/dashboard/platform' },
-          { label: 'Subscriptions' },
-        ]}
+        items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Subscriptions' }]}
       />
 
       <PageHeader
         title="Subscription Management"
         description="Assign packages to existing tenants and manage upgrades, downgrades, billing periods, and payment readiness."
       >
-        <Button size="sm" onClick={() => setAssignmentOpen(true)} disabled={unsubscribedTenants.length === 0 || packages.length === 0}>
+        <Button
+          size="sm"
+          onClick={() => setAssignmentOpen(true)}
+          disabled={unsubscribedTenants.length === 0 || packages.length === 0}
+        >
           <Plus className="h-4 w-4" aria-hidden="true" /> Assign package
         </Button>
         <Button asChild size="sm" variant="secondary">
@@ -312,24 +419,33 @@ export default function PlatformSubscriptionsPage() {
       </PageHeader>
 
       {stats && (
-        <section aria-label="Subscription summary" className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
+        <section
+          aria-label="Subscription summary"
+          className="border-border bg-surface overflow-hidden rounded-[var(--radius-card)] border"
+        >
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
             {SUMMARY_ITEMS.map(({ key, label }, index) => (
               <div
                 key={key}
-                className={`px-4 py-4 ${index % 2 ? 'border-l border-border' : ''} ${index >= 2 ? 'border-t border-border sm:border-t-0' : ''} ${index >= 3 ? 'sm:border-t sm:border-border lg:border-t-0' : ''} ${index > 0 ? 'lg:border-l lg:border-border' : ''}`}
+                className={`px-4 py-4 ${index % 2 ? 'border-border border-l' : ''} ${index >= 2 ? 'border-border border-t sm:border-t-0' : ''} ${index >= 3 ? 'sm:border-border sm:border-t lg:border-t-0' : ''} ${index > 0 ? 'lg:border-border lg:border-l' : ''}`}
               >
-                <p className="text-xs font-medium text-ink-500">{label}</p>
-                <p className="mt-1 text-2xl font-[650] tabular-nums text-ink-950">{stats[key]}</p>
+                <p className="text-ink-500 text-xs font-medium">{label}</p>
+                <p className="text-ink-950 mt-1 text-2xl font-[650] tabular-nums">{stats[key]}</p>
               </div>
             ))}
           </div>
         </section>
       )}
 
-      <section aria-label="Subscription filters" className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <section
+        aria-label="Subscription filters"
+        className="flex flex-col gap-3 sm:flex-row sm:items-center"
+      >
         <div className="relative w-full sm:max-w-md sm:flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" aria-hidden="true" />
+          <Search
+            className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2"
+            aria-hidden="true"
+          />
           <Input
             type="search"
             aria-label="Search subscriptions"
@@ -354,18 +470,26 @@ export default function PlatformSubscriptionsPage() {
           </SelectTrigger>
           <SelectContent>
             {STATUS_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Button variant="secondary" size="icon" onClick={fetchSubscriptions} loading={loading} aria-label="Refresh subscriptions">
+        <Button
+          variant="secondary"
+          size="icon"
+          onClick={fetchSubscriptions}
+          loading={loading}
+          aria-label="Refresh subscriptions"
+        >
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
         </Button>
       </section>
 
       {loading ? (
         <div className="flex min-h-48 items-center justify-center" role="status">
-          <span className="text-sm text-ink-500">Loading subscriptions…</span>
+          <span className="text-ink-500 text-sm">Loading subscriptions…</span>
         </div>
       ) : error ? (
         <EmptyState
@@ -378,12 +502,25 @@ export default function PlatformSubscriptionsPage() {
         <EmptyState
           icon={<CreditCard className="h-6 w-6" />}
           title="No subscriptions found"
-          description={debouncedSearch || statusFilter !== 'all' ? 'Adjust the current filters to see other subscriptions.' : unsubscribedTenants.length > 0 ? 'Choose an existing tenant and assign its first package.' : 'Subscriptions are created as part of tenant onboarding.'}
-          action={!debouncedSearch && statusFilter === 'all' && unsubscribedTenants.length > 0 && packages.length > 0 ? { label: 'Assign package', onClick: () => setAssignmentOpen(true) } : undefined}
+          description={
+            debouncedSearch || statusFilter !== 'all'
+              ? 'Adjust the current filters to see other subscriptions.'
+              : unsubscribedTenants.length > 0
+                ? 'Choose an existing tenant and assign its first package.'
+                : 'Subscriptions are created as part of tenant onboarding.'
+          }
+          action={
+            !debouncedSearch &&
+            statusFilter === 'all' &&
+            unsubscribedTenants.length > 0 &&
+            packages.length > 0
+              ? { label: 'Assign package', onClick: () => setAssignmentOpen(true) }
+              : undefined
+          }
         />
       ) : (
-        <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface">
-          <div className="hidden grid-cols-[1.2fr_1fr_0.75fr_0.8fr_0.9fr_1.15fr_auto] gap-4 border-b border-border bg-muted/40 px-5 py-3 text-xs font-medium text-ink-500 xl:grid">
+        <div className="border-border bg-surface overflow-hidden rounded-[var(--radius-card)] border">
+          <div className="border-border bg-muted/40 text-ink-500 hidden grid-cols-[1.2fr_1fr_0.75fr_0.8fr_0.9fr_1.15fr_auto] gap-4 border-b px-5 py-3 text-xs font-medium xl:grid">
             <span>Tenant</span>
             <span>Package</span>
             <span>Status</span>
@@ -401,35 +538,54 @@ export default function PlatformSubscriptionsPage() {
             return (
               <article
                 key={subscription.id}
-                className="grid gap-4 border-b border-border px-4 py-5 last:border-b-0 sm:px-5 xl:grid-cols-[1.2fr_1fr_0.75fr_0.8fr_0.9fr_1.15fr_auto] xl:items-center"
+                className="border-border grid gap-4 border-b px-4 py-5 last:border-b-0 sm:px-5 xl:grid-cols-[1.2fr_1fr_0.75fr_0.8fr_0.9fr_1.15fr_auto] xl:items-center"
               >
                 <div className="min-w-0">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400 xl:hidden">Tenant</p>
+                  <p className="text-ink-400 text-[10px] font-medium tracking-wide uppercase xl:hidden">
+                    Tenant
+                  </p>
                   <div className="mt-0.5 flex items-center gap-2">
-                    <Building2 className="h-4 w-4 shrink-0 text-ink-400" aria-hidden="true" />
-                    <span className="truncate text-sm font-medium text-ink-950">{subscription.tenantName}</span>
+                    <Building2 className="text-ink-400 h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span className="text-ink-950 truncate text-sm font-medium">
+                      {subscription.tenantName}
+                    </span>
                   </div>
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400 xl:hidden">Package</p>
+                  <p className="text-ink-400 text-[10px] font-medium tracking-wide uppercase xl:hidden">
+                    Package
+                  </p>
                   <div className="mt-0.5 flex items-center gap-1.5">
-                    <Package className="h-3.5 w-3.5 shrink-0 text-ink-400" aria-hidden="true" />
-                    <span className="truncate text-sm text-ink-700">{subscription.packageName}</span>
+                    <Package className="text-ink-400 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="text-ink-700 truncate text-sm">
+                      {subscription.packageName}
+                    </span>
                   </div>
                 </div>
                 <div>
-                  <Badge variant={statusConfig.variant} size="sm">{statusConfig.label}</Badge>
+                  <Badge variant={statusConfig.variant} size="sm">
+                    {statusConfig.label}
+                  </Badge>
                 </div>
                 <div>
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400 xl:hidden">Billing</p>
-                  <p className="text-sm capitalize text-ink-700">{subscription.billingInterval}</p>
+                  <p className="text-ink-400 text-[10px] font-medium tracking-wide uppercase xl:hidden">
+                    Billing
+                  </p>
+                  <p className="text-ink-700 text-sm capitalize">{subscription.billingInterval}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400 xl:hidden">Price</p>
-                  <p className="text-sm font-semibold text-ink-950">{formatCurrency(subscription.priceCents, subscription.currency)}</p>
+                  <p className="text-ink-400 text-[10px] font-medium tracking-wide uppercase xl:hidden">
+                    Price
+                  </p>
+                  <p className="text-ink-950 text-sm font-semibold">
+                    {formatCurrency(subscription.priceCents, subscription.currency)}
+                  </p>
                 </div>
-                <div className="space-y-1 text-xs text-ink-500">
-                  <p>{formatDate(subscription.currentPeriodStart)} — {formatDate(subscription.currentPeriodEnd)}</p>
+                <div className="text-ink-500 space-y-1 text-xs">
+                  <p>
+                    {formatDate(subscription.currentPeriodStart)} —{' '}
+                    {formatDate(subscription.currentPeriodEnd)}
+                  </p>
                   {subscription.nextPaymentDueAt && (
                     <p className="flex items-center gap-1.5">
                       <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
@@ -453,11 +609,30 @@ export default function PlatformSubscriptionsPage() {
       )}
 
       {totalPages > 1 && (
-        <nav className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between" aria-label="Subscription pagination">
-          <p className="text-xs text-ink-500">Page {page} of {totalPages}</p>
+        <nav
+          className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between"
+          aria-label="Subscription pagination"
+        >
+          <p className="text-ink-500 text-xs">
+            Page {page} of {totalPages}
+          </p>
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Previous</Button>
-            <Button variant="secondary" size="sm" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages}>Next</Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              disabled={page === totalPages}
+            >
+              Next
+            </Button>
           </div>
         </nav>
       )}
@@ -465,7 +640,11 @@ export default function PlatformSubscriptionsPage() {
       <TransitionDialog
         open={transitionModal.open}
         subscription={transitionModal.subscription}
-        availableStatuses={transitionModal.subscription ? TRANSITION_OPTIONS[transitionModal.subscription.status] ?? [] : []}
+        availableStatuses={
+          transitionModal.subscription
+            ? (TRANSITION_OPTIONS[transitionModal.subscription.status] ?? [])
+            : []
+        }
         packages={packages}
         transitioning={transitioning}
         onTransition={handleTransition}
@@ -506,7 +685,7 @@ function AssignmentDialog({
 }) {
   const [tenantId, setTenantId] = useState('');
   const [packageId, setPackageId] = useState('');
-  const [billingInterval, setBillingInterval] = useState<'monthly' | 'quarterly' | 'annually'>('annually');
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>('annually');
   const [startMode, setStartMode] = useState<'active' | 'trial' | 'pending'>('active');
 
   useEffect(() => {
@@ -520,19 +699,16 @@ function AssignmentDialog({
   }, [open, packages, tenants]);
 
   const selectedPackage = packages.find((pkg) => pkg.id === packageId);
-  const selectedPrice = billingInterval === 'monthly'
-    ? selectedPackage?.priceMonthlyCents
-    : billingInterval === 'quarterly'
-      ? selectedPackage?.priceQuarterlyCents
-      : selectedPackage?.priceAnnuallyCents;
+  const selectedPrice = selectedPackage ? packagePrice(selectedPackage, billingInterval) : null;
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !assigning && !nextOpen && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Assign a subscription package</DialogTitle>
           <DialogDescription>
-            Apply the first subscription to a tenant that already exists. Future package changes use Manage.
+            Apply the first subscription to a tenant that already exists. Future package changes use
+            Manage.
           </DialogDescription>
         </DialogHeader>
 
@@ -540,41 +716,74 @@ function AssignmentDialog({
           <div className="space-y-1.5">
             <Label>Tenant</Label>
             <Select value={tenantId} onValueChange={setTenantId} disabled={assigning}>
-              <SelectTrigger aria-label="Tenant without a subscription"><SelectValue placeholder="Select tenant" /></SelectTrigger>
-              <SelectContent>{tenants.map((tenant) => <SelectItem key={tenant.id} value={tenant.id}>{tenant.name} ({tenant.code})</SelectItem>)}</SelectContent>
+              <SelectTrigger aria-label="Tenant without a subscription">
+                <SelectValue placeholder="Select tenant" />
+              </SelectTrigger>
+              <SelectContent>
+                {tenants.map((tenant) => (
+                  <SelectItem key={tenant.id} value={tenant.id}>
+                    {tenant.name} ({tenant.code})
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-1.5">
             <Label>Package</Label>
-            <Select value={packageId} onValueChange={(value) => {
-              setPackageId(value);
-              const pkg = packages.find((item) => item.id === value);
-              if (pkg) setBillingInterval(pkg.defaultBillingInterval);
-            }} disabled={assigning}>
-              <SelectTrigger aria-label="Subscription package"><SelectValue placeholder="Select package" /></SelectTrigger>
-              <SelectContent>{packages.map((pkg) => <SelectItem key={pkg.id} value={pkg.id}>{pkg.name} ({pkg.code})</SelectItem>)}</SelectContent>
-            </Select>
+            <p className="text-ink-500 text-xs">
+              Compare the price and primary capacity before assigning a package.
+            </p>
+            <PackageChoiceList
+              packages={packages}
+              selectedPackageId={packageId}
+              billingInterval={billingInterval}
+              disabled={assigning}
+              onSelect={(pkg) => {
+                setPackageId(pkg.id);
+                setBillingInterval(pkg.defaultBillingInterval);
+              }}
+            />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Billing interval</Label>
-              <Select value={billingInterval} onValueChange={(value) => setBillingInterval(value as typeof billingInterval)} disabled={assigning}>
-                <SelectTrigger aria-label="Billing interval"><SelectValue /></SelectTrigger>
-                <SelectContent>{(['monthly', 'quarterly', 'annually'] as const).map((interval) => {
-                  const price = interval === 'monthly' ? selectedPackage?.priceMonthlyCents : interval === 'quarterly' ? selectedPackage?.priceQuarterlyCents : selectedPackage?.priceAnnuallyCents;
-                  return <SelectItem key={interval} value={interval} disabled={price == null}>{interval.charAt(0).toUpperCase() + interval.slice(1)}</SelectItem>;
-                })}</SelectContent>
+              <Select
+                value={billingInterval}
+                onValueChange={(value) => setBillingInterval(value as typeof billingInterval)}
+                disabled={assigning}
+              >
+                <SelectTrigger aria-label="Billing interval">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(['monthly', 'quarterly', 'annually'] as const).map((interval) => {
+                    const price = selectedPackage ? packagePrice(selectedPackage, interval) : null;
+                    return (
+                      <SelectItem key={interval} value={interval} disabled={price == null}>
+                        {interval.charAt(0).toUpperCase() + interval.slice(1)}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
               <Label>Start subscription</Label>
-              <Select value={startMode} onValueChange={(value) => setStartMode(value as typeof startMode)} disabled={assigning}>
-                <SelectTrigger aria-label="Subscription start mode"><SelectValue /></SelectTrigger>
+              <Select
+                value={startMode}
+                onValueChange={(value) => setStartMode(value as typeof startMode)}
+                disabled={assigning}
+              >
+                <SelectTrigger aria-label="Subscription start mode">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="active">Active now</SelectItem>
-                  <SelectItem value="trial" disabled={!selectedPackage?.trialDays}>Package trial ({selectedPackage?.trialDays ?? 0} days)</SelectItem>
+                  <SelectItem value="trial" disabled={!selectedPackage?.trialDays}>
+                    Package trial ({selectedPackage?.trialDays ?? 0} days)
+                  </SelectItem>
                   <SelectItem value="pending">Pending payment</SelectItem>
                 </SelectContent>
               </Select>
@@ -582,27 +791,34 @@ function AssignmentDialog({
           </div>
 
           {selectedPackage && (
-            <div className="rounded-[8px] border border-border bg-muted/40 p-3 text-xs text-ink-600">
-              <p className="font-medium text-ink-950">
-                {selectedPrice == null ? 'Unavailable interval' : new Intl.NumberFormat('en-NA', { style: 'currency', currency: 'NAD' }).format(selectedPrice / 100)} · {billingInterval}
+            <div className="border-border bg-muted/40 text-ink-600 rounded-[8px] border p-3 text-xs">
+              <p className="text-ink-950 font-medium">
+                {selectedPrice == null
+                  ? 'Unavailable interval'
+                  : formatPackagePrice(selectedPrice, billingInterval)}
               </p>
               <p className="mt-1">
-                Limits: {selectedPackage.maxVehicles ?? 'Unlimited'} vehicles · {selectedPackage.maxUsers ?? 'Unlimited'} users
+                Limits: {selectedPackage.maxVehicles ?? 'Unlimited'} vehicles ·{' '}
+                {selectedPackage.maxUsers ?? 'Unlimited'} users
               </p>
             </div>
           )}
         </div>
 
         <DialogFooter className="mobile-action-bar">
-          <Button variant="secondary" onClick={onClose} disabled={assigning}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose} disabled={assigning}>
+            Cancel
+          </Button>
           <Button
-            onClick={() => onAssign({
-              tenantId,
-              packageId,
-              billingInterval,
-              trialDays: startMode === 'trial' ? selectedPackage?.trialDays ?? 0 : 0,
-              startNow: startMode === 'active',
-            })}
+            onClick={() =>
+              onAssign({
+                tenantId,
+                packageId,
+                billingInterval,
+                trialDays: startMode === 'trial' ? (selectedPackage?.trialDays ?? 0) : 0,
+                startNow: startMode === 'active',
+              })
+            }
             loading={assigning}
             disabled={!tenantId || !packageId || selectedPrice == null}
           >
@@ -628,12 +844,18 @@ function TransitionDialog({
   availableStatuses: string[];
   transitioning: boolean;
   packages: PackageOption[];
-  onTransition: (change: { status?: string; reason: string; packageId?: string; billingInterval?: string; billingPeriods?: number }) => void | Promise<void>;
+  onTransition: (change: {
+    status?: string;
+    reason: string;
+    packageId?: string;
+    billingInterval?: string;
+    billingPeriods?: number;
+  }) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [selectedStatus, setSelectedStatus] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState('');
-  const [billingInterval, setBillingInterval] = useState<'monthly' | 'quarterly' | 'annually'>('annually');
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>('annually');
   const [billingPeriods, setBillingPeriods] = useState('1');
   const [reason, setReason] = useState('');
 
@@ -646,23 +868,31 @@ function TransitionDialog({
       setBillingPeriods('1');
       setReason('');
     }
-  }, [availableStatuses, open, subscription?.billingInterval, subscription?.id, subscription?.packageId]);
+  }, [
+    availableStatuses,
+    open,
+    subscription?.billingInterval,
+    subscription?.id,
+    subscription?.packageId,
+  ]);
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !transitioning && !nextOpen && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Manage tenant subscription</DialogTitle>
           <DialogDescription>
-            Upgrade or downgrade the package, set its billing duration, and optionally change lifecycle status.
+            Upgrade or downgrade the package, set its billing duration, and optionally change
+            lifecycle status.
           </DialogDescription>
         </DialogHeader>
 
         {subscription && (
-          <div className="rounded-[8px] border border-border bg-muted/40 p-3">
-            <p className="text-sm font-medium text-ink-950">{subscription.tenantName}</p>
-            <p className="mt-1 text-xs text-ink-500">
-              {subscription.packageName} · {STATUS_CONFIG[subscription.status]?.label ?? subscription.status}
+          <div className="border-border bg-muted/40 rounded-[8px] border p-3">
+            <p className="text-ink-950 text-sm font-medium">{subscription.tenantName}</p>
+            <p className="text-ink-500 mt-1 text-xs">
+              {subscription.packageName} ·{' '}
+              {STATUS_CONFIG[subscription.status]?.label ?? subscription.status}
             </p>
           </div>
         )}
@@ -670,34 +900,61 @@ function TransitionDialog({
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
             <Label>Subscription package</Label>
-            <Select value={selectedPackageId} onValueChange={(value) => {
-              setSelectedPackageId(value);
-              const pkg = packages.find((item) => item.id === value);
-              if (pkg) setBillingInterval(pkg.defaultBillingInterval);
-            }} disabled={transitioning}>
-              <SelectTrigger aria-label="Subscription package"><SelectValue placeholder="Select package" /></SelectTrigger>
-              <SelectContent>{packages.map((pkg) => <SelectItem key={pkg.id} value={pkg.id}>{pkg.name} ({pkg.code})</SelectItem>)}</SelectContent>
-            </Select>
+            <p className="text-ink-500 text-xs">
+              Prices follow the selected billing interval; capacities are the package maximums.
+            </p>
+            <PackageChoiceList
+              packages={packages}
+              selectedPackageId={selectedPackageId}
+              billingInterval={billingInterval}
+              disabled={transitioning}
+              onSelect={(pkg) => {
+                setSelectedPackageId(pkg.id);
+                setBillingInterval(pkg.defaultBillingInterval);
+              }}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Billing interval</Label>
-            <Select value={billingInterval} onValueChange={(value) => setBillingInterval(value as typeof billingInterval)} disabled={transitioning}>
-              <SelectTrigger aria-label="Billing interval"><SelectValue /></SelectTrigger>
-              <SelectContent>{(['monthly', 'quarterly', 'annually'] as const).map((interval) => {
-                const pkg = packages.find((item) => item.id === selectedPackageId);
-                const price = interval === 'monthly' ? pkg?.priceMonthlyCents : interval === 'quarterly' ? pkg?.priceQuarterlyCents : pkg?.priceAnnuallyCents;
-                return <SelectItem key={interval} value={interval} disabled={price == null}>{interval.charAt(0).toUpperCase() + interval.slice(1)}</SelectItem>;
-              })}</SelectContent>
+            <Select
+              value={billingInterval}
+              onValueChange={(value) => setBillingInterval(value as typeof billingInterval)}
+              disabled={transitioning}
+            >
+              <SelectTrigger aria-label="Billing interval">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(['monthly', 'quarterly', 'annually'] as const).map((interval) => {
+                  const pkg = packages.find((item) => item.id === selectedPackageId);
+                  const price = pkg ? packagePrice(pkg, interval) : null;
+                  return (
+                    <SelectItem key={interval} value={interval} disabled={price == null}>
+                      {interval.charAt(0).toUpperCase() + interval.slice(1)}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="billing-periods">Duration (billing periods)</Label>
-            <Input id="billing-periods" type="number" min={1} max={36} value={billingPeriods} onChange={(event) => setBillingPeriods(event.target.value)} disabled={transitioning} />
+            <Input
+              id="billing-periods"
+              type="number"
+              min={1}
+              max={36}
+              value={billingPeriods}
+              onChange={(event) => setBillingPeriods(event.target.value)}
+              disabled={transitioning}
+            />
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <Label>Lifecycle status <span className="font-normal text-ink-400">(optional)</span></Label>
+          <Label>
+            Lifecycle status <span className="text-ink-400 font-normal">(optional)</span>
+          </Label>
           <Select value={selectedStatus} onValueChange={setSelectedStatus} disabled={transitioning}>
             <SelectTrigger aria-label="New subscription status">
               <SelectValue placeholder="Select status" />
@@ -705,14 +962,18 @@ function TransitionDialog({
             <SelectContent>
               <SelectItem value="keep">Keep current status</SelectItem>
               {availableStatuses.map((status) => (
-                <SelectItem key={status} value={status}>{STATUS_CONFIG[status]?.label ?? status}</SelectItem>
+                <SelectItem key={status} value={status}>
+                  {STATUS_CONFIG[status]?.label ?? status}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
 
         <div className="space-y-1.5">
-          <Label>Reason <span className="font-normal text-ink-400">(optional)</span></Label>
+          <Label>
+            Reason <span className="text-ink-400 font-normal">(optional)</span>
+          </Label>
           <Textarea
             value={reason}
             onChange={(event) => setReason(event.target.value)}
@@ -723,17 +984,34 @@ function TransitionDialog({
         </div>
 
         <DialogFooter className="mobile-action-bar">
-          <Button variant="secondary" onClick={onClose} disabled={transitioning}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose} disabled={transitioning}>
+            Cancel
+          </Button>
           <Button
-            onClick={() => onTransition({
-              status: selectedStatus === 'keep' ? undefined : selectedStatus,
-              reason: reason.trim(),
-              packageId: selectedPackageId !== subscription?.packageId || billingInterval !== subscription?.billingInterval || billingPeriods !== '1' ? selectedPackageId : undefined,
-              billingInterval,
-              billingPeriods: Number(billingPeriods),
-            })}
+            onClick={() =>
+              onTransition({
+                status: selectedStatus === 'keep' ? undefined : selectedStatus,
+                reason: reason.trim(),
+                packageId:
+                  selectedPackageId !== subscription?.packageId ||
+                  billingInterval !== subscription?.billingInterval ||
+                  billingPeriods !== '1'
+                    ? selectedPackageId
+                    : undefined,
+                billingInterval,
+                billingPeriods: Number(billingPeriods),
+              })
+            }
             loading={transitioning}
-            disabled={!selectedPackageId || Number(billingPeriods) < 1 || Number(billingPeriods) > 36 || (selectedStatus === 'keep' && selectedPackageId === subscription?.packageId && billingInterval === subscription?.billingInterval && billingPeriods === '1')}
+            disabled={
+              !selectedPackageId ||
+              Number(billingPeriods) < 1 ||
+              Number(billingPeriods) > 36 ||
+              (selectedStatus === 'keep' &&
+                selectedPackageId === subscription?.packageId &&
+                billingInterval === subscription?.billingInterval &&
+                billingPeriods === '1')
+            }
           >
             <ArrowRightLeft className="h-4 w-4" aria-hidden="true" /> Apply changes
           </Button>
