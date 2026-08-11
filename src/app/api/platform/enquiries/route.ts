@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, count, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { cmsEnquiries } from '@/db/schema/cms-content';
-import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 const ALLOWED_STATUSES = ['new', 'in_progress', 'resolved', 'closed'] as const;
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.SITE_MANAGE);
+    const permCheck = await requireAnyPermission(session, [Permissions.SITE_MANAGE, Permissions.PLATFORM_SUPPORT]);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { searchParams } = new URL(request.url);
@@ -94,7 +94,7 @@ export async function PATCH(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.SITE_MANAGE);
+    const permCheck = await requireAnyPermission(session, [Permissions.SITE_MANAGE, Permissions.PLATFORM_SUPPORT]);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json().catch(() => null);

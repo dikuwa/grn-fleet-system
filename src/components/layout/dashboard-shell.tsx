@@ -44,6 +44,7 @@ export function DashboardShell({
         onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
         activeWorkspace={activeWorkspace}
         badgeCounts={badgeCounts}
+        roleNames={roleNames}
       />
 
       <MobileSidebar
@@ -54,6 +55,7 @@ export function DashboardShell({
         workspaceLabel={
           eligibleWorkspaces.find((workspace) => workspace.id === activeWorkspace)?.label
         }
+        roleNames={roleNames}
       />
 
       <div

@@ -133,9 +133,9 @@ describe('Platform Tenants API — GET /api/platform/tenants', () => {
   });
 
   it('returns 403 without PLATFORM_ADMIN', async () => {
-    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
+    const { requireRequestAuth, requireAnyPermission } = await import('@/lib/auth-helpers');
     vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
-    vi.mocked(requirePermission).mockResolvedValue(mockForbidden() as never);
+    vi.mocked(requireAnyPermission).mockResolvedValue(mockForbidden() as never);
 
     const req = { url: 'http://localhost:3000/api/platform/tenants?limit=25&page=1', method: 'GET' };
     const res = await route.GET(req as unknown as Request);
@@ -143,10 +143,10 @@ describe('Platform Tenants API — GET /api/platform/tenants', () => {
   });
 
   it('returns paginated tenants with member counts', async () => {
-    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
+    const { requireRequestAuth, requireAnyPermission } = await import('@/lib/auth-helpers');
     const { getDb } = await import('@/db');
     vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
-    vi.mocked(requirePermission).mockResolvedValue(true as never);
+    vi.mocked(requireAnyPermission).mockResolvedValue(true as never);
 
     const mockDb = createMockDb();
     // Count query
@@ -177,10 +177,10 @@ describe('Platform Tenants API — GET /api/platform/tenants', () => {
   });
 
   it('filters by search query', async () => {
-    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
+    const { requireRequestAuth, requireAnyPermission } = await import('@/lib/auth-helpers');
     const { getDb } = await import('@/db');
     vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
-    vi.mocked(requirePermission).mockResolvedValue(true as never);
+    vi.mocked(requireAnyPermission).mockResolvedValue(true as never);
 
     const mockDb = createMockDb();
     mockDb.pushResult([{ count: 1 }]);

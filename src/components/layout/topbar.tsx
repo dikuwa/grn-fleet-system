@@ -52,7 +52,6 @@ export function Topbar({
   roleNames,
   activeWorkspace,
   eligibleWorkspaces,
-  attentionBadgeCounts = {},
 }: TopbarProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -84,10 +83,6 @@ export function Topbar({
     refetchOnReconnect: true,
   });
   const unreadCount = notificationQuery.data?.unreadCount || 0;
-  const attentionTotal = Object.values(attentionBadgeCounts).reduce(
-    (sum, count) => sum + (Number(count) || 0),
-    0,
-  );
 
   useEffect(() => {
     const handler = (event: MouseEvent) => {
@@ -179,16 +174,7 @@ export function Topbar({
         <Link
           href="/dashboard/notifications"
           className="focus-ring text-ink-500 hover:bg-muted relative flex h-10 w-10 items-center justify-center rounded-[8px] transition-colors motion-reduce:transition-none"
-          aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}${
-            attentionTotal > 0
-              ? `, ${attentionTotal} item${attentionTotal === 1 ? '' : 's'} need your attention`
-              : ''
-          }`}
-          title={
-            attentionTotal > 0
-              ? `${attentionTotal} item${attentionTotal === 1 ? '' : 's'} need your attention`
-              : undefined
-          }
+          aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
         >
           <Bell className="h-[18px] w-[18px]" aria-hidden="true" />
           {unreadCount > 0 && (
@@ -196,12 +182,7 @@ export function Topbar({
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}
-          {attentionTotal > 0 && (
-            <span aria-hidden="true" className="bg-status-warning-text absolute -top-0.5 -left-0.5 flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] leading-none font-bold text-white">
-              {attentionTotal > 99 ? '99+' : attentionTotal}
-            </span>
-          )}
-          {unreadCount === 0 && attentionTotal === 0 && !notificationQuery.isError && (
+          {unreadCount === 0 && !notificationQuery.isError && (
             <span className="bg-ink-300 absolute top-1.5 right-1.5 h-2 w-2 rounded-full" />
           )}
         </Link>

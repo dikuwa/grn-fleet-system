@@ -8,7 +8,7 @@ import { employees, departments, offices } from '@/db/schema/people';
 import { regions } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, like, or, desc, sql, type SQL } from 'drizzle-orm';
+import { eq, and, ilike, or, desc, sql, type SQL } from 'drizzle-orm';
 import {
   programmeOwnershipCondition,
   resolveProgrammeAccess,
@@ -53,10 +53,10 @@ export async function GET(request: NextRequest) {
     if (q) {
       conditions.push(
         or(
-          like(programmes.title, `%${q}%`),
-          like(programmes.reference, `%${q}%`),
-          like(programmes.department, `%${q}%`),
-          like(programmes.venue, `%${q}%`),
+          ilike(programmes.title, `%${q}%`),
+          ilike(programmes.reference, `%${q}%`),
+          ilike(programmes.department, `%${q}%`),
+          ilike(programmes.venue, `%${q}%`),
         )!,
       );
     }

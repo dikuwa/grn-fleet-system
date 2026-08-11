@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { and, desc, eq, like, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { getDb, isDbConnected } from '@/db';
 import { vehicleInspections } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
@@ -56,9 +56,9 @@ async function fetchInspections(
   if (search) {
     conditions.push(
       or(
-        like(vehicles.licenceNumber, `%${search}%`),
-        like(vehicles.make, `%${search}%`),
-        like(vehicles.model, `%${search}%`),
+        ilike(vehicles.licenceNumber, `%${search}%`),
+        ilike(vehicles.make, `%${search}%`),
+        ilike(vehicles.model, `%${search}%`),
       )!,
     );
   }

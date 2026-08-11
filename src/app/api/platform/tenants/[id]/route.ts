@@ -3,7 +3,8 @@
  *
  * GET    /api/platform/tenants/[id] — tenant details + deletion assessment
  * PATCH  /api/platform/tenants/[id] — controlled tenant/lifecycle update
- * DELETE /api/platform/tenants/[id] — hard-delete only when no substantive records exist
+ * DELETE /api/platform/tenants/[id] — controlled hard-delete; populated tenants
+ * require suspension/archive plus an explicit force confirmation
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -15,7 +16,7 @@ import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { trips } from '@/db/schema/trips';
 import { programmes } from '@/db/schema/programmes';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
@@ -57,7 +58,7 @@ export async function GET(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
+    const permCheck = await requireAnyPermission(session, [Permissions.PLATFORM_ADMIN, Permissions.TENANT_VIEW]);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
@@ -200,26 +201,31 @@ export async function DELETE(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.TENANT_MANAGE);
+    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
     const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
     if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
+    const deletion = await getDeletionAssessment(id);
+    const force = request.nextUrl.searchParams.get('force') === 'true';
+    const expectedConfirmation = deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`;
     const confirmation = request.nextUrl.searchParams.get('confirm') ?? '';
-    if (confirmation !== tenant.code) {
+    if (confirmation !== expectedConfirmation) {
       return NextResponse.json(
-        { error: `Type the tenant code ${tenant.code} to confirm permanent deletion.` },
+        { error: `Type ${expectedConfirmation} to confirm permanent deletion.` },
         { status: 400 },
       );
     }
 
-    const deletion = await getDeletionAssessment(id);
-    if (!deletion.canDelete) {
+    const isInactive = tenant.status === 'SUSPENDED' || tenant.status === 'ARCHIVED' || tenant.lifecycleStatus === 'ARCHIVED';
+    if (!deletion.canDelete && (!force || !isInactive)) {
       return NextResponse.json(
         {
-          error: 'This tenant contains platform or operational records and cannot be permanently deleted.',
+          error: isInactive
+            ? 'This tenant contains records. Use the populated-tenant confirmation to delete it and its tenant-owned data.'
+            : 'Suspend or archive this tenant before deleting it with records.',
           deletion,
           alternatives: ['SUSPENDED', 'ARCHIVED'],
         },
@@ -233,7 +239,7 @@ export async function DELETE(
       action: 'tenant.permanent_delete_requested',
       entityType: 'tenant',
       entityId: tenant.id,
-      summary: `Platform administrator permanently deleted empty tenant ${tenant.name} (${tenant.code}).`,
+      summary: `Platform administrator permanently deleted ${deletion.canDelete ? 'empty' : 'populated'} tenant ${tenant.name} (${tenant.code}).`,
       before: { name: tenant.name, code: tenant.code, slug: tenant.slug, status: tenant.status, lifecycleStatus: tenant.lifecycleStatus },
     }).catch(() => {});
 
@@ -241,7 +247,7 @@ export async function DELETE(
 
     return NextResponse.json({
       success: true,
-      data: { id: tenant.id, name: tenant.name, code: tenant.code, deleted: true },
+      data: { id: tenant.id, name: tenant.name, code: tenant.code, deleted: true, removedRecordAssessment: deletion },
     });
   } catch (error) {
     console.error('[Platform Tenant Detail] DELETE failed:', error);

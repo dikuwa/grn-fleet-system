@@ -39,6 +39,8 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { TenantActivityLog } from './TenantActivityLog';
 import { formatDate } from '@/lib/utils';
 import { useToast } from '@/lib/use-toast';
+import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
+import { SystemRoles } from '@/lib/workspaces';
 
 interface TenantDetail {
   id: string;
@@ -90,10 +92,16 @@ function lifecycleBadge(status: string) {
   return <Badge variant={variant} size="sm">{status.replace(/_/g, ' ').toLowerCase()}</Badge>;
 }
 
+function colourPickerValue(value: string, fallback: string) {
+  return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+}
+
 export default function PlatformTenantDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const { toast } = useToast();
+  const profileQuery = useQuery({ queryKey: userProfileQueryKey, queryFn: ({ signal }) => fetchUserProfile(signal) });
+  const canManage = profileQuery.data?.roles.some((role) => role.roleName === SystemRoles.PLATFORM_ADMIN) === true;
   const [activeTab, setActiveTab] = useState<TabId>('general');
   const [saving, setSaving] = useState(false);
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
@@ -129,16 +137,19 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
 
   useEffect(() => {
     if (!tenant) return;
-    setEditName(tenant.name);
-    setEditStatus(tenant.status.toUpperCase());
-    setEditTimezone(tenant.timezone);
-    setEditContactEmail(tenant.branding?.contactEmail ?? '');
-    setEditContactPhone(tenant.branding?.contactPhone ?? '');
-    setEditAddress(tenant.branding?.address ?? '');
-    setEditPrimaryColor(tenant.branding?.primaryColor ?? '#1F4E8C');
-    setEditAccentColor(tenant.branding?.accentColor ?? '#0F766E');
-    setEditDocumentFooter(tenant.branding?.documentFooter ?? '');
-    setEditSenderName(tenant.branding?.senderName ?? '');
+    const timer = window.setTimeout(() => {
+      setEditName(tenant.name);
+      setEditStatus(tenant.status.toUpperCase());
+      setEditTimezone(tenant.timezone);
+      setEditContactEmail(tenant.branding?.contactEmail ?? '');
+      setEditContactPhone(tenant.branding?.contactPhone ?? '');
+      setEditAddress(tenant.branding?.address ?? '');
+      setEditPrimaryColor(tenant.branding?.primaryColor ?? '#1F4E8C');
+      setEditAccentColor(tenant.branding?.accentColor ?? '#0F766E');
+      setEditDocumentFooter(tenant.branding?.documentFooter ?? '');
+      setEditSenderName(tenant.branding?.senderName ?? '');
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [tenant]);
 
   const deletionBlockers = useMemo(() => {
@@ -222,13 +233,17 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
   };
 
   const permanentlyDelete = async () => {
-    if (!tenant || deleteConfirmation !== tenant.code) return;
+    if (!tenant) return;
+    const expected = tenant.deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`;
+    if (deleteConfirmation !== expected) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/platform/tenants/${id}?confirm=${encodeURIComponent(tenant.code)}`, { method: 'DELETE' });
+      const params = new URLSearchParams({ confirm: expected });
+      if (!tenant.deletion.canDelete) params.set('force', 'true');
+      const res = await fetch(`/api/platform/tenants/${id}?${params}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Tenant deletion failed');
-      toast({ title: 'Tenant permanently deleted', description: `${tenant.name} contained no protected operational records.`, variant: 'success' });
+      toast({ title: 'Tenant permanently deleted', description: `${tenant.name} and its tenant-owned data were removed.`, variant: 'success' });
       router.replace('/dashboard/platform/tenants');
       router.refresh();
     } catch (error) {
@@ -256,7 +271,7 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Tenants', href: '/dashboard/platform/tenants' }, { label: tenant.name }]} />
       <PageHeader title={tenant.name} description={`${tenant.code} · ${tenant.slug}`}>
-        <div className="flex flex-wrap gap-2">
+        {canManage && <div className="flex flex-wrap gap-2">
           {tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW' && <Button size="sm" onClick={() => setReviewDialogOpen(true)}><CheckCircle2 className="h-4 w-4" /> Review setup</Button>}
           {tenant.lifecycleStatus === 'READY_FOR_ACTIVATION' && <Button size="sm" onClick={() => void handleLifecycleChange('ACTIVE')} loading={isApproving}><ShieldCheck className="h-4 w-4" /> Activate</Button>}
           <Button variant="secondary" size="sm" onClick={() => setStatusDialogOpen(true)}>
@@ -264,8 +279,10 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
             {tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate' : 'Suspend'}
           </Button>
           <Button size="sm" onClick={() => void handleSave()} loading={saving}><Save className="h-4 w-4" /> Save changes</Button>
-        </div>
+        </div>}
       </PageHeader>
+
+      {!canManage && <div className="rounded-[8px] border border-brand-200 bg-brand-50/40 px-4 py-3 text-sm text-ink-700 dark:bg-brand-950/20">Read-only platform oversight. Tenant changes require the Platform Super Administrator role.</div>}
 
       <section className="overflow-hidden rounded-[10px] border border-border bg-border" aria-label="Tenant summary">
         <div className="grid sm:grid-cols-2 lg:grid-cols-4">
@@ -305,14 +322,14 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
           <Card>
             <CardHeader><CardTitle>General configuration</CardTitle></CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
-              <FieldWrapper label="Organisation name" required><Input value={editName} onChange={(event) => setEditName(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Organisation name" required><Input value={editName} onChange={(event) => setEditName(event.target.value)} disabled={!canManage} /></FieldWrapper>
               <FieldWrapper label="Tenant code"><Input value={tenant.code} disabled /></FieldWrapper>
               <FieldWrapper label="Account status">
-                <StyledSelect value={editStatus} onChange={(event) => setEditStatus(event.target.value)}>
+                <StyledSelect value={editStatus} onChange={(event) => setEditStatus(event.target.value)} disabled={!canManage}>
                   <option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="TRIAL">Trial</option><option value="ARCHIVED">Archived</option>
                 </StyledSelect>
               </FieldWrapper>
-              <FieldWrapper label="Timezone"><StyledSelect value={editTimezone} onChange={(event) => setEditTimezone(event.target.value)}><option value="Africa/Windhoek">Africa/Windhoek (UTC+2)</option></StyledSelect></FieldWrapper>
+              <FieldWrapper label="Timezone"><StyledSelect value={editTimezone} onChange={(event) => setEditTimezone(event.target.value)} disabled={!canManage}><option value="Africa/Windhoek">Africa/Windhoek (UTC+2)</option></StyledSelect></FieldWrapper>
               <FieldWrapper label="Type"><Input value={tenant.type.replace(/_/g, ' ')} disabled className="capitalize" /></FieldWrapper>
               <FieldWrapper label="URL slug"><Input value={tenant.slug} disabled /></FieldWrapper>
             </CardContent>
@@ -326,7 +343,7 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
             </CardContent>
           </Card>
 
-          <Card className={tenant.deletion.canDelete ? 'border-status-warning-text/30' : ''}>
+          {canManage && <Card className={tenant.deletion.canDelete ? 'border-status-warning-text/30' : ''}>
             <CardHeader><CardTitle>Retention & removal</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               {tenant.deletion.canDelete ? (
@@ -339,13 +356,16 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="flex items-start gap-3"><Archive className="mt-0.5 h-5 w-5 text-ink-400" /><div><p className="text-sm font-semibold text-ink-950">Permanent deletion is blocked.</p><p className="mt-1 text-xs text-ink-500">The tenant owns records that must be retained. Suspend or archive it instead.</p></div></div>
+                  <div className="flex items-start gap-3"><Archive className="mt-0.5 h-5 w-5 text-ink-400" /><div><p className="text-sm font-semibold text-ink-950">This tenant contains records.</p><p className="mt-1 text-xs text-ink-500">Suspend or archive it first. A Platform Administrator can then permanently remove the tenant and all tenant-owned records with an elevated confirmation.</p></div></div>
                   <div className="flex flex-wrap gap-2">{deletionBlockers.map(([label, value]) => <Badge key={label} variant="default" size="sm">{label.replace(/([A-Z])/g, ' $1')}: {value}</Badge>)}</div>
-                  {tenant.lifecycleStatus !== 'ARCHIVED' && <Button variant="secondary" size="sm" onClick={() => void handleLifecycleChange('ARCHIVED')} loading={isApproving}><Archive className="h-4 w-4" /> Archive tenant</Button>}
+                  <div className="flex flex-wrap gap-2">
+                    {tenant.lifecycleStatus !== 'ARCHIVED' && <Button variant="secondary" size="sm" onClick={() => void handleLifecycleChange('ARCHIVED')} loading={isApproving}><Archive className="h-4 w-4" /> Archive tenant</Button>}
+                    {(tenant.status.toUpperCase() === 'SUSPENDED' || tenant.status.toUpperCase() === 'ARCHIVED' || tenant.lifecycleStatus === 'ARCHIVED') && <Button variant="ghost" size="sm" className="text-status-error-text" onClick={() => setDeleteDialogOpen(true)}><Trash2 className="h-4 w-4" /> Delete tenant and records</Button>}
+                  </div>
                 </div>
               )}
             </CardContent>
-          </Card>
+          </Card>}
         </div>
       )}
 
@@ -356,8 +376,18 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
             <div className="grid gap-4 sm:grid-cols-2">
               <FieldWrapper label="Contact email"><Input type="email" value={editContactEmail} onChange={(event) => setEditContactEmail(event.target.value)} /></FieldWrapper>
               <FieldWrapper label="Contact phone"><Input value={editContactPhone} onChange={(event) => setEditContactPhone(event.target.value)} /></FieldWrapper>
-              <FieldWrapper label="Primary colour"><Input value={editPrimaryColor} onChange={(event) => setEditPrimaryColor(event.target.value)} /></FieldWrapper>
-              <FieldWrapper label="Accent colour"><Input value={editAccentColor} onChange={(event) => setEditAccentColor(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Primary colour">
+                <div className="flex items-center gap-2">
+                  <input type="color" aria-label="Choose primary colour" value={colourPickerValue(editPrimaryColor, '#1F4E8C')} onChange={(event) => setEditPrimaryColor(event.target.value.toUpperCase())} className="h-10 w-12 cursor-pointer rounded-[7px] border border-border bg-surface p-1" />
+                  <Input value={editPrimaryColor} onChange={(event) => setEditPrimaryColor(event.target.value)} placeholder="#1F4E8C" className="font-mono" />
+                </div>
+              </FieldWrapper>
+              <FieldWrapper label="Accent colour">
+                <div className="flex items-center gap-2">
+                  <input type="color" aria-label="Choose accent colour" value={colourPickerValue(editAccentColor, '#0F766E')} onChange={(event) => setEditAccentColor(event.target.value.toUpperCase())} className="h-10 w-12 cursor-pointer rounded-[7px] border border-border bg-surface p-1" />
+                  <Input value={editAccentColor} onChange={(event) => setEditAccentColor(event.target.value)} placeholder="#0F766E" className="font-mono" />
+                </div>
+              </FieldWrapper>
               <FieldWrapper label="Sender name"><Input value={editSenderName} onChange={(event) => setEditSenderName(event.target.value)} /></FieldWrapper>
               <FieldWrapper label="Physical address"><Input value={editAddress} onChange={(event) => setEditAddress(event.target.value)} /></FieldWrapper>
             </div>
@@ -385,12 +415,12 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
 
       <Dialog open={deleteDialogOpen} onOpenChange={(open) => { setDeleteDialogOpen(open); if (!open) setDeleteConfirmation(''); }}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Permanently delete {tenant.name}?</DialogTitle><DialogDescription>This action is available only because the dependency check found no members, staff, vehicles, requests, trips or programmes. It cannot be undone.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Permanently delete {tenant.name}?</DialogTitle><DialogDescription>{tenant.deletion.canDelete ? 'The dependency check found no members, staff, vehicles, requests, trips or programmes.' : `This permanently removes the tenant and its ${tenant.deletion.substantiveRecordCount} assessed tenant-owned records.`} This cannot be undone.</DialogDescription></DialogHeader>
           <div className="space-y-3">
             <div className="flex items-start gap-2 rounded-[8px] border border-status-warning-text/30 bg-status-warning-bg/30 p-3 text-xs text-ink-700"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-status-warning-text" />Tenant-only configuration and setup records will also be removed.</div>
-            <div className="space-y-1.5"><Label htmlFor="delete-tenant-confirm">Type {tenant.code} to confirm</Label><Input id="delete-tenant-confirm" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value.toUpperCase())} autoComplete="off" /></div>
+            <div className="space-y-1.5"><Label htmlFor="delete-tenant-confirm">Type {tenant.deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`} to confirm</Label><Input id="delete-tenant-confirm" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value.toUpperCase())} autoComplete="off" /></div>
           </div>
-          <DialogFooter><Button variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button variant="destructive" disabled={deleteConfirmation !== tenant.code} loading={deleting} onClick={() => void permanentlyDelete()}><Trash2 className="h-4 w-4" /> Delete permanently</Button></DialogFooter>
+          <DialogFooter><Button variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button variant="ghost" className="text-status-error-text" disabled={deleteConfirmation !== (tenant.deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`)} loading={deleting} onClick={() => void permanentlyDelete()}><Trash2 className="h-4 w-4" /> Delete permanently</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

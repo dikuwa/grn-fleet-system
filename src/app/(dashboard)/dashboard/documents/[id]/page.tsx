@@ -164,6 +164,11 @@ export default async function DocumentDetailPage({ params }: PageProps) {
             <Download className="h-4 w-4" /> Download PDF
           </a>
         </Button>
+        <Button variant="secondary" size="sm" asChild>
+          <a href={`/api/documents/${doc.id}/pdf?preview=1`} target="_blank" rel="noreferrer">
+            <Eye className="h-4 w-4" /> Preview PDF
+          </a>
+        </Button>
         <DocumentLifecycleActions documentId={doc.id} currentStatus={doc.status} />
         <ShareActions
           shareUrl={shareUrl || undefined}

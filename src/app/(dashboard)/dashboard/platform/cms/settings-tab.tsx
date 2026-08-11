@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useState } from 'react';
-import { Info, Loader2, Save } from 'lucide-react';
+import { useCallback, useRef, useState } from 'react';
+import { ImageIcon, Info, Loader2, Save, Trash2, Upload } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -107,6 +107,10 @@ export function SiteSettingsTab({ content: initialContent, brand: initialBrand, 
   const [content, setContent] = useState<PublicContent>(initialContent);
   const [brand, setBrand] = useState<BrandFields>(initialBrand);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState<'logo' | 'favicon' | null>(null);
+  const [mediaKeys, setMediaKeys] = useState<Partial<Record<'logo' | 'favicon', string>>>({});
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const faviconInputRef = useRef<HTMLInputElement>(null);
   const [savedAt, setSavedAt] = useState<string | null>(lastUpdatedAt);
 
   const setHero = useCallback((key: keyof PublicContent['hero'], value: unknown) => {
@@ -155,6 +159,33 @@ export function SiteSettingsTab({ content: initialContent, brand: initialBrand, 
     }
   };
 
+  const uploadBrandImage = async (kind: 'logo' | 'favicon', file?: File) => {
+    if (!file) return;
+    setUploading(kind);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('kind', kind);
+      const res = await fetch('/api/platform/cms/media', { method: 'POST', body: form });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Upload failed');
+      setBrand((current) => ({ ...current, [kind === 'logo' ? 'logoUrl' : 'faviconUrl']: json.data.url }));
+      setMediaKeys((current) => ({ ...current, [kind]: json.data.key }));
+      toast({ title: `${kind === 'logo' ? 'Logo' : 'Favicon'} uploaded`, description: 'Preview updated. Save changes to publish it.', variant: 'success' });
+    } catch (error) {
+      toast({ title: 'Upload failed', description: error instanceof Error ? error.message : 'Image upload failed', variant: 'error' });
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const clearBrandImage = async (kind: 'logo' | 'favicon') => {
+    const key = mediaKeys[kind];
+    if (key) await fetch('/api/platform/cms/media', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) }).catch(() => undefined);
+    setBrand((current) => ({ ...current, [kind === 'logo' ? 'logoUrl' : 'faviconUrl']: '' }));
+    setMediaKeys((current) => ({ ...current, [kind]: undefined }));
+  };
+
   const savedLabel = savedAt
     ? `Last updated ${new Date(savedAt).toLocaleString('en-NA', { dateStyle: 'medium', timeStyle: 'short' })}`
     : 'Not saved yet';
@@ -184,8 +215,18 @@ export function SiteSettingsTab({ content: initialContent, brand: initialBrand, 
           <CardContent className="space-y-4">
             <Field label="Public platform name"><Input value={brand.siteName} maxLength={120} onChange={(event) => setBrand((current) => ({ ...current, siteName: event.target.value }))} /></Field>
             <Field label="Tagline"><Input value={brand.siteTagline} maxLength={200} onChange={(event) => setBrand((current) => ({ ...current, siteTagline: event.target.value }))} /></Field>
-            <Field label="Logo URL" hint="Public HTTPS image URL for the wordmark."><Input type="url" value={brand.logoUrl} onChange={(event) => setBrand((current) => ({ ...current, logoUrl: event.target.value }))} /></Field>
-            <Field label="Favicon URL"><Input type="url" value={brand.faviconUrl} onChange={(event) => setBrand((current) => ({ ...current, faviconUrl: event.target.value }))} /></Field>
+            {(['logo', 'favicon'] as const).map((kind) => {
+              const value = kind === 'logo' ? brand.logoUrl : brand.faviconUrl;
+              const inputRef = kind === 'logo' ? logoInputRef : faviconInputRef;
+              return <Field key={kind} label={kind === 'logo' ? 'Logo' : 'Favicon'} hint="Upload an image or paste a public HTTPS URL.">
+                <div className="space-y-2">
+                  {value ? <div className="flex min-h-20 items-center justify-center rounded-[8px] border border-border bg-muted/30 p-3"><img src={value} alt={`${kind} preview`} className={kind === 'favicon' ? 'h-12 w-12 object-contain' : 'max-h-20 max-w-full object-contain'} /></div> : <div className="flex min-h-20 items-center justify-center rounded-[8px] border border-dashed border-border text-ink-400"><ImageIcon className="h-5 w-5" /><span className="ml-2 text-xs">No {kind} selected</span></div>}
+                  <Input type="url" value={value} onChange={(event) => setBrand((current) => ({ ...current, [kind === 'logo' ? 'logoUrl' : 'faviconUrl']: event.target.value }))} placeholder="https://…" />
+                  <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(event) => void uploadBrandImage(kind, event.target.files?.[0])} />
+                  <div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" size="sm" loading={uploading === kind} onClick={() => inputRef.current?.click()}><Upload className="h-4 w-4" /> Upload</Button>{value && <Button type="button" variant="ghost" size="sm" className="text-status-error-text" onClick={() => void clearBrandImage(kind)}><Trash2 className="h-4 w-4" /> Remove</Button>}</div>
+                </div>
+              </Field>;
+            })}
           </CardContent>
         </Card>
 

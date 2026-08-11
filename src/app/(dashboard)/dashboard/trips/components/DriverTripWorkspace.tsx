@@ -287,13 +287,16 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'The trip update could not be saved');
       toast({ title: 'Trip updated', description: 'The official timeline and audit trail were updated.', variant: 'success' });
+      setWorking(false);
       setAction(null);
       setIncidentFiles([]);
       setForm({ fuelLevel: 'half', entryType: 'official_stop', incidentType: 'mechanical_defect', severity: 'minor', continuationState: 'safe_to_continue', vehicleSafe: true, passengerSafe: true });
-      await load();
+      void load();
       router.refresh();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'The trip update could not be saved');
+      const message = submitError instanceof Error ? submitError.message : 'The trip update could not be saved';
+      setError(message);
+      toast({ title: 'Trip update failed', description: message, variant: 'error' });
     } finally {
       setWorking(false);
     }
@@ -349,7 +352,7 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
         </CardContent>
       </Card>
 
-      <Dialog open={action !== null} onOpenChange={(open) => !open && setAction(null)}>
+      <Dialog open={action !== null} onOpenChange={(open) => { if (!open && !working) { setAction(null); setError(''); } }}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{actionTitle(action)}</DialogTitle>
@@ -478,7 +481,7 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
           )}
 
           <DialogFooter className="sticky bottom-0 -mx-6 -mb-6 bg-surface px-6 py-4">
-            <Button variant="secondary" onClick={() => setAction(null)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => { setAction(null); setError(''); }} disabled={working}>Cancel</Button>
             <Button variant={action === 'incident' ? 'emergency' : 'primary'} loading={working} onClick={submit}>
               {online ? <CheckCircle2 className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
               {online ? 'Save Update' : 'Save for Sync'}

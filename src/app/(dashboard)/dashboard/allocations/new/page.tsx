@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -251,20 +251,34 @@ export default function NewAllocationPage() {
     try {
       const params = new URLSearchParams({ requestId: selectedRequest.id, limit: '50' });
       if (selectedVehicle) params.set('vehicleId', selectedVehicle.id);
+      if (startDate) params.set('startDate', startDate);
+      if (endDate) params.set('endDate', endDate);
       const res = await fetch(`/api/allocations/drivers?${params}`, { cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to load driver eligibility');
       setDrivers(json.data || []);
-      if (selectedRequest.preferredDriverEmployeeId) {
-        setSelectedDriverId(selectedRequest.preferredDriverEmployeeId);
-      }
+      const preferred = (json.data || []).find(
+        (driver: DriverEligibility) => driver.employeeId === selectedRequest.preferredDriverEmployeeId && driver.eligible,
+      );
+      setSelectedDriverId((current) => {
+        const currentStillEligible = (json.data || []).some(
+          (driver: DriverEligibility) => driver.employeeId === current && driver.eligible,
+        );
+        return currentStillEligible ? current : preferred?.employeeId ?? null;
+      });
     } catch (err) {
       setDrivers([]);
       setError(err instanceof Error ? err.message : 'Could not load drivers');
     } finally {
       setDriversLoading(false);
     }
-  }, [selectedRequest, selectedVehicle]);
+  }, [selectedRequest, selectedVehicle, startDate, endDate]);
+
+  useEffect(() => {
+    if (!selectedRequest) return;
+    const timer = window.setTimeout(() => void loadDrivers(), 150);
+    return () => window.clearTimeout(timer);
+  }, [loadDrivers, selectedRequest]);
 
   /* ------------------- Advisory recommendation ------------------- */
 

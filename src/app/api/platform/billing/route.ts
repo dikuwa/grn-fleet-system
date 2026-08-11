@@ -11,7 +11,7 @@ import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { billingSettings } from '@/db/schema/subscriptions';
 import { tenants } from '@/db/schema';
-import { eq, desc, count, and, or, like } from 'drizzle-orm';
+import { eq, desc, count, and, or, ilike, like } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 // ---------------------------------------------------------------------------
@@ -39,10 +39,10 @@ export async function GET(request: NextRequest) {
     if (q) {
       conditions.push(
         or(
-          like(tenants.name, `%${q}%`),
-          like(billingSettings.billingContactName, `%${q}%`),
-          like(billingSettings.billingContactEmail, `%${q}%`),
-          like(billingSettings.taxId, `%${q}%`),
+          ilike(tenants.name, `%${q}%`),
+          ilike(billingSettings.billingContactName, `%${q}%`),
+          ilike(billingSettings.billingContactEmail, `%${q}%`),
+          ilike(billingSettings.taxId, `%${q}%`),
         )!,
       );
     }
@@ -51,8 +51,8 @@ export async function GET(request: NextRequest) {
 
     const [totalResult] = await db
       .select({ count: count() })
-      .from(billingSettings)
-      .innerJoin(tenants, eq(billingSettings.tenantId, tenants.id))
+      .from(tenants)
+      .leftJoin(billingSettings, eq(billingSettings.tenantId, tenants.id))
       .where(whereClause);
 
     const total = totalResult?.count || 0;
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
     const settings = await db
       .select({
         id: billingSettings.id,
-        tenantId: billingSettings.tenantId,
+        tenantId: tenants.id,
         tenantName: tenants.name,
         tenantCode: tenants.code,
         billingContactName: billingSettings.billingContactName,
@@ -79,8 +79,8 @@ export async function GET(request: NextRequest) {
         createdAt: billingSettings.createdAt,
         updatedAt: billingSettings.updatedAt,
       })
-      .from(billingSettings)
-      .innerJoin(tenants, eq(billingSettings.tenantId, tenants.id))
+      .from(tenants)
+      .leftJoin(billingSettings, eq(billingSettings.tenantId, tenants.id))
       .where(whereClause)
       .orderBy(desc(billingSettings.updatedAt))
       .limit(limit)
@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
     // Compute stats
     const [totalCount] = await db
       .select({ count: count() })
-      .from(billingSettings);
+      .from(tenants);
 
     const [taxExemptCount] = await db
       .select({ count: count() })
@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
       .where(
         or(
           like(billingSettings.billingContactEmail, '%@%'),
-          like(billingSettings.taxId, '%'),
+          like(billingSettings.taxId, '%_%'),
         )!,
       );
 

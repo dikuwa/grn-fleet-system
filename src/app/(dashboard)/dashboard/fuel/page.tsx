@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { and, desc, eq, like, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb, isDbConnected } from '@/db';
 import { fuelTransactions } from '@/db/schema/trips';
@@ -54,10 +54,10 @@ async function fetchFuelEntries(
   if (search) {
     conditions.push(
       or(
-        like(vehicles.licenceNumber, `%${search}%`),
-        like(vehicles.make, `%${search}%`),
-        like(fuelTransactions.stationName, `%${search}%`),
-        like(fuelTransactions.referenceNumber, `%${search}%`),
+        ilike(vehicles.licenceNumber, `%${search}%`),
+        ilike(vehicles.make, `%${search}%`),
+        ilike(fuelTransactions.stationName, `%${search}%`),
+        ilike(fuelTransactions.referenceNumber, `%${search}%`),
       )!,
     );
   }

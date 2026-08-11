@@ -74,7 +74,11 @@ function loadGoogleMapsScript(): Promise<void> {
     }
 
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&v=weekly&loading=async`;
+    // Do not use loading=async here: this component attaches Autocomplete from
+    // the script load event, and the async bootstrap may fire that event before
+    // the Places library is ready. A deterministic load makes first-keystroke
+    // suggestions available without repeated focus/click attempts.
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&v=weekly&language=en&region=NA`;
     script.async = true;
     script.dataset.mapsJsApi = 'true';
     script.addEventListener('load', () => {
@@ -194,6 +198,7 @@ export function PlacesAutocomplete({
         aria-label={ariaLabel}
         disabled={disabled}
         autoComplete="off"
+        spellCheck={false}
       />
       {failed ? (
         <button

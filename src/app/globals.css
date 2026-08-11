@@ -603,3 +603,12 @@ body {
     margin: 12mm;
   }
 }
+/* Report figures need stronger visual hierarchy than surrounding labels. */
+.report-surface .text-2xl,
+.report-surface .text-xl.font-bold {
+  color: var(--color-brand-700);
+}
+
+.report-surface .grid {
+  row-gap: 1.25rem;
+}

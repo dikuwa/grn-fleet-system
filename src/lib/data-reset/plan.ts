@@ -127,6 +127,7 @@ export function resolveStepCondition(
   const fuelIds = ids.fuelTransactionIds;
   const workflowIds = ids.workflowInstanceIds;
   const documentIds = ids.generatedDocumentIds;
+  const notificationIds = ids.notificationIds;
   const removedEntityIds = ids.removedEntityIds;
 
   switch (step.table) {
@@ -185,8 +186,15 @@ export function resolveStepCondition(
     }
     // -- notifications caused by removed operational entities
     case 'notifications': {
-      if (removedEntityIds.length === 0) return null;
-      return sql`tenant_id = ${tenantId} AND entity_id = ANY(${sql.raw(uuidArrayLiteral(removedEntityIds))})`;
+      const parts: SQL[] = [];
+      if (notificationIds.length > 0) {
+        parts.push(sql`id = ANY(${sql.raw(uuidArrayLiteral(notificationIds))})`);
+      }
+      if (removedEntityIds.length > 0) {
+        parts.push(sql`entity_id = ANY(${sql.raw(uuidArrayLiteral(removedEntityIds))})`);
+      }
+      if (parts.length === 0) return null;
+      return sql`tenant_id = ${tenantId} AND (${sql.join(parts, sql` OR `)})`;
     }
     // -- share links for removed documents
     case 'share_links': {
@@ -321,7 +329,26 @@ async function collectEntityIds(db: ResetDb, tenantId: string): Promise<EntityId
     ),
     collectIds(
       db,
-      sql`SELECT id FROM ${sql.raw(quoteTable('notifications'))} WHERE tenant_id = ${tenantId} AND entity_id = ANY(${sql.raw(uuidArrayLiteral(removedEntityIds))})`,
+      sql`SELECT n.id FROM ${sql.raw(quoteTable('notifications'))} n WHERE n.tenant_id = ${tenantId} AND (
+        n.entity_id = ANY(${sql.raw(uuidArrayLiteral(removedEntityIds))}) OR
+        (n.entity_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM transport_requests tr WHERE tr.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM trips tp WHERE tp.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM vehicle_allocations va WHERE va.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM trip_authorities ta WHERE ta.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM vehicle_inspections vi WHERE vi.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM fuel_transactions ft WHERE ft.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM workflow_instances wi WHERE wi.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM generated_documents gd WHERE gd.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM vehicles v WHERE v.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM maintenance_events me WHERE me.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM programmes p WHERE p.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM regions rg WHERE rg.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM driver_licences dl WHERE dl.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM employees em WHERE em.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM offices ofc WHERE ofc.id = n.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM departments dp WHERE dp.id = n.entity_id))
+      )`,
     ),
   ]);
 

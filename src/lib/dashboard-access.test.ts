@@ -52,6 +52,24 @@ describe('canonical workspace route policy', () => {
     );
   });
 
+  it('gives each platform system role a real, bounded workspace', () => {
+    for (const path of ['/dashboard/platform', '/dashboard/platform/tenants', '/dashboard/platform/demo-requests', '/dashboard/platform/enquiries', '/dashboard/platform/emergency-contacts']) {
+      expect(canAccessDashboardPath(path, [R.PLATFORM_SUPPORT], W.PLATFORM_ADMIN), path).toBe(true);
+    }
+    expect(canAccessDashboardPath('/dashboard/platform/users', [R.PLATFORM_SUPPORT], W.PLATFORM_ADMIN)).toBe(false);
+    expect(canAccessDashboardPath('/dashboard/platform/reset', [R.PLATFORM_SUPPORT], W.PLATFORM_ADMIN)).toBe(false);
+
+    for (const path of ['/dashboard/platform', '/dashboard/platform/tenants', '/dashboard/platform/audit']) {
+      expect(canAccessDashboardPath(path, [R.PLATFORM_AUDITOR], W.PLATFORM_ADMIN), path).toBe(true);
+    }
+    expect(canAccessDashboardPath('/dashboard/platform/demo-requests', [R.PLATFORM_AUDITOR], W.PLATFORM_ADMIN)).toBe(false);
+    expect(canAccessDashboardPath('/dashboard/platform/billing', [R.PLATFORM_AUDITOR], W.PLATFORM_ADMIN)).toBe(false);
+
+    for (const path of ['/dashboard/platform/users', '/dashboard/platform/onboard', '/dashboard/platform/subscriptions', '/dashboard/platform/packages', '/dashboard/platform/cms', '/dashboard/platform/reset', '/dashboard/platform/backups', '/dashboard/platform/billing']) {
+      expect(canAccessDashboardPath(path, [R.PLATFORM_ADMIN], W.PLATFORM_ADMIN), path).toBe(true);
+    }
+  });
+
   it('does not union capabilities for a multi-role user', () => {
     const roles = [R.TENANT_ADMIN, R.TRANSPORT_ADMIN, R.DRIVER];
     expect(canAccessDashboardPath('/dashboard/allocations', roles, W.TENANT_ADMIN)).toBe(false);

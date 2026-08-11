@@ -177,7 +177,7 @@ export default function DriversPage() {
         </div>
       )}
 
-      <section aria-label="Driver summary" className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border sm:grid-cols-4 xl:grid-cols-7">
+      {stats && <section aria-label="Driver summary" className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border sm:grid-cols-4 xl:grid-cols-7">
         {summary.map((item) => {
           const content = (
             <><p className={`text-xl font-semibold tabular-nums ${item.tone}`}>{item.value ?? '—'}</p><p className="text-ink-500 mt-0.5 text-[11px]">{item.label}</p></>
@@ -188,7 +188,7 @@ export default function DriversPage() {
             <div key={item.label} className="bg-surface min-h-16 px-3 py-3">{content}</div>
           );
         })}
-      </section>
+      </section>}
 
       <Card>
         <CardContent className="pt-4">

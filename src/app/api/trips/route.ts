@@ -11,7 +11,7 @@ import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, and, desc, like, or, sql, type SQL } from 'drizzle-orm';
+import { eq, and, desc, ilike, or, sql, type SQL } from 'drizzle-orm';
 import {
   getSessionRoleNames,
   requireDashboardAction,
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     if (status) conditions.push(eq(trips.status, status));
     if (search) {
       conditions.push(
-        or(like(vehicles.licenceNumber, `%${search}%`), like(vehicles.make, `%${search}%`))!,
+        or(ilike(vehicles.licenceNumber, `%${search}%`), ilike(vehicles.make, `%${search}%`))!,
       );
     }
 

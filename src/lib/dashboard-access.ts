@@ -8,6 +8,7 @@
 
 import {
   resolveActiveWorkspace,
+  SystemRoles,
   WorkspaceIds,
   type WorkspaceId,
 } from '@/lib/workspaces';
@@ -47,6 +48,7 @@ export type RouteDefinition = {
   access: Partial<Record<WorkspaceId, RouteAccess>>;
   requiredPermissions?: readonly string[];
   requiredAnyPermissions?: readonly string[];
+  allowedRoleNames?: readonly string[];
   tenantScoped: boolean;
   platformOnly?: boolean;
   personalRoute?: boolean;
@@ -62,6 +64,11 @@ export type RouteDefinition = {
 };
 
 const W = WorkspaceIds;
+const R = SystemRoles;
+const PLATFORM_ALL_ROLES = [R.PLATFORM_ADMIN, R.PLATFORM_SUPPORT, R.PLATFORM_AUDITOR] as const;
+const PLATFORM_ADMIN_ONLY = [R.PLATFORM_ADMIN] as const;
+const PLATFORM_SUPPORT_ROLES = [R.PLATFORM_ADMIN, R.PLATFORM_SUPPORT] as const;
+const PLATFORM_AUDIT_ROLES = [R.PLATFORM_ADMIN, R.PLATFORM_AUDITOR] as const;
 const TENANT_WORKSPACES: readonly WorkspaceId[] = [
   W.PERSONAL,
   W.APPROVER,
@@ -437,7 +444,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     workspaces: [W.TRANSPORT_ADMIN],
     access: { [W.TRANSPORT_ADMIN]: tenantManage() },
     tenantScoped: true,
-    requiredPermissions: ['inspection-template:manage'],
+    requiredPermissions: ['vehicle:manage'],
     order: 205,
     navigationVisible: false,
   },
@@ -1034,6 +1041,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_ALL_ROLES,
     order: 500,
     navigationVisible: true,
   },
@@ -1047,7 +1055,22 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_ALL_ROLES,
     order: 510,
+    navigationVisible: true,
+  },
+  {
+    id: 'platform-users',
+    path: '/dashboard/platform/users',
+    label: 'Platform Users',
+    icon: 'UserCog',
+    section: 'Platform Access',
+    workspaces: [W.PLATFORM_ADMIN],
+    access: { [W.PLATFORM_ADMIN]: platformManage() },
+    tenantScoped: false,
+    platformOnly: true,
+    allowedRoleNames: PLATFORM_ADMIN_ONLY,
+    order: 505,
     navigationVisible: true,
   },
   {
@@ -1060,6 +1083,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_ADMIN_ONLY,
     order: 520,
     navigationVisible: true,
   },
@@ -1073,6 +1097,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_AUDIT_ROLES,
     order: 530,
     navigationVisible: true,
   },
@@ -1086,6 +1111,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_ADMIN_ONLY,
     order: 540,
     navigationVisible: true,
   },
@@ -1099,7 +1125,22 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_SUPPORT_ROLES,
     order: 550,
+    navigationVisible: true,
+  },
+  {
+    id: 'platform-enquiries',
+    path: '/dashboard/platform/enquiries',
+    label: 'Public Enquiries',
+    icon: 'MessageSquareText',
+    section: 'Platform',
+    workspaces: [W.PLATFORM_ADMIN],
+    access: { [W.PLATFORM_ADMIN]: platformManage() },
+    tenantScoped: false,
+    platformOnly: true,
+    allowedRoleNames: PLATFORM_SUPPORT_ROLES,
+    order: 551,
     navigationVisible: true,
   },
   {
@@ -1112,7 +1153,22 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_ADMIN_ONLY,
     order: 560,
+    navigationVisible: true,
+  },
+  {
+    id: 'platform-packages',
+    path: '/dashboard/platform/packages',
+    label: 'Subscription Packages',
+    icon: 'Package',
+    section: 'Platform',
+    workspaces: [W.PLATFORM_ADMIN],
+    access: { [W.PLATFORM_ADMIN]: platformManage() },
+    tenantScoped: false,
+    platformOnly: true,
+    allowedRoleNames: PLATFORM_ADMIN_ONLY,
+    order: 541,
     navigationVisible: true,
   },
   {
@@ -1125,7 +1181,22 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_ADMIN_ONLY,
     order: 570,
+    navigationVisible: true,
+  },
+  {
+    id: 'platform-backups',
+    path: '/dashboard/platform/backups',
+    label: 'Backup & Restore',
+    icon: 'Database',
+    section: 'Platform',
+    workspaces: [W.PLATFORM_ADMIN],
+    access: { [W.PLATFORM_ADMIN]: platformManage() },
+    tenantScoped: false,
+    platformOnly: true,
+    allowedRoleNames: PLATFORM_ADMIN_ONLY,
+    order: 571,
     navigationVisible: true,
   },
   {
@@ -1138,6 +1209,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_ADMIN_ONLY,
     order: 580,
     navigationVisible: true,
   },
@@ -1151,6 +1223,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     access: { [W.PLATFORM_ADMIN]: platformManage() },
     tenantScoped: false,
     platformOnly: true,
+    allowedRoleNames: PLATFORM_SUPPORT_ROLES,
     order: 590,
     navigationVisible: true,
   },
@@ -1187,7 +1260,8 @@ export function resolveDashboardAccess(
   const route = [...routeRegistry]
     .filter((candidate) => pathMatches(pathname, candidate))
     .sort((a, b) => routeSpecificity(b) - routeSpecificity(a))[0];
-  const access = route?.access[activeWorkspace];
+  const roleAllowed = !route?.allowedRoleNames || route.allowedRoleNames.some((role) => roleNames.includes(role));
+  const access = roleAllowed ? route?.access[activeWorkspace] : undefined;
 
   if (!route || !access) {
     return {
@@ -1218,10 +1292,11 @@ export function resolveDashboardAccess(
   };
 }
 
-export function getWorkspaceNavigation(workspace: WorkspaceId) {
+export function getWorkspaceNavigation(workspace: WorkspaceId, roleNames?: readonly string[]) {
   const seen = new Set<string>();
   return routeRegistry
     .filter((route) => route.navigationVisible !== false && route.access[workspace])
+    .filter((route) => !roleNames || !route.allowedRoleNames || route.allowedRoleNames.some((role) => roleNames.includes(role)))
     .filter((route) => {
       const key = route.href ?? route.path;
       if (seen.has(key)) return false;

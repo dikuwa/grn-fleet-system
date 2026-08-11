@@ -54,11 +54,14 @@ export async function GET(
       );
     }
 
+    const disposition = new URL(request.url).searchParams.get('preview') === '1'
+      ? 'inline'
+      : 'attachment';
     return new NextResponse(result.buffer as BodyInit, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${result.filename}"`,
+        'Content-Disposition': `${disposition}; filename="${result.filename}"`,
         'Cache-Control': 'private, no-store',
       },
     });

@@ -7,7 +7,7 @@ import { transportRequests } from '@/db/schema/requests';
 import { trips } from '@/db/schema/trips';
 import { demoRequests } from '@/db/schema/demo-requests';
 import { cmsEnquiries } from '@/db/schema/cms-content';
-import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 export async function GET(req: NextRequest) {
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-    const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
+    const permCheck = await requireAnyPermission(session, [Permissions.PLATFORM_ADMIN, Permissions.PLATFORM_SUPPORT, Permissions.AUDIT_READ]);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();

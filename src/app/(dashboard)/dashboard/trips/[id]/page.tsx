@@ -283,13 +283,13 @@ export default async function TripDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{data.routeKm > 0 ? `${data.routeKm.toLocaleString()} km` : '—'}</p><p className="text-xs text-ink-500">Planned Route</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{data.totalLogKm.toLocaleString()} km</p><p className="text-xs text-ink-500">Logged Distance</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{logEntries.length}</p><p className="text-xs text-ink-500">Log Entries</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-status-info-text">{data.totalFuelLitres.toFixed(1)} L</p><p className="text-xs text-ink-500">Fuel Used</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className="text-2xl font-[650] tabular-nums text-ink-950">{formatCurrency(data.totalFuelCost)}</p><p className="text-xs text-ink-500">Fuel Cost</p></CardContent></Card>
-        <Card><CardContent className="pt-4 text-center"><p className={`text-2xl font-[650] tabular-nums ${incidents.length ? 'text-status-error-text' : 'text-ink-950'}`}>{incidents.length}</p><p className="text-xs text-ink-500">Trip Events</p></CardContent></Card>
+      <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        <Card className="min-w-0"><CardContent className="pt-4 text-center"><p className="break-words text-xl font-[650] tabular-nums text-ink-950">{data.routeKm > 0 ? `${data.routeKm.toLocaleString()} km` : '—'}</p><p className="text-xs text-ink-500">Planned Route</p></CardContent></Card>
+        <Card className="min-w-0"><CardContent className="pt-4 text-center"><p className="break-words text-xl font-[650] tabular-nums text-ink-950">{data.totalLogKm.toLocaleString()} km</p><p className="text-xs text-ink-500">Logged Distance</p></CardContent></Card>
+        <Card className="min-w-0"><CardContent className="pt-4 text-center"><p className="text-xl font-[650] tabular-nums text-ink-950">{logEntries.length}</p><p className="text-xs text-ink-500">Log Entries</p></CardContent></Card>
+        <Card className="min-w-0"><CardContent className="pt-4 text-center"><p className="break-words text-xl font-[650] tabular-nums text-status-info-text">{data.totalFuelLitres.toFixed(1)} L</p><p className="text-xs text-ink-500">Fuel Used</p></CardContent></Card>
+        <Card className="min-w-0"><CardContent className="pt-4 text-center"><p className="break-words text-xl font-[650] tabular-nums text-ink-950">{formatCurrency(data.totalFuelCost)}</p><p className="text-xs text-ink-500">Fuel Cost</p></CardContent></Card>
+        <Card className="min-w-0"><CardContent className="pt-4 text-center"><p className={`text-xl font-[650] tabular-nums ${incidents.length ? 'text-status-error-text' : 'text-ink-950'}`}>{incidents.length}</p><p className="text-xs text-ink-500">Trip Events</p></CardContent></Card>
       </div>
 
       <Card>

@@ -8,7 +8,7 @@ import {
   requirePermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, like, or, count, type SQL } from 'drizzle-orm';
+import { eq, and, ilike, or, count, type SQL } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
@@ -49,12 +49,12 @@ export async function GET(req: NextRequest) {
     if (search) {
       conditions.push(
         or(
-          like(vehicles.licenceNumber, `%${search}%`),
-          like(vehicles.vehicleRegisterNumber, `%${search}%`),
-          like(vehicles.vin, `%${search}%`),
-          like(vehicles.engineNumber, `%${search}%`),
-          like(vehicles.make, `%${search}%`),
-          like(vehicles.model, `%${search}%`),
+          ilike(vehicles.licenceNumber, `%${search}%`),
+          ilike(vehicles.vehicleRegisterNumber, `%${search}%`),
+          ilike(vehicles.vin, `%${search}%`),
+          ilike(vehicles.engineNumber, `%${search}%`),
+          ilike(vehicles.make, `%${search}%`),
+          ilike(vehicles.model, `%${search}%`),
         )!,
       );
     }

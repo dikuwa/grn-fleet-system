@@ -54,7 +54,18 @@ export async function GET(
     if (!settings) {
       return NextResponse.json({
         success: true,
-        data: null,
+        data: {
+          tenantId: tenant.id,
+          tenantName: tenant.name,
+          tenantCode: tenant.code,
+          billingCountry: 'Namibia',
+          taxExempt: false,
+          gracePeriodDays: 14,
+          notifyOnPaymentDue: true,
+          notifyOnPaymentReceived: true,
+          notifyOnPaymentOverdue: true,
+          notifyOnSubscriptionChanges: true,
+        },
         message: 'No billing settings configured for this tenant',
       });
     }

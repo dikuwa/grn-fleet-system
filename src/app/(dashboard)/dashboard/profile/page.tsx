@@ -33,6 +33,7 @@ export default function UserProfilePage() {
   const [editName, setEditName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const hydratedUserIdRef = useRef<string | null>(null);
 
   // Photo upload
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,17 +66,15 @@ export default function UserProfilePage() {
     queryFn: ({ signal }) => fetchUserProfile(signal),
   });
 
-  // Sync form fields
+  // Hydrate the form once per loaded user. Keeping the current field values in
+  // this effect's dependencies caused an intentionally-cleared field to be
+  // repopulated from the query cache on the next render.
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (profileData) {
-        if (profileData.name && !editName) setEditName(profileData.name);
-        if (profileData.profile?.displayName && !displayName)
-          setDisplayName(profileData.profile.displayName);
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [displayName, editName, profileData]);
+    if (!profileData || hydratedUserIdRef.current === profileData.id) return;
+    hydratedUserIdRef.current = profileData.id;
+    setEditName(profileData.name ?? '');
+    setDisplayName(profileData.profile?.displayName ?? '');
+  }, [profileData]);
 
   const handlePhotoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -162,14 +161,25 @@ export default function UserProfilePage() {
   };
 
   const handleSaveProfile = async () => {
+    const name = editName.trim();
+    if (!name) {
+      toast({
+        title: 'Full name is required',
+        description: 'Enter the name that should appear on official records.',
+        variant: 'error',
+      });
+      return;
+    }
+
     setIsSaving(true);
     try {
       const res = await fetch('/api/users/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: editName.trim(),
-          displayName: displayName.trim() || undefined,
+          name,
+          // Null is deliberate: it clears a previously saved optional value.
+          displayName: displayName.trim() || null,
         }),
       });
       const json = await res.json();

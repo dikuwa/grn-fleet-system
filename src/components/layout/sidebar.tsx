@@ -88,41 +88,8 @@ const iconRegistry: Record<string, LucideIcon> = {
   PhoneCall,
 };
 
-function getNavGroups(activeWorkspace: WorkspaceId) {
-  const navigation = getWorkspaceNavigation(activeWorkspace);
-
-  if (activeWorkspace === 'platform_admin') {
-    const root = navigation.find((item) => item.path === '/dashboard/platform');
-    if (root) {
-      const ensure = (
-        path: string,
-        id: string,
-        label: string,
-        icon: string,
-        order: number,
-        section = 'Platform',
-      ) => {
-        if (navigation.some((item) => item.path === path)) return;
-        navigation.push({
-          ...root,
-          id,
-          path,
-          href: path,
-          label,
-          icon,
-          order,
-          section,
-        });
-      };
-
-      // These are first-class Platform Admin tools. Keep them explicit rather
-      // than deriving them from neighbouring routes so they remain visible even
-      // if another platform route is permission-filtered or reordered later.
-      ensure('/dashboard/platform/users', 'platform-users', 'Platform Users', 'UserCog', 505, 'Platform Access');
-      ensure('/dashboard/platform/enquiries', 'platform-enquiries', 'Public Enquiries', 'MessageSquareText', 551);
-      ensure('/dashboard/platform/packages', 'platform-packages', 'Subscription Packages', 'Package', 541);
-    }
-  }
+function getNavGroups(activeWorkspace: WorkspaceId, roleNames: readonly string[] = []) {
+  const navigation = getWorkspaceNavigation(activeWorkspace, roleNames);
 
   navigation.sort((a, b) => a.order - b.order);
   const groups = new Map<string, ReturnType<typeof getWorkspaceNavigation>>();
@@ -139,11 +106,12 @@ interface SidebarProps {
   onToggle: () => void;
   activeWorkspace: WorkspaceId;
   badgeCounts: Record<string, number>;
+  roleNames: string[];
 }
 
-export function Sidebar({ collapsed, onToggle, activeWorkspace, badgeCounts }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, activeWorkspace, badgeCounts, roleNames }: SidebarProps) {
   const pathname = usePathname();
-  const navGroups = getNavGroups(activeWorkspace);
+  const navGroups = getNavGroups(activeWorkspace, roleNames);
 
   return (
     <aside
@@ -190,9 +158,9 @@ export function Sidebar({ collapsed, onToggle, activeWorkspace, badgeCounts }: S
   );
 }
 
-export function MobileSidebar({ open, onClose, activeWorkspace, tenantName, workspaceLabel }: { open: boolean; onClose: () => void; activeWorkspace: WorkspaceId; tenantName?: string; workspaceLabel?: string; }) {
+export function MobileSidebar({ open, onClose, activeWorkspace, tenantName, workspaceLabel, roleNames }: { open: boolean; onClose: () => void; activeWorkspace: WorkspaceId; tenantName?: string; workspaceLabel?: string; roleNames: string[]; }) {
   const pathname = usePathname();
-  const navGroups = getNavGroups(activeWorkspace);
+  const navGroups = getNavGroups(activeWorkspace, roleNames);
   const drawerRef = useRef<HTMLElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
