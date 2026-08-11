@@ -19,6 +19,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Label, Textarea } from '@/components/ui/input';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
+import { TENANT_RESET_REQUEST_PHRASE } from '@/lib/reset-workflow';
 
 interface TenantResetRequest {
   id: string;
@@ -263,7 +264,12 @@ export default function TenantDataResetPage() {
                   </p>
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="reset-acknowledgement">Type REQUEST RESET</Label>
+                  <Label htmlFor="reset-acknowledgement">
+                    Type{' '}
+                    <span className="font-semibold text-status-error-text">
+                      &quot;{TENANT_RESET_REQUEST_PHRASE}&quot;
+                    </span>
+                  </Label>
                   <Input
                     id="reset-acknowledgement"
                     value={acknowledgement}
@@ -275,7 +281,9 @@ export default function TenantDataResetPage() {
                   className="w-full"
                   onClick={() => void submit()}
                   loading={submitting}
-                  disabled={reason.trim().length < 20 || acknowledgement !== 'REQUEST RESET'}
+                  disabled={
+                    reason.trim().length < 20 || acknowledgement !== TENANT_RESET_REQUEST_PHRASE
+                  }
                 >
                   <Database className="h-4 w-4" /> Send to Platform Administrator
                 </Button>

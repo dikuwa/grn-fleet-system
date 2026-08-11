@@ -33,6 +33,8 @@ import { Input, Label, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
+import { normalizeResetPreview, type ResetPreviewData } from '@/lib/reset-preview';
+import { tenantExecutionResetPhrase } from '@/lib/reset-workflow';
 
 interface TenantOption {
   id: string;
@@ -40,20 +42,6 @@ interface TenantOption {
   code: string;
   status: string;
   type: string;
-}
-interface ResetPreview {
-  dryRunSummary: {
-    requests: number;
-    trips: number;
-    documents: number;
-    notifications: number;
-    total: number;
-  };
-  steps: Array<{ table: string; label: string; planned: number }>;
-  preserved: Array<{ table: string; label: string; count: number }>;
-  review: Array<{ table: string; label: string; reason: string; count: number }>;
-  fingerprint: string;
-  plannedAt: string;
 }
 interface ResetRequest {
   id: string;
@@ -71,7 +59,7 @@ interface ResetRequest {
   backupLocation: string | null;
   backupSizeBytes: number | null;
   backupRecordCount: number | null;
-  validationResults: ResetPreview | null;
+  validationResults: ResetPreviewData | Record<string, unknown> | null;
   rollbackPossible: boolean;
   rollbackPerformed: boolean;
   failureReason: string | null;
@@ -351,8 +339,8 @@ export default function PlatformResetPage() {
   };
 
   const requestExecution = (request: ResetRequest) => {
-    if (!request.tenantCode || !request.backupCreated || !request.validationResults) return;
-    const phrase = `RESET ${request.tenantCode}`;
+    if (!request.tenantCode || !request.backupCreated || !normalizeResetPreview(request.validationResults)) return;
+    const phrase = tenantExecutionResetPhrase(request.tenantCode);
     setDetailOpen(false);
     confirm({
       title: `Reset operational data for ${request.tenantName || request.tenantCode}?`,
@@ -393,7 +381,7 @@ export default function PlatformResetPage() {
     () => tenants.find((tenant) => tenant.id === createTenantId),
     [createTenantId, tenants],
   );
-  const preview = selected?.validationResults ?? null;
+  const preview = normalizeResetPreview(selected?.validationResults);
   const canExecute = Boolean(
     selected?.status === 'approved' &&
     selected?.scope === 'operational' &&
@@ -501,6 +489,7 @@ export default function PlatformResetPage() {
               variant: 'default' as const,
             };
             const tenantOrigin = request.metadata?.createdFrom === 'tenant_admin';
+            const requestPreview = normalizeResetPreview(request.validationResults);
             return (
               <article
                 key={request.id}
@@ -534,9 +523,7 @@ export default function PlatformResetPage() {
                       ? `Requested by ${request.requestedByName || request.requestedByEmail || 'Tenant Administrator'}`
                       : 'Created by Platform Administrator'}{' '}
                     · {formatDate(request.createdAt)}
-                    {request.validationResults?.dryRunSummary
-                      ? ` · dry run ${request.validationResults.dryRunSummary.total} rows`
-                      : ''}
+                    {requestPreview ? ` · dry run ${requestPreview.dryRunSummary.total} rows` : ''}
                     {request.rollbackPerformed ? ' · restored from recovery point' : ''}
                   </p>
                 </div>
@@ -616,7 +603,9 @@ export default function PlatformResetPage() {
             {createTarget === 'tenant' && selectedTenant && (
               <p className="text-ink-500 text-xs">
                 Final execution confirmation will require:{' '}
-                <strong>RESET {selectedTenant.code}</strong>
+                <strong className="text-status-error-text">
+                  &quot;RESET {selectedTenant.code}&quot;
+                </strong>
               </p>
             )}
             {createTarget === 'platform' && (
