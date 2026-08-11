@@ -15,7 +15,8 @@ import {
 import { getDb } from '@/db';
 import { tenants } from '@/db/schema/tenants';
 import { tenantSubscriptions } from '@/db/schema/subscriptions';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, isNull, ne } from 'drizzle-orm';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 // ---------------------------------------------------------------------------
 // GET — List all tenant subscriptions with summary stats
@@ -37,8 +38,29 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '25', 10);
     const offset = (page - 1) * limit;
 
-    // Fetch subscriptions with tenant and package info
-    const subscriptions = await listSubscriptions();
+    // Fetch subscriptions and production tenants that still need their first
+    // package assignment. Keeping both in one response prevents a second,
+    // subtly different source of truth in the client.
+    const db = getDb();
+    const [subscriptions, unsubscribedTenants] = await Promise.all([
+      listSubscriptions(),
+      db
+        .select({
+          id: tenants.id,
+          name: tenants.name,
+          code: tenants.code,
+          status: tenants.status,
+        })
+        .from(tenants)
+        .leftJoin(tenantSubscriptions, eq(tenantSubscriptions.tenantId, tenants.id))
+        .where(
+          and(
+            isNull(tenantSubscriptions.id),
+            ne(tenants.type, 'demo_sandbox'),
+          ),
+        )
+        .orderBy(asc(tenants.name)),
+    ]);
 
     // Apply client-side filters for search
     let filtered = subscriptions;
@@ -77,6 +99,7 @@ export async function GET(request: NextRequest) {
         page,
         limit,
         totalPages: Math.ceil(filtered.length / limit),
+        unsubscribedTenants,
       },
     });
   } catch (error) {
@@ -130,9 +153,9 @@ export async function POST(request: NextRequest) {
       .where(eq(tenantSubscriptions.tenantId, tenantId))
       .limit(1);
 
-    if (existing && ['active', 'trialing'].includes(existing.status)) {
+    if (existing) {
       return NextResponse.json(
-        { error: 'Tenant already has an active subscription. Cancel or modify the existing one first.' },
+        { error: 'This tenant already has a subscription. Use Manage to change its package or status.' },
         { status: 409 },
       );
     }
@@ -144,6 +167,21 @@ export async function POST(request: NextRequest) {
       trialDays,
       gracePeriodDays,
       startNow,
+    });
+
+    await recordAuditEvent({
+      tenantId,
+      actorUserId: session.user.id,
+      action: 'subscription.assigned',
+      entityType: 'subscription',
+      entityId: subscription.id,
+      summary: `Initial ${subscription.packageName} subscription assigned to ${subscription.tenantName}.`,
+      after: {
+        packageId: subscription.packageId,
+        packageCode: subscription.packageCode,
+        billingInterval: subscription.billingInterval,
+        status: subscription.status,
+      },
     });
 
     return NextResponse.json({
