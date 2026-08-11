@@ -12,6 +12,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { printPdfFromUrl } from '@/lib/print-pdf';
 import {
   Dialog,
   DialogContent,
@@ -137,7 +138,10 @@ export function ShareActions({
                   <Download className="h-4 w-4" /> Download PDF
                 </a>
               </Button>
-              <Button variant="secondary" onClick={() => window.print()}>
+              <Button
+                variant="secondary"
+                onClick={() => void printPdfFromUrl(`/api/documents/${documentId}/pdf`)}
+              >
                 <Printer className="h-4 w-4" /> Print document
               </Button>
               <Button variant="secondary" asChild>

@@ -17,7 +17,9 @@ import {
   DocumentTable,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
+  SafePdfText,
   documentStyles,
+  officialRedTheme,
 } from './document-system';
 
 export interface TripAuthorityData {
@@ -30,19 +32,21 @@ export interface TripAuthorityData {
     vehicleRegisterNumber: string;
     make: string;
     model: string;
+    modelYear?: number | string;
     colour?: string;
     fuelType?: string;
     currentOdometer?: number;
     inspectionStatus?: string;
+    inspectionDate?: string;
   };
   requestReference: string;
-  scope: string;
-  startAt: string;
-  endAt: string;
   requesterName?: string;
   department?: string;
   transportOffice?: string;
   priority?: string;
+  scope: string;
+  startAt: string;
+  endAt: string;
   purpose?: string;
   routeSummary?: string;
   totalKm?: number;
@@ -51,10 +55,12 @@ export interface TripAuthorityData {
   issuedAt?: string;
   verificationCode?: string;
   verificationUrl?: string;
+  documentHash?: string;
   qrCodeDataUrl?: string;
   driver?: {
     name: string;
     employeeNumber?: string;
+    idNumber?: string;
     designation?: string;
     department?: string;
     contactNumber?: string;
@@ -67,8 +73,10 @@ export interface TripAuthorityData {
   passengers?: Array<{
     name: string;
     employeeNumber?: string;
+    idNumber?: string;
     department?: string;
     organisation?: string;
+    contactNumber?: string;
     passengerType?: string;
     destination?: string;
     indemnityConfirmed?: boolean;
@@ -76,10 +84,13 @@ export interface TripAuthorityData {
   additionalDrivers?: Array<{
     name: string;
     employeeNumber?: string;
+    idNumber?: string;
+    department?: string;
+    contactNumber?: string;
+    licenceNumber?: string;
     licenceClass?: string;
     licenceExpiry?: string;
   }>;
-  // ── Journey details (route legs) ──
   journeyLegs?: Array<{
     origin: string;
     destination: string;
@@ -90,7 +101,9 @@ export interface TripAuthorityData {
     estimatedKm?: number;
     objective?: string;
   }>;
-  // ── Authorisation details ──
+  specialConditions?: string;
+  beginningOdometer?: number;
+  endingOdometer?: number;
   authorisation?: {
     authoriserName: string;
     authoriserRole: string;
@@ -101,9 +114,6 @@ export interface TripAuthorityData {
     contactNumber?: string;
     approvalMethod?: string;
   };
-  specialConditions?: string;
-  beginningOdometer?: number;
-  endingOdometer?: number;
   authoriser?: {
     name?: string;
     designation?: string;
@@ -116,26 +126,21 @@ export interface TripAuthorityData {
     issuedAt?: string;
     signatureUrl?: string;
   };
-  goodsAndEquipment?: Array<{
-    description: string;
-    quantity?: string;
-    purpose?: string;
-  }>;
-  preDepartureInspection?: {
-    status: string;
-    odometer?: number;
-    items?: Array<{ label: string; result: string; comment?: string }>;
-    defects?: Array<{ severity: string; description: string }>;
-    notes?: string;
-    completedAt?: string;
-    inspectorName?: string;
-  };
-  fuelInformation?: {
-    fuelCardNumber?: string;
-    expectedFuel?: string;
-    fuelType?: string;
-    costCentre?: string;
-  };
+  goodsAndEquipment?: Array<{ description: string; quantity?: string; purpose?: string }>;
+  preDepartureInspection?: Record<string, unknown>;
+  fuelInformation?: Record<string, unknown>;
+}
+
+const STANDARD_CONDITIONS = [
+  'Authority is valid only for the approved purpose and period.',
+  'The driver must comply with traffic laws and the institution’s fleet policies.',
+  'Accidents, breakdowns and incidents must be reported immediately.',
+  'This document must be produced when requested by an authorised officer.',
+];
+
+function dateTime(date?: string, time?: string, locale = 'en-NA') {
+  const displayDate = formatHumanDate(date, locale);
+  return [displayDate, time].filter(Boolean).join(' ');
 }
 
 export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ data }) => {
@@ -153,241 +158,309 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
           documentFooter: data.tenantDocumentFooter,
         }
       : null);
-  const status = data.authorityStatus || 'issued';
-  const conditions = (data.specialConditions || '')
+  const locale = branding?.locale || 'en-NA';
+  const specialAuthority = (data.specialConditions || '')
     .split(/\n|;/)
-    .map((condition) => condition.trim())
+    .map((item) => item.trim())
     .filter(Boolean);
-
-  const journeyLegs = data.journeyLegs || [];
+  const legs = data.journeyLegs || [];
+  const passengers = data.passengers || [];
 
   return (
-    <Document title={`Trip Authority ${data.reference}`}>
-      <DocumentPage status={status === 'draft' ? 'draft' : undefined}>
-        {/* ── Header ── */}
+    <Document
+      title={`Official Vehicle Trip Authority ${data.reference}`}
+      author={branding?.organisationName || 'Government Fleet'}
+    >
+      <DocumentPage
+        status={data.authorityStatus === 'draft' ? 'draft' : undefined}
+        official
+        continuationLabel={`${branding?.organisationName || 'Government Fleet'} · Official Vehicle Trip Authority and Log Statement`}
+      >
         <DocumentHeader
           branding={branding}
           title={'Official Vehicle Trip Authority\nAnd Log Statement'}
-          reference={data.reference}
-          version={data.documentVersion || 1}
-          status={formatDocumentStatus(status)}
-          issueDate={formatHumanDate(data.issuedAt || new Date().toISOString(), branding?.locale)}
-          qrCode={data.qrCodeDataUrl}
+          official
+          showIdentity={false}
         />
 
-        {/* A and B intentionally share one compact bordered row. */}
         <DocumentRow>
-          <DocumentSection title="A. Authority Summary">
+          <DocumentSection title="A. Authority Summary" theme={officialRedTheme}>
             <DocumentFieldGrid
+              columns={1}
+              labelWidth={36}
               fields={[
                 { label: 'Scope', value: humanizeKey(data.scope) },
-                { label: 'Purpose', value: data.purpose || 'Not recorded' },
-                { label: 'Validity', value: [data.startAt, data.endAt].filter(Boolean).join(' — ') || 'Not set' },
-                { label: 'Authority number', value: data.reference },
-                { label: 'Request number', value: data.requestReference || 'Not linked' },
-                { label: 'Department', value: data.department || 'Not recorded' },
-                { label: 'Transport office', value: data.transportOffice || 'Not recorded' },
+                { label: 'Purpose', value: data.purpose },
+                {
+                  label: 'Validity',
+                  value: `${formatHumanDate(data.startAt, locale)} – ${formatHumanDate(data.endAt, locale)}`,
+                },
+                { label: 'Trip authority no.', value: data.reference },
               ]}
             />
           </DocumentSection>
-          <DocumentSection title="B. Vehicle Particulars">
+          <DocumentSection title="B. Vehicle Particulars" theme={officialRedTheme}>
             <DocumentFieldGrid
+              labelWidth={48}
               fields={[
-                { label: 'Registration', value: data.vehicle.licenceNumber },
-                { label: 'Register number', value: data.vehicle.vehicleRegisterNumber },
-                { label: 'Make and model', value: `${data.vehicle.make} ${data.vehicle.model}`.trim() },
-                { label: 'Colour', value: data.vehicle.colour || 'Not recorded' },
-                { label: 'Fuel type', value: data.vehicle.fuelType || 'Not recorded' },
-                { label: 'Odometer out', value: formatHumanValue(data.beginningOdometer ?? data.vehicle.currentOdometer, 'odometer') },
-                { label: 'Inspection', value: formatDocumentStatus(data.vehicle.inspectionStatus || 'pending') },
-                { label: 'Cost centre', value: data.fuelInformation?.costCentre || 'Not recorded' },
+                { label: 'Registration no./plate', value: data.vehicle.licenceNumber },
+                { label: 'Fuel type', value: humanizeKey(data.vehicle.fuelType ?? '') },
+                { label: 'Make', value: data.vehicle.make },
+                {
+                  label: 'Odometer (at start)',
+                  value: formatHumanValue(
+                    data.beginningOdometer ?? data.vehicle.currentOdometer,
+                    'odometer',
+                  ),
+                },
+                {
+                  label: 'Model year/type',
+                  value: [data.vehicle.modelYear, data.vehicle.model].filter(Boolean).join(' · '),
+                },
+                {
+                  label: 'Inspection status',
+                  value: [
+                    formatDocumentStatus(data.vehicle.inspectionStatus || 'pending'),
+                    data.vehicle.inspectionDate
+                      ? `(${formatHumanDate(data.vehicle.inspectionDate, locale)})`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' '),
+                },
+                { label: 'Colour', value: data.vehicle.colour },
+                { label: 'Register no.', value: data.vehicle.vehicleRegisterNumber },
               ]}
             />
           </DocumentSection>
         </DocumentRow>
 
-        <DocumentSection title="C. Main Driver Details">
-          <DocumentFieldGrid fields={[
-            { label: 'Driver', value: data.driver?.name || 'Not assigned' },
-            { label: 'Employee number', value: data.driver?.employeeNumber || 'Not recorded' },
-            { label: 'Designation', value: data.driver?.designation || 'Not recorded' },
-            { label: 'Department', value: data.driver?.department || 'Not recorded' },
-            { label: 'Licence', value: [data.driver?.licenceNumber, data.driver?.licenceClass].filter(Boolean).join(' · ') || 'Not recorded' },
-            { label: 'Licence expiry', value: data.driver?.licenceExpiry || 'Not recorded' },
-            { label: 'Contact', value: data.driver?.contactNumber || 'Not recorded' },
-            { label: 'Acknowledged', value: data.driver?.acceptedAt || 'Pending' },
-          ]} />
-          {(data.additionalDrivers?.length || 0) > 0 && <DocumentTable columns={[
-            { key: 'name', label: 'Additional driver' }, { key: 'employeeNumber', label: 'Employee no.' },
-            { key: 'licenceClass', label: 'Licence class' }, { key: 'licenceExpiry', label: 'Expiry' },
-          ]} rows={(data.additionalDrivers || []).map((driver) => ({
-            name: driver.name, employeeNumber: driver.employeeNumber || '—', licenceClass: driver.licenceClass || '—', licenceExpiry: driver.licenceExpiry || '—',
-          }))} />}
+        <DocumentSection title="C. Main Driver Details" theme={officialRedTheme}>
+          <DocumentTable
+            theme={officialRedTheme}
+            columns={[
+              { key: 'name', label: 'Driver name', width: '20%' },
+              { key: 'employee', label: 'Employee no.', width: '14%' },
+              { key: 'licence', label: 'Licence no.', width: '18%' },
+              { key: 'department', label: 'Department', width: '16%' },
+              { key: 'contact', label: 'Contact no.', width: '15%' },
+              { key: 'id', label: 'ID number', width: '17%' },
+            ]}
+            rows={
+              data.driver
+                ? [
+                    {
+                      name: data.driver.name,
+                      employee: data.driver.employeeNumber,
+                      licence: [data.driver.licenceNumber, data.driver.licenceClass]
+                        .filter(Boolean)
+                        .join(' · '),
+                      department: data.driver.department,
+                      contact: data.driver.contactNumber,
+                      id: data.driver.idNumber,
+                    },
+                  ]
+                : []
+            }
+            emptyLabel="No main driver assigned"
+          />
+          {(data.additionalDrivers?.length || 0) > 0 ? (
+            <View style={{ marginTop: 5 }}>
+              <Text
+                style={{
+                  color: officialRedTheme.primary,
+                  fontFamily: 'Helvetica-Bold',
+                  fontSize: 6.7,
+                  marginBottom: 2,
+                }}
+              >
+                ADDITIONAL DRIVERS
+              </Text>
+              <DocumentTable
+                theme={officialRedTheme}
+                columns={[
+                  { key: 'name', label: 'Driver name', width: '20%' },
+                  { key: 'employee', label: 'Employee no.', width: '14%' },
+                  { key: 'licence', label: 'Licence no.', width: '18%' },
+                  { key: 'department', label: 'Department', width: '16%' },
+                  { key: 'contact', label: 'Contact no.', width: '15%' },
+                  { key: 'id', label: 'ID number', width: '17%' },
+                ]}
+                rows={(data.additionalDrivers || []).map((driver) => ({
+                  name: driver.name,
+                  employee: driver.employeeNumber,
+                  licence: [driver.licenceNumber, driver.licenceClass].filter(Boolean).join(' · '),
+                  department: driver.department,
+                  contact: driver.contactNumber,
+                  id: driver.idNumber,
+                }))}
+              />
+            </View>
+          ) : null}
         </DocumentSection>
 
-        {/* ════════════════════════════════════════
-           ROW 3: Journey Details | Authorised Passengers
-           ════════════════════════════════════════ */}
-        <DocumentRow>
-          {/* Left: Journey Details */}
-          <DocumentSection title="D. Journey Details">
-            {journeyLegs.length > 0 ? (
-              <>
-                <DocumentTable
-                  columns={[
-                    { key: 'origin', label: 'From' },
-                    { key: 'destination', label: 'To' },
-                    { key: 'departure', label: 'Departure' },
-                    { key: 'ret', label: 'Return' },
-                    { key: 'km', label: 'Km' },
-                  ]}
-                  rows={journeyLegs.map((leg) => ({
-                    origin: leg.origin || 'Not specified',
-                    destination: leg.destination || 'Not specified',
-                    departure: leg.departureDate || 'Not set',
-                    ret: leg.returnDate || 'Not set',
-                    km: leg.estimatedKm ? `${leg.estimatedKm.toLocaleString('en-NA')} km` : '—',
-                  }))}
-                  emptyLabel="No route legs recorded"
-                />
-                <Text style={{ marginTop: 3, fontSize: 6.5, color: '#374151' }}>
-                  Total distance:{' '}
-                  {data.totalKm ? `${data.totalKm.toLocaleString('en-NA')} km` : 'Not estimated'}
-                </Text>
-              </>
-            ) : (
-              <DocumentFieldGrid
-                fields={[
-                  { label: 'Approved route', value: data.routeSummary || 'Not recorded' },
-                  {
-                    label: 'Authorised distance',
-                    value: data.totalKm
-                      ? `${data.totalKm.toLocaleString('en-NA')} km`
-                      : 'Not estimated',
-                  },
-                  { label: 'Objective', value: data.purpose || 'Not recorded' },
-                ]}
-              />
-            )}
-          </DocumentSection>
-          {/* Right: Authorised Passengers */}
-          <DocumentSection title={`E. Authorised Passengers (${data.passengers?.length || 0})`}>
-            <DocumentTable
-              columns={[
-                { key: 'name', label: 'Name' },
-                { key: 'employeeNumber', label: 'Employee no. / ID' },
-                { key: 'organisation', label: 'Department / organisation' },
-                { key: 'type', label: 'Type' },
-              ]}
-              rows={(data.passengers || []).map((passenger) => ({
-                name: passenger.name,
-                employeeNumber: passenger.employeeNumber || 'External',
-                organisation: passenger.department || passenger.organisation || 'Not recorded',
-                type: humanizeKey(passenger.passengerType || 'passenger'),
-              }))}
-              emptyLabel="No passengers authorised"
-            />
-          </DocumentSection>
-        </DocumentRow>
-
-        {/* ════════════════════════════════════════
-           ROW 4: Goods & Equipment | Pre-departure Inspection
-           ════════════════════════════════════════ */}
-          <DocumentSection title="F. Goods / Equipment">
-            {data.goodsAndEquipment && data.goodsAndEquipment.length > 0 ? (
-              <DocumentTable
-                columns={[
-                  { key: 'description', label: 'Description' },
-                  { key: 'quantity', label: 'Quantity' },
-                  { key: 'purpose', label: 'Purpose' },
-                ]}
-                rows={data.goodsAndEquipment.map((item) => ({
-                  description: item.description,
-                  quantity: item.quantity || '—',
-                  purpose: item.purpose || '—',
-                }))}
-                emptyLabel="No goods or equipment recorded"
-              />
-            ) : (
-              <Text style={{ color: '#4B5563', fontSize: 7 }}>None recorded</Text>
-            )}
-          </DocumentSection>
-
-          <DocumentSection title="G. Special Conditions" wrap={false}>
-            {conditions.length > 0 ? (
-              conditions.map((condition, index) => (
-                <Text key={condition} style={{ marginBottom: 1.5, fontSize: 6.5 }}>
-                  {index + 1}. {condition}
-                </Text>
-              ))
-            ) : (
-              <>
-                <Text style={{ marginBottom: 1.5, fontSize: 6.5, color: '#4B5563' }}>
-                  1. Authority is valid only for the approved purpose and period.
-                </Text>
-                <Text style={{ marginBottom: 1.5, fontSize: 6.5, color: '#4B5563' }}>
-                  2. Driver must comply with traffic laws and council policies.
-                </Text>
-                <Text style={{ marginBottom: 1.5, fontSize: 6.5, color: '#4B5563' }}>
-                  3. Accidents, breakdowns and incidents must be reported immediately.
-                </Text>
-                <Text style={{ marginBottom: 1.5, fontSize: 6.5, color: '#4B5563' }}>
-                  4. This document must be produced when requested by an authorised officer.
-                </Text>
-              </>
-            )}
-          </DocumentSection>
-
-        {/* ════════════════════════════════════════
-           ROW 6: Approvals (three-column)
-           ════════════════════════════════════════ */}
-        <DocumentSection title="H. Approvals" wrap={false}>
-          <View style={documentStyles.signatureRow}>
-            {data.transportOfficer ? (
-              <DocumentSignature
-                name={data.transportOfficer.name}
-                role={data.transportOfficer.designation || 'Transport Officer'}
-                signedAt={data.transportOfficer.issuedAt}
-                signatureUrl={data.transportOfficer.signatureUrl}
-              />
-            ) : (
-              <DocumentSignature name="—" role="Transport Officer" />
-            )}
-            <DocumentSignature
-              name={data.authoriser?.name || data.authorisation?.authoriserName || '—'}
-              role={data.authoriser?.designation || data.authorisation?.authoriserRole || 'Authorising Officer'}
-              signedAt={data.authoriser?.authorisedAt || data.authorisation?.authorisedAt}
-              signatureUrl={data.authoriser?.signatureUrl}
-            />
-            {data.driver ? (
-              <DocumentSignature
-                name={data.driver.name}
-                role="Driver acknowledgement"
-                signedAt={data.driver.acceptedAt}
-                signatureUrl={data.driver.signatureUrl}
-              />
-            ) : (
-              <DocumentSignature name="—" role="Driver acknowledgement" />
-            )}
+        <DocumentSection title="D. Journey Details" theme={officialRedTheme}>
+          <DocumentTable
+            theme={officialRedTheme}
+            columns={[
+              { key: 'number', label: 'No.', width: '6%' },
+              { key: 'from', label: 'From', width: '18%' },
+              { key: 'to', label: 'To', width: '18%' },
+              { key: 'departure', label: 'Departure', width: '23%' },
+              { key: 'return', label: 'Return', width: '23%' },
+              { key: 'km', label: 'Km', width: '12%', align: 'right' },
+            ]}
+            rows={
+              legs.length
+                ? legs.map((leg, index) => ({
+                    number: index + 1,
+                    from: leg.origin,
+                    to: leg.destination,
+                    departure: dateTime(leg.departureDate, leg.departureTime, locale),
+                    return: dateTime(leg.returnDate, leg.returnTime, locale),
+                    km:
+                      leg.estimatedKm === undefined
+                        ? undefined
+                        : `${leg.estimatedKm.toLocaleString(locale)} km`,
+                  }))
+                : [
+                    {
+                      number: 1,
+                      from: data.routeSummary,
+                      to: undefined,
+                      departure: formatHumanDate(data.startAt, locale),
+                      return: formatHumanDate(data.endAt, locale),
+                      km: data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : undefined,
+                    },
+                  ]
+            }
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 3 }}>
+            <Text style={{ width: '28%', fontFamily: 'Helvetica-Bold' }}>
+              Total estimated distance
+            </Text>
+            <Text style={{ width: '15%', textAlign: 'right', fontFamily: 'Helvetica-Bold' }}>
+              {data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : '—'}
+            </Text>
           </View>
         </DocumentSection>
 
-        <View style={documentStyles.spacer} />
+        <DocumentSection
+          title={`E. Authorised Passengers${passengers.length ? ` (${passengers.length})` : ''}`}
+          theme={officialRedTheme}
+        >
+          <DocumentTable
+            theme={officialRedTheme}
+            columns={[
+              { key: 'number', label: 'No.', width: '6%' },
+              { key: 'name', label: 'Name', width: '22%' },
+              { key: 'employee', label: 'Employee no./ID', width: '18%' },
+              { key: 'department', label: 'Department', width: '18%' },
+              { key: 'contact', label: 'Contact no.', width: '18%' },
+              { key: 'indemnity', label: 'Indemnity consent', width: '18%' },
+            ]}
+            rows={passengers.map((passenger, index) => ({
+              number: index + 1,
+              name: passenger.name,
+              employee: passenger.employeeNumber || passenger.idNumber,
+              department: passenger.department || passenger.organisation,
+              contact: passenger.contactNumber,
+              indemnity: passenger.indemnityConfirmed,
+            }))}
+            emptyLabel="No passengers authorised"
+          />
+        </DocumentSection>
 
-        {/* ════════════════════════════════════════
-           Verification block
-           ════════════════════════════════════════ */}
-        <DocumentVerificationBlock
-          branding={branding}
-          verificationCode={data.verificationCode}
-          verificationUrl={data.verificationUrl}
-          qrCode={data.qrCodeDataUrl}
-        />
+        <DocumentSection
+          title="F. Goods / Equipments"
+          theme={officialRedTheme}
+          minPresenceAhead={100}
+          breakBefore={(data.goodsAndEquipment?.length || 0) > 10}
+        >
+          <DocumentTable
+            theme={officialRedTheme}
+            columns={[
+              { key: 'description', label: 'Description', width: '30%' },
+              { key: 'quantity', label: 'Quantity', width: '20%' },
+              { key: 'purpose', label: 'Purpose', width: '50%' },
+            ]}
+            rows={(data.goodsAndEquipment || []).map((item) => ({
+              description: item.description,
+              quantity: item.quantity,
+              purpose: item.purpose,
+            }))}
+            emptyLabel="No goods or equipment authorised"
+          />
+        </DocumentSection>
+
+        <DocumentRow>
+          <DocumentSection title="G. Special Conditions" theme={officialRedTheme} wrap={false}>
+            {STANDARD_CONDITIONS.map((condition, index) => (
+              <Text key={condition} style={{ marginBottom: 1.8, fontSize: 6.1 }}>
+                {index + 1}. {condition}
+              </Text>
+            ))}
+          </DocumentSection>
+          <DocumentSection title="Special Authority" theme={officialRedTheme} wrap={false}>
+            {specialAuthority.length ? (
+              specialAuthority.map((condition, index) => (
+                <Text key={`${condition}-${index}`} style={{ marginBottom: 1.8, fontSize: 6.1 }}>
+                  {condition}
+                </Text>
+              ))
+            ) : (
+              <SafePdfText
+                value="No additional special authority conditions recorded."
+                style={documentStyles.muted}
+              />
+            )}
+          </DocumentSection>
+        </DocumentRow>
+
+        <View style={documentStyles.finalBlock} wrap={false}>
+          <DocumentSection title="H. Approvals" theme={officialRedTheme} wrap={false}>
+            <View style={documentStyles.signatureRow}>
+              <DocumentSignature
+                theme={officialRedTheme}
+                statement="I confirm that the trip request has been reviewed and is approved."
+                name={data.transportOfficer?.name}
+                role={data.transportOfficer?.designation || 'Transport Officer'}
+                signedAt={data.transportOfficer?.issuedAt}
+                signatureUrl={data.transportOfficer?.signatureUrl}
+              />
+              <DocumentSignature
+                theme={officialRedTheme}
+                statement="I authorise the use of the above vehicle for the specified trip."
+                name={data.authoriser?.name}
+                role={data.authoriser?.designation || 'Authorising Officer'}
+                signedAt={data.authoriser?.authorisedAt}
+                signatureUrl={data.authoriser?.signatureUrl}
+              />
+              <DocumentSignature
+                theme={officialRedTheme}
+                statement="I acknowledge receipt of this Trip Authority and accept responsibility."
+                name={data.driver?.name}
+                role="Driver"
+                signedAt={data.driver?.acceptedAt}
+                signatureUrl={data.driver?.signatureUrl}
+              />
+            </View>
+          </DocumentSection>
+          <DocumentVerificationBlock
+            branding={branding}
+            verificationCode={data.verificationCode}
+            verificationUrl={data.verificationUrl}
+            documentHash={data.documentHash}
+            qrCode={data.qrCodeDataUrl}
+            theme={officialRedTheme}
+          />
+        </View>
 
         <DocumentVerificationFooter
           branding={branding}
-          verificationCode={data.verificationCode}
+          verificationCode={data.verificationCode || data.reference}
           verificationUrl={data.verificationUrl}
+          theme={officialRedTheme}
         />
       </DocumentPage>
     </Document>

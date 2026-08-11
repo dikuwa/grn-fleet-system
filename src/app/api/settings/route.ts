@@ -55,32 +55,49 @@ export async function GET(request: NextRequest) {
       .from(tenantBranding)
       .where(eq(tenantBranding.tenantId, session.tenantId))
       .limit(1)
-      .then((rows) => rows.length > 0 ? rows : [{
-        contactEmail: '',
-        contactPhone: '',
-        address: '',
-        primaryColor: '#1F4E8C',
-        accentColor: '#0F766E',
-        documentFooter: '',
-        senderName: '',
-        senderEmail: '',
-      }]);
+      .then((rows) =>
+        rows.length > 0
+          ? rows
+          : [
+              {
+                contactEmail: '',
+                contactPhone: '',
+                address: '',
+                primaryColor: '#1F4E8C',
+                accentColor: '#0F766E',
+                documentFooter: '',
+                executiveSignatoryName: '',
+                executiveSignatoryTitle: 'Chief Executive Officer',
+                executiveSignatureUrl: '',
+                senderName: '',
+                senderEmail: '',
+              },
+            ],
+      );
 
     const [notifPrefs] = await db
       .select()
       .from(notificationPreferences)
-      .where(and(
-        eq(notificationPreferences.tenantId, session.tenantId),
-        eq(notificationPreferences.userId, session.user.id),
-      ))
+      .where(
+        and(
+          eq(notificationPreferences.tenantId, session.tenantId),
+          eq(notificationPreferences.userId, session.user.id),
+        ),
+      )
       .limit(1)
-      .then((rows) => rows.length > 0 ? rows : [{
-        emailNotifications: true,
-        inAppNotifications: true,
-        quietHoursStart: '20:00',
-        quietHoursEnd: '07:00',
-        emergencyBypassQuietHours: true,
-      }]);
+      .then((rows) =>
+        rows.length > 0
+          ? rows
+          : [
+              {
+                emailNotifications: true,
+                inAppNotifications: true,
+                quietHoursStart: '20:00',
+                quietHoursEnd: '07:00',
+                emergencyBypassQuietHours: true,
+              },
+            ],
+      );
 
     return NextResponse.json({
       success: true,
@@ -111,9 +128,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const db = getDb();
 
-    if (body.tenant?.name !== undefined && (
-      typeof body.tenant.name !== 'string' || !body.tenant.name.trim() || body.tenant.name.length > 200
-    )) {
+    if (
+      body.tenant?.name !== undefined &&
+      (typeof body.tenant.name !== 'string' ||
+        !body.tenant.name.trim() ||
+        body.tenant.name.length > 200)
+    ) {
       return NextResponse.json(
         { error: 'Organisation name is required and must be under 200 characters.' },
         { status: 422 },
@@ -133,11 +153,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Select a supported locale.' }, { status: 422 });
     }
 
-    if (body.branding?.primaryColor !== undefined && !/^#[0-9a-f]{6}$/i.test(body.branding.primaryColor)) {
-      return NextResponse.json({ error: 'Primary colour must be a six-digit hex colour.' }, { status: 422 });
+    if (
+      body.branding?.primaryColor !== undefined &&
+      !/^#[0-9a-f]{6}$/i.test(body.branding.primaryColor)
+    ) {
+      return NextResponse.json(
+        { error: 'Primary colour must be a six-digit hex colour.' },
+        { status: 422 },
+      );
     }
-    if (body.branding?.accentColor !== undefined && !/^#[0-9a-f]{6}$/i.test(body.branding.accentColor)) {
-      return NextResponse.json({ error: 'Accent colour must be a six-digit hex colour.' }, { status: 422 });
+    if (
+      body.branding?.accentColor !== undefined &&
+      !/^#[0-9a-f]{6}$/i.test(body.branding.accentColor)
+    ) {
+      return NextResponse.json(
+        { error: 'Accent colour must be a six-digit hex colour.' },
+        { status: 422 },
+      );
     }
     for (const email of [body.branding?.contactEmail, body.branding?.senderEmail]) {
       if (email && (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
@@ -150,16 +182,35 @@ export async function POST(request: NextRequest) {
 
     const prefs = body.notificationPreferences;
     if (prefs) {
-      for (const value of [prefs.emailNotifications, prefs.inAppNotifications, prefs.emergencyBypassQuietHours]) {
+      for (const value of [
+        prefs.emailNotifications,
+        prefs.inAppNotifications,
+        prefs.emergencyBypassQuietHours,
+      ]) {
         if (value !== undefined && typeof value !== 'boolean') {
-          return NextResponse.json({ error: 'Notification preference values must be true or false.' }, { status: 422 });
+          return NextResponse.json(
+            { error: 'Notification preference values must be true or false.' },
+            { status: 422 },
+          );
         }
       }
-      if (prefs.quietHoursStart !== undefined && (typeof prefs.quietHoursStart !== 'string' || !TIME_PATTERN.test(prefs.quietHoursStart))) {
-        return NextResponse.json({ error: 'Quiet-hours start must use HH:MM format.' }, { status: 422 });
+      if (
+        prefs.quietHoursStart !== undefined &&
+        (typeof prefs.quietHoursStart !== 'string' || !TIME_PATTERN.test(prefs.quietHoursStart))
+      ) {
+        return NextResponse.json(
+          { error: 'Quiet-hours start must use HH:MM format.' },
+          { status: 422 },
+        );
       }
-      if (prefs.quietHoursEnd !== undefined && (typeof prefs.quietHoursEnd !== 'string' || !TIME_PATTERN.test(prefs.quietHoursEnd))) {
-        return NextResponse.json({ error: 'Quiet-hours end must use HH:MM format.' }, { status: 422 });
+      if (
+        prefs.quietHoursEnd !== undefined &&
+        (typeof prefs.quietHoursEnd !== 'string' || !TIME_PATTERN.test(prefs.quietHoursEnd))
+      ) {
+        return NextResponse.json(
+          { error: 'Quiet-hours end must use HH:MM format.' },
+          { status: 422 },
+        );
       }
     }
 
@@ -175,14 +226,27 @@ export async function POST(request: NextRequest) {
 
     if (body.branding) {
       const brandingUpdate: Record<string, unknown> = { updatedAt: new Date() };
-      if (body.branding.contactEmail !== undefined) brandingUpdate.contactEmail = body.branding.contactEmail.trim();
-      if (body.branding.contactPhone !== undefined) brandingUpdate.contactPhone = String(body.branding.contactPhone).trim();
-      if (body.branding.address !== undefined) brandingUpdate.address = String(body.branding.address).trim();
-      if (body.branding.primaryColor !== undefined) brandingUpdate.primaryColor = body.branding.primaryColor;
-      if (body.branding.accentColor !== undefined) brandingUpdate.accentColor = body.branding.accentColor;
-      if (body.branding.documentFooter !== undefined) brandingUpdate.documentFooter = String(body.branding.documentFooter).trim();
-      if (body.branding.senderName !== undefined) brandingUpdate.senderName = String(body.branding.senderName).trim();
-      if (body.branding.senderEmail !== undefined) brandingUpdate.senderEmail = body.branding.senderEmail.trim();
+      if (body.branding.contactEmail !== undefined)
+        brandingUpdate.contactEmail = body.branding.contactEmail.trim();
+      if (body.branding.contactPhone !== undefined)
+        brandingUpdate.contactPhone = String(body.branding.contactPhone).trim();
+      if (body.branding.address !== undefined)
+        brandingUpdate.address = String(body.branding.address).trim();
+      if (body.branding.primaryColor !== undefined)
+        brandingUpdate.primaryColor = body.branding.primaryColor;
+      if (body.branding.accentColor !== undefined)
+        brandingUpdate.accentColor = body.branding.accentColor;
+      if (body.branding.documentFooter !== undefined)
+        brandingUpdate.documentFooter = String(body.branding.documentFooter).trim();
+      if (body.branding.executiveSignatoryName !== undefined)
+        brandingUpdate.executiveSignatoryName = String(body.branding.executiveSignatoryName).trim();
+      if (body.branding.executiveSignatoryTitle !== undefined)
+        brandingUpdate.executiveSignatoryTitle =
+          String(body.branding.executiveSignatoryTitle).trim() || 'Chief Executive Officer';
+      if (body.branding.senderName !== undefined)
+        brandingUpdate.senderName = String(body.branding.senderName).trim();
+      if (body.branding.senderEmail !== undefined)
+        brandingUpdate.senderEmail = body.branding.senderEmail.trim();
 
       const [existingBranding] = await db
         .select()
@@ -191,7 +255,10 @@ export async function POST(request: NextRequest) {
         .limit(1);
 
       if (existingBranding) {
-        await db.update(tenantBranding).set(brandingUpdate).where(eq(tenantBranding.tenantId, session.tenantId));
+        await db
+          .update(tenantBranding)
+          .set(brandingUpdate)
+          .where(eq(tenantBranding.tenantId, session.tenantId));
       } else {
         await db.insert(tenantBranding).values({
           tenantId: session.tenantId,
@@ -202,23 +269,31 @@ export async function POST(request: NextRequest) {
 
     if (prefs) {
       const prefUpdate: Record<string, unknown> = { updatedAt: new Date() };
-      if (prefs.emailNotifications !== undefined) prefUpdate.emailNotifications = prefs.emailNotifications;
-      if (prefs.inAppNotifications !== undefined) prefUpdate.inAppNotifications = prefs.inAppNotifications;
+      if (prefs.emailNotifications !== undefined)
+        prefUpdate.emailNotifications = prefs.emailNotifications;
+      if (prefs.inAppNotifications !== undefined)
+        prefUpdate.inAppNotifications = prefs.inAppNotifications;
       if (prefs.quietHoursStart !== undefined) prefUpdate.quietHoursStart = prefs.quietHoursStart;
       if (prefs.quietHoursEnd !== undefined) prefUpdate.quietHoursEnd = prefs.quietHoursEnd;
-      if (prefs.emergencyBypassQuietHours !== undefined) prefUpdate.emergencyBypassQuietHours = prefs.emergencyBypassQuietHours;
+      if (prefs.emergencyBypassQuietHours !== undefined)
+        prefUpdate.emergencyBypassQuietHours = prefs.emergencyBypassQuietHours;
 
       const [existingPrefs] = await db
         .select()
         .from(notificationPreferences)
-        .where(and(
-          eq(notificationPreferences.tenantId, session.tenantId),
-          eq(notificationPreferences.userId, session.user.id),
-        ))
+        .where(
+          and(
+            eq(notificationPreferences.tenantId, session.tenantId),
+            eq(notificationPreferences.userId, session.user.id),
+          ),
+        )
         .limit(1);
 
       if (existingPrefs) {
-        await db.update(notificationPreferences).set(prefUpdate).where(eq(notificationPreferences.id, existingPrefs.id));
+        await db
+          .update(notificationPreferences)
+          .set(prefUpdate)
+          .where(eq(notificationPreferences.id, existingPrefs.id));
       } else {
         await db.insert(notificationPreferences).values({
           tenantId: session.tenantId,

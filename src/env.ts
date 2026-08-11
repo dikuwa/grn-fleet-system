@@ -95,7 +95,10 @@ function validateEnv(): Env {
       const missing = error.errors
         .filter((e) => e.message === 'Required')
         .map((e) => e.path.join('.'));
-      if (missing.length > 0) {
+      // Server-only variables are intentionally absent from the browser bundle.
+      // Report missing configuration where it can be acted on without producing
+      // a false warning on every authenticated client navigation.
+      if (missing.length > 0 && typeof window === 'undefined') {
         console.warn(
           `Missing required environment variables: ${missing.join(', ')}. ` +
             'The application may not function correctly without these values configured.',

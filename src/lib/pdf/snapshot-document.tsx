@@ -30,6 +30,7 @@ export interface SnapshotDocumentData {
   status?: string;
   verificationCode?: string;
   verificationUrl?: string;
+  documentHash?: string;
   qrCodeDataUrl?: string;
 }
 
@@ -133,6 +134,7 @@ export const SnapshotDocument: React.FC<{ data: SnapshotDocumentData }> = ({ dat
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
           qrCode={data.qrCodeDataUrl}
         />
         <DocumentVerificationFooter

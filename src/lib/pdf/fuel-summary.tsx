@@ -16,6 +16,7 @@ import {
   DocumentTable,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
+  DocumentExecutiveCertification,
 } from './document-system';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,7 @@ export interface FuelSummaryData {
   status?: string;
   verificationCode?: string;
   verificationUrl?: string;
+  documentHash?: string;
   qrCodeDataUrl?: string;
 
   // Optional enriched fields
@@ -181,11 +183,13 @@ export const FuelSummaryDocument: React.FC<{ data: FuelSummaryData }> = ({ data 
           </DocumentSection>
         )}
 
+        <DocumentExecutiveCertification branding={branding} generatedAt={data.generatedAt} />
         {/* Verification block */}
         <DocumentVerificationBlock
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
           qrCode={data.qrCodeDataUrl}
         />
 

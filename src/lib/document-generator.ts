@@ -10,6 +10,7 @@
  */
 
 import { getDb } from '@/db';
+import { createHash } from 'node:crypto';
 import { generatedDocuments } from '@/db/schema/documents';
 import {
   trips,
@@ -28,6 +29,7 @@ import {
   requestPassengers,
   requestRoutes,
   requestAttachments,
+  requestGoodsEquipment,
 } from '@/db/schema/requests';
 import { auditEvents } from '@/db/schema/audit';
 import { vehicleAllocations } from '@/db/schema/trips';
@@ -35,6 +37,7 @@ import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { departments, employees, offices } from '@/db/schema/people';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
+import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -96,54 +99,64 @@ async function buildTransportRequestSnapshot(requestId: string) {
     .leftJoin(offices, eq(offices.id, employees.officeId))
     .where(eq(employees.id, req.requesterEmployeeId))
     .limit(1);
-  const [drivers, passengers, routes, attachments, approvals] = await Promise.all([
-    db
-      .select({
-        driverType: requestDrivers.driverType,
-        sortOrder: requestDrivers.sortOrder,
-        name: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
-        employeeNumber: employees.employeeNumber,
-        department: departments.name,
-      })
-      .from(requestDrivers)
-      .innerJoin(employees, eq(employees.id, requestDrivers.employeeId))
-      .leftJoin(departments, eq(departments.id, employees.departmentId))
-      .where(eq(requestDrivers.requestId, requestId)),
-    db
-      .select({
-        employeeId: requestPassengers.employeeId,
-        externalName: requestPassengers.externalName,
-        externalOrganisation: requestPassengers.externalOrganisation,
-        travellerRole: requestPassengers.travellerRole,
-        reasonForTravel: requestPassengers.reasonForTravel,
-        employeeName: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
-        employeeNumber: employees.employeeNumber,
-        department: departments.name,
-      })
-      .from(requestPassengers)
-      .leftJoin(employees, eq(employees.id, requestPassengers.employeeId))
-      .leftJoin(departments, eq(departments.id, employees.departmentId))
-      .where(eq(requestPassengers.requestId, requestId)),
-    db.select().from(requestRoutes).where(eq(requestRoutes.requestId, requestId)),
-    db
-      .select({ fileName: requestAttachments.fileName, mimeType: requestAttachments.mimeType })
-      .from(requestAttachments)
-      .where(eq(requestAttachments.requestId, requestId)),
-    db
-      .select({
-        stage: workflowActions.stepOrder,
-        action: workflowActions.actionType,
-        decision: workflowActions.result,
-        officer: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
-        comment: workflowActions.comment,
-        dateTime: workflowActions.createdAt,
-        signed: sql<boolean>`${workflowActions.signatureRef} is not null`,
-      })
-      .from(workflowActions)
-      .innerJoin(workflowInstances, eq(workflowInstances.id, workflowActions.instanceId))
-      .leftJoin(employees, eq(employees.id, workflowActions.actorEmployeeId))
-      .where(eq(workflowInstances.requestId, requestId)),
-  ]);
+  const [drivers, passengers, routes, attachments, goodsAndEquipment, approvals] =
+    await Promise.all([
+      db
+        .select({
+          driverType: requestDrivers.driverType,
+          sortOrder: requestDrivers.sortOrder,
+          name: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
+          employeeNumber: employees.employeeNumber,
+          department: departments.name,
+        })
+        .from(requestDrivers)
+        .innerJoin(employees, eq(employees.id, requestDrivers.employeeId))
+        .leftJoin(departments, eq(departments.id, employees.departmentId))
+        .where(eq(requestDrivers.requestId, requestId)),
+      db
+        .select({
+          employeeId: requestPassengers.employeeId,
+          externalName: requestPassengers.externalName,
+          externalOrganisation: requestPassengers.externalOrganisation,
+          travellerRole: requestPassengers.travellerRole,
+          reasonForTravel: requestPassengers.reasonForTravel,
+          employeeName: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
+          employeeNumber: employees.employeeNumber,
+          department: departments.name,
+        })
+        .from(requestPassengers)
+        .leftJoin(employees, eq(employees.id, requestPassengers.employeeId))
+        .leftJoin(departments, eq(departments.id, employees.departmentId))
+        .where(eq(requestPassengers.requestId, requestId)),
+      db.select().from(requestRoutes).where(eq(requestRoutes.requestId, requestId)),
+      db
+        .select({ fileName: requestAttachments.fileName, mimeType: requestAttachments.mimeType })
+        .from(requestAttachments)
+        .where(eq(requestAttachments.requestId, requestId)),
+      db
+        .select({
+          description: requestGoodsEquipment.description,
+          quantity: requestGoodsEquipment.quantity,
+          purpose: requestGoodsEquipment.purpose,
+        })
+        .from(requestGoodsEquipment)
+        .where(eq(requestGoodsEquipment.requestId, requestId))
+        .orderBy(requestGoodsEquipment.sortOrder),
+      db
+        .select({
+          stage: workflowActions.stepOrder,
+          action: workflowActions.actionType,
+          decision: workflowActions.result,
+          officer: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
+          comment: workflowActions.comment,
+          dateTime: workflowActions.createdAt,
+          signed: sql<boolean>`${workflowActions.signatureRef} is not null`,
+        })
+        .from(workflowActions)
+        .innerJoin(workflowInstances, eq(workflowInstances.id, workflowActions.instanceId))
+        .leftJoin(employees, eq(employees.id, workflowActions.actorEmployeeId))
+        .where(eq(workflowInstances.requestId, requestId)),
+    ]);
 
   return {
     id: req.id,
@@ -192,6 +205,7 @@ async function buildTransportRequestSnapshot(requestId: string) {
       estimatedDurationMinutes: route.mappedDurationMinutes,
     })),
     attachments,
+    goodsAndEquipment,
     approvalWorkflow: approvals.map((approval) => ({
       stage: approval.stage,
       action: approval.action,
@@ -498,7 +512,9 @@ async function buildTripCompletionSnapshot(tripId: string) {
     .limit(1);
 
   const fuelSummary = await buildFuelSummarySnapshot(tripId);
-  const incidents = await db.select().from(tripIncidents)
+  const incidents = await db
+    .select()
+    .from(tripIncidents)
     .where(and(eq(tripIncidents.tripId, tripId), eq(tripIncidents.tenantId, trip.tenantId)))
     .orderBy(tripIncidents.occurredAt);
 
@@ -549,9 +565,28 @@ async function buildTripCompletionSnapshot(tripId: string) {
     fuelSummary,
     eventSummary: {
       total: incidents.length,
-      incidents: incidents.filter((event) => !['mechanical_defect', 'electrical_defect', 'vehicle_defect', 'tyre_failure', 'tyre_damage'].includes(event.incidentType)).length,
-      defects: incidents.filter((event) => ['mechanical_defect', 'electrical_defect', 'vehicle_defect', 'tyre_failure', 'tyre_damage'].includes(event.incidentType)).length,
-      accidents: incidents.filter((event) => ['accident', 'accident_collision'].includes(event.incidentType)).length,
+      incidents: incidents.filter(
+        (event) =>
+          ![
+            'mechanical_defect',
+            'electrical_defect',
+            'vehicle_defect',
+            'tyre_failure',
+            'tyre_damage',
+          ].includes(event.incidentType),
+      ).length,
+      defects: incidents.filter((event) =>
+        [
+          'mechanical_defect',
+          'electrical_defect',
+          'vehicle_defect',
+          'tyre_failure',
+          'tyre_damage',
+        ].includes(event.incidentType),
+      ).length,
+      accidents: incidents.filter((event) =>
+        ['accident', 'accident_collision'].includes(event.incidentType),
+      ).length,
       injuries: incidents.reduce((sum, event) => sum + event.numberInjured, 0),
       critical: incidents.filter((event) => event.severity === 'critical').length,
       events: incidents.map((event) => ({
@@ -570,15 +605,17 @@ async function buildTripCompletionSnapshot(tripId: string) {
 
 async function buildTripIncidentSnapshot(incidentId: string) {
   const db = getDb();
-  const [record] = await db.select({
-    incident: tripIncidents,
-    requestReference: transportRequests.reference,
-    authorityNumber: tripAuthorities.authorityNumber,
-    vehicleRegistration: vehicles.licenceNumber,
-    vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
-    vehicleMake: vehicles.make,
-    vehicleModel: vehicles.model,
-  }).from(tripIncidents)
+  const [record] = await db
+    .select({
+      incident: tripIncidents,
+      requestReference: transportRequests.reference,
+      authorityNumber: tripAuthorities.authorityNumber,
+      vehicleRegistration: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+      vehicleMake: vehicles.make,
+      vehicleModel: vehicles.model,
+    })
+    .from(tripIncidents)
     .innerJoin(trips, eq(trips.id, tripIncidents.tripId))
     .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
     .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
@@ -686,11 +723,26 @@ export async function generateDocument(
     return null;
   }
 
-  const snapshotData = await builder(entityId);
-  if (!snapshotData) {
+  const sourceSnapshot = await builder(entityId);
+  if (!sourceSnapshot) {
     console.warn(`[DocGen] No data found for ${entityType}: ${entityId}`);
     return null;
   }
+  const branding = await resolveTenantDocumentBranding(tenantId);
+  const snapshotData = {
+    ...sourceSnapshot,
+    documentIdentity: {
+      organisationName: branding?.organisationName,
+      logoUrl: branding?.logoUrl,
+      primaryColor: branding?.primaryColor,
+      accentColor: branding?.accentColor,
+      executiveSignatoryName: branding?.executiveSignatoryName,
+      executiveSignatoryTitle: branding?.executiveSignatoryTitle || 'Chief Executive Officer',
+      executiveSignatureUrl: branding?.executiveSignatureUrl,
+      snapshottedAt: new Date().toISOString(),
+    },
+  };
+  const snapshotHash = createHash('sha256').update(JSON.stringify(snapshotData)).digest('hex');
 
   // Validate snapshot against document type schema
   if (hasSchema(documentType)) {
@@ -740,6 +792,7 @@ export async function generateDocument(
       entityType,
       entityId,
       snapshotData,
+      hash: snapshotHash,
       status: newVersion > 1 ? 'issued' : 'draft', // Regenerations are auto-issued
       generatedByUserId,
     })

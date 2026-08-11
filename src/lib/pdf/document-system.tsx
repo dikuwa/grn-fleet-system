@@ -1,184 +1,258 @@
+/* eslint-disable jsx-a11y/alt-text -- React-PDF Image renders PDF content, not an HTML img element. */
 import React from 'react';
-import { Font, Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import path from 'node:path';
+import { Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 
+/**
+ * The PDF renderer deliberately uses the built-in Helvetica family.  The former
+ * implementation downloaded fonts from GitHub and Google during every render,
+ * which made production documents depend on third-party network availability.
+ */
+const OFFICIAL_RED = '#C1121F';
+const INK = '#172033';
+const MUTED = '#667085';
+const RULE = '#D9DEE7';
+const EMPTY_VALUE = '—';
 
-Font.register({
-  family: 'IBM Plex Mono',
-  fonts: [
-    {
-      src: 'https://raw.githubusercontent.com/IBM/plex/master/packages/plex-mono/fonts/complete/ttf/IBMPlexMono-Regular.ttf',
-      fontWeight: 400,
-    },
-    {
-      src: 'https://raw.githubusercontent.com/IBM/plex/master/packages/plex-mono/fonts/complete/ttf/IBMPlexMono-SemiBold.ttf',
-      fontWeight: 700,
-    },
-  ],
-});
+export type PdfTheme = {
+  primary: string;
+  accent: string;
+  tint: string;
+  ink: string;
+  muted: string;
+  rule: string;
+};
 
-Font.register({
-  family: 'Allura',
-  src: 'https://fonts.gstatic.com/s/allura/v23/9oRPNYsQpS4zjuAPjA.ttf',
-});
+export const officialRedTheme: PdfTheme = {
+  primary: OFFICIAL_RED,
+  accent: OFFICIAL_RED,
+  tint: '#FFF7F7',
+  ink: INK,
+  muted: MUTED,
+  rule: '#E8B8BB',
+};
 
-const OFFICIAL_RED = '#B42318';
-const OFFICIAL_RED_LIGHT = '#D92D20';
+const defaultTenantTheme: PdfTheme = {
+  primary: '#245B9E',
+  accent: '#0F766E',
+  tint: '#F4F7FB',
+  ink: INK,
+  muted: MUTED,
+  rule: RULE,
+};
+
+export function tenantPdfTheme(branding?: ResolvedTenantBranding | null): PdfTheme {
+  return {
+    primary: branding?.primaryColor || '#245B9E',
+    accent: branding?.accentColor || '#0F766E',
+    tint: '#F4F7FB',
+    ink: INK,
+    muted: MUTED,
+    rule: RULE,
+  };
+}
+
+export const NAMIBIA_COAT_OF_ARMS_PATH = path.join(
+  process.cwd(),
+  'public',
+  'official',
+  'namibia-coat-of-arms.png',
+);
+
+export function safePdfValue(value: unknown, fallback = EMPTY_VALUE): string {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'number' && !Number.isFinite(value)) return fallback;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  const text = String(value).replace(/\s+/g, ' ').trim();
+  if (!text || /^(undefined|null|nan)$/i.test(text)) return fallback;
+  return text;
+}
+
+export function SafePdfText({
+  value,
+  fallback,
+  style,
+}: {
+  value: unknown;
+  fallback?: string;
+  style?: React.ComponentProps<typeof Page>['style'];
+}) {
+  return (
+    <Text style={style} orphans={2} widows={2}>
+      {safePdfValue(value, fallback)}
+    </Text>
+  );
+}
 
 export const documentStyles = StyleSheet.create({
   page: {
-    paddingTop: 24,
-    paddingHorizontal: 30,
-    paddingBottom: 54,
-    fontFamily: 'IBM Plex Mono',
-    fontSize: 8,
-    lineHeight: 1.3,
-    color: '#171717',
-    borderWidth: 1.2,
+    paddingTop: 32,
+    paddingHorizontal: 24,
+    paddingBottom: 50,
+    fontFamily: 'Helvetica',
+    fontSize: 7.4,
+    lineHeight: 1.25,
+    color: INK,
+  },
+  officialPage: {
+    borderWidth: 0.8,
     borderColor: OFFICIAL_RED,
   },
-  // ── Three-zone header ──
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1.2,
-    borderBottomColor: OFFICIAL_RED,
-    paddingBottom: 6,
+    alignItems: 'center',
+    borderBottomWidth: 0.9,
+    paddingBottom: 7,
     marginBottom: 7,
+    minHeight: 72,
   },
-  headerLogoZone: { width: '22%', justifyContent: 'center' },
-  logo: { width: 'auto', height: 38, objectFit: 'contain', maxWidth: 52 },
-  headerOrgZone: { width: '56%', justifyContent: 'center', alignItems: 'center' },
-  organisation: { fontSize: 9, fontWeight: 700, color: '#171717', textAlign: 'center' },
-  orgDetail: { color: '#4B5563', fontSize: 6.5, marginTop: 1 },
-  headerTitleZone: { width: '22%', alignItems: 'flex-end', justifyContent: 'center' },
-  title: { fontSize: 11, fontWeight: 700, color: OFFICIAL_RED, textAlign: 'center' },
-  reference: { fontSize: 8, fontWeight: 700, marginTop: 1.5, textAlign: 'center' },
-  meta: { color: '#4B5563', fontSize: 6.5, marginTop: 1, textAlign: 'center' },
-  muted: { color: '#4B5563', fontSize: 6.5 },
+  headerLogoZone: { width: '18%', justifyContent: 'center', alignItems: 'flex-start' },
+  logo: { width: 54, height: 58, objectFit: 'contain' },
+  headerOrgZone: {
+    width: '64%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 5,
+  },
+  organisation: {
+    fontSize: 10.2,
+    fontFamily: 'Helvetica-Bold',
+    color: INK,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  orgDetail: { color: MUTED, fontSize: 6.4, marginTop: 1, textAlign: 'center' },
+  headerTitleZone: { width: '18%', alignItems: 'flex-end', justifyContent: 'center' },
+  continuationHeader: {
+    position: 'absolute',
+    top: 10,
+    left: 24,
+    right: 24,
+    paddingBottom: 2,
+    color: MUTED,
+    fontSize: 5.5,
+    textAlign: 'center',
+  },
+  title: { fontSize: 11.4, fontFamily: 'Helvetica-Bold', textAlign: 'center', lineHeight: 1.16 },
+  reference: { fontSize: 7.2, fontFamily: 'Helvetica-Bold', marginTop: 2, textAlign: 'center' },
+  meta: { color: MUTED, fontSize: 5.8, marginTop: 1, textAlign: 'center' },
+  muted: { color: MUTED, fontSize: 6.3 },
   statusBadge: {
     alignSelf: 'flex-end',
     borderWidth: 0.6,
-    borderColor: '#D9DEE7',
+    borderColor: RULE,
     paddingVertical: 1.5,
     paddingHorizontal: 4,
-    fontSize: 6.5,
-    fontWeight: 700,
+    fontSize: 5.8,
+    fontFamily: 'Helvetica-Bold',
     textTransform: 'uppercase',
     marginTop: 2,
   },
-  // ── Sections ──
-  section: { marginBottom: 6 },
+  section: { marginBottom: 3.5 },
   sectionTitle: {
-    color: OFFICIAL_RED,
-    fontSize: 8,
-    fontWeight: 700,
+    fontSize: 7.7,
+    fontFamily: 'Helvetica-Bold',
     textTransform: 'uppercase',
-    borderBottomWidth: 0.7,
-    borderWidth: 0.9,
-    borderColor: OFFICIAL_RED_LIGHT,
-    paddingHorizontal: 3,
-    paddingTop: 2,
-    paddingBottom: 2,
-    marginBottom: 2.5,
-  },
-  // ── Two-column row ──
-  sectionRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  column: {
-    flex: 1,
-  },
-  // ── Field grid ──
-  fieldGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-  field: {
-    width: '50%',
-    flexDirection: 'row',
-    borderBottomWidth: 0.4,
-    borderBottomColor: '#E6A7A2',
+    borderWidth: 0.55,
+    paddingHorizontal: 4,
     paddingVertical: 2,
-    paddingRight: 5,
+    marginBottom: 0,
   },
-  fieldLabel: { width: '40%', color: '#4B5563', fontSize: 6.8 },
-  fieldValue: { width: '60%', color: '#111827', fontSize: 7 },
-  // ── Tables ──
-  tableHeader: {
-    flexDirection: 'row',
-    backgroundColor: '#FFF5F4',
-    borderBottomWidth: 0.7,
-    borderBottomColor: OFFICIAL_RED,
-    paddingVertical: 2.5,
+  sectionBody: {
+    borderLeftWidth: 0.45,
+    borderRightWidth: 0.45,
+    borderBottomWidth: 0.45,
+    padding: 3,
   },
-  tableRow: {
-    flexDirection: 'row',
-    borderBottomWidth: 0.4,
-    borderBottomColor: '#E6A7A2',
-    paddingVertical: 2.5,
+  sectionRow: { flexDirection: 'row', gap: 6 },
+  column: { flex: 1 },
+  fieldGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  field: { width: '50%', flexDirection: 'row', paddingVertical: 1.7, paddingRight: 5 },
+  fieldLabel: { width: '40%', color: MUTED, fontSize: 6.2, fontFamily: 'Helvetica-Bold' },
+  fieldValue: { width: '60%', color: INK, fontSize: 6.7 },
+  table: { width: '100%' },
+  tableHeader: { flexDirection: 'row', borderBottomWidth: 0.65, paddingVertical: 2 },
+  tableRow: { flexDirection: 'row', borderBottomWidth: 0.35, paddingVertical: 2, minHeight: 11 },
+  tableCell: { paddingHorizontal: 2.5, fontSize: 6.25 },
+  tableHeading: {
+    paddingHorizontal: 2.5,
+    fontSize: 5.9,
+    fontFamily: 'Helvetica-Bold',
+    textTransform: 'uppercase',
   },
-  tableCell: { flex: 1, paddingHorizontal: 2.5, fontSize: 6.5 },
-  tableHeading: { flex: 1, paddingHorizontal: 2.5, fontSize: 6.3, fontWeight: 700 },
-  empty: { paddingVertical: 4, color: '#4B5563', fontSize: 7 },
-  // ── Verification block ──
+  empty: { paddingVertical: 4, color: MUTED, fontSize: 6.5 },
   verificationBlock: {
-    marginTop: 6,
-    borderWidth: 0.7,
-    borderColor: OFFICIAL_RED,
-    padding: 6,
+    marginTop: 3,
+    borderWidth: 0.55,
+    padding: 3.5,
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
-  verifyQrCol: { width: 52, justifyContent: 'center' },
-  qrSmall: { width: 48, height: 48 },
+  verifyQrCol: { width: 37, justifyContent: 'center' },
+  qrSmall: { width: 34, height: 34, objectFit: 'contain' },
   verifyDetailsCol: { flex: 1, justifyContent: 'center' },
-  verifyTitle: { fontSize: 7, fontWeight: 700, color: OFFICIAL_RED, marginBottom: 2 },
-  verifyLabel: { fontSize: 5.8, color: '#4B5563' },
-  verifyValue: { fontSize: 6.5, color: '#111827', marginBottom: 2 },
-  // ── Watermark ──
+  verifyTitle: { fontSize: 6.5, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
+  verifyLabel: { fontSize: 5.2, color: MUTED, textTransform: 'uppercase' },
+  verifyValue: { fontSize: 5.9, color: INK, marginBottom: 1.5 },
   watermark: {
     position: 'absolute',
-    top: '40%',
-    left: '15%',
+    top: '42%',
+    left: '19%',
     transform: 'rotate(-30deg)',
-    fontSize: 52,
-    color: '#F2C7C3',
-    opacity: 0.32,
-    fontWeight: 700,
-    letterSpacing: 8,
+    fontSize: 48,
+    color: '#DDE3EA',
+    opacity: 0.34,
+    fontFamily: 'Helvetica-Bold',
+    letterSpacing: 7,
   },
-  // ── Page footer ──
   footer: {
     position: 'absolute',
-    bottom: 14,
-    left: 30,
-    right: 30,
-    borderTopWidth: 0.6,
-    borderTopColor: OFFICIAL_RED,
+    bottom: 12,
+    left: 24,
+    right: 24,
+    borderTopWidth: 0.5,
     paddingTop: 3,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    color: '#4B5563',
-    fontSize: 6,
+    alignItems: 'flex-end',
+    color: MUTED,
+    fontSize: 5.3,
   },
-  // ── Approvals ──
-  signatureRow: { flexDirection: 'row', gap: 10, marginTop: 3 },
-  signature: {
-    flex: 1,
-    minHeight: 38,
-    borderTopWidth: 0.6,
-    borderTopColor: OFFICIAL_RED,
-    paddingTop: 2.5,
-  },
-  signatureImage: { height: 20, maxWidth: 90, objectFit: 'contain', objectPosition: 'left' },
-  signatureName: { fontSize: 13, fontFamily: 'Allura' },
-  // ── Misc ──
+  footerLeft: { width: '45%' },
+  footerCentre: { width: '38%', textAlign: 'center' },
+  footerRight: { width: '17%', textAlign: 'right' },
+  signatureRow: { flexDirection: 'row', gap: 8, marginTop: 3 },
+  signature: { flex: 1, minHeight: 34, borderTopWidth: 0.5, paddingTop: 2 },
+  signatureStatement: { fontSize: 5.2, textAlign: 'center', minHeight: 13, color: '#344054' },
+  signatureImage: { height: 14, maxWidth: 78, objectFit: 'contain', objectPosition: 'left' },
+  signatureName: { fontSize: 8.4, fontFamily: 'Helvetica-Oblique', marginTop: 0.5 },
+  finalBlock: {},
   spacer: { height: 4 },
-})
+});
 
-export function DocumentPage({ children, status }: { children: React.ReactNode; status?: string }) {
+export function DocumentPage({
+  children,
+  status,
+  official = false,
+  continuationLabel = 'Official document continuation',
+}: {
+  children: React.ReactNode;
+  status?: string;
+  official?: boolean;
+  continuationLabel?: string;
+}) {
   return (
-    <Page size="A4" style={documentStyles.page} wrap>
-      {status === 'draft' && <Text style={documentStyles.watermark}>DRAFT</Text>}
+    <Page size="A4" style={[documentStyles.page, official ? documentStyles.officialPage : {}]} wrap>
+      {status === 'draft' && (
+        <Text style={documentStyles.watermark} fixed>
+          DRAFT
+        </Text>
+      )}
+      <Text
+        style={documentStyles.continuationHeader}
+        render={({ pageNumber }) => (pageNumber > 1 ? continuationLabel : '')}
+        fixed
+      />
       {children}
     </Page>
   );
@@ -192,53 +266,64 @@ export function DocumentHeader({
   status,
   issueDate,
   qrCode,
+  official = false,
+  showIdentity = true,
+  coatOfArmsPath = NAMIBIA_COAT_OF_ARMS_PATH,
+  theme = official ? officialRedTheme : tenantPdfTheme(branding),
 }: {
   branding?: ResolvedTenantBranding | null;
   title: string;
-  reference: string;
-  version: number;
-  status: string;
-  issueDate: string;
+  reference?: string;
+  version?: number;
+  status?: string;
+  issueDate?: string;
   qrCode?: string;
+  official?: boolean;
+  showIdentity?: boolean;
+  coatOfArmsPath?: string;
+  theme?: PdfTheme;
 }) {
+  const contact = [branding?.phone, branding?.email, branding?.website]
+    .filter(Boolean)
+    .join('  ·  ');
   return (
-    <View style={documentStyles.header} fixed>
-      {/* Left: Logo */}
+    <View style={[documentStyles.header, { borderBottomColor: theme.primary }]}>
       <View style={documentStyles.headerLogoZone}>
-        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
-        {branding?.logoUrl ? <Image src={branding.logoUrl} style={documentStyles.logo} /> : null}
+        <Image src={coatOfArmsPath} style={documentStyles.logo} />
       </View>
-      {/* Centre: Organisation details */}
       <View style={documentStyles.headerOrgZone}>
-        <Text style={{ fontSize: 7, fontWeight: 700, textAlign: 'center' }}>REPUBLIC OF NAMIBIA</Text>
-        <Text style={documentStyles.title}>{title.toUpperCase()}</Text>
-        <Text style={{ fontSize: 5.5, marginTop: 2, textAlign: 'center' }}>
+        <Text style={{ fontSize: 7, fontFamily: 'Helvetica-Bold', textAlign: 'center' }}>
+          REPUBLIC OF NAMIBIA
+        </Text>
+        <Text style={[documentStyles.title, { color: theme.primary }]}>{title.toUpperCase()}</Text>
+        <Text style={{ fontSize: 5.3, marginTop: 2, textAlign: 'center' }}>
           OFFICE / MINISTRY / DEPARTMENT / MUNICIPALITY
         </Text>
         <Text style={documentStyles.organisation}>
-          {branding?.organisationName || 'Government Fleet'}
+          {safePdfValue(branding?.organisationName, 'GOVERNMENT FLEET')}
         </Text>
         {branding?.division ? (
-          <Text style={documentStyles.orgDetail}>{branding.division}</Text>
+          <SafePdfText value={branding.division} style={documentStyles.orgDetail} />
         ) : null}
         {branding?.address ? (
-          <Text style={documentStyles.orgDetail}>{branding.address}</Text>
+          <SafePdfText value={branding.address} style={documentStyles.orgDetail} />
         ) : null}
-        <Text style={documentStyles.orgDetail}>
-          {[branding?.phone, branding?.email, branding?.website].filter(Boolean).join(' · ')}
-        </Text>
+        {contact ? <SafePdfText value={contact} style={documentStyles.orgDetail} /> : null}
       </View>
-      {/* Right: Document identity */}
       <View style={documentStyles.headerTitleZone}>
-        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
-        {branding?.sealUrl ? <Image src={branding.sealUrl} style={documentStyles.logo} /> : null}
-        <Text style={documentStyles.reference}>{reference}</Text>
-        <Text style={documentStyles.meta}>
-          Version {version} · {issueDate}
-        </Text>
-        <Text style={documentStyles.statusBadge}>{status}</Text>
-        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
-        {qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
+        {branding?.logoUrl ? <Image src={branding.logoUrl} style={documentStyles.logo} /> : null}
+        {showIdentity && reference ? (
+          <SafePdfText value={reference} style={documentStyles.reference} />
+        ) : null}
+        {showIdentity && (version || issueDate) ? (
+          <Text style={documentStyles.meta}>
+            {[version ? `Version ${version}` : null, issueDate].filter(Boolean).join(' · ')}
+          </Text>
+        ) : null}
+        {showIdentity && status ? (
+          <SafePdfText value={status} style={documentStyles.statusBadge} />
+        ) : null}
+        {showIdentity && qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
       </View>
     </View>
   );
@@ -248,57 +333,117 @@ export function DocumentSection({
   title,
   children,
   wrap = true,
+  theme = defaultTenantTheme,
+  minPresenceAhead = 45,
+  breakBefore = false,
 }: {
   title: string;
   children: React.ReactNode;
   wrap?: boolean;
+  theme?: PdfTheme;
+  minPresenceAhead?: number;
+  breakBefore?: boolean;
 }) {
   return (
-    <View style={documentStyles.section} wrap={wrap}>
-      <Text style={documentStyles.sectionTitle}>{title}</Text>
-      {children}
+    <View
+      style={documentStyles.section}
+      wrap={wrap}
+      minPresenceAhead={minPresenceAhead}
+      break={breakBefore}
+    >
+      <Text
+        style={[
+          documentStyles.sectionTitle,
+          { color: theme.primary, borderColor: theme.rule, backgroundColor: theme.tint },
+        ]}
+      >
+        {title}
+      </Text>
+      <View style={[documentStyles.sectionBody, { borderColor: theme.rule }]}>{children}</View>
     </View>
   );
 }
 
-export function DocumentFieldGrid({ fields }: { fields: Array<{ label: string; value: string }> }) {
+export function DocumentFieldGrid({
+  fields,
+  columns = 2,
+  labelWidth = 40,
+}: {
+  fields: Array<{ label: string; value: unknown }>;
+  columns?: 1 | 2 | 3;
+  labelWidth?: number;
+}) {
   return (
     <View style={documentStyles.fieldGrid}>
-      {fields.map((field) => (
-        <View key={field.label} style={documentStyles.field}>
-          <Text style={documentStyles.fieldLabel}>{field.label}</Text>
-          <Text style={documentStyles.fieldValue}>{field.value}</Text>
+      {fields.map((field, index) => (
+        <View
+          key={`${field.label}-${index}`}
+          style={[documentStyles.field, { width: `${100 / columns}%` }]}
+        >
+          <SafePdfText
+            value={field.label}
+            style={[documentStyles.fieldLabel, { width: `${labelWidth}%` }]}
+          />
+          <SafePdfText
+            value={field.value}
+            style={[documentStyles.fieldValue, { width: `${100 - labelWidth}%` }]}
+          />
         </View>
       ))}
     </View>
   );
 }
 
+export type DocumentTableColumn = {
+  key: string;
+  label: string;
+  width?: string | number;
+  align?: 'left' | 'center' | 'right';
+};
+
 export function DocumentTable({
   columns,
   rows,
-  emptyLabel = 'No records',
+  emptyLabel = 'No records recorded',
+  theme = defaultTenantTheme,
 }: {
-  columns: Array<{ key: string; label: string }>;
-  rows: Array<Record<string, string>>;
+  columns: DocumentTableColumn[];
+  rows: Array<Record<string, unknown>>;
   emptyLabel?: string;
+  theme?: PdfTheme;
 }) {
-  if (!rows.length) return <Text style={documentStyles.empty}>{emptyLabel}</Text>;
+  if (!rows.length) return <SafePdfText value={emptyLabel} style={documentStyles.empty} />;
+  const fallbackWidth = `${100 / columns.length}%`;
+  const cellStyle = (column: DocumentTableColumn, heading: boolean) => ({
+    ...(heading ? documentStyles.tableHeading : documentStyles.tableCell),
+    width: column.width || fallbackWidth,
+    textAlign: column.align || 'left',
+  });
   return (
-    <View>
-      <View style={documentStyles.tableHeader} fixed>
+    <View style={documentStyles.table} minPresenceAhead={22}>
+      <View
+        style={[
+          documentStyles.tableHeader,
+          { backgroundColor: theme.tint, borderBottomColor: theme.primary },
+        ]}
+        fixed
+      >
         {columns.map((column) => (
-          <Text key={column.key} style={documentStyles.tableHeading}>
-            {column.label}
-          </Text>
+          <SafePdfText key={column.key} value={column.label} style={cellStyle(column, true)} />
         ))}
       </View>
       {rows.map((row, index) => (
-        <View key={index} style={documentStyles.tableRow} wrap={false}>
+        <View
+          key={index}
+          style={[documentStyles.tableRow, { borderBottomColor: theme.rule }]}
+          wrap={false}
+        >
           {columns.map((column) => (
-            <Text key={column.key} style={documentStyles.tableCell}>
-              {row[column.key] || 'Not recorded'}
-            </Text>
+            <SafePdfText
+              key={column.key}
+              value={row[column.key]}
+              style={cellStyle(column, false)}
+            />
           ))}
         </View>
       ))}
@@ -309,23 +454,69 @@ export function DocumentTable({
 export function DocumentSignature({
   name,
   role,
+  statement,
   signedAt,
   signatureUrl,
+  theme = defaultTenantTheme,
 }: {
-  name: string;
-  role: string;
-  signedAt?: string;
+  name: unknown;
+  role: unknown;
+  statement?: string;
+  signedAt?: unknown;
   signatureUrl?: string;
+  theme?: PdfTheme;
 }) {
   return (
-    <View style={documentStyles.signature}>
-      {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
+    <View style={[documentStyles.signature, { borderTopColor: theme.primary }]}>
+      {statement ? (
+        <SafePdfText value={statement} style={documentStyles.signatureStatement} />
+      ) : null}
       {signatureUrl ? <Image src={signatureUrl} style={documentStyles.signatureImage} /> : null}
-      <Text style={documentStyles.signatureName}>{name}</Text>
-      <Text style={documentStyles.muted}>{role}</Text>
-      <Text style={documentStyles.muted}>
-        {signedAt ? `Digitally approved · ${signedAt}` : 'Signature not applied'}
+      <SafePdfText value={name} style={documentStyles.signatureName} />
+      <SafePdfText value={role} style={documentStyles.muted} />
+      <SafePdfText
+        value={
+          signedAt ? `Digitally approved · ${safePdfValue(signedAt)}` : 'Signature not applied'
+        }
+        style={documentStyles.muted}
+      />
+    </View>
+  );
+}
+
+export function DocumentExecutiveCertification({
+  branding,
+  generatedAt,
+  statement = 'I certify that this report is a true system record for the stated reporting period.',
+  theme = tenantPdfTheme(branding),
+}: {
+  branding?: ResolvedTenantBranding | null;
+  generatedAt?: unknown;
+  statement?: string;
+  theme?: PdfTheme;
+}) {
+  return (
+    <View style={{ marginTop: 5 }} wrap={false}>
+      <Text
+        style={[
+          documentStyles.sectionTitle,
+          { color: theme.primary, borderColor: theme.rule, backgroundColor: theme.tint },
+        ]}
+      >
+        Executive certification
       </Text>
+      <View style={[documentStyles.sectionBody, { borderColor: theme.rule }]}>
+        <View style={documentStyles.signatureRow}>
+          <DocumentSignature
+            name={branding?.executiveSignatoryName}
+            role={branding?.executiveSignatoryTitle || 'Chief Executive Officer'}
+            statement={statement}
+            signedAt={generatedAt}
+            signatureUrl={branding?.executiveSignatureUrl}
+            theme={theme}
+          />
+        </View>
+      </View>
     </View>
   );
 }
@@ -334,36 +525,40 @@ export function DocumentVerificationBlock({
   branding,
   verificationCode,
   verificationUrl,
+  documentHash,
   qrCode,
+  theme = tenantPdfTheme(branding),
 }: {
   branding?: ResolvedTenantBranding | null;
-  verificationCode?: string;
-  verificationUrl?: string;
+  verificationCode?: unknown;
+  verificationUrl?: unknown;
+  documentHash?: unknown;
   qrCode?: string;
+  theme?: PdfTheme;
 }) {
   return (
-    <View style={documentStyles.verificationBlock} wrap={false}>
+    <View style={[documentStyles.verificationBlock, { borderColor: theme.rule }]} wrap={false}>
       <View style={documentStyles.verifyQrCol}>
-        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer Image has no alt prop */}
         {qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
       </View>
       <View style={documentStyles.verifyDetailsCol}>
-        <Text style={documentStyles.verifyTitle}>VERIFY THIS DOCUMENT</Text>
-        {verificationCode ? (
-          <>
-            <Text style={documentStyles.verifyLabel}>Verification code</Text>
-            <Text style={documentStyles.verifyValue}>{verificationCode}</Text>
-          </>
-        ) : null}
-        {verificationUrl ? (
-          <>
-            <Text style={documentStyles.verifyLabel}>Secure verification link</Text>
-            <Text style={documentStyles.verifyValue}>{verificationUrl}</Text>
-          </>
-        ) : null}
-        <Text style={documentStyles.verifyLabel}>
-          {branding?.organisationName || 'Government Fleet'} · Official digital record
-        </Text>
+        <SafePdfText value="Verification code" style={documentStyles.verifyLabel} />
+        <SafePdfText
+          value={verificationCode}
+          style={[documentStyles.verifyTitle, { color: theme.primary }]}
+        />
+      </View>
+      <View style={documentStyles.verifyDetailsCol}>
+        <SafePdfText value="Short link" style={documentStyles.verifyLabel} />
+        <SafePdfText value={verificationUrl} style={documentStyles.verifyValue} />
+      </View>
+      <View style={{ ...documentStyles.verifyDetailsCol, flex: 1.35 }}>
+        <SafePdfText value="Document hash (SHA256)" style={documentStyles.verifyLabel} />
+        <SafePdfText value={documentHash} style={documentStyles.verifyValue} />
+        <SafePdfText
+          value={`${branding?.organisationName || 'Government Fleet'} · Official digital record`}
+          style={documentStyles.verifyLabel}
+        />
       </View>
     </View>
   );
@@ -373,30 +568,42 @@ export function DocumentVerificationFooter({
   branding,
   verificationCode,
   verificationUrl,
+  theme = tenantPdfTheme(branding),
 }: {
   branding?: ResolvedTenantBranding | null;
-  verificationCode?: string;
-  verificationUrl?: string;
+  verificationCode?: unknown;
+  verificationUrl?: unknown;
+  theme?: PdfTheme;
 }) {
   return (
-    <View style={documentStyles.footer} fixed>
-      <Text>
-        {branding?.documentFooter || 'This is a digitally generated document and does not require a physical stamp'}
-      </Text>
-      <Text>
-        {verificationCode ? `Verify: ${verificationCode}` : 'Internal record'}
-        {verificationUrl ? ` · ${verificationUrl}` : ''}
-      </Text>
-      <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+    <View style={[documentStyles.footer, { borderTopColor: theme.primary }]} fixed>
+      <SafePdfText
+        value={
+          branding?.documentFooter ||
+          `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`
+        }
+        style={documentStyles.footerLeft}
+      />
+      <SafePdfText
+        value={
+          verificationCode
+            ? `Verify: ${safePdfValue(verificationCode)}${verificationUrl ? ` · ${safePdfValue(verificationUrl)}` : ''}`
+            : 'Internal record'
+        }
+        style={documentStyles.footerCentre}
+      />
+      <Text
+        style={documentStyles.footerRight}
+        render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`}
+      />
     </View>
   );
 }
 
 export function DocumentRow({ children }: { children: React.ReactNode }) {
-  const childArray = React.Children.toArray(children);
   return (
     <View style={documentStyles.sectionRow}>
-      {childArray.map((child, index) => (
+      {React.Children.toArray(children).map((child, index) => (
         <View key={index} style={documentStyles.column}>
           {child}
         </View>

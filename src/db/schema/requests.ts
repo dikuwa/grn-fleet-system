@@ -1,4 +1,13 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, jsonb, uniqueIndex } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  boolean,
+  integer,
+  jsonb,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
 import { employees, departments, offices } from './people';
@@ -163,6 +172,23 @@ export const requestRoutes = pgTable('request_routes', {
   overrideReason: text('override_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Goods and equipment travelling under a request. Keeping these as rows (rather
+ * than a free-text blob) lets approvals and every later authority/document use
+ * the same ordered source of truth.
+ */
+export const requestGoodsEquipment = pgTable('request_goods_equipment', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  requestId: uuid('request_id')
+    .notNull()
+    .references(() => transportRequests.id, { onDelete: 'cascade' }),
+  description: text('description').notNull(),
+  quantity: text('quantity'),
+  purpose: text('purpose'),
+  sortOrder: integer('sort_order').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 /**

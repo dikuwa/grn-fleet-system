@@ -1,4 +1,5 @@
 import React from 'react';
+import { createHash } from 'node:crypto';
 import QRCode from 'qrcode';
 import { renderToStream } from '@react-pdf/renderer';
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,7 +17,7 @@ import {
 } from '@/db/schema/trips';
 import { departments, employees } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
-import { transportRequests, requestRoutes } from '@/db/schema/requests';
+import { transportRequests, requestGoodsEquipment, requestRoutes } from '@/db/schema/requests';
 import { tenantBranding, tenants } from '@/db/schema/tenants';
 import {
   getSessionRoleNames,
@@ -26,7 +27,7 @@ import {
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { TripAuthorityDocument, type TripAuthorityData } from '@/lib/pdf/trip-authority';
-import { resolveTenantBranding } from '@/lib/tenant-branding';
+import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
 
@@ -72,7 +73,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         allocatedByUserId: vehicleAllocations.allocatedByUserId,
       })
       .from(tripAuthorities)
-      .innerJoin(trips, and(eq(trips.id, tripAuthorities.tripId), eq(trips.tenantId, session.tenantId)))
+      .innerJoin(
+        trips,
+        and(eq(trips.id, tripAuthorities.tripId), eq(trips.tenantId, session.tenantId)),
+      )
       .innerJoin(
         transportRequests,
         and(
@@ -102,7 +106,16 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!authority)
       return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
 
-    const [passengers, drivers, departureInspections, authoriserEmployee, transportOfficerEmployee, requesterName, routeRows] = await Promise.all([
+    const [
+      passengers,
+      drivers,
+      departureInspections,
+      authoriserEmployee,
+      transportOfficerEmployee,
+      requesterName,
+      routeRows,
+      goodsRows,
+    ] = await Promise.all([
       db
         .select()
         .from(tripAuthorityPassengers)
@@ -118,6 +131,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           lastName: employees.lastName,
           jobTitle: employees.jobTitle,
           phone: employees.phone,
+          nationalIdNumber: employees.nationalIdNumber,
           departmentName: departments.name,
         })
         .from(tripAuthorisedDrivers)
@@ -135,12 +149,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       db
         .select()
         .from(vehicleInspections)
-        .where(and(
-          eq(vehicleInspections.tenantId, session.tenantId),
-          eq(vehicleInspections.tripId, id),
-          eq(vehicleInspections.vehicleId, authority.vehicleId),
-          eq(vehicleInspections.type, 'departure'),
-        ))
+        .where(
+          and(
+            eq(vehicleInspections.tenantId, session.tenantId),
+            eq(vehicleInspections.tripId, id),
+            eq(vehicleInspections.vehicleId, authority.vehicleId),
+            eq(vehicleInspections.type, 'departure'),
+          ),
+        )
         .orderBy(desc(vehicleInspections.createdAt))
         .limit(1),
       // Resolve authoriser name from authoriserSnapshot.employeeId.
@@ -168,10 +184,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             jobTitle: employees.jobTitle,
           })
           .from(employees)
-          .where(and(
-            eq(employees.userId, authority.allocatedByUserId),
-            eq(employees.tenantId, session.tenantId),
-          ))
+          .where(
+            and(
+              eq(employees.userId, authority.allocatedByUserId),
+              eq(employees.tenantId, session.tenantId),
+            ),
+          )
           .limit(1);
         return emp || null;
       })(),
@@ -184,10 +202,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             lastName: employees.lastName,
           })
           .from(employees)
-          .where(and(
-            eq(employees.id, authority.requesterEmployeeId),
-            eq(employees.tenantId, session.tenantId),
-          ))
+          .where(
+            and(
+              eq(employees.id, authority.requesterEmployeeId),
+              eq(employees.tenantId, session.tenantId),
+            ),
+          )
           .limit(1);
         return emp ? `${emp.firstName} ${emp.lastName}` : null;
       })(),
@@ -196,6 +216,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         .select()
         .from(requestRoutes)
         .where(eq(requestRoutes.requestId, authority.authority.requestId)),
+      db
+        .select({
+          description: requestGoodsEquipment.description,
+          quantity: requestGoodsEquipment.quantity,
+          purpose: requestGoodsEquipment.purpose,
+        })
+        .from(requestGoodsEquipment)
+        .where(eq(requestGoodsEquipment.requestId, authority.authority.requestId))
+        .orderBy(requestGoodsEquipment.sortOrder),
     ]);
 
     // Fetch inspection items only from the tenant/trip-scoped departure inspection above.
@@ -209,12 +238,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           label: inspectionTemplateItems.label,
         })
         .from(inspectionItemResults)
-        .innerJoin(inspectionTemplateItems, eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId))
+        .innerJoin(
+          inspectionTemplateItems,
+          eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId),
+        )
         .where(eq(inspectionItemResults.inspectionId, insp.id));
       inspectionItems = results;
     }
 
-    const branding = await resolveTenantBranding(session.tenantId);
+    const branding = await resolveTenantDocumentBranding(session.tenantId);
     const primary = drivers.find((driver) => driver.driverType === 'primary');
     const token = (authority.authority.data as { verificationToken?: string } | null)
       ?.verificationToken;
@@ -254,15 +286,17 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       transportOffice: authority.requestingOfficeSnapshot || undefined,
       routeSummary: authority.authority.approvedRoute || undefined,
       totalKm: distance,
-      journeyLegs: routeRows.length > 0
-        ? routeRows.map((r) => ({
-            origin: r.originName || 'Not specified',
-            destination: r.destinationName || 'Not specified',
-            departureDate: authority.authority.validFrom?.toISOString().split('T')[0] || 'Not set',
-            returnDate: authority.authority.validUntil?.toISOString().split('T')[0] || 'Not set',
-            estimatedKm: r.totalKilometres ?? r.mappedDistanceKm ?? undefined,
-          }))
-        : undefined,
+      journeyLegs:
+        routeRows.length > 0
+          ? routeRows.map((r) => ({
+              origin: r.originName || 'Not specified',
+              destination: r.destinationName || 'Not specified',
+              departureDate:
+                authority.authority.validFrom?.toISOString().split('T')[0] || 'Not set',
+              returnDate: authority.authority.validUntil?.toISOString().split('T')[0] || 'Not set',
+              estimatedKm: r.totalKilometres ?? r.mappedDistanceKm ?? undefined,
+            }))
+          : undefined,
       authorisation: {
         authoriserName: authoriserEmployee
           ? `${authoriserEmployee.firstName} ${authoriserEmployee.lastName}`
@@ -283,6 +317,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       issuedAt: authority.authority.issuedAt?.toISOString(),
       verificationCode: authority.authority.authorityNumber || undefined,
       verificationUrl,
+      documentHash: createHash('sha256')
+        .update(
+          JSON.stringify({
+            authorityId: authority.authority.id,
+            version: authority.authority.version,
+            updatedAt: authority.authority.updatedAt,
+            passengers,
+            drivers,
+            routes: routeRows,
+            goods: goodsRows,
+          }),
+        )
+        .digest('hex'),
       qrCodeDataUrl,
       specialConditions: authority.authority.specialConditions || undefined,
       beginningOdometer: authority.authority.beginningOdometer || undefined,
@@ -291,6 +338,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         ? {
             name: `${primary.firstName} ${primary.lastName}`,
             employeeNumber: primary.employeeNumber || undefined,
+            idNumber: primary.nationalIdNumber || undefined,
             designation: primary.jobTitle || undefined,
             licenceNumber: primary.licenceNumber || undefined,
             licenceClass: primary.licenceClass || undefined,
@@ -303,24 +351,31 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       passengers: passengers.map((passenger) => ({
         name: passenger.fullName,
         employeeNumber: passenger.employeeNumber || undefined,
+        department: passenger.officeOrDepartment || undefined,
+        contactNumber: passenger.contactNumber || undefined,
         passengerType: passenger.passengerType.replaceAll('_', ' '),
         destination: passenger.destination || undefined,
         indemnityConfirmed: passenger.indemnityConfirmed,
       })),
-      authoriser: (authoriserEmployee || authority.authority.authorisedByUserId)
-        ? {
-            name: authoriserEmployee
-              ? `${authoriserEmployee.firstName} ${authoriserEmployee.lastName}`
-              : 'Authorising officer',
-            designation: authoriserEmployee?.jobTitle || 'Authorising Officer',
-            authorisedAt: authority.authority.authorisedAt?.toLocaleString('en-NA'),
-          }
-        : undefined,
+      authoriser:
+        authoriserEmployee || authority.authority.authorisedByUserId
+          ? {
+              name: authoriserEmployee
+                ? `${authoriserEmployee.firstName} ${authoriserEmployee.lastName}`
+                : 'Authorising officer',
+              designation: authoriserEmployee?.jobTitle || 'Authorising Officer',
+              authorisedAt: authority.authority.authorisedAt?.toLocaleString('en-NA'),
+            }
+          : undefined,
       additionalDrivers: drivers
         .filter((driver) => driver.driverType !== 'primary')
         .map((driver) => ({
           name: `${driver.firstName} ${driver.lastName}`,
           employeeNumber: driver.employeeNumber || undefined,
+          idNumber: driver.nationalIdNumber || undefined,
+          department: driver.departmentName || undefined,
+          contactNumber: driver.phone || undefined,
+          licenceNumber: driver.licenceNumber || undefined,
           licenceClass: driver.licenceClass || undefined,
           licenceExpiry: driver.licenceExpiry?.toLocaleDateString('en-NA'),
         })),
@@ -331,26 +386,35 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             issuedAt: authority.authority.issuedAt?.toLocaleString('en-NA'),
           }
         : undefined,
-      goodsAndEquipment: authority.authority.purpose
-        ? [{ description: 'Authorised cargo per trip purpose', purpose: authority.authority.purpose }]
-        : undefined,
-      preDepartureInspection: departureInspections.length > 0
-        ? {
-            status: departureInspections[0].status,
-            odometer: departureInspections[0].odometerReading || undefined,
-            items: inspectionItems.length > 0
-              ? inspectionItems.map((item) => ({
-                  label: item.label,
-                  result: item.result,
-                  comment: item.comment || undefined,
-                }))
-              : undefined,
-            notes: departureInspections[0].notes || undefined,
-            completedAt: departureInspections[0].createdAt.toLocaleString('en-NA'),
-          }
-        : undefined,
+      goodsAndEquipment: goodsRows.map((item) => ({
+        description: item.description,
+        quantity: item.quantity || undefined,
+        purpose: item.purpose || undefined,
+      })),
+      preDepartureInspection:
+        departureInspections.length > 0
+          ? {
+              status: departureInspections[0].status,
+              odometer: departureInspections[0].odometerReading || undefined,
+              items:
+                inspectionItems.length > 0
+                  ? inspectionItems.map((item) => ({
+                      label: item.label,
+                      result: item.result,
+                      comment: item.comment || undefined,
+                    }))
+                  : undefined,
+              notes: departureInspections[0].notes || undefined,
+              completedAt: departureInspections[0].createdAt.toLocaleString('en-NA'),
+            }
+          : undefined,
       fuelInformation: (() => {
-        const info: { fuelCardNumber?: string; expectedFuel?: string; fuelType?: string; costCentre?: string } = {};
+        const info: {
+          fuelCardNumber?: string;
+          expectedFuel?: string;
+          fuelType?: string;
+          costCentre?: string;
+        } = {};
         if (authority.fuelCardNumber) info.fuelCardNumber = authority.fuelCardNumber;
         if (authority.fuelType) info.fuelType = authority.fuelType;
         if (authority.authorisedKm) {

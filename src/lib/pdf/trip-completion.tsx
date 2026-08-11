@@ -14,9 +14,9 @@ import {
   DocumentPage,
   DocumentRow,
   DocumentSection,
-
   DocumentVerificationBlock,
   DocumentVerificationFooter,
+  DocumentExecutiveCertification,
 } from './document-system';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +75,7 @@ export interface TripCompletionData {
   statusText?: string;
   verificationCode?: string;
   verificationUrl?: string;
+  documentHash?: string;
   qrCodeDataUrl?: string;
 }
 
@@ -101,9 +102,7 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
   const status = data.statusText || data.status || 'issued';
 
   return (
-    <Document
-      title={`Trip Completion — ${data.vehicle.licenceNumber || data.tripId.slice(0, 8)}`}
-    >
+    <Document title={`Trip Completion — ${data.vehicle.licenceNumber || data.tripId.slice(0, 8)}`}>
       <DocumentPage status={status === 'draft' ? 'draft' : undefined}>
         <DocumentHeader
           branding={branding}
@@ -124,7 +123,10 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
             <DocumentFieldGrid
               fields={[
                 { label: 'Vehicle registration', value: data.vehicle.licenceNumber },
-                { label: 'Asset register number', value: data.vehicle.registrationNumber || 'Not recorded' },
+                {
+                  label: 'Asset register number',
+                  value: data.vehicle.registrationNumber || 'Not recorded',
+                },
                 { label: 'Status', value: formatDocumentStatus(data.status) },
                 {
                   label: 'Fuel total',
@@ -180,8 +182,14 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
               <DocumentFieldGrid
                 fields={[
                   { label: 'Route distance', value: formatHumanValue(data.routeKm, 'kilometres') },
-                  { label: 'Authorised kilometres', value: formatHumanValue(data.closure.authorisedKm, 'kilometres') },
-                  { label: 'Actual kilometres', value: formatHumanValue(data.closure.actualKm, 'kilometres') },
+                  {
+                    label: 'Authorised kilometres',
+                    value: formatHumanValue(data.closure.authorisedKm, 'kilometres'),
+                  },
+                  {
+                    label: 'Actual kilometres',
+                    value: formatHumanValue(data.closure.actualKm, 'kilometres'),
+                  },
                   {
                     label: 'Variance',
                     value:
@@ -213,9 +221,15 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
                       minimumFractionDigits: 1,
                     })} L`,
                   },
-                  { label: 'Total cost', value: formatMoney(data.fuelSummary.totalCost, branding?.locale) },
+                  {
+                    label: 'Total cost',
+                    value: formatMoney(data.fuelSummary.totalCost, branding?.locale),
+                  },
                   { label: 'Transactions', value: String(data.fuelSummary.transactionCount) },
-                  { label: 'Pending reimbursements', value: String(data.fuelSummary.pendingReimbursements) },
+                  {
+                    label: 'Pending reimbursements',
+                    value: String(data.fuelSummary.pendingReimbursements),
+                  },
                 ]}
               />
             </DocumentSection>
@@ -234,22 +248,30 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
             ]}
           />
           {(data.eventSummary?.events || []).map((event) => (
-            <DocumentFieldGrid key={event.number || `${event.type}-${event.occurredAt}`} fields={[
-              { label: 'Event number', value: event.number || 'Pending' },
-              { label: 'Type / severity', value: `${humanizeKey(event.type)} · ${humanizeKey(event.severity)}` },
-              { label: 'Date', value: formatHumanDate(event.occurredAt, branding?.locale) },
-              { label: 'Journey state', value: humanizeKey(event.continuationState) },
-              { label: 'Police reference', value: event.policeReference || 'Not applicable' },
-              { label: 'Outcome', value: `${humanizeKey(event.status)} — ${event.description}` },
-            ]} />
+            <DocumentFieldGrid
+              key={event.number || `${event.type}-${event.occurredAt}`}
+              fields={[
+                { label: 'Event number', value: event.number || 'Pending' },
+                {
+                  label: 'Type / severity',
+                  value: `${humanizeKey(event.type)} · ${humanizeKey(event.severity)}`,
+                },
+                { label: 'Date', value: formatHumanDate(event.occurredAt, branding?.locale) },
+                { label: 'Journey state', value: humanizeKey(event.continuationState) },
+                { label: 'Police reference', value: event.policeReference || 'Not applicable' },
+                { label: 'Outcome', value: `${humanizeKey(event.status)} — ${event.description}` },
+              ]}
+            />
           ))}
         </DocumentSection>
 
+        <DocumentExecutiveCertification branding={branding} generatedAt={data.generatedAt} />
         {/* Verification block */}
         <DocumentVerificationBlock
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
           qrCode={data.qrCodeDataUrl}
         />
 

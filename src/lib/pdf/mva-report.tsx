@@ -1,11 +1,7 @@
 import React from 'react';
 import { Document, Text, View, StyleSheet } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
-import {
-  formatDocumentStatus,
-  formatHumanDate,
-  humanizeKey,
-} from '@/lib/human-readable';
+import { formatDocumentStatus, formatHumanDate, humanizeKey } from '@/lib/human-readable';
 import {
   DocumentFieldGrid,
   DocumentHeader,
@@ -14,6 +10,7 @@ import {
   DocumentSection,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
+  DocumentExecutiveCertification,
 } from './document-system';
 
 // ---------------------------------------------------------------------------
@@ -79,6 +76,7 @@ export interface MvaReportData {
   generatedAt?: string;
   verificationCode?: string;
   verificationUrl?: string;
+  documentHash?: string;
   qrCodeDataUrl?: string;
 }
 
@@ -137,9 +135,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
         }
       : null);
 
-  const witnessCount = Array.isArray(data.witnessStatements)
-    ? data.witnessStatements.length
-    : 0;
+  const witnessCount = Array.isArray(data.witnessStatements) ? data.witnessStatements.length : 0;
 
   return (
     <Document title={`Motor Vehicle Accident Report — ${data.reference}`}>
@@ -178,14 +174,27 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
                   value: formatHumanDate(data.occurredAt, branding?.locale),
                 },
                 { label: 'Location', value: data.location || 'Not recorded' },
-                { label: 'Continuation state', value: humanStatus(data.continuationState || 'safe_to_continue') },
+                {
+                  label: 'Continuation state',
+                  value: humanStatus(data.continuationState || 'safe_to_continue'),
+                },
                 {
                   label: 'Vehicle safe',
-                  value: data.vehicleSafe === true ? 'Yes' : data.vehicleSafe === false ? 'No' : 'Not assessed',
+                  value:
+                    data.vehicleSafe === true
+                      ? 'Yes'
+                      : data.vehicleSafe === false
+                        ? 'No'
+                        : 'Not assessed',
                 },
                 {
                   label: 'Passenger(s) safe',
-                  value: data.passengerSafe === true ? 'Yes' : data.passengerSafe === false ? 'No' : 'Not assessed',
+                  value:
+                    data.passengerSafe === true
+                      ? 'Yes'
+                      : data.passengerSafe === false
+                        ? 'No'
+                        : 'Not assessed',
                 },
               ]}
             />
@@ -200,7 +209,10 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
               { label: 'Register number', value: data.vehicle.registerNumber },
               { label: 'Make', value: data.vehicle.make || '—' },
               { label: 'Model', value: data.vehicle.model || '—' },
-              { label: 'Injuries', value: data.injuries ? `${data.numberInjured} reported` : 'None' },
+              {
+                label: 'Injuries',
+                value: data.injuries ? `${data.numberInjured} reported` : 'None',
+              },
               { label: 'Vehicle damage', value: data.vehicleDamage ? 'Yes' : 'No' },
               { label: 'Third party involved', value: data.thirdPartyInvolvement ? 'Yes' : 'No' },
             ]}
@@ -237,15 +249,27 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
             <DocumentFieldGrid
               fields={[
                 { label: 'Status', value: humanStatus(data.investigationStatus) },
-                { label: 'Closed at', value: data.investigationClosedAt ? formatHumanDate(data.investigationClosedAt, branding?.locale) : '—' },
-                { label: 'Witnesses', value: witnessCount > 0 ? `${witnessCount} statement(s)` : 'None recorded' },
+                {
+                  label: 'Closed at',
+                  value: data.investigationClosedAt
+                    ? formatHumanDate(data.investigationClosedAt, branding?.locale)
+                    : '—',
+                },
+                {
+                  label: 'Witnesses',
+                  value: witnessCount > 0 ? `${witnessCount} statement(s)` : 'None recorded',
+                },
               ]}
             />
           </DocumentRow>
           {data.investigationNotes ? (
             <View style={{ marginTop: 8 }}>
-              <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#374151', marginBottom: 4 }}>Investigation notes:</Text>
-              <Text style={{ fontSize: 9, color: '#6B7280', lineHeight: 1.5 }}>{data.investigationNotes}</Text>
+              <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#374151', marginBottom: 4 }}>
+                Investigation notes:
+              </Text>
+              <Text style={{ fontSize: 9, color: '#6B7280', lineHeight: 1.5 }}>
+                {data.investigationNotes}
+              </Text>
             </View>
           ) : null}
         </DocumentSection>
@@ -259,10 +283,14 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
                   Witness {idx + 1}: {String((w as Record<string, unknown>).name ?? 'Not named')}
                 </Text>
                 {(w as Record<string, unknown>).phone ? (
-                  <Text style={styles.witnessDetail}>Phone: {String((w as Record<string, unknown>).phone)}</Text>
+                  <Text style={styles.witnessDetail}>
+                    Phone: {String((w as Record<string, unknown>).phone)}
+                  </Text>
                 ) : null}
                 {(w as Record<string, unknown>).statement ? (
-                  <Text style={styles.witnessDetail}>{String((w as Record<string, unknown>).statement)}</Text>
+                  <Text style={styles.witnessDetail}>
+                    {String((w as Record<string, unknown>).statement)}
+                  </Text>
                 ) : null}
               </View>
             ))}
@@ -277,9 +305,19 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
                 label: 'Insurer notified',
                 value: data.insuranceNotified ? 'Yes' : 'No',
               },
-              { label: 'Notified at', value: data.insuranceNotifiedAt ? formatHumanDate(data.insuranceNotifiedAt, branding?.locale) : '—' },
+              {
+                label: 'Notified at',
+                value: data.insuranceNotifiedAt
+                  ? formatHumanDate(data.insuranceNotifiedAt, branding?.locale)
+                  : '—',
+              },
               { label: 'Claim reference', value: data.insuranceClaimReference || 'Pending' },
-              { label: 'Third party insurer', value: data.thirdPartyInsuranceDetails ? JSON.stringify(data.thirdPartyInsuranceDetails) : 'Not recorded' },
+              {
+                label: 'Third party insurer',
+                value: data.thirdPartyInsuranceDetails
+                  ? JSON.stringify(data.thirdPartyInsuranceDetails)
+                  : 'Not recorded',
+              },
             ]}
           />
         </DocumentSection>
@@ -289,8 +327,16 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
           <DocumentFieldGrid
             fields={[
               { label: 'Status', value: humanStatus(data.technicalClearanceStatus) },
-              { label: 'Cleared at', value: data.technicalClearanceAt ? formatHumanDate(data.technicalClearanceAt, branding?.locale) : '—' },
-              { label: 'Cleared by user', value: data.technicalClearanceByUserId?.slice(0, 8) || '—' },
+              {
+                label: 'Cleared at',
+                value: data.technicalClearanceAt
+                  ? formatHumanDate(data.technicalClearanceAt, branding?.locale)
+                  : '—',
+              },
+              {
+                label: 'Cleared by user',
+                value: data.technicalClearanceByUserId?.slice(0, 8) || '—',
+              },
             ]}
           />
         </DocumentSection>
@@ -304,10 +350,16 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
           </View>
         ) : null}
 
+        <DocumentExecutiveCertification
+          branding={branding}
+          generatedAt={data.generatedAt}
+          statement="I certify that this incident report is the official system record available at the time of issue."
+        />
         <DocumentVerificationBlock
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
           qrCode={data.qrCodeDataUrl}
         />
 
