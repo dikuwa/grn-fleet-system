@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/reset-service';
+import { notifyResetRequesterOutcome } from '@/lib/platform/reset-notifications';
 
 export const maxDuration = 300;
 
@@ -12,10 +13,7 @@ export const maxDuration = 300;
  * fresh dry run, verified durable recovery point, unchanged plan fingerprint,
  * and exact `RESET <TENANT_CODE>` typed confirmation.
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -25,7 +23,8 @@ export async function POST(
 
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const confirmationPhrase = typeof body.confirmationPhrase === 'string' ? body.confirmationPhrase : '';
+    const confirmationPhrase =
+      typeof body.confirmationPhrase === 'string' ? body.confirmationPhrase : '';
 
     const result = await executeApprovedTenantOperationalReset({
       resetRequestId: id,
@@ -34,11 +33,28 @@ export async function POST(
       confirmationPhrase,
     });
 
-    return NextResponse.json({ success: result.result === 'completed', data: result }, { status: result.result === 'completed' ? 200 : 500 });
+    if (result.tenantOrigin) {
+      await notifyResetRequesterOutcome({
+        requestId: id,
+        tenantId: result.tenantId,
+        requesterUserId: result.requesterUserId,
+        status: result.result,
+        notes:
+          result.result === 'failed'
+            ? 'The reset did not pass every integrity check. The recovery point remains available for investigation.'
+            : null,
+      });
+    }
+
+    return NextResponse.json(
+      { success: result.result === 'completed', data: result },
+      { status: result.result === 'completed' ? 200 : 500 },
+    );
   } catch (error) {
     console.error('[Platform Reset Execute] POST failed:', error);
     const message = error instanceof Error ? error.message : String(error);
-    const isPrecondition = /approve|dry run|recovery point|confirmation|changed|operational reset/i.test(message);
+    const isPrecondition =
+      /approve|dry run|recovery point|confirmation|changed|operational reset/i.test(message);
     return NextResponse.json({ error: message }, { status: isPrecondition ? 409 : 500 });
   }
 }

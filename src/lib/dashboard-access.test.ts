@@ -53,19 +53,50 @@ describe('canonical workspace route policy', () => {
   });
 
   it('gives each platform system role a real, bounded workspace', () => {
-    for (const path of ['/dashboard/platform', '/dashboard/platform/tenants', '/dashboard/platform/demo-requests', '/dashboard/platform/enquiries', '/dashboard/platform/emergency-contacts']) {
+    for (const path of [
+      '/dashboard/platform',
+      '/dashboard/platform/tenants',
+      '/dashboard/platform/demo-requests',
+      '/dashboard/platform/enquiries',
+      '/dashboard/platform/emergency-contacts',
+    ]) {
       expect(canAccessDashboardPath(path, [R.PLATFORM_SUPPORT], W.PLATFORM_ADMIN), path).toBe(true);
     }
-    expect(canAccessDashboardPath('/dashboard/platform/users', [R.PLATFORM_SUPPORT], W.PLATFORM_ADMIN)).toBe(false);
-    expect(canAccessDashboardPath('/dashboard/platform/reset', [R.PLATFORM_SUPPORT], W.PLATFORM_ADMIN)).toBe(false);
+    expect(
+      canAccessDashboardPath('/dashboard/platform/users', [R.PLATFORM_SUPPORT], W.PLATFORM_ADMIN),
+    ).toBe(false);
+    expect(
+      canAccessDashboardPath('/dashboard/platform/reset', [R.PLATFORM_SUPPORT], W.PLATFORM_ADMIN),
+    ).toBe(false);
 
-    for (const path of ['/dashboard/platform', '/dashboard/platform/tenants', '/dashboard/platform/audit']) {
+    for (const path of [
+      '/dashboard/platform',
+      '/dashboard/platform/tenants',
+      '/dashboard/platform/audit',
+    ]) {
       expect(canAccessDashboardPath(path, [R.PLATFORM_AUDITOR], W.PLATFORM_ADMIN), path).toBe(true);
     }
-    expect(canAccessDashboardPath('/dashboard/platform/demo-requests', [R.PLATFORM_AUDITOR], W.PLATFORM_ADMIN)).toBe(false);
-    expect(canAccessDashboardPath('/dashboard/platform/billing', [R.PLATFORM_AUDITOR], W.PLATFORM_ADMIN)).toBe(false);
+    expect(
+      canAccessDashboardPath(
+        '/dashboard/platform/demo-requests',
+        [R.PLATFORM_AUDITOR],
+        W.PLATFORM_ADMIN,
+      ),
+    ).toBe(false);
+    expect(
+      canAccessDashboardPath('/dashboard/platform/billing', [R.PLATFORM_AUDITOR], W.PLATFORM_ADMIN),
+    ).toBe(false);
 
-    for (const path of ['/dashboard/platform/users', '/dashboard/platform/onboard', '/dashboard/platform/subscriptions', '/dashboard/platform/packages', '/dashboard/platform/cms', '/dashboard/platform/reset', '/dashboard/platform/backups', '/dashboard/platform/billing']) {
+    for (const path of [
+      '/dashboard/platform/users',
+      '/dashboard/platform/onboard',
+      '/dashboard/platform/subscriptions',
+      '/dashboard/platform/packages',
+      '/dashboard/platform/cms',
+      '/dashboard/platform/reset',
+      '/dashboard/platform/backups',
+      '/dashboard/platform/billing',
+    ]) {
       expect(canAccessDashboardPath(path, [R.PLATFORM_ADMIN], W.PLATFORM_ADMIN), path).toBe(true);
     }
   });
@@ -94,6 +125,29 @@ describe('canonical workspace route policy', () => {
     expect(canPerformDashboardAction('/dashboard/staff', roles, 'update', W.TENANT_ADMIN)).toBe(
       true,
     );
+  });
+
+  it('separates tenant reset requests from platform reset execution', () => {
+    expect(
+      canAccessDashboardPath('/dashboard/admin/data-reset', [R.TENANT_ADMIN], W.TENANT_ADMIN),
+    ).toBe(true);
+    expect(
+      canPerformDashboardAction(
+        '/dashboard/admin/data-reset',
+        [R.TENANT_ADMIN],
+        'create',
+        W.TENANT_ADMIN,
+      ),
+    ).toBe(true);
+    expect(
+      canAccessDashboardPath('/dashboard/platform/reset', [R.TENANT_ADMIN], W.TENANT_ADMIN),
+    ).toBe(false);
+    expect(
+      canAccessDashboardPath('/dashboard/admin/data-reset', [R.PLATFORM_ADMIN], W.PLATFORM_ADMIN),
+    ).toBe(false);
+    expect(
+      canAccessDashboardPath('/dashboard/platform/reset', [R.PLATFORM_ADMIN], W.PLATFORM_ADMIN),
+    ).toBe(true);
   });
 
   it('applies assigned and related record scopes to operational workspaces', () => {

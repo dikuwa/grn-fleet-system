@@ -5,7 +5,12 @@ import { platformBackups } from '@/db/schema/data-protection';
 import { tenantResetRequests, resetRequestSteps } from '@/db/schema/reset-requests';
 import { tenants } from '@/db/schema/tenants';
 import { OPERATIONAL_DELETE_STEPS, quoteTable } from '@/lib/data-reset/config';
-import { buildResetPlan, resolveStepCondition, type ResetDb, type ResetPlan } from '@/lib/data-reset/plan';
+import {
+  buildResetPlan,
+  resolveStepCondition,
+  type ResetDb,
+  type ResetPlan,
+} from '@/lib/data-reset/plan';
 import { criticalChecksPassed, runIntegrityChecks } from '@/lib/data-reset/integrity';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { readBackupPayload } from './backup-service';
@@ -57,7 +62,9 @@ export function resetPlanFingerprint(plan: ResetPlan) {
   return createHash('sha256').update(stable).digest('hex');
 }
 
-export async function previewTenantOperationalReset(tenantId: string): Promise<{ preview: ResetPreview; plan: ResetPlan }> {
+export async function previewTenantOperationalReset(
+  tenantId: string,
+): Promise<{ preview: ResetPreview; plan: ResetPlan }> {
   const db = getDb();
   const plan = await buildResetPlan(db as unknown as ResetDb, {
     tenantId,
@@ -70,7 +77,11 @@ export async function previewTenantOperationalReset(tenantId: string): Promise<{
     tenantName: plan.tenantName,
     tenantCode: plan.tenantCode,
     dryRunSummary: summarizePlan(plan),
-    steps: plan.steps.map((step) => ({ table: step.table, label: step.label, planned: step.before })),
+    steps: plan.steps.map((step) => ({
+      table: step.table,
+      label: step.label,
+      planned: step.before,
+    })),
     preserved: plan.preserved,
     review: plan.review,
     fingerprint: resetPlanFingerprint(plan),
@@ -81,7 +92,8 @@ export async function previewTenantOperationalReset(tenantId: string): Promise<{
 
 async function deleteStep(db: ResetDb, plan: ResetPlan, table: string) {
   const configured = OPERATIONAL_DELETE_STEPS.find((step) => step.table === table);
-  if (!configured) throw new Error(`Reset table ${table} is not in the approved operational reset registry`);
+  if (!configured)
+    throw new Error(`Reset table ${table} is not in the approved operational reset registry`);
   const condition = resolveStepCondition(configured, plan.ids, plan.tenantId);
   if (!condition) return;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -109,9 +121,12 @@ export async function executeApprovedTenantOperationalReset(input: {
   if (!requestRow) throw new Error('Reset request not found');
   const resetRequest = requestRow.request;
   if (resetRequest.scope !== 'operational') {
-    throw new Error('Only the tenant operational reset is supported for production-safe execution. Create a new operational reset request.');
+    throw new Error(
+      'Only the tenant operational reset is supported for production-safe execution. Create a new operational reset request.',
+    );
   }
-  if (resetRequest.status !== 'approved') throw new Error('Reset request must be approved before execution');
+  if (resetRequest.status !== 'approved')
+    throw new Error('Reset request must be approved before execution');
 
   const expectedPhrase = `RESET ${requestRow.tenantCode}`;
   if (input.confirmationPhrase.trim() !== expectedPhrase) {
@@ -119,47 +134,91 @@ export async function executeApprovedTenantOperationalReset(input: {
   }
 
   const validation = (resetRequest.validationResults ?? {}) as Record<string, unknown>;
-  const storedFingerprint = typeof validation.fingerprint === 'string' ? validation.fingerprint : null;
+  const storedFingerprint =
+    typeof validation.fingerprint === 'string' ? validation.fingerprint : null;
   const storedSummary = validation.dryRunSummary as { total?: unknown } | undefined;
-  if (!storedFingerprint || !storedSummary) throw new Error('Run a fresh dry run before executing this reset');
+  if (!storedFingerprint || !storedSummary)
+    throw new Error('Run a fresh dry run before executing this reset');
 
   const metadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
-  const backupSnapshotId = typeof metadata.backupSnapshotId === 'string' ? metadata.backupSnapshotId : null;
+  const backupSnapshotId =
+    typeof metadata.backupSnapshotId === 'string' ? metadata.backupSnapshotId : null;
   if (!resetRequest.backupCreated || !backupSnapshotId || !resetRequest.backupLocation) {
     throw new Error('Create a durable recovery point before executing this reset');
   }
 
-  const [backup] = await db.select().from(platformBackups).where(eq(platformBackups.id, backupSnapshotId)).limit(1);
+  const [backup] = await db
+    .select()
+    .from(platformBackups)
+    .where(eq(platformBackups.id, backupSnapshotId))
+    .limit(1);
   if (!backup || backup.status !== 'ready' || backup.resetRequestId !== resetRequest.id) {
-    throw new Error('The linked recovery point is not ready. Create a new recovery point before reset.');
+    throw new Error(
+      'The linked recovery point is not ready. Create a new recovery point before reset.',
+    );
   }
   // This also downloads and verifies the archive checksum/tenant identity before deletion begins.
   await readBackupPayload(backup.id);
 
-  const { preview: freshPreview, plan } = await previewTenantOperationalReset(resetRequest.tenantId);
-  if (freshPreview.fingerprint !== storedFingerprint || freshPreview.dryRunSummary.total !== Number(storedSummary.total ?? -1)) {
-    await db.update(tenantResetRequests).set({
-      backupCreated: false,
-      backupLocation: null,
-      backupSizeBytes: null,
-      backupRecordCount: null,
-      rollbackPossible: false,
-      metadata: { ...metadata, backupSnapshotId: null, resetInvalidatedAt: new Date().toISOString(), resetInvalidatedReason: 'Operational data changed after dry run.' },
-      updatedAt: new Date(),
-    }).where(eq(tenantResetRequests.id, resetRequest.id));
-    throw new Error('Operational data changed after the dry run. Run the dry run again and create a new recovery point before executing.');
+  const { preview: freshPreview, plan } = await previewTenantOperationalReset(
+    resetRequest.tenantId,
+  );
+  if (
+    freshPreview.fingerprint !== storedFingerprint ||
+    freshPreview.dryRunSummary.total !== Number(storedSummary.total ?? -1)
+  ) {
+    await db
+      .update(tenantResetRequests)
+      .set({
+        backupCreated: false,
+        backupLocation: null,
+        backupSizeBytes: null,
+        backupRecordCount: null,
+        rollbackPossible: false,
+        metadata: {
+          ...metadata,
+          backupSnapshotId: null,
+          resetInvalidatedAt: new Date().toISOString(),
+          resetInvalidatedReason: 'Operational data changed after dry run.',
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(tenantResetRequests.id, resetRequest.id));
+    throw new Error(
+      'Operational data changed after the dry run. Run the dry run again and create a new recovery point before executing.',
+    );
   }
 
   await db.delete(resetRequestSteps).where(eq(resetRequestSteps.resetRequestId, resetRequest.id));
-  await db.update(tenantResetRequests).set({ status: 'in_progress', startedAt: new Date(), failureReason: null, updatedAt: new Date() }).where(eq(tenantResetRequests.id, resetRequest.id));
+  await db
+    .update(tenantResetRequests)
+    .set({
+      status: 'in_progress',
+      startedAt: new Date(),
+      failureReason: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(tenantResetRequests.id, resetRequest.id));
 
   const startedAt = Date.now();
-  const outcomes: Array<{ table: string; label: string; planned: number; removed: number; error?: string }> = [];
+  const outcomes: Array<{
+    table: string;
+    label: string;
+    planned: number;
+    removed: number;
+    error?: string;
+  }> = [];
   let failed = false;
 
   for (const step of plan.steps) {
     if (failed) {
-      outcomes.push({ table: step.table, label: step.label, planned: step.before, removed: 0, error: 'Skipped after earlier failure' });
+      outcomes.push({
+        table: step.table,
+        label: step.label,
+        planned: step.before,
+        removed: 0,
+        error: 'Skipped after earlier failure',
+      });
       continue;
     }
     if (step.before === 0) {
@@ -168,10 +227,21 @@ export async function executeApprovedTenantOperationalReset(input: {
     }
     try {
       await deleteStep(db as unknown as ResetDb, plan, step.table);
-      outcomes.push({ table: step.table, label: step.label, planned: step.before, removed: step.before });
+      outcomes.push({
+        table: step.table,
+        label: step.label,
+        planned: step.before,
+        removed: step.before,
+      });
     } catch (error) {
       failed = true;
-      outcomes.push({ table: step.table, label: step.label, planned: step.before, removed: 0, error: error instanceof Error ? error.message : String(error) });
+      outcomes.push({
+        table: step.table,
+        label: step.label,
+        planned: step.before,
+        removed: 0,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -199,25 +269,29 @@ export async function executeApprovedTenantOperationalReset(input: {
   const totalRemoved = outcomes.reduce((sum, outcome) => sum + outcome.removed, 0);
   const failureReason = success
     ? null
-    : outcomes.find((outcome) => outcome.error)?.error || 'One or more critical integrity checks failed after reset.';
+    : outcomes.find((outcome) => outcome.error)?.error ||
+      'One or more critical integrity checks failed after reset.';
 
-  await db.update(tenantResetRequests).set({
-    status: success ? 'completed' : 'failed',
-    completedAt,
-    executionTimeMs: Date.now() - startedAt,
-    results: {
-      dryRunSummary: { ...freshPreview.dryRunSummary, total: totalRemoved },
-      steps: outcomes,
-      preserved: freshPreview.preserved,
-      review: freshPreview.review,
-      integrity,
-      storageFilesRemoved: [],
-      storageFilesPreserved: plan.fileKeys.length,
-    },
-    failureReason,
-    rollbackPossible: true,
-    updatedAt: completedAt,
-  }).where(eq(tenantResetRequests.id, resetRequest.id));
+  await db
+    .update(tenantResetRequests)
+    .set({
+      status: success ? 'completed' : 'failed',
+      completedAt,
+      executionTimeMs: Date.now() - startedAt,
+      results: {
+        dryRunSummary: { ...freshPreview.dryRunSummary, total: totalRemoved },
+        steps: outcomes,
+        preserved: freshPreview.preserved,
+        review: freshPreview.review,
+        integrity,
+        storageFilesRemoved: [],
+        storageFilesPreserved: plan.fileKeys.length,
+      },
+      failureReason,
+      rollbackPossible: true,
+      updatedAt: completedAt,
+    })
+    .where(eq(tenantResetRequests.id, resetRequest.id));
 
   await recordAuditEvent({
     tenantId: resetRequest.tenantId,
@@ -237,10 +311,13 @@ export async function executeApprovedTenantOperationalReset(input: {
   });
 
   return {
-    result: success ? 'completed' as const : 'failed' as const,
+    result: success ? ('completed' as const) : ('failed' as const),
     tenantId: resetRequest.tenantId,
     tenantName: requestRow.tenantName,
     tenantCode: requestRow.tenantCode,
+    requesterUserId: resetRequest.requestedByUserId,
+    tenantOrigin:
+      (resetRequest.metadata as Record<string, unknown> | null)?.createdFrom === 'tenant_admin',
     totalRemoved,
     backupSnapshotId: backup.id,
     outcomes,

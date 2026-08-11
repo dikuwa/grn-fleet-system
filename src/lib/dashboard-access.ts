@@ -977,6 +977,19 @@ export const routeRegistry: readonly RouteDefinition[] = [
     navigationVisible: true,
   },
   {
+    id: 'tenant-data-reset',
+    path: '/dashboard/admin/data-reset',
+    label: 'Operational Data Reset',
+    icon: 'Database',
+    section: 'Tenant Configuration',
+    workspaces: [W.TENANT_ADMIN],
+    access: { [W.TENANT_ADMIN]: tenantManage(['view', 'create', 'update']) },
+    requiredPermissions: ['tenant:manage'],
+    tenantScoped: true,
+    order: 375,
+    navigationVisible: true,
+  },
+  {
     id: 'notification-deliveries',
     path: '/dashboard/notifications/deliveries',
     label: 'Delivery Dashboard',
@@ -1260,7 +1273,8 @@ export function resolveDashboardAccess(
   const route = [...routeRegistry]
     .filter((candidate) => pathMatches(pathname, candidate))
     .sort((a, b) => routeSpecificity(b) - routeSpecificity(a))[0];
-  const roleAllowed = !route?.allowedRoleNames || route.allowedRoleNames.some((role) => roleNames.includes(role));
+  const roleAllowed =
+    !route?.allowedRoleNames || route.allowedRoleNames.some((role) => roleNames.includes(role));
   const access = roleAllowed ? route?.access[activeWorkspace] : undefined;
 
   if (!route || !access) {
@@ -1296,7 +1310,12 @@ export function getWorkspaceNavigation(workspace: WorkspaceId, roleNames?: reado
   const seen = new Set<string>();
   return routeRegistry
     .filter((route) => route.navigationVisible !== false && route.access[workspace])
-    .filter((route) => !roleNames || !route.allowedRoleNames || route.allowedRoleNames.some((role) => roleNames.includes(role)))
+    .filter(
+      (route) =>
+        !roleNames ||
+        !route.allowedRoleNames ||
+        route.allowedRoleNames.some((role) => roleNames.includes(role)),
+    )
     .filter((route) => {
       const key = route.href ?? route.path;
       if (seen.has(key)) return false;
