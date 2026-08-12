@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { offices } from '@/db/schema/people';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, isNull, sql } from 'drizzle-orm';
 
 /**
  * GET /api/fleet/map
  * Returns vehicle locations with status, office coordinates, and trip context.
- * 
+ *
  * NOTE: Live GPS/telematics is out of scope for v1.
  * This endpoint returns vehicle positions based on their assigned office
  * location, with status markers showing availability, trips, and alerts.
@@ -19,6 +19,13 @@ export async function GET(req: NextRequest) {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    // This endpoint returns tenant-wide fleet location/status data. VEHICLE_VIEW
+    // is intentionally broader than the Fleet Map workspace, so permission-only
+    // checks would let assigned/related roles bypass the route matrix by calling
+    // the API directly.
+    const routeCheck = await requireDashboardAction(session, '/dashboard/fleet/map', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
 
     const permCheck = await requirePermission(session, Permissions.VEHICLE_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -46,17 +53,24 @@ export async function GET(req: NextRequest) {
         hasOpenDefects: sql<boolean>`EXISTS (SELECT 1 FROM ${vehicleDefects} WHERE ${vehicleDefects.vehicleId} = ${vehicles.id} AND ${vehicleDefects.resolvedAt} IS NULL)`,
       })
       .from(vehicles)
-      .leftJoin(offices, eq(vehicles.officeId, offices.id))
+      .leftJoin(
+        offices,
+        and(eq(vehicles.officeId, offices.id), eq(offices.tenantId, session.tenantId)),
+      )
       .where(and(eq(vehicles.tenantId, session.tenantId), eq(vehicles.isActive, true)))
       .orderBy(vehicles.licenceNumber);
 
-    // Get open defect counts per vehicle
+    // Get open defect counts only for this tenant's vehicles.
     const openDefectCounts = await db
       .select({
         vehicleId: vehicleDefects.vehicleId,
         count: sql<number>`count(*)`,
       })
       .from(vehicleDefects)
+      .innerJoin(
+        vehicles,
+        and(eq(vehicles.id, vehicleDefects.vehicleId), eq(vehicles.tenantId, session.tenantId)),
+      )
       .where(isNull(vehicleDefects.resolvedAt))
       .groupBy(vehicleDefects.vehicleId);
 
@@ -67,10 +81,10 @@ export async function GET(req: NextRequest) {
     // those, falling back to this lookup for offices without coordinates.
     const regionCenters: Record<string, { lat: number; lng: number }> = {
       'Head Office': { lat: -22.5609, lng: 17.0658 },
-      'Rundu': { lat: -17.9333, lng: 19.7667 },
-      'Nkurenkuru': { lat: -17.6167, lng: 18.6 },
-      'Mukwe': { lat: -18.0667, lng: 21.4167 },
-      'Ndiyona': { lat: -18.2167, lng: 20.7 },
+      Rundu: { lat: -17.9333, lng: 19.7667 },
+      Nkurenkuru: { lat: -17.6167, lng: 18.6 },
+      Mukwe: { lat: -18.0667, lng: 21.4167 },
+      Ndiyona: { lat: -18.2167, lng: 20.7 },
     };
 
     const vehiclesMap = rows.map((v) => {
@@ -95,11 +109,15 @@ export async function GET(req: NextRequest) {
         location: coord,
         openDefects,
         markerColor:
-          v.status === 'available' ? '#22c55e' :
-          v.status === 'issued' || v.status === 'allocated' ? '#3b82f6' :
-          v.status === 'maintenance' ? '#f59e0b' :
-          v.status === 'out_of_service' || v.status === 'written_off' ? '#ef4444' :
-          '#a1a1aa',
+          v.status === 'available'
+            ? '#22c55e'
+            : v.status === 'issued' || v.status === 'allocated'
+              ? '#3b82f6'
+              : v.status === 'maintenance'
+                ? '#f59e0b'
+                : v.status === 'out_of_service' || v.status === 'written_off'
+                  ? '#ef4444'
+                  : '#a1a1aa',
       };
     });
 
@@ -109,7 +127,9 @@ export async function GET(req: NextRequest) {
       available: vehiclesMap.filter((v) => v.status === 'available').length,
       onTrip: vehiclesMap.filter((v) => v.status === 'issued' || v.status === 'allocated').length,
       maintenance: vehiclesMap.filter((v) => v.status === 'maintenance').length,
-      outOfService: vehiclesMap.filter((v) => v.status === 'out_of_service' || v.status === 'written_off').length,
+      outOfService: vehiclesMap.filter(
+        (v) => v.status === 'out_of_service' || v.status === 'written_off',
+      ).length,
       withDefects: vehiclesMap.filter((v) => v.openDefects > 0).length,
     };
 

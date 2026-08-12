@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicles } from '@/db/schema/fleet';
+import { vehicleCategories, vehicles } from '@/db/schema/fleet';
+import { offices } from '@/db/schema/people';
 import {
   getSessionRoleNames,
   requireDashboardAction,
@@ -8,9 +9,11 @@ import {
   requirePermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, ne } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
+
+const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 
 /**
  * GET /api/fleet/[id]
@@ -51,7 +54,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ vehicle });
+    // Fuel-card PINs are credentials, not fleet profile data. Never return the
+    // stored value through a general vehicle-view endpoint shared with audit,
+    // maintenance and inspection workspaces.
+    const { fuelCardPin: _fuelCardPin, ...safeVehicle } = vehicle;
+    return NextResponse.json({ vehicle: safeVehicle });
   } catch (error) {
     console.error('[fleet/:id] GET failed:', error);
     return NextResponse.json({ error: 'Failed to fetch vehicle' }, { status: 500 });
@@ -76,9 +83,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const db = getDb();
     const { id } = await params;
 
-    // Verify vehicle exists and belongs to this tenant
+    // Verify vehicle exists and belongs to this tenant. Operational state is
+    // loaded here so generic edits cannot silently undo trip/issue workflows.
     const [existing] = await db
-      .select({ id: vehicles.id })
+      .select({
+        id: vehicles.id,
+        licenceNumber: vehicles.licenceNumber,
+        status: vehicles.status,
+        currentOdometer: vehicles.currentOdometer,
+      })
       .from(vehicles)
       .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
@@ -88,14 +101,128 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const body = await req.json();
+    if (body.fuelCardPin !== undefined) {
+      return NextResponse.json(
+        {
+          error:
+            'Fuel card PINs cannot be stored or changed through the general vehicle editor. Use a dedicated secure credential workflow.',
+        },
+        { status: 422 },
+      );
+    }
 
-    // Build update payload — only include fields that were actually sent
+    const requestedLicenceNumber =
+      body.licenceNumber === undefined ? undefined : String(body.licenceNumber).trim();
+    if (requestedLicenceNumber !== undefined) {
+      if (!requestedLicenceNumber) {
+        return NextResponse.json({ error: 'Licence number cannot be blank' }, { status: 422 });
+      }
+      if (requestedLicenceNumber !== existing.licenceNumber) {
+        const [duplicate] = await db
+          .select({ id: vehicles.id })
+          .from(vehicles)
+          .where(
+            and(
+              eq(vehicles.tenantId, session.tenantId),
+              eq(vehicles.licenceNumber, requestedLicenceNumber),
+              eq(vehicles.isActive, true),
+              ne(vehicles.id, id),
+            ),
+          )
+          .limit(1);
+        if (duplicate) {
+          return NextResponse.json(
+            { error: `Another active vehicle already uses licence number "${requestedLicenceNumber}"` },
+            { status: 409 },
+          );
+        }
+      }
+    }
+
+    let requestedOdometer: number | undefined;
+    if (body.currentOdometer !== undefined) {
+      requestedOdometer = Number(body.currentOdometer);
+      if (!Number.isInteger(requestedOdometer) || requestedOdometer < 0) {
+        return NextResponse.json(
+          { error: 'Current odometer must be a non-negative whole number' },
+          { status: 422 },
+        );
+      }
+      if (requestedOdometer < existing.currentOdometer) {
+        return NextResponse.json(
+          {
+            error: `Odometer cannot be reduced below the current reading (${existing.currentOdometer}). Use an audited odometer correction workflow for exceptional corrections.`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    const requestedStatus = body.status === undefined ? undefined : String(body.status).trim();
+    if (requestedStatus !== undefined && requestedStatus !== existing.status) {
+      if (['allocated', 'issued'].includes(existing.status)) {
+        return NextResponse.json(
+          {
+            error: `Vehicle status is controlled by the active ${existing.status === 'issued' ? 'trip issue/return' : 'allocation'} workflow. Complete or replace that workflow instead of editing status directly.`,
+          },
+          { status: 409 },
+        );
+      }
+      if (!MANUAL_EDIT_STATUSES.has(requestedStatus)) {
+        return NextResponse.json(
+          {
+            error:
+              'Allocated and issued statuses are controlled by allocation/trip workflows, and written-off status must use the audited decommission workflow.',
+          },
+          { status: 422 },
+        );
+      }
+    }
+
+    // Tenant-owned foreign references must be validated independently because
+    // UUID foreign keys alone do not encode tenant ownership.
+    if (body.categoryId) {
+      const [category] = await db
+        .select({ id: vehicleCategories.id })
+        .from(vehicleCategories)
+        .where(
+          and(
+            eq(vehicleCategories.id, String(body.categoryId)),
+            eq(vehicleCategories.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      if (!category) {
+        return NextResponse.json({ error: 'Vehicle category not found in your tenant' }, { status: 422 });
+      }
+    }
+
+    for (const [field, value] of [
+      ['officeId', body.officeId],
+      ['assignedOfficeId', body.assignedOfficeId],
+    ] as const) {
+      if (!value) continue;
+      const [office] = await db
+        .select({ id: offices.id })
+        .from(offices)
+        .where(and(eq(offices.id, String(value)), eq(offices.tenantId, session.tenantId)))
+        .limit(1);
+      if (!office) {
+        return NextResponse.json(
+          { error: `${field === 'officeId' ? 'Office' : 'Assigned office'} not found in your tenant` },
+          { status: 422 },
+        );
+      }
+    }
+
+    // Build update payload — only include fields that were actually sent.
     const updateData: Record<string, unknown> = {
       updatedBy: session.user.id,
+      updatedAt: new Date(),
     };
 
     // Section A — Identity
-    if (body.licenceNumber !== undefined) updateData.licenceNumber = body.licenceNumber;
+    if (requestedLicenceNumber !== undefined) updateData.licenceNumber = requestedLicenceNumber;
     if (body.vehicleRegisterNumber !== undefined)
       updateData.vehicleRegisterNumber = body.vehicleRegisterNumber || null;
     if (body.vin !== undefined) updateData.vin = body.vin || null;
@@ -138,11 +265,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       updateData.licenceExpiryDate = body.licenceExpiryDate || null;
 
     // Section E — Fleet assignment
-    if (body.status !== undefined) updateData.status = body.status;
-    if (body.currentOdometer !== undefined)
-      updateData.currentOdometer = Number(body.currentOdometer);
+    if (requestedStatus !== undefined) updateData.status = requestedStatus;
+    if (requestedOdometer !== undefined) updateData.currentOdometer = requestedOdometer;
     if (body.fuelCardNumber !== undefined) updateData.fuelCardNumber = body.fuelCardNumber || null;
-    if (body.fuelCardPin !== undefined) updateData.fuelCardPin = body.fuelCardPin || null;
     if (body.categoryId !== undefined) updateData.categoryId = body.categoryId || null;
     if (body.officeId !== undefined) updateData.officeId = body.officeId || null;
     if (body.assignedOfficeId !== undefined)
@@ -152,9 +277,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const [vehicle] = await db
       .update(vehicles)
       .set(updateData)
-      .where(eq(vehicles.id, id))
+      .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
       .returning();
 
+    if (vehicle) vehicle.fuelCardPin = null;
     return NextResponse.json({ vehicle });
   } catch (error) {
     console.error('[fleet/:id] PATCH failed:', error);

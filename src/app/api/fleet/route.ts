@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicles, vehicleCategories } from '@/db/schema/fleet';
+import { offices } from '@/db/schema/people';
 import {
   getSessionRoleNames,
   requireDashboardAction,
@@ -12,6 +13,8 @@ import { eq, and, ilike, or, count, type SQL } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
+
+const INITIAL_VEHICLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 
 /**
  * GET /api/fleet
@@ -78,7 +81,13 @@ export async function GET(req: NextRequest) {
         categoryName: vehicleCategories.name,
       })
       .from(vehicles)
-      .leftJoin(vehicleCategories, eq(vehicles.categoryId, vehicleCategories.id))
+      .leftJoin(
+        vehicleCategories,
+        and(
+          eq(vehicles.categoryId, vehicleCategories.id),
+          eq(vehicleCategories.tenantId, session.tenantId),
+        ),
+      )
       .where(and(...conditions))
       .orderBy(vehicles.licenceNumber);
 
@@ -107,6 +116,78 @@ export async function POST(req: NextRequest) {
     const db = getDb();
     const body = await req.json();
 
+    if (body.fuelCardPin !== undefined) {
+      return NextResponse.json(
+        {
+          error:
+            'Fuel card PINs cannot be stored through the general fleet form. Use a dedicated secure credential workflow.',
+        },
+        { status: 422 },
+      );
+    }
+
+    const licenceNumber = String(body.licenceNumber || '').trim();
+    const make = String(body.make || '').trim();
+    const model = String(body.model || '').trim();
+    if (!licenceNumber) {
+      return NextResponse.json({ error: 'Licence number is required' }, { status: 400 });
+    }
+    if (!make) {
+      return NextResponse.json({ error: 'Make is required' }, { status: 400 });
+    }
+    if (!model) {
+      return NextResponse.json({ error: 'Model is required' }, { status: 400 });
+    }
+
+    const requestedStatus = String(body.status || 'available').trim();
+    if (!INITIAL_VEHICLE_STATUSES.has(requestedStatus)) {
+      return NextResponse.json(
+        {
+          error:
+            'New vehicles may start as available, provisional, maintenance, or out of service. Allocation and issued states are controlled by operational workflows.',
+        },
+        { status: 422 },
+      );
+    }
+
+    const currentOdometer = body.currentOdometer === undefined || body.currentOdometer === ''
+      ? 0
+      : Number(body.currentOdometer);
+    if (!Number.isInteger(currentOdometer) || currentOdometer < 0) {
+      return NextResponse.json(
+        { error: 'Current odometer must be a non-negative whole number' },
+        { status: 422 },
+      );
+    }
+
+    if (body.categoryId) {
+      const [category] = await db
+        .select({ id: vehicleCategories.id })
+        .from(vehicleCategories)
+        .where(
+          and(
+            eq(vehicleCategories.id, String(body.categoryId)),
+            eq(vehicleCategories.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      if (!category) {
+        return NextResponse.json({ error: 'Vehicle category not found in your tenant' }, { status: 422 });
+      }
+    }
+
+    for (const value of [body.officeId, body.assignedOfficeId]) {
+      if (!value) continue;
+      const [office] = await db
+        .select({ id: offices.id })
+        .from(offices)
+        .where(and(eq(offices.id, String(value)), eq(offices.tenantId, session.tenantId)))
+        .limit(1);
+      if (!office) {
+        return NextResponse.json({ error: 'Selected office not found in your tenant' }, { status: 422 });
+      }
+    }
+
     // Enforce the tenant's subscription vehicle limit before creating.
     const entitlements = await getTenantEntitlements(session.tenantId);
     if (entitlements) {
@@ -128,24 +209,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Validate required fields
-    if (!body.licenceNumber) {
-      return NextResponse.json({ error: 'Licence number is required' }, { status: 400 });
-    }
-    if (!body.make) {
-      return NextResponse.json({ error: 'Make is required' }, { status: 400 });
-    }
-    if (!body.model) {
-      return NextResponse.json({ error: 'Model is required' }, { status: 400 });
-    }
-
-    // Check for duplicate licence number within tenant
+    // Check for duplicate active licence number within tenant.
     const [existing] = await db
       .select({ id: vehicles.id })
       .from(vehicles)
       .where(
         and(
-          eq(vehicles.licenceNumber, body.licenceNumber),
+          eq(vehicles.licenceNumber, licenceNumber),
           eq(vehicles.tenantId, session.tenantId),
           eq(vehicles.isActive, true),
         ),
@@ -154,9 +224,7 @@ export async function POST(req: NextRequest) {
 
     if (existing) {
       return NextResponse.json(
-        {
-          error: `A vehicle with licence number "${body.licenceNumber}" already exists in your fleet`,
-        },
+        { error: `A vehicle with licence number "${licenceNumber}" already exists in your fleet` },
         { status: 409 },
       );
     }
@@ -169,14 +237,14 @@ export async function POST(req: NextRequest) {
         updatedBy: session.user.id,
 
         // Section A — Identity
-        licenceNumber: body.licenceNumber,
+        licenceNumber,
         vehicleRegisterNumber: body.vehicleRegisterNumber || null,
         vin: body.vin || null,
         engineNumber: body.engineNumber || null,
 
         // Section B — Description
-        make: body.make,
-        model: body.model,
+        make,
+        model,
         seriesName: body.seriesName || null,
         manufactureYear: body.manufactureYear ? Number(body.manufactureYear) : null,
         vehicleCategory: body.vehicleCategory || null,
@@ -199,10 +267,9 @@ export async function POST(req: NextRequest) {
         licenceExpiryDate: body.licenceExpiryDate || null,
 
         // Section E — Fleet assignment
-        status: body.status || 'available',
-        currentOdometer: body.currentOdometer ? Number(body.currentOdometer) : 0,
+        status: requestedStatus,
+        currentOdometer,
         fuelCardNumber: body.fuelCardNumber || null,
-        fuelCardPin: body.fuelCardPin || null,
         categoryId: body.categoryId || null,
         officeId: body.officeId || null,
         assignedOfficeId: body.assignedOfficeId || null,
@@ -212,6 +279,7 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
+    if (vehicle) vehicle.fuelCardPin = null;
     return NextResponse.json({ vehicle }, { status: 201 });
   } catch (error) {
     console.error('[fleet] POST failed:', error);
