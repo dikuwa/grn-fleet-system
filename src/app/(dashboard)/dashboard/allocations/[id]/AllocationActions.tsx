@@ -102,13 +102,15 @@ export function AllocationActions({ allocationId, hasTrip }: AllocationActionsPr
               value={manualAuthorityNumber}
               onChange={(event) => setManualAuthorityNumber(event.target.value)}
               maxLength={60}
-              placeholder="e.g. TA-2026-PB-0042 (from the paper authority)"
+              placeholder="e.g. 5886775 or KERC/TA/00451/26"
               className="border-border bg-background text-ink-950 placeholder:text-ink-400 focus:border-ink-400 focus:ring-ink-200 w-full rounded-[8px] border px-3 py-2 text-sm transition-colors outline-none focus:ring-2"
             />
             <p className="text-ink-500 mt-1.5 flex items-start gap-1.5 text-xs">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Enter the number from the physical Trip Authority if available. If left blank, GRN
-              FLEET will generate a number automatically.
+              Use the number printed on the physical authority book if you need the digital record
+              to match the paper copy. It will be reserved for this request and applied when final
+              authorisation is completed. Leave it blank and GRN FLEET will generate a unique
+              number automatically.
             </p>
           </div>
         )}
