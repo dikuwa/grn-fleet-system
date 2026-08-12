@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
         state: vehicleAllocations.state,
         requestStatus: transportRequests.status,
         vehicleRequirements: transportRequests.vehicleRequirements,
+        physicalTripAuthorityNumber: transportRequests.physicalTripAuthorityNumber,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
@@ -91,16 +92,37 @@ export async function POST(req: NextRequest) {
     }
 
     const [existingTrip] = await db
-      .select({ id: trips.id })
+      .select()
       .from(trips)
       .where(and(eq(trips.allocationId, allocationId), eq(trips.tenantId, tenantId)))
       .limit(1);
 
     if (existingTrip) {
-      return NextResponse.json(
-        { error: 'A trip already exists for this allocation', tripId: existingTrip.id },
-        { status: 409 },
-      );
+      // Retry-safe replay: a lost HTTP response after the transaction committed
+      // must not strand the operator on the allocation page. Do not, however,
+      // let a retry mutate the already-staged paper number.
+      if (
+        rawManualAuthorityNumber &&
+        rawManualAuthorityNumber !== allocation.physicalTripAuthorityNumber
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'A trip already exists for this allocation with a different Trip Authority number reservation. Open the existing trip instead of creating another one.',
+            tripId: existingTrip.id,
+          },
+          { status: 409 },
+        );
+      }
+
+      return NextResponse.json({
+        trip: existingTrip,
+        authority: null,
+        alreadyExists: true,
+        authorityNumberMode: allocation.physicalTripAuthorityNumber ? 'manual' : 'automatic',
+        manualAuthorityNumber: allocation.physicalTripAuthorityNumber,
+        message: 'This trip was already created. Continuing with the existing operational trip.',
+      });
     }
 
     let manualAuthorityNumber: string | null = null;
@@ -219,6 +241,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       trip,
       authority: null,
+      alreadyExists: false,
       authorityNumberMode: manualAuthorityNumber ? 'manual' : 'automatic',
       manualAuthorityNumber,
       message: manualAuthorityNumber
