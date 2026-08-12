@@ -32,6 +32,7 @@ interface ReadinessGate {
   key: string;
   status: GateStatus;
   label: string;
+  required: boolean;
 }
 
 interface ReadinessInfo {
@@ -202,12 +203,14 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
         key: 'request_approvals',
         status: requestApproved ? 'pass' : 'blocking',
         label: GATE_LABELS.request_approvals,
+        required: true,
       });
       if (releaseStepExists) {
         gates.push({
           key: 'releasing_officer_acted',
           status: releaseAction ? 'pass' : 'blocking',
           label: GATE_LABELS.releasing_officer_acted,
+          required: true,
         });
       }
 
@@ -215,30 +218,39 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
         key: 'vehicle_allocated',
         status: trip.vehicleId && trip.allocationState === 'confirmed' ? 'pass' : 'blocking',
         label: GATE_LABELS.vehicle_allocated,
+        required: true,
       });
       gates.push({
         key: 'driver_allocated',
         status: trip.driverEmployeeId ? 'pass' : 'blocking',
         label: GATE_LABELS.driver_allocated,
+        required: true,
       });
 
-      let driverProfile:
-        | {
-            driverStatus: string;
-            licenceClass: string | null;
-            expiryDate: string | null;
-            verificationStatus: string | null;
-            employmentStatus: string;
-          }
-        | undefined;
       if (trip.driverEmployeeId) {
-        [driverProfile] = await db
+        const [employee] = await db
+          .select({ employmentStatus: employees.employmentStatus })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.id, trip.driverEmployeeId),
+              eq(employees.tenantId, tenantId),
+            ),
+          )
+          .limit(1);
+        gates.push({
+          key: 'driver_active_employee',
+          status: employee?.employmentStatus === 'active' ? 'pass' : 'blocking',
+          label: GATE_LABELS.driver_active_employee,
+          required: true,
+        });
+
+        const [driverProfile] = await db
           .select({
             driverStatus: driverProfiles.driverStatus,
             licenceClass: driverLicences.licenceClass,
             expiryDate: driverLicences.expiryDate,
             verificationStatus: driverLicences.verificationStatus,
-            employmentStatus: employees.employmentStatus,
           })
           .from(driverProfiles)
           .innerJoin(employees, eq(employees.id, driverProfiles.employeeId))
@@ -254,13 +266,6 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
           .orderBy(desc(driverLicences.version))
           .limit(1);
 
-        const employeeActive = driverProfile?.employmentStatus === 'active';
-        gates.push({
-          key: 'driver_active_employee',
-          status: employeeActive ? 'pass' : 'blocking',
-          label: GATE_LABELS.driver_active_employee,
-        });
-
         const expiry = driverProfile?.expiryDate
           ? new Date(`${driverProfile.expiryDate}T23:59:59.999Z`)
           : null;
@@ -275,6 +280,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
           key: 'driver_licence_valid',
           status: licenceValid ? 'pass' : driverProfile ? 'blocking' : 'pending',
           label: GATE_LABELS.driver_licence_valid,
+          required: true,
         });
 
         if (trip.requiredLicenceClass && driverProfile?.licenceClass) {
@@ -286,6 +292,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
             key: 'driver_licence_class_match',
             status: classCovered ? 'pass' : 'blocking',
             label: GATE_LABELS.driver_licence_class_match,
+            required: true,
           });
         }
       }
@@ -306,6 +313,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
         key: 'vehicle_no_blocking_defects',
         status: Number(defect?.count || 0) === 0 ? 'pass' : 'blocking',
         label: GATE_LABELS.vehicle_no_blocking_defects,
+        required: true,
       });
 
       const [authority] = await db
@@ -322,6 +330,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
         key: 'trip_authority',
         status: authority ? 'pass' : 'blocking',
         label: GATE_LABELS.trip_authority,
+        required: true,
       });
 
       if (authority) {
@@ -335,6 +344,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
           key: 'driver_acknowledged',
           status: acceptedStatuses.has(authority.status) ? 'pass' : 'pending',
           label: GATE_LABELS.driver_acknowledged,
+          required: true,
         });
 
         const now = new Date();
@@ -345,6 +355,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
           key: 'authority_validity',
           status: withinValidity ? 'pass' : 'blocking',
           label: GATE_LABELS.authority_validity,
+          required: true,
         });
       }
 
@@ -367,6 +378,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
         key: 'departure_inspection',
         status: inspectionPassed ? 'pass' : inspectionDone ? 'blocking' : 'pending',
         label: GATE_LABELS.departure_inspection,
+        required: true,
       });
 
       const vehicleLicenceValid =
@@ -382,26 +394,31 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
         key: 'vehicle_documents',
         status: usableVehicleStatus && vehicleLicenceValid ? 'pass' : 'blocking',
         label: GATE_LABELS.vehicle_documents,
+        required: true,
       });
 
       gates.push({
         key: 'vehicle_issued',
         status: trip.issuedAt ? 'pass' : 'pending',
         label: GATE_LABELS.vehicle_issued,
+        required: false,
       });
 
       const blockingCount = gates.filter((gate) => gate.status === 'blocking').length;
+      const pendingRequired = gates.filter(
+        (gate) => gate.required && gate.status === 'pending',
+      ).length;
       const pendingCount = gates.filter((gate) => gate.status === 'pending').length;
       const passedCount = gates.filter((gate) => gate.status === 'pass').length;
       const status: 'ready' | 'blocked' | 'pending' =
-        blockingCount > 0 ? 'blocked' : pendingCount > 0 ? 'pending' : 'ready';
+        blockingCount > 0 ? 'blocked' : pendingRequired > 0 ? 'pending' : 'ready';
       const currentStep = resolveCurrentStep(gates);
       const label =
         status === 'ready'
           ? 'Ready for departure'
           : status === 'blocked'
             ? `${blockingCount} gate${blockingCount === 1 ? '' : 's'} blocking`
-            : `${pendingCount} step${pendingCount === 1 ? '' : 's'} pending`;
+            : `${pendingRequired} step${pendingRequired === 1 ? '' : 's'} pending`;
 
       return {
         ...trip,
@@ -426,7 +443,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
   const gateCounts = new Map<string, number>();
   for (const trip of enrichedTrips) {
     for (const gate of trip.readiness.gates) {
-      if (gate.status === 'blocking') {
+      if (gate.required && gate.status === 'blocking') {
         gateCounts.set(gate.key, (gateCounts.get(gate.key) || 0) + 1);
       }
     }
