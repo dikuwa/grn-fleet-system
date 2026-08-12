@@ -24,30 +24,6 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - name: Format document-system change
-        run: >-
-          pnpm exec prettier --write
-          "src/app/(dashboard)/dashboard/documents/[id]/document-viewer-actions.tsx"
-          "src/app/(dashboard)/dashboard/documents/[id]/page.tsx"
-          src/lib/pdf/document-system.tsx
-          src/lib/pdf/trip-authority.tsx
-          src/lib/tenant-branding.ts
-      - name: Upload formatted document files
-        uses: actions/upload-artifact@v4
-        with:
-          name: formatted-document-system
-          path: |
-            src/app/(dashboard)/dashboard/documents/[id]/page.tsx
-            src/lib/pdf/document-system.tsx
-          retention-days: 1
-      - name: Verify document-system formatting
-        run: >-
-          pnpm exec prettier --check
-          "src/app/(dashboard)/dashboard/documents/[id]/document-viewer-actions.tsx"
-          "src/app/(dashboard)/dashboard/documents/[id]/page.tsx"
-          src/lib/pdf/document-system.tsx
-          src/lib/pdf/trip-authority.tsx
-          src/lib/tenant-branding.ts
       - name: Report legacy repository formatting debt
         continue-on-error: true
         run: pnpm format:check
