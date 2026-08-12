@@ -99,11 +99,24 @@ function decodeDataImage(source: string): Buffer | null {
   }
 }
 
+function absoluteDocumentImageUrl(source: string): string {
+  if (!source.startsWith('/')) return source;
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL;
+  if (!baseUrl) return source;
+  const normalizedBase = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
+  return `${normalizedBase.replace(/\/$/, '')}${source}`;
+}
+
 async function readDocumentImage(source?: string): Promise<Buffer | null> {
   if (!source) return null;
   if (source.startsWith('data:')) return decodeDataImage(source);
+  const resolvedSource = absoluteDocumentImageUrl(source);
+  if (resolvedSource.startsWith('/')) return null;
   try {
-    const response = await fetch(source, { signal: AbortSignal.timeout(5_000) });
+    const response = await fetch(resolvedSource, { signal: AbortSignal.timeout(5_000) });
     const contentType = response.headers.get('content-type') || '';
     if (!response.ok || !contentType.startsWith('image/')) return null;
     const bytes = Buffer.from(await response.arrayBuffer());
