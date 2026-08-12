@@ -13,6 +13,8 @@ import { eq, and, ne } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 
+const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
+
 /**
  * GET /api/fleet/[id]
  * Fetch a single vehicle by ID.
@@ -157,17 +159,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const requestedStatus = body.status === undefined ? undefined : String(body.status).trim();
-    if (
-      requestedStatus &&
-      requestedStatus !== existing.status &&
-      ['allocated', 'issued'].includes(existing.status)
-    ) {
-      return NextResponse.json(
-        {
-          error: `Vehicle status is controlled by the active ${existing.status === 'issued' ? 'trip issue/return' : 'allocation'} workflow. Complete or replace that workflow instead of editing status directly.`,
-        },
-        { status: 409 },
-      );
+    if (requestedStatus !== undefined && requestedStatus !== existing.status) {
+      if (['allocated', 'issued'].includes(existing.status)) {
+        return NextResponse.json(
+          {
+            error: `Vehicle status is controlled by the active ${existing.status === 'issued' ? 'trip issue/return' : 'allocation'} workflow. Complete or replace that workflow instead of editing status directly.`,
+          },
+          { status: 409 },
+        );
+      }
+      if (!MANUAL_EDIT_STATUSES.has(requestedStatus)) {
+        return NextResponse.json(
+          {
+            error:
+              'Allocated and issued statuses are controlled by allocation/trip workflows, and written-off status must use the audited decommission workflow.',
+          },
+          { status: 422 },
+        );
+      }
     }
 
     // Tenant-owned foreign references must be validated independently because
