@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-12 — Session 50: Document system refinement, protected system roles, manual Trip Authority numbers
+
+### Added
+
+- **Manual Physical Trip Authority Number** — Transport Officers can optionally enter the number from a physical authority when issuing; GRN FLEET auto-generates the system number when left blank. Duplicate numbers are rejected safely (409) with a human-readable error, assignment is tenant-scoped, and the chosen number becomes the canonical number on records, documents and exports (`authorityNumberSource` audit fields).
+- **Document viewer cleanup** — single canonical Download PDF / Preview / Print action set inside the Document Preview header; page-level action group limited to lifecycle actions; duplicate lower Secure Sharing section removed; Document Metadata compressed to a compact supporting row; explicit `download` attribute on the Download action.
+- **Document-only printing** — print architecture renders only the official document (no dashboard shell) for system documents and Reports & Analytics; A4-safe layout, headers/tables/approvals/signatures/QR/verification/footer retained.
+- **Top Fuel Consumers rank badges** — gold/amber (1st), silver/slate (2nd), bronze/copper (3rd), subtle neutral for 4+ (muted green at 5th); theme-aware, ranking logic unchanged.
+- **Protected system role editing** — system roles open read-only first; "Edit protected role" requires typing `EDIT ROLE` in an application dialog (no browser confirm); configurable permissions editable per session, mandatory system permissions locked with explanations; immutable role identity enforced server-side; system roles cannot be deleted; every protected change is audit-logged with before/after permission diffs.
+- **Role responsibility UX** — every role card shows a human-readable responsibility statement plus a dynamically derived "Current access" capability summary (human labels, not raw permission keys); custom roles support a Purpose/responsibility field.
+- **Design-system date picker** — reusable themed date picker replaces browser-native calendar UI (Operational Data Reset and other date fields); light/dark mode, keyboard accessible, viewport-aware positioning.
+- **Browser-native dialog audit** — repository-wide alert/confirm/prompt/beforeunload pass; transient feedback uses the existing React Hot Toast system, decisions use application dialogs, unnecessary leave-site warnings removed.
+
+### Fixed
+
+- **Document-system E2E regression** — seeded minimal idempotent document fixtures (transport request + trip authority) so the previously-red spec passes 4/4; PDF generation verified end to end.
+- **Concurrent duplicate manual TA number race** — extracted unique-violation classification and covered the race path with 7 new unit tests.
+
+### Validation
+
+- TypeScript: 0 errors · ESLint: clean on all changed files · Unit: 409/409 · E2E: document-system 4/4, platform-users 2/2, protected-role-edit 6/6 · Full suite: 187 passed (23 pre-existing failures unrelated to this branch, verified against master) · Production build passes · Deployed to production.
+
 ## 2026-08-08 — Session 49: Type-safe platform cleanup, lint 0/0, public-site E2E regression
 
 ### Fixed
