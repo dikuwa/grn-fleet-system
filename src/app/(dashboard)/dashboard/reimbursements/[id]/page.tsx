@@ -8,7 +8,7 @@ import { Badge, StatusBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea, Label } from '@/components/ui/input';
 import { EmptyState } from '@/components/ui/empty-state';
-import { ChevronLeft, CreditCard, Fuel, CalendarDays, CheckCircle2, XCircle, DollarSign } from 'lucide-react';
+import { ArrowRight, ChevronLeft, CreditCard, Fuel, CalendarDays, CheckCircle2, XCircle, DollarSign } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import Link from 'next/link';
@@ -39,6 +39,13 @@ const STATE_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error'> =
   pending: 'pending', approved: 'info', paid: 'success', rejected: 'error',
 };
 
+const NEXT_STEP: Record<string, string> = {
+  pending: 'Review supporting fuel transaction, then approve or reject',
+  approved: 'Record payment reference and mark the claim as paid',
+  paid: 'Financially complete — use an audited correction workflow for any reversal',
+  rejected: 'Claim is closed; no further ordinary Transport Office action is available',
+};
+
 export default function ReimbursementDetailPage() {
   const params = useParams();
   const [data, setData] = useState<ReimbursementDetail | null>(null);
@@ -51,7 +58,7 @@ export default function ReimbursementDetailPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch(`/api/reimbursements/${params.id}`);
+      const res = await fetch(`/api/reimbursements/${params.id}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to load reimbursement');
       const json = await res.json();
       setData(json.data);
@@ -69,14 +76,20 @@ export default function ReimbursementDetailPage() {
     }
   }, [fetchData]);
 
-  const handleAction = useCallback(async (actionType: string) => {
+  const handleAction = useCallback(async (actionType: 'approved' | 'paid' | 'rejected') => {
+    const notes = actionComment.trim();
+    if ((actionType === 'paid' || actionType === 'rejected') && !notes) {
+      setError(actionType === 'paid' ? 'Enter the payment reference or payment notes before marking this claim as paid.' : 'Enter a rejection reason before rejecting this claim.');
+      return;
+    }
+
     setActionLoading(true);
     setError('');
     try {
       const res = await fetch(`/api/reimbursements/${params.id}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actionType, notes: actionComment || null }),
+        body: JSON.stringify({ actionType, notes: notes || null }),
       });
       if (!res.ok) {
         const body = await res.json();
@@ -127,7 +140,8 @@ export default function ReimbursementDetailPage() {
 
   const canApprove = data.state === 'pending';
   const canPay = data.state === 'approved';
-  const canReject = ['pending', 'approved', 'paid'].includes(data.state);
+  const canReject = data.state === 'pending' || data.state === 'approved';
+  const isFinal = data.state === 'paid' || data.state === 'rejected';
 
   return (
     <div className="space-y-6">
@@ -142,7 +156,22 @@ export default function ReimbursementDetailPage() {
         </Button>
       </PageHeader>
 
-      {/* Summary */}
+      <Card>
+        <CardContent className="pt-4">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-500">Current step</p>
+              <p className="mt-0.5 text-sm font-semibold text-ink-950">{STATE_LABELS[data.state] ?? data.state}</p>
+            </div>
+            <ArrowRight className="hidden h-4 w-4 text-ink-400 sm:block" aria-hidden="true" />
+            <div className="border-t border-border pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-500">Next step</p>
+              <p className={`mt-0.5 text-sm font-medium ${isFinal ? 'text-ink-600' : 'text-brand-700'}`}>{NEXT_STEP[data.state] ?? 'Review claim status'}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardContent className="pt-4">
           <div className="flex items-center gap-4">
@@ -169,7 +198,6 @@ export default function ReimbursementDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Details Grid */}
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>Claim Details</CardTitle></CardHeader>
@@ -190,7 +218,7 @@ export default function ReimbursementDetailPage() {
             )}
             {data.notes && (
               <div className="space-y-1">
-                <span className="text-xs text-ink-500 font-medium">Notes</span>
+                <span className="text-xs text-ink-500 font-medium">Decision / payment notes</span>
                 <p className="text-sm text-ink-700 rounded-[8px] bg-muted px-3 py-2">{data.notes}</p>
               </div>
             )}
@@ -226,19 +254,22 @@ export default function ReimbursementDetailPage() {
         </Card>
       </div>
 
-      {/* Action Section */}
       {(canApprove || canPay || canReject) && (
         <Card>
           <CardHeader><CardTitle>Process Claim</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
-              <Label>Comment (optional)</Label>
+              <Label>Decision / payment notes</Label>
               <Textarea
-                placeholder="Add notes about this decision..."
+                placeholder={canPay ? 'Payment reference or payment notes are required…' : 'Optional for approval; required when rejecting…'}
                 value={actionComment}
-                onChange={(e) => setActionComment(e.target.value)}
+                onChange={(e) => {
+                  setActionComment(e.target.value);
+                  setError('');
+                }}
                 rows={2}
               />
+              <p className="text-xs text-ink-500">Rejection requires a reason. Marking as paid requires a payment reference or payment note.</p>
             </div>
 
             {error && (
@@ -254,18 +285,16 @@ export default function ReimbursementDetailPage() {
                 </Button>
               )}
               {canPay && (
-                <Button variant="primary" size="sm" onClick={() => handleAction('paid')} loading={actionLoading}>
+                <Button variant="primary" size="sm" onClick={() => handleAction('paid')} loading={actionLoading} disabled={!actionComment.trim()}>
                   <DollarSign className="h-4 w-4" /> Mark as Paid
                 </Button>
               )}
               {canReject && (
-                <Button variant="secondary" size="sm" onClick={() => handleAction('rejected')} loading={actionLoading}>
+                <Button variant="secondary" size="sm" onClick={() => handleAction('rejected')} loading={actionLoading} disabled={!actionComment.trim()}>
                   <XCircle className="h-4 w-4" /> Reject
                 </Button>
               )}
-              {actionLoading && (
-                <span className="text-xs text-ink-500">Processing...</span>
-              )}
+              {actionLoading && <span className="text-xs text-ink-500">Processing…</span>}
             </div>
           </CardContent>
         </Card>

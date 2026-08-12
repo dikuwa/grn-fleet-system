@@ -81,6 +81,13 @@ export async function POST(
     if (!allocation) return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
 
     if (actionType === 'confirm') {
+      // Confirmation is deliberately idempotent because the operator flow
+      // confirms first and then creates the trip. If the second request fails
+      // or the browser retries after a lost response, a confirmed allocation
+      // must remain usable instead of trapping the operator behind a 409.
+      if (allocation.state === 'confirmed') {
+        return NextResponse.json({ success: true, state: 'confirmed', alreadyConfirmed: true });
+      }
       if (allocation.state !== 'provisional') {
         return NextResponse.json({ error: `Cannot confirm an allocation in '${allocation.state}' state` }, { status: 409 });
       }
@@ -88,7 +95,7 @@ export async function POST(
       await runAtomicMutations((tx) => [
         tx.update(vehicleAllocations)
           .set({ state: 'confirmed', updatedAt: now })
-          .where(eq(vehicleAllocations.id, id)),
+          .where(and(eq(vehicleAllocations.id, id), eq(vehicleAllocations.state, 'provisional'))),
         tx.insert(auditEvents).values({
           tenantId: session.tenantId,
           tenantSequence: Date.now(),
@@ -102,7 +109,7 @@ export async function POST(
           after: { state: 'confirmed' },
         }),
       ]);
-      return NextResponse.json({ success: true, state: 'confirmed' });
+      return NextResponse.json({ success: true, state: 'confirmed', alreadyConfirmed: false });
     }
 
     if (!['provisional', 'confirmed'].includes(allocation.state)) {

@@ -15,7 +15,7 @@ import { saveDraft } from '@/lib/offline-drafts';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 type InspectionType = 'departure' | 'return';
-type Result = 'pass' | 'fail' | 'not_applicable';
+type Result = '' | 'pass' | 'fail' | 'not_applicable';
 
 type ContextTrip = {
   id: string;
@@ -121,7 +121,7 @@ export default function NewInspectionPage() {
         setChecklist(
           json.template.items.map((item) => ({
             ...item,
-            result: 'not_applicable' as const,
+            result: '' as const,
             comment: '',
           })),
         );
@@ -165,6 +165,8 @@ export default function NewInspectionPage() {
 
   const failedCount = checklist.filter((item) => item.result === 'fail').length;
   const criticalFailed = checklist.some((item) => item.isCritical && item.result === 'fail');
+  const unassessedCount = checklist.filter((item) => !item.result).length;
+  const assessedCount = checklist.length - unassessedCount;
   const requiredPhotoCount = context?.requiredPhotoCount ?? 0;
 
   function updateResult(id: string, result: Result) {
@@ -197,6 +199,9 @@ export default function NewInspectionPage() {
     try {
       if (!context) throw new Error('Inspection context is not available');
       if (!tripId || !vehicleId) throw new Error('Select an eligible trip before submitting');
+      if (unassessedCount > 0) {
+        throw new Error(`Assess every checklist item before submitting. ${unassessedCount} item${unassessedCount === 1 ? '' : 's'} remaining.`);
+      }
       if (photos.length < requiredPhotoCount) {
         throw new Error(`At least ${requiredPhotoCount} evidence photo${requiredPhotoCount === 1 ? '' : 's'} required`);
       }
@@ -337,20 +342,31 @@ export default function NewInspectionPage() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle className="flex flex-wrap items-center justify-between gap-2"><span>Checklist</span>{failedCount > 0 && <Badge variant={criticalFailed ? 'emergency' : 'error'} size="sm">{failedCount} failed</Badge>}</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+                <span>Checklist</span>
+                <span className="flex flex-wrap items-center gap-2">
+                  {unassessedCount > 0 && <Badge variant="pending" size="sm">{unassessedCount} remaining</Badge>}
+                  {failedCount > 0 && <Badge variant={criticalFailed ? 'emergency' : 'error'} size="sm">{failedCount} failed</Badge>}
+                </span>
+              </CardTitle>
+            </CardHeader>
             <CardContent className="space-y-6">
+              <div className="rounded-[8px] border border-border bg-muted/30 px-3 py-2 text-xs text-ink-600">
+                Assess every checklist item explicitly as Pass, Fail, or N/A. Items are intentionally left unselected when the form opens.
+              </div>
               {Object.entries(groupedItems).map(([category, items]) => (
                 <section key={category}>
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">{CATEGORY_LABELS[category] ?? category}</h3>
                   <div className="space-y-2">
                     {items.map((item) => (
-                      <div key={item.id} className={`rounded-[8px] border p-3 ${item.result === 'fail' ? 'border-status-error-bg bg-status-error-bg/10' : 'border-border bg-surface'}`}>
+                      <div key={item.id} className={`rounded-[8px] border p-3 ${item.result === 'fail' ? 'border-status-error-bg bg-status-error-bg/10' : !item.result ? 'border-status-pending-border bg-status-pending-bg/10' : 'border-border bg-surface'}`}>
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0"><p className="text-sm font-medium text-ink-950">{item.label}</p><div className="mt-1 flex gap-1.5">{item.isCritical && <Badge variant="emergency" size="sm">Critical</Badge>}{item.requiresPhoto && <Badge variant="info" size="sm">Photo evidence</Badge>}</div></div>
+                          <div className="min-w-0"><p className="text-sm font-medium text-ink-950">{item.label}</p><div className="mt-1 flex gap-1.5">{item.isCritical && <Badge variant="emergency" size="sm">Critical</Badge>}{item.requiresPhoto && <Badge variant="info" size="sm">Photo evidence</Badge>}{!item.result && <Badge variant="pending" size="sm">Assessment required</Badge>}</div></div>
                           <div className="flex flex-wrap gap-1.5">
                             <button type="button" onClick={() => updateResult(item.id, 'pass')} className={`focus-ring inline-flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'pass' ? 'bg-status-success-bg text-status-success-text' : 'bg-muted text-ink-500'}`}><CheckCircle2 className="h-3.5 w-3.5" /> Pass</button>
                             <button type="button" onClick={() => updateResult(item.id, 'fail')} className={`focus-ring inline-flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'fail' ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}><XCircle className="h-3.5 w-3.5" /> Fail</button>
-                            <button type="button" onClick={() => updateResult(item.id, 'not_applicable')} className={`focus-ring rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'not_applicable' ? 'bg-muted text-ink-950' : 'bg-muted/60 text-ink-500'}`}>N/A</button>
+                            <button type="button" onClick={() => updateResult(item.id, 'not_applicable')} className={`focus-ring rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'not_applicable' ? 'bg-muted text-ink-950 ring-1 ring-border' : 'bg-muted/60 text-ink-500'}`}>N/A</button>
                           </div>
                         </div>
                         {item.result === 'fail' && <input value={item.comment} onChange={(event) => updateComment(item.id, event.target.value)} required placeholder="Describe the defect…" className="focus-ring mt-3 h-9 w-full rounded-[6px] border border-border bg-surface px-2.5 text-xs text-ink-950" />}
@@ -380,8 +396,8 @@ export default function NewInspectionPage() {
           </Card>
 
           <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-ink-500">{checklist.filter((item) => item.result === 'pass').length} passed · {failedCount} failed · {checklist.filter((item) => item.result === 'not_applicable').length} N/A</p>
-            <div className="flex items-center gap-2"><Button variant="secondary" size="sm" asChild><Link href="/dashboard/inspections">Cancel</Link></Button><Button variant="primary" size="sm" type="submit" loading={submitting} disabled={submitting || !tripId || !inspectorAcknowledged || !driverAcknowledged || photos.length < requiredPhotoCount}><ClipboardCheck className="h-4 w-4" /> Submit Inspection</Button></div>
+            <p className="text-xs text-ink-500">{assessedCount}/{checklist.length} assessed · {checklist.filter((item) => item.result === 'pass').length} passed · {failedCount} failed · {checklist.filter((item) => item.result === 'not_applicable').length} N/A</p>
+            <div className="flex items-center gap-2"><Button variant="secondary" size="sm" asChild><Link href="/dashboard/inspections">Cancel</Link></Button><Button variant="primary" size="sm" type="submit" loading={submitting} disabled={submitting || !tripId || unassessedCount > 0 || !inspectorAcknowledged || !driverAcknowledged || photos.length < requiredPhotoCount}><ClipboardCheck className="h-4 w-4" /> Submit Inspection</Button></div>
           </div>
         </form>
       )}

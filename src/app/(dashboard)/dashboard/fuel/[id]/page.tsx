@@ -23,15 +23,22 @@ import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getServerSession } from '@/lib/session';
-import { getSessionPermissions } from '@/lib/auth-helpers';
+import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { FuelReviewActions } from './FuelReviewActions';
+import { resolveDashboardAccess, type DashboardRecordScope } from '@/lib/dashboard-access';
+import { fuelScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-async function fetchFuelDetail(id: string, tenantId: string) {
+async function fetchFuelDetail(
+  id: string,
+  tenantId: string,
+  userId: string,
+  recordScope: DashboardRecordScope,
+) {
   const db = getDb();
   const driverEmp = alias(employees, 'fuel_driver');
   const recorderEmp = alias(employees, 'fuel_recorder');
@@ -66,7 +73,12 @@ async function fetchFuelDetail(id: string, tenantId: string) {
     .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
     .leftJoin(driverEmp, eq(fuelTransactions.driverEmployeeId, driverEmp.id))
     .leftJoin(recorderEmp, eq(fuelTransactions.recordedByUserId, recorderEmp.userId))
-    .where(and(eq(fuelTransactions.id, id), eq(vehicles.tenantId, tenantId)))
+    .where(
+      and(
+        eq(fuelTransactions.id, id),
+        fuelScopeCondition({ tenantId, userId, recordScope }),
+      ),
+    )
     .then((r) => r[0] ?? null);
 
   if (!transaction) notFound();
@@ -110,9 +122,13 @@ export default async function FuelDetailPage({ params }: PageProps) {
     );
   }
 
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/fuel', roleNames);
+  if (!access.allowed || !access.recordScope) notFound();
+
   let data: Awaited<ReturnType<typeof fetchFuelDetail>>;
   try {
-    data = await fetchFuelDetail(id, session.tenantId);
+    data = await fetchFuelDetail(id, session.tenantId, session.user.id, access.recordScope);
   } catch (error) {
     console.error('Fuel detail query failed:', error);
     return (
@@ -131,8 +147,9 @@ export default async function FuelDetailPage({ params }: PageProps) {
   }
 
   const { transaction: t, receipts, reimbursement } = data;
+  const anomalyState = t.anomalyState ?? 'none';
   const permissions = await getSessionPermissions(session);
-  const canVerify = permissions.includes(Permissions.FUEL_VERIFY);
+  const canVerify = access.actions.includes('update') && permissions.includes(Permissions.FUEL_VERIFY);
 
   return (
     <div className="space-y-6">
@@ -147,7 +164,9 @@ export default async function FuelDetailPage({ params }: PageProps) {
         title={`${t.make} ${t.model}`}
         description={`${t.licenceNumber}${t.vehicleRegisterNumber ? ` · ${t.vehicleRegisterNumber}` : ''} · ${formatDate(t.transactionAt)}`}
       >
-        {!t.isVerified && canVerify && <FuelReviewActions transactionId={t.id} />}
+        {!t.isVerified && canVerify && (
+          <FuelReviewActions transactionId={t.id} anomalyState={anomalyState} />
+        )}
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fuel">
             <ChevronLeft className="h-4 w-4" /> Back to Fuel
@@ -155,12 +174,11 @@ export default async function FuelDetailPage({ params }: PageProps) {
         </Button>
       </PageHeader>
 
-      {/* Summary Card */}
       <Card>
         <CardContent className="pt-4">
           <div className="flex items-center gap-4">
             <div
-              className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-[10px] ${t.anomalyState !== 'none' ? 'bg-status-error-bg text-status-error-text' : 'bg-brand-50 text-brand-700'}`}
+              className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-[10px] ${anomalyState !== 'none' ? 'bg-status-error-bg text-status-error-text' : 'bg-brand-50 text-brand-700'}`}
             >
               <Fuel className="h-7 w-7" />
             </div>
@@ -181,9 +199,9 @@ export default async function FuelDetailPage({ params }: PageProps) {
                 >
                   {t.paymentMethod.replace(/_/g, ' ')}
                 </Badge>
-                {t.anomalyState !== 'none' && (
+                {anomalyState !== 'none' && (
                   <Badge variant="error" size="sm">
-                    Flagged: {t.anomalyState}
+                    Flagged: {anomalyState}
                   </Badge>
                 )}
                 <Badge variant={t.isVerified ? 'success' : 'pending'} size="sm">
@@ -206,7 +224,15 @@ export default async function FuelDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Details Grid */}
+      {t.anomalyNotes && (
+        <Card>
+          <CardContent className="pt-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink-500">Review note</p>
+            <p className="mt-1 text-sm text-ink-800">{t.anomalyNotes}</p>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -217,98 +243,59 @@ export default async function FuelDetailPage({ params }: PageProps) {
               <span className="text-ink-500">Fuel Type</span>
               <span className="text-ink-950 capitalize">{t.fuelType}</span>
             </div>
-            {t.driverName && (
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-ink-500">Driver</span>
-                <span className="text-ink-950">{t.driverName}</span>
-              </div>
-            )}
-            {t.recordedByName && (
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-ink-500">Recorded By</span>
-                <span className="text-ink-950">{t.recordedByName}</span>
-              </div>
-            )}
             <div className="flex items-center justify-between text-sm">
               <span className="text-ink-500">Litres</span>
-              <span className="text-ink-950 font-medium tabular-nums">
-                {Number(t.litres).toFixed(1)} L
-              </span>
+              <span className="text-ink-950 tabular-nums">{Number(t.litres).toFixed(2)} L</span>
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-ink-500">Amount</span>
-              <span className="text-ink-950 font-medium tabular-nums">
-                {formatCurrency(Number(t.amount))}
-              </span>
+              <span className="text-ink-950 tabular-nums font-medium">{formatCurrency(Number(t.amount))}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-ink-500">Unit Price</span>
-              <span className="text-ink-950 tabular-nums">
-                {Number(t.litres) > 0
-                  ? formatCurrency(Number(t.amount) / Number(t.litres)) + '/L'
-                  : '—'}
-              </span>
+              <span className="text-ink-500">Payment</span>
+              <span className="text-ink-950 capitalize">{t.paymentMethod.replace(/_/g, ' ')}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-ink-500">Fill Type</span>
-              <span className="text-ink-950 capitalize">{t.fillType}</span>
+              <span className="text-ink-950 capitalize">{t.fillType?.replace(/_/g, ' ') || '—'}</span>
             </div>
-            {t.odometerReading && (
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-ink-500 flex items-center gap-1">
-                  <Gauge className="h-3.5 w-3.5" />
-                  Odometer
-                </span>
-                <span className="text-ink-950 tabular-nums">
-                  {t.odometerReading.toLocaleString()} km
-                </span>
-              </div>
-            )}
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-ink-500">Odometer</span>
+              <span className="text-ink-950 tabular-nums flex items-center gap-1">
+                <Gauge className="h-3.5 w-3.5 text-ink-400" />
+                {t.odometerReading ? `${t.odometerReading.toLocaleString()} km` : '—'}
+              </span>
+            </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Anomaly Status</CardTitle>
+            <CardTitle>Attribution</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-ink-500">Status</span>
-              <Badge
-                variant={
-                  t.anomalyState === 'none'
-                    ? 'success'
-                    : t.anomalyState === 'verified'
-                      ? 'info'
-                      : t.anomalyState === 'rejected'
-                        ? 'error'
-                        : 'emergency'
-                }
-                size="sm"
-              >
-                {t.anomalyState === 'none' ? 'Normal' : t.anomalyState}
-              </Badge>
+              <span className="text-ink-500">Driver</span>
+              <span className="text-ink-950">{t.driverName || '—'}</span>
             </div>
-            {t.anomalyNotes && (
-              <div className="space-y-1">
-                <span className="text-ink-500 text-xs font-medium">Anomaly Notes</span>
-                <p className="text-ink-700 bg-muted rounded-[8px] px-3 py-2 text-sm">
-                  {t.anomalyNotes}
-                </p>
-              </div>
-            )}
             <div className="flex items-center justify-between text-sm">
-              <span className="text-ink-500">Verified</span>
-              {t.isVerified ? (
-                <CheckCircle2 className="text-status-success-text h-4 w-4" />
-              ) : (
-                <XCircle className="text-ink-300 h-4 w-4" />
-              )}
+              <span className="text-ink-500">Recorded By</span>
+              <span className="text-ink-950">{t.recordedByName || '—'}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-ink-500">Recorded At</span>
+              <span className="text-ink-950">{formatDateTime(t.createdAt)}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-ink-500">Verification</span>
+              <span className={`flex items-center gap-1 text-sm ${t.isVerified ? 'text-status-success-text' : 'text-status-pending-text'}`}>
+                {t.isVerified ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                {t.isVerified ? 'Verified' : 'Pending'}
+              </span>
             </div>
           </CardContent>
         </Card>
 
-        {/* Reimbursement */}
         {reimbursement && (
           <Card>
             <CardHeader>
@@ -317,22 +304,12 @@ export default async function FuelDetailPage({ params }: PageProps) {
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-ink-500">Amount</span>
-                <span className="text-ink-950 font-medium tabular-nums">
-                  {formatCurrency(Number(reimbursement.amount))}
-                </span>
+                <span className="font-medium tabular-nums text-ink-950">{formatCurrency(Number(reimbursement.amount))}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-ink-500">Status</span>
                 <Badge
-                  variant={
-                    reimbursement.state === 'paid'
-                      ? 'success'
-                      : reimbursement.state === 'approved'
-                        ? 'info'
-                        : reimbursement.state === 'rejected'
-                          ? 'error'
-                          : 'pending'
-                  }
+                  variant={reimbursement.state === 'paid' ? 'success' : reimbursement.state === 'rejected' ? 'error' : 'pending'}
                   size="sm"
                 >
                   {reimbursement.state}
@@ -340,42 +317,45 @@ export default async function FuelDetailPage({ params }: PageProps) {
               </div>
               {reimbursement.paidAt && (
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-ink-500">Paid At</span>
-                  <span className="text-ink-950">{formatDate(reimbursement.paidAt)}</span>
+                  <span className="text-ink-500">Paid</span>
+                  <span className="text-ink-950">{formatDateTime(reimbursement.paidAt)}</span>
                 </div>
               )}
               {reimbursement.notes && (
                 <div className="space-y-1">
-                  <span className="text-ink-500 text-xs font-medium">Notes</span>
+                  <p className="text-xs font-medium text-ink-500">Notes</p>
                   <p className="text-ink-700 text-sm">{reimbursement.notes}</p>
                 </div>
+              )}
+              {access.recordScope === 'tenant' && (
+                <Button variant="secondary" size="sm" asChild>
+                  <Link href={`/dashboard/reimbursements/${reimbursement.id}`}>
+                    Open reimbursement claim
+                  </Link>
+                </Button>
               )}
             </CardContent>
           </Card>
         )}
 
-        {/* Receipts */}
         <Card>
           <CardHeader>
             <CardTitle>Receipts ({receipts.length})</CardTitle>
           </CardHeader>
           <CardContent>
             {receipts.length === 0 ? (
-              <p className="text-ink-500 text-sm">No receipts uploaded for this transaction.</p>
+              <p className="text-sm text-ink-500">No receipt uploaded.</p>
             ) : (
-              <div className="space-y-2">
-                {receipts.map((r) => (
-                  <div
-                    key={r.id}
-                    className="border-border flex items-center justify-between rounded-[8px] border p-3"
-                  >
-                    <div className="flex items-center gap-2">
-                      <FileText className="text-ink-400 h-4 w-4" />
-                      <span className="text-ink-700 text-sm">{r.fileKey.split('/').pop()}</span>
+              <div className="space-y-3">
+                {receipts.map((receipt) => (
+                  <div key={receipt.id} className="rounded-[8px] border border-border bg-muted/30 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-medium text-ink-900">{receipt.originalFileName}</p>
+                      <Badge variant={receipt.isVerified ? 'success' : 'pending'} size="sm">
+                        {receipt.isVerified ? 'Verified' : receipt.ocrStatus.replace(/_/g, ' ')}
+                      </Badge>
                     </div>
-                    <Badge variant={r.isVerified ? 'success' : 'pending'} size="sm">
-                      {r.isVerified ? 'Verified' : 'Pending'}
-                    </Badge>
+                    <p className="mt-1 text-xs text-ink-500">Uploaded {formatDateTime(receipt.createdAt)}</p>
                   </div>
                 ))}
               </div>

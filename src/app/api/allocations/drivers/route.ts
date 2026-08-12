@@ -2,10 +2,13 @@
  * Driver eligibility picker for the Vehicle Allocation flow.
  *
  * GET /api/allocations/drivers?requestId=&vehicleId=&startDate=&endDate=&q=&page=&limit=
+ * GET /api/allocations/drivers?allocationId=&employeeId=&q=&page=&limit=
  *
  * Returns every tenant driver with a real-time compliance verdict for the
  * selected request + vehicle, so the Transport Officer can see why a known
- * driver is excluded (never hidden silently).
+ * driver is excluded (never hidden silently). When allocationId is supplied,
+ * request/vehicle/dates are derived server-side from that allocation and the
+ * allocation itself is excluded from schedule-conflict detection.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -22,7 +25,7 @@ import {
 import { requestActivities, transportRequests } from '@/db/schema/requests';
 import { vehicleCategories, vehicles } from '@/db/schema/fleet';
 import { vehicleAllocations } from '@/db/schema/trips';
-import { and, asc, eq, gt, inArray, lt } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lt, ne, type SQL } from 'drizzle-orm';
 import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { calculateDriverCompliance } from '@/lib/employee-lifecycle';
@@ -49,17 +52,16 @@ export async function GET(request: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { searchParams } = new URL(request.url);
-    const requestId = searchParams.get('requestId')?.trim();
-    const vehicleId = searchParams.get('vehicleId')?.trim() || null;
+    const allocationId = searchParams.get('allocationId')?.trim() || null;
+    const employeeId = searchParams.get('employeeId')?.trim() || null;
+    let requestId = searchParams.get('requestId')?.trim() || null;
+    let vehicleId = searchParams.get('vehicleId')?.trim() || null;
     const q = searchParams.get('q')?.trim() || '';
     const page = Math.max(1, Number(searchParams.get('page') || '1') || 1);
     const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') || '25') || 25));
-    const requestedStart = parseOptionalDate(searchParams.get('startDate'));
-    const requestedEnd = parseOptionalDate(searchParams.get('endDate'));
+    let requestedStart = parseOptionalDate(searchParams.get('startDate'));
+    let requestedEnd = parseOptionalDate(searchParams.get('endDate'));
 
-    if (!requestId) {
-      return NextResponse.json({ error: 'requestId is required' }, { status: 400 });
-    }
     if (searchParams.get('startDate') && !requestedStart) {
       return NextResponse.json({ error: 'startDate is invalid' }, { status: 400 });
     }
@@ -69,6 +71,43 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
     const tenantId = session.tenantId;
+
+    // Replacement/assignment editing must never trust request, vehicle or date
+    // context supplied by the browser. Derive all of it from the tenant-scoped
+    // allocation instead.
+    if (allocationId) {
+      const [allocationContext] = await db
+        .select({
+          requestId: vehicleAllocations.requestId,
+          vehicleId: vehicleAllocations.vehicleId,
+          startAt: vehicleAllocations.startAt,
+          endAt: vehicleAllocations.endAt,
+        })
+        .from(vehicleAllocations)
+        .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+        .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
+        .where(
+          and(
+            eq(vehicleAllocations.id, allocationId),
+            eq(transportRequests.tenantId, tenantId),
+            eq(vehicles.tenantId, tenantId),
+          ),
+        )
+        .limit(1);
+
+      if (!allocationContext) {
+        return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+      }
+
+      requestId = allocationContext.requestId;
+      vehicleId = allocationContext.vehicleId;
+      requestedStart = allocationContext.startAt;
+      requestedEnd = allocationContext.endAt;
+    }
+
+    if (!requestId) {
+      return NextResponse.json({ error: 'requestId or allocationId is required' }, { status: 400 });
+    }
 
     const [requestRow] = await db
       .select({ id: transportRequests.id })
@@ -131,6 +170,12 @@ export async function GET(request: NextRequest) {
 
     // Every tenant driver — including currently-ineligible ones, so officers
     // understand why a known driver cannot be selected.
+    const driverEmployeeConditions: SQL[] = [
+      eq(employees.tenantId, tenantId),
+      eq(employees.isDriver, true),
+    ];
+    if (employeeId) driverEmployeeConditions.push(eq(employees.id, employeeId));
+
     const driverEmployees = await db
       .select({
         id: employees.id,
@@ -147,7 +192,7 @@ export async function GET(request: NextRequest) {
       .from(employees)
       .leftJoin(departments, eq(employees.departmentId, departments.id))
       .leftJoin(offices, eq(employees.officeId, offices.id))
-      .where(and(eq(employees.tenantId, tenantId), eq(employees.isDriver, true)))
+      .where(and(...driverEmployeeConditions))
       .orderBy(asc(employees.lastName), asc(employees.firstName));
 
     if (driverEmployees.length === 0) {
@@ -172,6 +217,14 @@ export async function GET(request: NextRequest) {
         : [];
     const licenceIds = licences.map((licence) => licence.id);
 
+    const conflictConditions: SQL[] = [
+      inArray(vehicleAllocations.driverEmployeeId, employeeIds),
+      inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
+      lt(vehicleAllocations.startAt, tripEnd),
+      gt(vehicleAllocations.endAt, tripStart),
+    ];
+    if (allocationId) conflictConditions.push(ne(vehicleAllocations.id, allocationId));
+
     const [codes, professionals, driverAllocations] = await Promise.all([
       licenceIds.length > 0
         ? db
@@ -188,14 +241,7 @@ export async function GET(request: NextRequest) {
       db
         .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
         .from(vehicleAllocations)
-        .where(
-          and(
-            inArray(vehicleAllocations.driverEmployeeId, employeeIds),
-            inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
-            lt(vehicleAllocations.startAt, tripEnd),
-            gt(vehicleAllocations.endAt, tripStart),
-          ),
-        ),
+        .where(and(...conflictConditions)),
     ]);
 
     // Highest-version active licence per profile. Eligibility below additionally
@@ -285,7 +331,7 @@ export async function GET(request: NextRequest) {
     let filtered = drivers;
     if (q) {
       const needle = q.toLowerCase();
-      filtered = drivers.filter(
+      filtered = filtered.filter(
         (driver) =>
           driver.firstName.toLowerCase().includes(needle) ||
           driver.lastName.toLowerCase().includes(needle) ||
@@ -307,6 +353,7 @@ export async function GET(request: NextRequest) {
       page: safePage,
       limit,
       totalPages,
+      allocationId,
       requestId,
       requiredLicenceClass,
       vehicleCategoryName,

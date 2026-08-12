@@ -3,7 +3,7 @@ import { getDb } from '@/db';
 import { reimbursements, fuelTransactions } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and } from 'drizzle-orm';
 
@@ -21,6 +21,9 @@ export async function GET(
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const routeCheck = await requireDashboardAction(session, '/dashboard/reimbursements', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
 
     const permCheck = await requirePermission(session, Permissions.FUEL_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -49,7 +52,13 @@ export async function GET(
       .innerJoin(employees, eq(reimbursements.claimantEmployeeId, employees.id))
       .innerJoin(fuelTransactions, eq(reimbursements.transactionId, fuelTransactions.id))
       .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .where(and(eq(reimbursements.id, id), eq(vehicles.tenantId, session.tenantId)))
+      .where(
+        and(
+          eq(reimbursements.id, id),
+          eq(employees.tenantId, session.tenantId),
+          eq(vehicles.tenantId, session.tenantId),
+        ),
+      )
       .limit(1);
 
     if (!data) {

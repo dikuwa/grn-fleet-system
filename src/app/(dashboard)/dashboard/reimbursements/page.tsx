@@ -140,7 +140,6 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
       />
       <PageHeader title="Reimbursements" description="Manage personal fuel expense claims" />
 
-      {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <CardContent className="pt-4 text-center">
@@ -166,7 +165,6 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
         </Card>
       </div>
 
-      {/* Filters */}
       <Card>
         <CardContent className="pt-4">
           <FilterToolbar
@@ -191,7 +189,6 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Reimbursement List */}
       {result.rows.length === 0 ? (
         <EmptyState
           icon={<CreditCard className="h-8 w-8" />}
@@ -207,8 +204,8 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
           {result.rows.map((r) => (
             <Link
               key={r.id}
-              href={`/dashboard/fuel/${r.id}`}
-              className="border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm"
+              href={`/dashboard/reimbursements/${r.id}`}
+              className="focus-ring border-border bg-surface hover:border-brand-100 block rounded-[10px] border p-4 transition-all hover:shadow-sm motion-reduce:transition-none"
             >
               <div className="flex items-center justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-4">
@@ -228,10 +225,11 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
                     </div>
                   </div>
                 </div>
-                <div className="shrink-0 text-right">
+                <div className="flex shrink-0 items-center gap-2 text-right">
                   <p className="text-ink-950 text-sm font-[650] tabular-nums">
                     {formatCurrency(Number(r.amount))}
                   </p>
+                  <ChevronRight className="h-4 w-4 text-ink-300" aria-hidden="true" />
                 </div>
               </div>
             </Link>
@@ -239,7 +237,6 @@ export default async function ReimbursementsPage({ searchParams }: PageProps) {
         </div>
       )}
 
-      {/* Pagination */}
       {result.totalPages > 1 && (
         <div className="border-border flex items-center justify-between border-t pt-4">
           <p className="text-ink-500 text-xs">

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions, trips, vehicleAllocations } from '@/db/schema/trips';
+import { fuelTransactions, reimbursements, trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
@@ -18,8 +18,12 @@ import {
 import { Permissions } from '@/lib/permissions';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { fuelScopeCondition, tripScopeCondition } from '@/lib/record-scope';
-import { createScopedNotifications } from '@/lib/notification-service';
+import {
+  createScopedNotifications,
+  resolvePermissionRecipients,
+} from '@/lib/notification-service';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 /** GET /api/fuel — list fuel transactions within the active record scope. */
 export async function GET(request: NextRequest) {
@@ -128,6 +132,8 @@ export async function POST(req: NextRequest) {
       fillType,
       clientSyncId,
       driverEmployeeId,
+      claimantEmployeeId,
+      notes,
     } = body;
 
     if ((!vehicleId && !vehicleGrn) || !fuelType || !litres || !amount || !paymentMethod) {
@@ -217,7 +223,17 @@ export async function POST(req: NextRequest) {
           .where(eq(vehicles.id, existing.vehicleId))
           .limit(1);
         if (existingVehicle?.tenantId === session.tenantId) {
-          return NextResponse.json({ success: true, data: existing, idempotent: true });
+          const [existingReimbursement] = await db
+            .select()
+            .from(reimbursements)
+            .where(eq(reimbursements.transactionId, existing.id))
+            .limit(1);
+          return NextResponse.json({
+            success: true,
+            data: existing,
+            reimbursement: existingReimbursement ?? null,
+            idempotent: true,
+          });
         }
         return NextResponse.json({ error: 'Fuel sync key is already in use' }, { status: 409 });
       }
@@ -274,8 +290,12 @@ export async function POST(req: NextRequest) {
       }
     } else if (resolvedTripId) {
       const [tenantTrip] = await db
-        .select({ id: trips.id })
+        .select({
+          id: trips.id,
+          allocatedDriverEmployeeId: vehicleAllocations.driverEmployeeId,
+        })
         .from(trips)
+        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
         .where(
           and(
             eq(trips.id, resolvedTripId),
@@ -287,10 +307,28 @@ export async function POST(req: NextRequest) {
       if (!tenantTrip) {
         return NextResponse.json({ error: 'Trip does not match this tenant and vehicle' }, { status: 422 });
       }
+      if (
+        driverEmployeeId &&
+        tenantTrip.allocatedDriverEmployeeId &&
+        String(driverEmployeeId) !== tenantTrip.allocatedDriverEmployeeId
+      ) {
+        return NextResponse.json(
+          { error: 'Fuel recorded against a trip must remain attributed to that trip’s allocated driver' },
+          { status: 422 },
+        );
+      }
     }
 
     let resolvedDriverId: string | null = currentEmployeeId;
-    if (isManager && driverEmployeeId) {
+    if (isManager && resolvedTripId) {
+      const [tripDriver] = await db
+        .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
+        .from(trips)
+        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+        .where(and(eq(trips.id, resolvedTripId), eq(trips.tenantId, session.tenantId)))
+        .limit(1);
+      resolvedDriverId = tripDriver?.driverEmployeeId ?? null;
+    } else if (isManager && driverEmployeeId) {
       const [driverEmp] = await db
         .select({ id: employees.id, isDriver: employees.isDriver, employmentStatus: employees.employmentStatus })
         .from(employees)
@@ -303,19 +341,45 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Selected driver is not an active driver' }, { status: 422 });
       }
       resolvedDriverId = driverEmp.id;
-    } else if (isManager && resolvedTripId) {
-      const [tripDriver] = await db
-        .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
-        .from(trips)
-        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-        .where(and(eq(trips.id, resolvedTripId), eq(trips.tenantId, session.tenantId)))
-        .limit(1);
-      resolvedDriverId = tripDriver?.driverEmployeeId ?? null;
+    }
+
+    let reimbursementClaimantId: string | null = null;
+    if (paymentMethod === 'personal_reimbursement') {
+      if (!isManager) {
+        reimbursementClaimantId = currentEmployeeId;
+      } else {
+        const requestedClaimantId = typeof claimantEmployeeId === 'string' ? claimantEmployeeId.trim() : '';
+        if (!requestedClaimantId) {
+          return NextResponse.json(
+            { error: 'Select the employee who personally paid for this fuel transaction' },
+            { status: 422 },
+          );
+        }
+        const [claimant] = await db
+          .select({ id: employees.id, employmentStatus: employees.employmentStatus })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.id, requestedClaimantId),
+              eq(employees.tenantId, session.tenantId),
+            ),
+          )
+          .limit(1);
+        if (!claimant) {
+          return NextResponse.json({ error: 'Reimbursement claimant was not found in your organisation' }, { status: 404 });
+        }
+        if (claimant.employmentStatus === 'archived' || claimant.employmentStatus === 'deceased') {
+          return NextResponse.json({ error: 'This employee cannot be used as a reimbursement claimant' }, { status: 422 });
+        }
+        reimbursementClaimantId = claimant.id;
+      }
     }
 
     const transactionId = randomUUID();
+    const reimbursementId = paymentMethod === 'personal_reimbursement' ? randomUUID() : null;
     const now = new Date();
     const auditSequence = Date.now();
+    const cleanNotes = typeof notes === 'string' ? notes.trim().slice(0, 2000) : '';
 
     await runAtomicMutations((executor) => {
       const queries = [
@@ -345,9 +409,45 @@ export async function POST(req: NextRequest) {
           entityType: 'fuel_transaction',
           entityId: transactionId,
           summary: `Fuel: ${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — ${amountNumber}`,
+          after: {
+            paymentMethod,
+            reimbursementClaimantId,
+          },
           sourceChannel: syncId ? 'offline_sync' : 'web',
         }),
       ];
+
+      if (reimbursementId && reimbursementClaimantId) {
+        queries.push(
+          executor.insert(reimbursements).values({
+            id: reimbursementId,
+            transactionId,
+            claimantEmployeeId: reimbursementClaimantId,
+            amount: amountNumber.toFixed(2),
+            state: 'pending',
+            notes: cleanNotes || null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+          executor.insert(auditEvents).values({
+            tenantId: session.tenantId,
+            tenantSequence: auditSequence + 1,
+            eventType: 'reimbursement_created',
+            actorUserId: session.user.id,
+            action: 'create',
+            entityType: 'reimbursement',
+            entityId: reimbursementId,
+            summary: `Personal fuel reimbursement claim created for N$${amountNumber.toFixed(2)}`,
+            after: {
+              transactionId,
+              claimantEmployeeId: reimbursementClaimantId,
+              amount: amountNumber.toFixed(2),
+              state: 'pending',
+            },
+            sourceChannel: syncId ? 'offline_sync' : 'web',
+          }),
+        );
+      }
 
       if (odometerNumber !== null) {
         queries.push(
@@ -371,14 +471,29 @@ export async function POST(req: NextRequest) {
       return queries;
     });
 
-    const [transaction] = await db
-      .select()
-      .from(fuelTransactions)
-      .where(eq(fuelTransactions.id, transactionId))
-      .limit(1);
+    const [[transaction], [reimbursement]] = await Promise.all([
+      db
+        .select()
+        .from(fuelTransactions)
+        .where(eq(fuelTransactions.id, transactionId))
+        .limit(1),
+      reimbursementId
+        ? db
+            .select()
+            .from(reimbursements)
+            .where(eq(reimbursements.id, reimbursementId))
+            .limit(1)
+        : Promise.resolve([]),
+    ]);
     if (!transaction) throw new Error('Fuel transaction committed but could not be reloaded');
 
     const { activeWorkspace } = await getSessionWorkspace(session);
+    const reviewerIds = reimbursement
+      ? (await resolvePermissionRecipients(session.tenantId, Permissions.FUEL_VERIFY)).filter(
+          (userId) => userId !== session.user.id,
+        )
+      : [];
+
     await Promise.allSettled([
       createScopedNotifications({
         tenantId: session.tenantId,
@@ -386,16 +501,40 @@ export async function POST(req: NextRequest) {
         category: 'outcome',
         eventType: 'fuel_entry_recorded',
         title: `Fuel Entry Recorded — ${litresNumber}L`,
-        body: `${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amountNumber}.`,
+        body: reimbursement
+          ? `${litresNumber}L of ${fuelType} recorded. Personal reimbursement claim N$${amountNumber.toFixed(2)} is pending review.`
+          : `${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amountNumber}.`,
         entityType: 'fuel_transaction',
         entityId: transaction.id,
-        actionUrl: '/dashboard/fuel',
+        actionUrl:
+          reimbursement && isManager
+            ? `/dashboard/reimbursements/${reimbursement.id}`
+            : `/dashboard/fuel/${transaction.id}`,
         workspace: activeWorkspace,
-        priority: 'normal',
+        priority: reimbursement ? 'high' : 'normal',
       }),
+      reimbursement
+        ? createScopedNotifications({
+            tenantId: session.tenantId,
+            recipientUserIds: reviewerIds,
+            category: 'action_required',
+            eventType: 'reimbursement_review_required',
+            title: 'Personal Fuel Reimbursement Requires Review',
+            body: `A personal fuel reimbursement claim for N$${amountNumber.toFixed(2)} is ready for Transport Office review.`,
+            entityType: 'reimbursement',
+            entityId: reimbursement.id,
+            actionUrl: `/dashboard/reimbursements/${reimbursement.id}`,
+            workspace: WorkspaceIds.TRANSPORT_ADMIN,
+            workflowStage: 'reimbursement_review',
+            priority: 'high',
+          })
+        : Promise.resolve([]),
     ]);
 
-    return NextResponse.json({ success: true, data: transaction }, { status: 201 });
+    return NextResponse.json(
+      { success: true, data: transaction, reimbursement: reimbursement ?? null },
+      { status: 201 },
+    );
   } catch (error) {
     const code = (error as { code?: string })?.code;
     if (code === '23505') {
@@ -430,55 +569,95 @@ export async function PATCH(req: NextRequest) {
       );
     }
     const action = body.action as 'verify' | 'reject';
-    if (action === 'reject' && !body.reason?.trim()) {
+    const reason = body.reason?.trim() || null;
+    if (action === 'reject' && !reason) {
       return NextResponse.json({ error: 'A rejection reason is required' }, { status: 422 });
     }
 
     const db = getDb();
     const [transaction] = await db
-      .select({ id: fuelTransactions.id, isVerified: fuelTransactions.isVerified, anomalyState: fuelTransactions.anomalyState })
+      .select({
+        id: fuelTransactions.id,
+        isVerified: fuelTransactions.isVerified,
+        anomalyState: fuelTransactions.anomalyState,
+      })
       .from(fuelTransactions)
       .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
       .where(and(eq(fuelTransactions.id, body.transactionId), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
     if (!transaction) return NextResponse.json({ error: 'Fuel transaction not found' }, { status: 404 });
 
-    const isVerified = action === 'verify';
-    const nextState = isVerified ? 'verified' : 'rejected';
-    const reason = body.reason?.trim() || null;
+    if (transaction.isVerified) {
+      if (action === 'verify') {
+        return NextResponse.json({ success: true, state: 'verified', idempotentReplay: true });
+      }
+      return NextResponse.json(
+        { error: 'A verified fuel transaction cannot be rejected through ordinary review. Use an audited correction workflow.' },
+        { status: 409 },
+      );
+    }
+    if (transaction.anomalyState === 'rejected' && action === 'reject') {
+      return NextResponse.json({ success: true, state: 'rejected', idempotentReplay: true });
+    }
 
-    await runAtomicMutations((executor) => [
-      executor
-        .update(fuelTransactions)
-        .set({
-          isVerified,
-          verifiedByUserId: session.user.id,
-          anomalyState: nextState,
-          anomalyNotes: reason,
-          updatedAt: new Date(),
-        })
-        .where(eq(fuelTransactions.id, transaction.id)),
-      executor.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: `fuel_${action}`,
-        actorUserId: session.user.id,
-        action,
-        entityType: 'fuel_transaction',
-        entityId: transaction.id,
-        before: { isVerified: transaction.isVerified, anomalyState: transaction.anomalyState },
-        after: { isVerified, anomalyState: nextState },
-        reason,
-        sourceChannel: 'web',
-      }),
-    ]);
+    const nextVerified = action === 'verify';
+    const nextState = nextVerified ? 'verified' : 'rejected';
+    const now = new Date();
+
+    await db.execute(sql`
+      WITH transitioned AS (
+        UPDATE fuel_transactions
+        SET is_verified = ${nextVerified},
+            verified_by_user_id = ${session.user.id},
+            anomaly_state = ${nextState},
+            anomaly_notes = ${reason},
+            updated_at = ${now}
+        WHERE id = ${transaction.id}::uuid
+          AND is_verified = ${transaction.isVerified}
+          AND anomaly_state IS NOT DISTINCT FROM ${transaction.anomalyState}
+        RETURNING id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id, action,
+          entity_type, entity_id, summary, before, after, reason, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${Date.now()},
+          ${`fuel_${action}`},
+          ${session.user.id},
+          ${action},
+          'fuel_transaction',
+          id,
+          ${`Fuel transaction ${action === 'verify' ? 'verified' : 'rejected'}`},
+          jsonb_build_object('isVerified', ${transaction.isVerified}, 'anomalyState', ${transaction.anomalyState}),
+          jsonb_build_object('isVerified', ${nextVerified}, 'anomalyState', ${nextState}),
+          ${reason},
+          'web'
+        FROM transitioned
+        RETURNING id
+      )
+      SELECT count(*) AS transitioned_count FROM transitioned
+    `);
 
     const [updated] = await db
       .select()
       .from(fuelTransactions)
       .where(eq(fuelTransactions.id, transaction.id))
       .limit(1);
-    return NextResponse.json({ success: true, data: updated });
+    if (!updated) return NextResponse.json({ error: 'Fuel transaction no longer exists' }, { status: 404 });
+
+    if (updated.isVerified !== nextVerified || updated.anomalyState !== nextState) {
+      return NextResponse.json(
+        {
+          error: `This fuel transaction changed to '${updated.anomalyState}' while you were reviewing it. Refresh before taking another action.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({ success: true, data: updated, state: nextState, idempotentReplay: false });
   } catch (error) {
     console.error('[fuel] PATCH failed:', error);
     return NextResponse.json({ error: 'Failed to review fuel transaction' }, { status: 500 });

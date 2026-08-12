@@ -25,44 +25,44 @@ export async function GET(request: NextRequest) {
   // Employment status controls whether a person belongs in ordinary employee
   // selectors. Availability is an operational scheduling signal and must not
   // make an otherwise active staff member disappear from passenger/requester
-  // selection. Driver searches remain availability-aware because nominating a
-  // driver is an operational resource decision.
+  // selection.
   const conditions = [
     eq(employees.tenantId, session.tenantId),
     eq(employees.employmentStatus, 'active'),
   ];
 
   if (kind === 'driver') {
-    conditions.push(
-      eq(employees.isDriver, true),
-      eq(driverProfiles.driverStatus, 'authorised'),
-      // Match the Transport Review licence lifecycle rule: only the highest-
-      // version active licence is authoritative. The Requester picker must not
-      // surface a driver whose current version is provisional/unverified or
-      // already expired. Final submission performs the stronger trip-end check.
-      sql`exists (
-        select 1
-        from driver_licences dl
-        where dl.driver_profile_id = ${driverProfiles.id}
-          and dl.is_active = true
-          and dl.verification_status = 'verified'
-          and dl.expiry_date >= current_date
-          and not exists (
-            select 1
-            from driver_licences newer
-            where newer.driver_profile_id = dl.driver_profile_id
-              and newer.is_active = true
-              and newer.version > dl.version
-          )
-      )`,
-    );
+    conditions.push(eq(employees.isDriver, true));
+
+    // Ordinary driver pickers only surface drivers that can reasonably be
+    // nominated. Transport/administrative callers with STAFF_VIEW may request
+    // the wider active driver roster so an operator can select a known driver
+    // and see the canonical eligibility reason instead of having that person
+    // silently disappear from the selector.
     if (!canViewUnavailable) {
       conditions.push(
+        eq(driverProfiles.driverStatus, 'authorised'),
         eq(employees.availabilityStatus, 'available'),
         eq(driverProfiles.availabilityStatus, 'available'),
+        sql`exists (
+          select 1
+          from driver_licences dl
+          where dl.driver_profile_id = ${driverProfiles.id}
+            and dl.is_active = true
+            and dl.verification_status = 'verified'
+            and dl.expiry_date >= current_date
+            and not exists (
+              select 1
+              from driver_licences newer
+              where newer.driver_profile_id = dl.driver_profile_id
+                and newer.is_active = true
+                and newer.version > dl.version
+            )
+        )`,
       );
     }
   }
+
   if (query) {
     // Request/passenger selection is an employee-directory lookup, not a
     // general identity search. Do not allow ordinary request users to probe
@@ -85,7 +85,6 @@ export async function GET(request: NextRequest) {
 
   const db = getDb();
 
-  // Get total count for pagination
   const [{ count: total }] = await db
     .select({ count: count() })
     .from(employees)
@@ -120,6 +119,7 @@ export async function GET(request: NextRequest) {
   const data = rows.map((row) => ({
     ...row,
     fullName: `${row.firstName} ${row.lastName}`.trim(),
+    availabilityStatus: row.availabilityStatus ?? row.employeeAvailabilityStatus,
   }));
 
   return NextResponse.json(
