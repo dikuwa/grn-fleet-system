@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { CheckSquare, RotateCcw, CheckCircle2, Undo2 } from 'lucide-react';
+import { CheckSquare, RotateCcw, CheckCircle2, Undo2, Clock3 } from 'lucide-react';
 
 interface ClosureReviewActionsProps {
   tripId: string;
@@ -11,17 +11,30 @@ interface ClosureReviewActionsProps {
   hasReturnInspection: boolean;
 }
 
-type ClosureDecision = 'closed' | 'requires_correction';
+type ClosureDecision = 'closed' | 'requires_correction' | 'follow_up';
 
-export function ClosureReviewActions({ tripId, tripStatus, hasReturnInspection }: ClosureReviewActionsProps) {
+export function ClosureReviewActions({
+  tripId,
+  tripStatus,
+  hasReturnInspection,
+}: ClosureReviewActionsProps) {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reviewNotes, setReviewNotes] = useState('');
-  const [actionResult, setActionResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [actionResult, setActionResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
 
   const submitDecision = async (decision: ClosureDecision) => {
-    if (decision === 'requires_correction' && !reviewNotes.trim()) {
-      setActionResult({ success: false, message: 'Add review notes before requesting correction.' });
+    if (decision !== 'closed' && !reviewNotes.trim()) {
+      setActionResult({
+        success: false,
+        message:
+          decision === 'follow_up'
+            ? 'Add review notes before marking the trip for follow-up.'
+            : 'Add review notes before requesting correction.',
+      });
       return;
     }
 
@@ -42,6 +55,8 @@ export function ClosureReviewActions({ tripId, tripStatus, hasReturnInspection }
 
       if (decision === 'closed') {
         setActionResult({ success: true, message: 'Trip closed successfully' });
+      } else if (decision === 'follow_up') {
+        setActionResult({ success: true, message: 'Trip marked for follow-up' });
       } else {
         setActionResult({ success: true, message: 'Trip returned for correction' });
       }
@@ -84,7 +99,7 @@ export function ClosureReviewActions({ tripId, tripStatus, hasReturnInspection }
           onChange={(event) => setReviewNotes(event.target.value)}
           rows={2}
           maxLength={2000}
-          placeholder="Review notes or correction details…"
+          placeholder="Review notes, correction details, or follow-up reason…"
           className="w-full resize-y rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs text-ink-950 outline-none transition-colors placeholder:text-ink-400 focus:border-ink-400 focus:ring-2 focus:ring-ink-200"
           aria-label="Closure review notes"
         />
@@ -120,6 +135,20 @@ export function ClosureReviewActions({ tripId, tripStatus, hasReturnInspection }
             >
               <Undo2 className="h-3 w-3" />
               Request correction
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                submitDecision('follow_up');
+              }}
+              disabled={isSubmitting || !reviewNotes.trim()}
+              className="h-7 px-2.5 text-[11px]"
+            >
+              <Clock3 className="h-3 w-3" />
+              Follow-up
             </Button>
           </>
         )}
