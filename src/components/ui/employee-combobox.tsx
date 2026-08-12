@@ -27,6 +27,7 @@ interface EmployeeComboboxProps {
   onSelect: (option: EmployeeSearchOption | null) => void;
   placeholder?: string;
   disabled?: boolean;
+  showUnavailable?: boolean;
   className?: string;
 }
 
@@ -37,6 +38,7 @@ export function EmployeeCombobox({
   onSelect,
   placeholder,
   disabled,
+  showUnavailable = false,
   className,
 }: EmployeeComboboxProps) {
   const listboxId = useId();
@@ -50,12 +52,13 @@ export function EmployeeCombobox({
   }, [search]);
 
   const query = useQuery<EmployeeSearchOption[]>({
-    queryKey: ['people-search', kind, debouncedSearch],
+    queryKey: ['people-search', kind, debouncedSearch, showUnavailable],
     enabled: open,
     staleTime: 30_000,
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ kind, limit: '20' });
       if (debouncedSearch) params.set('q', debouncedSearch);
+      if (showUnavailable) params.set('showUnavailable', 'true');
       const response = await fetch(`/api/people-search?${params}`, { signal, cache: 'no-store' });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'Unable to search employees');
@@ -72,7 +75,9 @@ export function EmployeeCombobox({
 
   const emptyLabel =
     kind === 'driver'
-      ? 'No authorised drivers match this search.'
+      ? showUnavailable
+        ? 'No driver records match this search.'
+        : 'No authorised drivers match this search.'
       : 'No active employees match this search.';
   const resolvedPlaceholder =
     placeholder || (kind === 'driver' ? 'Search drivers by name…' : 'Search employees by name…');
