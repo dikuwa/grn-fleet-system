@@ -51,6 +51,16 @@ export const transportRequests = pgTable(
     overnight: boolean('overnight').notNull().default(false),
     specialRequirements: text('special_requirements'),
     vehicleRequirements: jsonb('vehicle_requirements').$type<Record<string, unknown>>().default({}),
+    /**
+     * Optional number copied from a physical Trip Authority book by Transport Office.
+     * It is reserved on the request before final authorisation, then becomes the
+     * canonical trip_authorities.authority_number when the authority is provisioned.
+     */
+    physicalTripAuthorityNumber: text('physical_trip_authority_number'),
+    physicalTripAuthorityNumberSetByUserId: text('physical_trip_authority_number_set_by_user_id'),
+    physicalTripAuthorityNumberSetAt: timestamp('physical_trip_authority_number_set_at', {
+      withTimezone: true,
+    }),
     departmentId: uuid('department_id').references(() => departments.id),
     officeId: uuid('office_id').references(() => offices.id),
     regionId: uuid('region_id'),
@@ -74,6 +84,9 @@ export const transportRequests = pgTable(
     uniqueIndex('uq_transport_requests_tenant_submission')
       .on(table.tenantId, table.clientSubmissionId)
       .where(sql`${table.clientSubmissionId} IS NOT NULL`),
+    uniqueIndex('uq_transport_requests_tenant_physical_authority_number')
+      .on(table.tenantId, table.physicalTripAuthorityNumber)
+      .where(sql`${table.physicalTripAuthorityNumber} IS NOT NULL`),
   ],
 );
 
