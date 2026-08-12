@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { reimbursements, fuelTransactions } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { auditEvents } from '@/db/schema/audit';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and } from 'drizzle-orm';
-import { runAtomicMutations } from '@/lib/db-atomic';
+import { eq, and, sql } from 'drizzle-orm';
 
 // Ordinary Transport Office actions are deliberately forward-only. Paid claims
 // are financially final here; reopening/reversing one requires a separate,
@@ -48,7 +46,8 @@ export async function POST(
       );
     }
 
-    if ((actionType === 'rejected' || actionType === 'paid') && !String(notes || '').trim()) {
+    const cleanNotes = String(notes || '').trim();
+    if ((actionType === 'rejected' || actionType === 'paid') && !cleanNotes) {
       return NextResponse.json(
         { error: actionType === 'paid' ? 'Payment reference/notes are required' : 'Rejection reason is required' },
         { status: 400 },
@@ -60,7 +59,6 @@ export async function POST(
       .select({
         id: reimbursements.id,
         state: reimbursements.state,
-        transactionId: reimbursements.transactionId,
       })
       .from(reimbursements)
       .innerJoin(fuelTransactions, eq(reimbursements.transactionId, fuelTransactions.id))
@@ -72,6 +70,12 @@ export async function POST(
       return NextResponse.json({ error: 'Reimbursement not found' }, { status: 404 });
     }
 
+    // A same-action retry after a lost response is safe. No second audit event
+    // or financial mutation is created.
+    if (reimbursement.state === actionType) {
+      return NextResponse.json({ success: true, state: actionType, idempotentReplay: true });
+    }
+
     const allowedTransitions = VALID_TRANSITIONS[reimbursement.state] || [];
     if (!allowedTransitions.includes(actionType)) {
       return NextResponse.json(
@@ -81,35 +85,73 @@ export async function POST(
     }
 
     const now = new Date();
-    const updateData: Record<string, unknown> = {
-      state: actionType,
-      notes: String(notes || '').trim() || null,
-      updatedAt: now,
-    };
-    if (actionType === 'approved') updateData.approvedByUserId = session.user.id;
-    if (actionType === 'paid') updateData.paidAt = now;
+    const paidAt = actionType === 'paid' ? now : null;
+    const approvedByUserId = actionType === 'approved' ? session.user.id : null;
 
-    await runAtomicMutations((tx) => [
-      tx.update(reimbursements)
-        .set(updateData)
-        .where(eq(reimbursements.id, id)),
-      tx.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: `reimbursement_${actionType}`,
-        actorUserId: session.user.id,
-        action: actionType,
-        entityType: 'reimbursement',
-        entityId: id,
-        summary: `Reimbursement moved from ${reimbursement.state} to ${actionType}`,
-        before: { state: reimbursement.state },
-        after: { state: actionType },
-        reason: String(notes || '').trim() || null,
-        sourceChannel: 'web',
-      }),
-    ]);
+    // Compare-and-set the exact state we just reviewed. The audit row is
+    // inserted from the transitioned CTE, so a racing request that loses the
+    // state claim cannot create a false audit event.
+    await db.execute(sql`
+      WITH transitioned AS (
+        UPDATE reimbursements
+        SET state = ${actionType},
+            notes = ${cleanNotes || null},
+            approved_by_user_id = CASE
+              WHEN ${actionType} = 'approved' THEN ${approvedByUserId}
+              ELSE approved_by_user_id
+            END,
+            paid_at = CASE
+              WHEN ${actionType} = 'paid' THEN ${paidAt}
+              ELSE paid_at
+            END,
+            updated_at = ${now}
+        WHERE id = ${id}::uuid
+          AND state = ${reimbursement.state}
+        RETURNING id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id, action,
+          entity_type, entity_id, summary, before, after, reason, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${Date.now()},
+          ${`reimbursement_${actionType}`},
+          ${session.user.id},
+          ${actionType},
+          'reimbursement',
+          id,
+          ${`Reimbursement moved from ${reimbursement.state} to ${actionType}`},
+          jsonb_build_object('state', ${reimbursement.state}),
+          jsonb_build_object('state', ${actionType}),
+          ${cleanNotes || null},
+          'web'
+        FROM transitioned
+        RETURNING id
+      )
+      SELECT count(*) AS transitioned_count FROM transitioned
+    `);
 
-    return NextResponse.json({ success: true, state: actionType });
+    const [current] = await db
+      .select({ state: reimbursements.state })
+      .from(reimbursements)
+      .where(eq(reimbursements.id, id))
+      .limit(1);
+
+    if (!current) {
+      return NextResponse.json({ error: 'Reimbursement no longer exists' }, { status: 404 });
+    }
+    if (current.state !== actionType) {
+      return NextResponse.json(
+        {
+          error: `The reimbursement changed to '${current.state}' while you were reviewing it. Refresh before taking another action.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({ success: true, state: actionType, idempotentReplay: false });
   } catch (error) {
     console.error('[Reimbursement Action] POST failed:', error);
     return NextResponse.json(
