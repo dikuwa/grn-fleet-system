@@ -482,7 +482,10 @@ export async function POST(req: NextRequest) {
           : `${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amountNumber}.`,
         entityType: 'fuel_transaction',
         entityId: transaction.id,
-        actionUrl: reimbursement ? `/dashboard/reimbursements/${reimbursement.id}` : '/dashboard/fuel',
+        actionUrl:
+          reimbursement && isManager
+            ? `/dashboard/reimbursements/${reimbursement.id}`
+            : `/dashboard/fuel/${transaction.id}`,
         workspace: activeWorkspace,
         priority: reimbursement ? 'high' : 'normal',
       }),
