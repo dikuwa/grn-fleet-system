@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions, trips, vehicleAllocations } from '@/db/schema/trips';
+import { fuelTransactions, reimbursements, trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
@@ -128,6 +128,8 @@ export async function POST(req: NextRequest) {
       fillType,
       clientSyncId,
       driverEmployeeId,
+      claimantEmployeeId,
+      notes,
     } = body;
 
     if ((!vehicleId && !vehicleGrn) || !fuelType || !litres || !amount || !paymentMethod) {
@@ -217,7 +219,17 @@ export async function POST(req: NextRequest) {
           .where(eq(vehicles.id, existing.vehicleId))
           .limit(1);
         if (existingVehicle?.tenantId === session.tenantId) {
-          return NextResponse.json({ success: true, data: existing, idempotent: true });
+          const [existingReimbursement] = await db
+            .select()
+            .from(reimbursements)
+            .where(eq(reimbursements.transactionId, existing.id))
+            .limit(1);
+          return NextResponse.json({
+            success: true,
+            data: existing,
+            reimbursement: existingReimbursement ?? null,
+            idempotent: true,
+          });
         }
         return NextResponse.json({ error: 'Fuel sync key is already in use' }, { status: 409 });
       }
@@ -313,9 +325,43 @@ export async function POST(req: NextRequest) {
       resolvedDriverId = tripDriver?.driverEmployeeId ?? null;
     }
 
+    let reimbursementClaimantId: string | null = null;
+    if (paymentMethod === 'personal_reimbursement') {
+      if (!isManager) {
+        reimbursementClaimantId = currentEmployeeId;
+      } else {
+        const requestedClaimantId = typeof claimantEmployeeId === 'string' ? claimantEmployeeId.trim() : '';
+        if (!requestedClaimantId) {
+          return NextResponse.json(
+            { error: 'Select the employee who personally paid for this fuel transaction' },
+            { status: 422 },
+          );
+        }
+        const [claimant] = await db
+          .select({ id: employees.id, employmentStatus: employees.employmentStatus })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.id, requestedClaimantId),
+              eq(employees.tenantId, session.tenantId),
+            ),
+          )
+          .limit(1);
+        if (!claimant) {
+          return NextResponse.json({ error: 'Reimbursement claimant was not found in your organisation' }, { status: 404 });
+        }
+        if (claimant.employmentStatus === 'archived' || claimant.employmentStatus === 'deceased') {
+          return NextResponse.json({ error: 'This employee cannot be used as a reimbursement claimant' }, { status: 422 });
+        }
+        reimbursementClaimantId = claimant.id;
+      }
+    }
+
     const transactionId = randomUUID();
+    const reimbursementId = paymentMethod === 'personal_reimbursement' ? randomUUID() : null;
     const now = new Date();
     const auditSequence = Date.now();
+    const cleanNotes = typeof notes === 'string' ? notes.trim().slice(0, 2000) : '';
 
     await runAtomicMutations((executor) => {
       const queries = [
@@ -345,9 +391,45 @@ export async function POST(req: NextRequest) {
           entityType: 'fuel_transaction',
           entityId: transactionId,
           summary: `Fuel: ${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — ${amountNumber}`,
+          after: {
+            paymentMethod,
+            reimbursementClaimantId,
+          },
           sourceChannel: syncId ? 'offline_sync' : 'web',
         }),
       ];
+
+      if (reimbursementId && reimbursementClaimantId) {
+        queries.push(
+          executor.insert(reimbursements).values({
+            id: reimbursementId,
+            transactionId,
+            claimantEmployeeId: reimbursementClaimantId,
+            amount: amountNumber.toFixed(2),
+            state: 'pending',
+            notes: cleanNotes || null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+          executor.insert(auditEvents).values({
+            tenantId: session.tenantId,
+            tenantSequence: auditSequence + 1,
+            eventType: 'reimbursement_created',
+            actorUserId: session.user.id,
+            action: 'create',
+            entityType: 'reimbursement',
+            entityId: reimbursementId,
+            summary: `Personal fuel reimbursement claim created for N$${amountNumber.toFixed(2)}`,
+            after: {
+              transactionId,
+              claimantEmployeeId: reimbursementClaimantId,
+              amount: amountNumber.toFixed(2),
+              state: 'pending',
+            },
+            sourceChannel: syncId ? 'offline_sync' : 'web',
+          }),
+        );
+      }
 
       if (odometerNumber !== null) {
         queries.push(
@@ -371,11 +453,20 @@ export async function POST(req: NextRequest) {
       return queries;
     });
 
-    const [transaction] = await db
-      .select()
-      .from(fuelTransactions)
-      .where(eq(fuelTransactions.id, transactionId))
-      .limit(1);
+    const [[transaction], [reimbursement]] = await Promise.all([
+      db
+        .select()
+        .from(fuelTransactions)
+        .where(eq(fuelTransactions.id, transactionId))
+        .limit(1),
+      reimbursementId
+        ? db
+            .select()
+            .from(reimbursements)
+            .where(eq(reimbursements.id, reimbursementId))
+            .limit(1)
+        : Promise.resolve([]),
+    ]);
     if (!transaction) throw new Error('Fuel transaction committed but could not be reloaded');
 
     const { activeWorkspace } = await getSessionWorkspace(session);
@@ -386,16 +477,21 @@ export async function POST(req: NextRequest) {
         category: 'outcome',
         eventType: 'fuel_entry_recorded',
         title: `Fuel Entry Recorded — ${litresNumber}L`,
-        body: `${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amountNumber}.`,
+        body: reimbursement
+          ? `${litresNumber}L of ${fuelType} recorded. Personal reimbursement claim N$${amountNumber.toFixed(2)} is pending review.`
+          : `${litresNumber}L of ${fuelType} at ${stationName || 'unknown station'} — N$${amountNumber}.`,
         entityType: 'fuel_transaction',
         entityId: transaction.id,
-        actionUrl: '/dashboard/fuel',
+        actionUrl: reimbursement ? `/dashboard/reimbursements/${reimbursement.id}` : '/dashboard/fuel',
         workspace: activeWorkspace,
-        priority: 'normal',
+        priority: reimbursement ? 'high' : 'normal',
       }),
     ]);
 
-    return NextResponse.json({ success: true, data: transaction }, { status: 201 });
+    return NextResponse.json(
+      { success: true, data: transaction, reimbursement: reimbursement ?? null },
+      { status: 201 },
+    );
   } catch (error) {
     const code = (error as { code?: string })?.code;
     if (code === '23505') {
