@@ -40,16 +40,22 @@ function getEndpoint(draft: OfflineDraft): SyncEndpoint | null {
         url: '/api/fuel',
         method: 'POST',
         transform: (d) => ({
+          vehicleId: fd<string | null>(d.formData, 'vehicleId', null),
           vehicleGrn: fd(d.formData, 'vehicleGrn', ''),
+          tripId: fd<string | null>(d.formData, 'tripId', null),
           tripRef: fd<string | null>(d.formData, 'tripRef', null),
+          driverEmployeeId: fd<string | null>(d.formData, 'driverEmployeeId', null),
+          claimantEmployeeId: fd<string | null>(d.formData, 'claimantEmployeeId', null),
           transactionAt: fd(d.formData, 'transactionDate', new Date().toISOString()),
           stationName: fd(d.formData, 'stationName', ''),
           fuelType: fd(d.formData, 'fuelType', 'diesel'),
           litres: fd(d.formData, 'litres', '0'),
           amount: fd(d.formData, 'amount', '0'),
           odometerReading: fd<number | null>(d.formData, 'odometerReading', null),
+          referenceNumber: fd<string | null>(d.formData, 'referenceNumber', null),
           paymentMethod: fd(d.formData, 'paymentMethod', 'fuel_card'),
           fillType: fd(d.formData, 'fillType', 'full'),
+          notes: fd<string | null>(d.formData, 'notes', null),
           clientSyncId: d.id,
         }),
       };
@@ -155,12 +161,9 @@ export async function syncSingleDraft(
       const attachmentKeys = fd<string[]>(draft.formData, 'attachmentKeys', []);
       const attachmentHashes = fd<Record<string, string>>(draft.formData, 'attachmentHashes', {});
       for (let index = attachmentKeys.length; index < files.length; index++) {
-        // Compute SHA-256 client-side so we can skip re-uploading identical
-        // photo bytes that already exist in storage.
         const file = files[index];
         const sha256 = await computeSha256(file);
 
-        // Ask the server whether this exact file already exists.
         const dedupRes = await fetch('/api/storage/check-dup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -215,9 +218,6 @@ export async function syncSingleDraft(
         if (!uploaded.data?.key) throw new Error('Inspection photo upload returned no storage key');
 
         photoKeys.push(uploaded.data.key);
-        // Persist each successful object key immediately. If the later inspection
-        // POST fails, the next reconnect reuses already-uploaded photos instead of
-        // producing duplicate R2 objects for the same local draft.
         await updateDraft(draft.id, {
           formData: {
             ...draft.formData,
@@ -239,10 +239,6 @@ export async function syncSingleDraft(
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
 
-      // A Fuel POST may lose a race against another retry carrying the same
-      // clientSyncId. The database correctly returns 409, but the winning row
-      // already represents this exact offline draft. Recover that row through a
-      // tenant/user-scoped lookup so receipt sync can continue against its ID.
       if (draft.draftType === 'fuel' && res.status === 409) {
         const recovery = await fetch(`/api/fuel/sync/${encodeURIComponent(draft.id)}`, {
           method: 'GET',
@@ -253,9 +249,6 @@ export async function syncSingleDraft(
         }
       }
 
-      // Inspection writes are also idempotent by clientSyncId. A simultaneous
-      // retry can lose the unique-index race after another request has committed.
-      // Recover only a record created by this same inspector and tenant.
       if (
         !responseData &&
         (draft.draftType === 'inspection_departure' || draft.draftType === 'inspection_return')
@@ -348,10 +341,6 @@ export async function syncPendingDrafts(filters?: {
     }
   }
 
-  // Clean up successfully synced drafts only when the caller supplied a full
-  // identity scope. This preserves the shared-device safety rule in
-  // removeSyncedDrafts while allowing the dashboard sync handler to actually
-  // remove the current user's completed drafts.
   if (result.synced > 0 && filters?.userId && filters?.tenantId) {
     await removeSyncedDrafts({ userId: filters.userId, tenantId: filters.tenantId });
   }
