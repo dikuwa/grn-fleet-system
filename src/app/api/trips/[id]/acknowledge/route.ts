@@ -97,6 +97,8 @@ export async function POST(
         and(
           eq(trips.id, id),
           eq(trips.tenantId, session.tenantId),
+          eq(transportRequests.tenantId, session.tenantId),
+          eq(tripAuthorities.tenantId, session.tenantId),
           eq(vehicleAllocations.state, 'confirmed'),
         ),
       )
