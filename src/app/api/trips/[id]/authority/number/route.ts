@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { auditEvents } from '@/db/schema/audit';
 import { tripAuthorities } from '@/db/schema/trips';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { runAtomicMutations } from '@/lib/db-atomic';
 import {
   ManualAuthorityNumberError,
   normaliseManualAuthorityNumber,
@@ -80,34 +78,69 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   const now = new Date();
-  await runAtomicMutations((tx) => [
-    tx.update(tripAuthorities)
-      .set({
-        authorityNumber,
-        authorityNumberSource: 'manual_override',
-        manualNumberOverrideReason: reason,
-        manualNumberOverrideByUserId: session.user.id,
-        manualNumberOverrideAt: now,
-        updatedAt: now,
-      })
-      .where(
-        and(eq(tripAuthorities.id, authority.id), eq(tripAuthorities.tenantId, session.tenantId)),
+  try {
+    await db.execute(sql`
+      WITH authority_claim AS (
+        UPDATE trip_authorities
+        SET authority_number = ${authorityNumber},
+            authority_number_source = 'manual_override',
+            manual_number_override_reason = ${reason},
+            manual_number_override_by_user_id = ${session.user.id},
+            manual_number_override_at = ${now},
+            updated_at = ${now}
+        WHERE id = ${authority.id}::uuid
+          AND tenant_id = ${session.tenantId}::uuid
+          AND status = ${authority.status}
+          AND authority_number IS NOT DISTINCT FROM ${authority.authorityNumber}
+          AND status NOT IN ('in_progress', 'returned', 'completed', 'closed', 'cancelled', 'superseded')
+        RETURNING id
       ),
-    tx.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'trip_authority_number_overridden',
-      actorUserId: session.user.id,
-      action: 'override_number',
-      entityType: 'trip_authority',
-      entityId: authority.id,
-      before: { authorityNumber: authority.authorityNumber },
-      after: { authorityNumber },
-      reason,
-      summary: `Trip Authority number changed from ${authority.authorityNumber} to ${authorityNumber}`,
-      sourceChannel: 'web',
-    }),
-  ]);
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id, action,
+          entity_type, entity_id, before, after, reason, summary, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${Date.now()},
+          'trip_authority_number_overridden',
+          ${session.user.id},
+          'override_number',
+          'trip_authority',
+          ${authority.id}::uuid,
+          jsonb_build_object('authorityNumber', ${authority.authorityNumber}::text),
+          jsonb_build_object('authorityNumber', ${authorityNumber}::text),
+          ${reason},
+          ${`Trip Authority number changed from ${authority.authorityNumber} to ${authorityNumber}`},
+          'web'
+        FROM authority_claim
+        RETURNING id
+      )
+      SELECT CAST(CASE
+        WHEN (SELECT count(*) FROM authority_claim) = 1
+         AND (SELECT count(*) FROM audit_insert) = 1
+        THEN '1'
+        ELSE 'authority_number_correction_conflict'
+      END AS integer) AS committed
+    `);
+  } catch (error) {
+    if ((error as { code?: string })?.code === '23505') {
+      return NextResponse.json(
+        { error: 'That Trip Authority number already exists in this organisation.' },
+        { status: 409 },
+      );
+    }
+    if (String(error).includes('authority_number_correction_conflict')) {
+      return NextResponse.json(
+        {
+          error:
+            'The Trip Authority changed while the number was being corrected. Refresh and review the current authority state before trying again.',
+        },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
 
   const [updated] = await db
     .select()
