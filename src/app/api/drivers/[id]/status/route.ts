@@ -10,10 +10,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { employees, driverProfiles, driverLicences, employeeDocuments } from '@/db/schema/people';
-import { auditEvents } from '@/db/schema/audit';
-import { eq, and, gte } from 'drizzle-orm';
-import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
+import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
+import { eq, and, desc, gte, sql } from 'drizzle-orm';
+import {
+  requireDashboardAction,
+  requireRequestAuth,
+  requireAnyPermission,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
 export async function PATCH(
@@ -26,6 +29,9 @@ export async function PATCH(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    const routeCheck = await requireDashboardAction(session, '/dashboard/drivers', 'update');
+    if (routeCheck instanceof NextResponse) return routeCheck;
+
     const permCheck = await requireAnyPermission(session, [
       Permissions.DRIVER_MANAGE,
       Permissions.STAFF_MANAGE,
@@ -33,7 +39,9 @@ export async function PATCH(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json();
-    const { action, reason, effectiveDate, documentKey } = body;
+    const action = String(body.action || '');
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+    const documentKey = typeof body.documentKey === 'string' ? body.documentKey.trim() : '';
     const validActions = ['suspend', 'reactivate'];
     if (!validActions.includes(action)) {
       return NextResponse.json(
@@ -41,14 +49,19 @@ export async function PATCH(
         { status: 400 },
       );
     }
-
-    if (!reason?.trim()) {
+    if (!reason) {
       return NextResponse.json({ error: 'A reason is required for this action.' }, { status: 400 });
+    }
+    if (reason.length > 1000) {
+      return NextResponse.json({ error: 'Reason must be 1000 characters or fewer.' }, { status: 422 });
+    }
+
+    const effectiveAt = body.effectiveDate ? new Date(String(body.effectiveDate)) : new Date();
+    if (!Number.isFinite(effectiveAt.getTime())) {
+      return NextResponse.json({ error: 'Effective date is invalid.' }, { status: 422 });
     }
 
     const db = getDb();
-
-    // Verify the employee exists in this tenant and has a driver profile
     const [employee] = await db
       .select({
         id: employees.id,
@@ -62,164 +75,222 @@ export async function PATCH(
       .where(and(eq(employees.id, id), eq(employees.tenantId, session.tenantId)))
       .limit(1);
 
-    if (!employee) {
-      return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
-    }
-
+    if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     if (!employee.isDriver) {
       return NextResponse.json({ error: 'Employee is not registered as a driver' }, { status: 400 });
     }
 
     const [profile] = await db
-      .select()
+      .select({ id: driverProfiles.id, driverStatus: driverProfiles.driverStatus })
       .from(driverProfiles)
       .where(eq(driverProfiles.employeeId, employee.id))
       .limit(1);
+    if (!profile) return NextResponse.json({ error: 'Driver profile not found' }, { status: 404 });
 
-    if (!profile) {
-      return NextResponse.json({ error: 'Driver profile not found' }, { status: 404 });
-    }
-
-    const effectiveAt = effectiveDate ? new Date(effectiveDate) : new Date();
-    const previousStatus = profile.driverStatus;
+    const now = new Date();
+    const auditSequence = Date.now();
 
     if (action === 'suspend') {
       if (profile.driverStatus === 'suspended') {
         return NextResponse.json({ error: 'Driver is already suspended' }, { status: 409 });
       }
 
-      await db
-        .update(driverProfiles)
-        .set({
-          driverStatus: 'suspended',
-          suspensionReason: reason,
-          suspensionEndsAt: null,
-          availabilityStatus: 'unavailable',
-          updatedAt: new Date(),
-        })
-        .where(eq(driverProfiles.id, profile.id));
-
-      // Keep the staff record in lockstep — a suspended driver is unavailable.
-      // Only swap when currently available so a real leave isn't clobbered.
-      if (employee.availabilityStatus === 'available') {
-        await db.update(employees)
-          .set({ availabilityStatus: 'temporarily_unavailable', updatedAt: new Date() })
-          .where(eq(employees.id, employee.id));
-      }
-
-      // If a document was provided, attach it as supporting evidence
-      if (documentKey) {
-        await db.insert(employeeDocuments).values({
-          employeeId: employee.id,
-          documentType: 'suspension_order',
-          documentName: `Driver Suspension — ${reason.substring(0, 60)}`,
-          fileKey: documentKey,
-          mimeType: 'application/pdf',
-          notes: `Suspension effective ${effectiveAt.toISOString().split('T')[0]}. Reason: ${reason}`,
-        });
-      }
-
-      // Invalidate active licences
-      await db
-        .update(driverLicences)
-        .set({ isActive: false, notes: `Suspended: ${reason}` })
-        .where(
-          and(
-            eq(driverLicences.driverProfileId, profile.id),
-            eq(driverLicences.isActive, true),
-          ),
-        );
-
-      await db.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'driver.suspended',
-        actorUserId: session.user.id,
-        action: 'suspend',
-        entityType: 'driver_profile',
-        entityId: profile.id,
-        summary: `Driver ${employee.firstName} ${employee.lastName} suspended. Reason: ${reason}`,
-        before: { driverStatus: previousStatus },
-        after: { driverStatus: 'suspended', suspensionReason: reason },
-      });
+      // Claim the current driver state first and make every dependent mutation
+      // conditional on that claim. This prevents concurrent suspend/reactivate
+      // requests from producing split profile/licence/staff/audit state.
+      await db.execute(sql`
+        WITH profile_claim AS (
+          UPDATE driver_profiles
+          SET driver_status = 'suspended',
+              suspension_reason = ${reason},
+              suspension_ends_at = NULL,
+              availability_status = 'unavailable',
+              updated_at = ${now}
+          WHERE id = ${profile.id}::uuid
+            AND employee_id = ${employee.id}::uuid
+            AND driver_status = ${profile.driverStatus}
+            AND driver_status <> 'suspended'
+          RETURNING id
+        ),
+        employee_update AS (
+          UPDATE employees
+          SET availability_status = 'temporarily_unavailable', updated_at = ${now}
+          WHERE id = ${employee.id}::uuid
+            AND tenant_id = ${session.tenantId}::uuid
+            AND availability_status = 'available'
+            AND EXISTS (SELECT 1 FROM profile_claim)
+          RETURNING id
+        ),
+        licences_update AS (
+          UPDATE driver_licences
+          SET is_active = false,
+              notes = ${`Suspended: ${reason}`},
+              updated_at = ${now}
+          WHERE driver_profile_id = ${profile.id}::uuid
+            AND is_active = true
+            AND EXISTS (SELECT 1 FROM profile_claim)
+          RETURNING id
+        ),
+        document_insert AS (
+          INSERT INTO employee_documents (
+            employee_id, document_type, document_name, file_key, mime_type, notes
+          )
+          SELECT
+            ${employee.id}::uuid,
+            'suspension_order',
+            ${`Driver Suspension — ${reason.substring(0, 60)}`},
+            ${documentKey || null},
+            'application/pdf',
+            ${`Suspension effective ${effectiveAt.toISOString().split('T')[0]}. Reason: ${reason}`}
+          FROM profile_claim
+          WHERE ${Boolean(documentKey)} = true
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id, action,
+            entity_type, entity_id, summary, before, after, reason, source_channel
+          )
+          SELECT
+            ${session.tenantId}::uuid,
+            ${auditSequence},
+            'driver.suspended',
+            ${session.user.id},
+            'suspend',
+            'driver_profile',
+            ${profile.id}::uuid,
+            ${`Driver ${employee.firstName} ${employee.lastName} suspended. Reason: ${reason}`},
+            jsonb_build_object('driverStatus', ${profile.driverStatus}),
+            jsonb_build_object('driverStatus', 'suspended', 'suspensionReason', ${reason}),
+            ${reason},
+            'web'
+          FROM profile_claim
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM profile_claim) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN '1'
+          ELSE 'atomic_driver_status_failed_' || (SELECT count(*) FROM profile_claim)::text
+        END AS integer) AS committed
+      `);
 
       return NextResponse.json({
         success: true,
         message: `Driver ${employee.firstName} ${employee.lastName} has been suspended.`,
-        data: { driverStatus: 'suspended', previousStatus, reason },
+        data: { driverStatus: 'suspended', previousStatus: profile.driverStatus, reason },
       });
     }
 
-    if (action === 'reactivate') {
-      if (profile.driverStatus === 'authorised') {
-        return NextResponse.json({ error: 'Driver is already active' }, { status: 409 });
-      }
+    if (profile.driverStatus === 'authorised') {
+      return NextResponse.json({ error: 'Driver is already active' }, { status: 409 });
+    }
 
-      const [verifiedLicence] = await db.select({ id: driverLicences.id }).from(driverLicences).where(and(
+    const today = new Date().toISOString().slice(0, 10);
+    const [verifiedLicence] = await db
+      .select({ id: driverLicences.id })
+      .from(driverLicences)
+      .where(and(
         eq(driverLicences.driverProfileId, profile.id),
         eq(driverLicences.verificationStatus, 'verified'),
         eq(driverLicences.isVerified, true),
-        gte(driverLicences.expiryDate, new Date().toISOString().slice(0, 10)),
-      )).limit(1);
-      if (!verifiedLicence) {
-        return NextResponse.json({ error: 'This driver cannot be authorised until a current licence is complete and verified.' }, { status: 409 });
-      }
-
-      // Reactivate — restore licences, clear suspension fields
-      await db
-        .update(driverProfiles)
-        .set({
-          driverStatus: 'authorised',
-          suspensionReason: null,
-          suspensionEndsAt: null,
-          availabilityStatus: 'available',
-          updatedAt: new Date(),
-        })
-        .where(eq(driverProfiles.id, profile.id));
-
-      // Undo the availability swap made on suspension (only if the status is
-      // still the suspension-induced one).
-      if (employee.availabilityStatus === 'temporarily_unavailable') {
-        await db.update(employees)
-          .set({ availabilityStatus: 'available', updatedAt: new Date() })
-          .where(eq(employees.id, employee.id));
-      }
-
-      // Reactivate licences that were active before suspension
-      await db
-        .update(driverLicences)
-        .set({ isActive: true })
-        .where(
-          and(
-            eq(driverLicences.driverProfileId, profile.id),
-            eq(driverLicences.verificationStatus, 'verified'),
-          ),
-        );
-
-      await db.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'driver.reactivated',
-        actorUserId: session.user.id,
-        action: 'reactivate',
-        entityType: 'driver_profile',
-        entityId: profile.id,
-        summary: `Driver ${employee.firstName} ${employee.lastName} reactivated. Reason: ${reason}`,
-        before: { driverStatus: previousStatus },
-        after: { driverStatus: 'authorised', reactivationReason: reason },
-      });
-
-      return NextResponse.json({
-        success: true,
-        message: `Driver ${employee.firstName} ${employee.lastName} has been reactivated.`,
-        data: { driverStatus: 'authorised', previousStatus, reason },
-      });
+        gte(driverLicences.expiryDate, today),
+      ))
+      .orderBy(desc(driverLicences.version))
+      .limit(1);
+    if (!verifiedLicence) {
+      return NextResponse.json(
+        { error: 'This driver cannot be authorised until a current licence is complete and verified.' },
+        { status: 409 },
+      );
     }
+
+    // Reactivation chooses exactly the latest current verified licence as the
+    // operational licence. Older verified versions stay inactive even if legacy
+    // data left more than one verified row behind.
+    await db.execute(sql`
+      WITH profile_claim AS (
+        UPDATE driver_profiles
+        SET driver_status = 'authorised',
+            suspension_reason = NULL,
+            suspension_ends_at = NULL,
+            availability_status = 'available',
+            updated_at = ${now}
+        WHERE id = ${profile.id}::uuid
+          AND employee_id = ${employee.id}::uuid
+          AND driver_status = ${profile.driverStatus}
+          AND driver_status <> 'authorised'
+          AND EXISTS (
+            SELECT 1
+            FROM driver_licences dl
+            WHERE dl.id = ${verifiedLicence.id}::uuid
+              AND dl.driver_profile_id = ${profile.id}::uuid
+              AND dl.verification_status = 'verified'
+              AND dl.is_verified = true
+              AND dl.expiry_date >= ${today}
+          )
+        RETURNING id
+      ),
+      employee_update AS (
+        UPDATE employees
+        SET availability_status = 'available', updated_at = ${now}
+        WHERE id = ${employee.id}::uuid
+          AND tenant_id = ${session.tenantId}::uuid
+          AND availability_status = 'temporarily_unavailable'
+          AND EXISTS (SELECT 1 FROM profile_claim)
+        RETURNING id
+      ),
+      licences_update AS (
+        UPDATE driver_licences
+        SET is_active = (id = ${verifiedLicence.id}::uuid), updated_at = ${now}
+        WHERE driver_profile_id = ${profile.id}::uuid
+          AND verification_status = 'verified'
+          AND is_verified = true
+          AND EXISTS (SELECT 1 FROM profile_claim)
+        RETURNING id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id, action,
+          entity_type, entity_id, summary, before, after, reason, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${auditSequence},
+          'driver.reactivated',
+          ${session.user.id},
+          'reactivate',
+          'driver_profile',
+          ${profile.id}::uuid,
+          ${`Driver ${employee.firstName} ${employee.lastName} reactivated. Reason: ${reason}`},
+          jsonb_build_object('driverStatus', ${profile.driverStatus}),
+          jsonb_build_object('driverStatus', 'authorised', 'reactivationReason', ${reason}),
+          ${reason},
+          'web'
+        FROM profile_claim
+        RETURNING id
+      )
+      SELECT CAST(CASE
+        WHEN (SELECT count(*) FROM profile_claim) = 1
+         AND (SELECT count(*) FROM audit_insert) = 1
+        THEN '1'
+        ELSE 'atomic_driver_status_failed_' || (SELECT count(*) FROM profile_claim)::text
+      END AS integer) AS committed
+    `);
+
+    return NextResponse.json({
+      success: true,
+      message: `Driver ${employee.firstName} ${employee.lastName} has been reactivated.`,
+      data: { driverStatus: 'authorised', previousStatus: profile.driverStatus, reason },
+    });
   } catch (error) {
     console.error('[Driver Status] PATCH failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to update driver status: ' + String(error) },
-      { status: 500 },
-    );
+    if (String(error).includes('atomic_driver_status_failed')) {
+      return NextResponse.json(
+        { error: 'Driver status changed while the action was being saved. Refresh and review the latest driver state.' },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ error: 'Failed to update driver status' }, { status: 500 });
   }
 }
