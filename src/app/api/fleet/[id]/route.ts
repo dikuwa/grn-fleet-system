@@ -52,7 +52,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ vehicle });
+    // Fuel-card PINs are credentials, not fleet profile data. Never return the
+    // stored value through a general vehicle-view endpoint shared with audit,
+    // maintenance and inspection workspaces.
+    const { fuelCardPin: _fuelCardPin, ...safeVehicle } = vehicle;
+    return NextResponse.json({ vehicle: safeVehicle });
   } catch (error) {
     console.error('[fleet/:id] GET failed:', error);
     return NextResponse.json({ error: 'Failed to fetch vehicle' }, { status: 500 });
@@ -95,6 +99,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const body = await req.json();
+    if (body.fuelCardPin !== undefined) {
+      return NextResponse.json(
+        {
+          error:
+            'Fuel card PINs cannot be stored or changed through the general vehicle editor. Use a dedicated secure credential workflow.',
+        },
+        { status: 422 },
+      );
+    }
 
     const requestedLicenceNumber =
       body.licenceNumber === undefined ? undefined : String(body.licenceNumber).trim();
@@ -246,7 +259,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (requestedStatus !== undefined) updateData.status = requestedStatus;
     if (requestedOdometer !== undefined) updateData.currentOdometer = requestedOdometer;
     if (body.fuelCardNumber !== undefined) updateData.fuelCardNumber = body.fuelCardNumber || null;
-    if (body.fuelCardPin !== undefined) updateData.fuelCardPin = body.fuelCardPin || null;
     if (body.categoryId !== undefined) updateData.categoryId = body.categoryId || null;
     if (body.officeId !== undefined) updateData.officeId = body.officeId || null;
     if (body.assignedOfficeId !== undefined)
@@ -259,6 +271,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
       .returning();
 
+    if (vehicle) vehicle.fuelCardPin = null;
     return NextResponse.json({ vehicle });
   } catch (error) {
     console.error('[fleet/:id] PATCH failed:', error);
