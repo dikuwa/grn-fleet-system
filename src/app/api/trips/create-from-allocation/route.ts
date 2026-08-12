@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
         vehicleId: vehicleAllocations.vehicleId,
         state: vehicleAllocations.state,
         requestStatus: transportRequests.status,
+        vehicleRequirements: transportRequests.vehicleRequirements,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
@@ -139,6 +140,14 @@ export async function POST(req: NextRequest) {
     const now = new Date();
     const tripId = randomUUID();
     const auditId = randomUUID();
+    // Keep a compatibility mirror in the already-established request snapshot
+    // until every authority provisioning caller reads the dedicated reservation
+    // columns. The dedicated columns + unique index are the authoritative source.
+    const nextVehicleRequirements = {
+      ...(allocation.vehicleRequirements ?? {}),
+      physicalTripAuthorityNumber: manualAuthorityNumber,
+      physicalTripAuthorityNumberSetByUserId: manualAuthorityNumber ? session.user.id : null,
+    };
 
     try {
       await runAtomicMutations((tx) => [
@@ -147,6 +156,7 @@ export async function POST(req: NextRequest) {
             physicalTripAuthorityNumber: manualAuthorityNumber,
             physicalTripAuthorityNumberSetByUserId: manualAuthorityNumber ? session.user.id : null,
             physicalTripAuthorityNumberSetAt: manualAuthorityNumber ? now : null,
+            vehicleRequirements: nextVehicleRequirements,
             updatedAt: now,
           })
           .where(
