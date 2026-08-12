@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 
-const TENANT_A = '00000000-0000-0000-0000-000000000001'; // Kavango East (seeded)
+const TENANT_A = '00000000-0000-0000-0000-000000000001';
 
 describe('Workflow reminder/escalation recipient chain (live)', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,35 +29,39 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
     db = (await import('@/db')).getDb();
   });
 
-  /** Fixtures created by this run; cleaned up after each test. */
-  const created: { requestId?: string; instanceId?: string; allocationId?: string } = {};
+  const created: {
+    requestId?: string;
+    instanceId?: string;
+    allocationId?: string;
+    tripId?: string;
+  } = {};
 
   afterEach(async () => {
     const { notifications } = await import('@/db/schema/notifications');
     const { workflowActions, workflowInstances } = await import('@/db/schema/workflows');
-    const { vehicleAllocations } = await import('@/db/schema/trips');
+    const { vehicleAllocations, trips } = await import('@/db/schema/trips');
     const { transportRequests } = await import('@/db/schema/requests');
     const { eq } = await import('drizzle-orm');
 
+    if (created.tripId) {
+      await db.delete(trips).where(eq(trips.id, created.tripId));
+    }
     if (created.allocationId) {
       await db.delete(vehicleAllocations).where(eq(vehicleAllocations.id, created.allocationId));
     }
     if (created.instanceId) {
-      // Notifications created for this instance (approval_assigned at init)
-      await db
-        .delete(notifications)
-        .where(eq(notifications.entityId, created.instanceId));
-      await db
-        .delete(workflowActions)
-        .where(eq(workflowActions.instanceId, created.instanceId));
+      await db.delete(notifications).where(eq(notifications.entityId, created.instanceId));
+      await db.delete(workflowActions).where(eq(workflowActions.instanceId, created.instanceId));
       await db.delete(workflowInstances).where(eq(workflowInstances.id, created.instanceId));
     }
     if (created.requestId) {
       await db.delete(transportRequests).where(eq(transportRequests.id, created.requestId));
     }
+
     created.requestId = undefined;
     created.instanceId = undefined;
     created.allocationId = undefined;
+    created.tripId = undefined;
   });
 
   async function userIdForEmail(email: string) {
@@ -72,8 +76,6 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
     const { employees } = await import('@/db/schema/people');
     const { eq, and } = await import('drizzle-orm');
 
-    // transport_requests.requester_employee_id is NOT NULL in the live schema;
-    // reuse a seeded requester (Maria Shikongo, KERC002).
     const [requester] = await db
       .select({ id: employees.id, userId: employees.userId })
       .from(employees)
@@ -100,7 +102,7 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
   }
 
   async function createAllocationFixture(requestId: string, driverEmployeeId: string) {
-    const { vehicleAllocations } = await import('@/db/schema/trips');
+    const { vehicleAllocations, trips } = await import('@/db/schema/trips');
     const { vehicles } = await import('@/db/schema/fleet');
     const { eq, and, lt, gt, inArray } = await import('drizzle-orm');
 
@@ -109,14 +111,11 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
       .from(vehicles)
       .where(and(eq(vehicles.tenantId, TENANT_A), eq(vehicles.status, 'available')))
       .limit(1);
+    expect(vehicle?.id).toBeTruthy();
 
     const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const end = new Date(start.getTime() + 3 * 60 * 60 * 1000);
 
-    // The driver-overlap exclusion constraint rejects two live allocations on
-    // the same driver for an overlapping window. Earlier spec runs (driver
-    // queue, role isolation) may have left live allocations on this seed
-    // driver, so cancel any that overlap our window before inserting.
     await db
       .update(vehicleAllocations)
       .set({ state: 'cancelled' })
@@ -141,6 +140,19 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
         allocatedByUserId: 'integration-test',
       })
       .returning({ id: vehicleAllocations.id });
+
+    const [trip] = await db
+      .insert(trips)
+      .values({
+        tenantId: TENANT_A,
+        requestId,
+        allocationId: allocation.id,
+        vehicleId: vehicle.id,
+        status: 'pending',
+      })
+      .returning({ id: trips.id });
+
+    created.tripId = trip.id as string;
     return allocation.id as string;
   }
 
@@ -167,8 +179,6 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
     created.instanceId = (init as { instance: { id: string } }).instance.id;
 
     const recipients = await engine.getCurrentStepRecipients(created.instanceId, TENANT_A);
-    // Step 1 (supervisor_approve) resolves the seeded supervisor — either as
-    // the runtime-resolved holder or via permission fan-out; both include them.
     expect(recipients.length).toBeGreaterThan(0);
     expect(recipients).toContain(supervisorUserId);
   });
@@ -179,7 +189,6 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
     const { eq, and } = await import('drizzle-orm');
     const { workflowInstances } = await import('@/db/schema/workflows');
 
-    // KERC008 (Michael Mwala) is the seeded driver account driver@kavangoeast.test.
     const [driver] = await db
       .select({ id: employees.id, userId: employees.userId })
       .from(employees)
@@ -193,7 +202,6 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
     expect(init.ok, 'initializeForRequest should succeed against seeded definition').toBe(true);
     created.instanceId = (init as { instance: { id: string } }).instance.id;
 
-    // Move the instance to the acknowledge step and allocate the driver.
     const acknowledgeStep = REGIONAL_WORKFLOW_STEPS.find((s) => s.actionType === 'acknowledge');
     expect(acknowledgeStep).toBeTruthy();
     created.allocationId = await createAllocationFixture(created.requestId, driver.id);
@@ -203,8 +211,6 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
       .where(eq(workflowInstances.id, created.instanceId));
 
     const recipients = await engine.getCurrentStepRecipients(created.instanceId, TENANT_A);
-    // The driver is the sole recipient — never the whole driver:log-create
-    // holder population (transport admins hold it and must NOT be nudged).
     expect(recipients).toEqual([driver.userId]);
   });
 
@@ -219,9 +225,6 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
     expect(init.ok).toBe(true);
     created.instanceId = (init as { instance: { id: string } }).instance.id;
 
-    // Point the instance at a step that does not exist in the regional
-    // definition (the reminder job guards on workflow status before calling
-    // this — here we prove the resolver itself degrades to nobody).
     await db
       .update(workflowInstances)
       .set({ currentStepOrder: 99 })
