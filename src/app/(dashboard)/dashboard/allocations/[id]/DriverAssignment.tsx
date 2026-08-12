@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,26 +8,37 @@ import {
   EmployeeCombobox,
   type EmployeeSearchOption,
 } from '@/components/ui/employee-combobox';
-import { User, XCircle, UserPlus } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, User, UserPlus } from 'lucide-react';
 
-interface LicenceInfo {
-  id: string;
-  licenceNumber: string;
-  licenceClass: string;
-  expiryDate: string;
-  verificationStatus: string;
+interface DriverCompliance {
+  status:
+    | 'eligible'
+    | 'eligible_expiring_soon'
+    | 'not_eligible'
+    | 'missing_information'
+    | 'awaiting_verification'
+    | 'temporarily_unavailable';
+  reasons: string[];
 }
 
-interface DriverInfo {
-  id: string;
+interface DriverEligibility {
+  employeeId: string;
   firstName: string;
   lastName: string;
   employeeNumber: string;
   jobTitle: string | null;
+  departmentName: string | null;
+  officeName: string | null;
+  employmentStatus: string;
+  availabilityStatus: string;
   driverStatus: string;
-  licenceCount: number;
-  activeLicenceCount: number;
-  licences: LicenceInfo[];
+  licenceNumber: string | null;
+  licenceClass: string | null;
+  licenceExpiry: string | null;
+  licenceVerificationStatus: string | null;
+  licenceClassCompatible: boolean;
+  eligible: boolean;
+  compliance: DriverCompliance;
 }
 
 interface DriverAssignmentProps {
@@ -35,48 +46,130 @@ interface DriverAssignmentProps {
   currentDriverId: string | null;
 }
 
-function getLicenceStatus(expiryDate: string): { label: string; variant: 'success' | 'emergency' | 'error' | 'pending' } {
-  const today = new Date();
-  const expiry = new Date(expiryDate);
-  const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+function toEmployeeOption(driver: DriverEligibility): EmployeeSearchOption {
+  return {
+    id: driver.employeeId,
+    fullName: `${driver.firstName} ${driver.lastName}`,
+    firstName: driver.firstName,
+    lastName: driver.lastName,
+    employeeNumber: driver.employeeNumber,
+    email: null,
+    jobTitle: driver.jobTitle,
+    departmentName: driver.departmentName,
+    officeName: driver.officeName,
+    driverStatus: driver.driverStatus,
+    availabilityStatus: driver.availabilityStatus,
+  };
+}
 
-  if (daysUntilExpiry < 0) return { label: `Expired ${Math.abs(daysUntilExpiry)}d ago`, variant: 'error' };
-  if (daysUntilExpiry <= 30) return { label: `Expires in ${daysUntilExpiry}d`, variant: 'emergency' };
-  if (daysUntilExpiry <= 90) return { label: `Expires in ${daysUntilExpiry}d`, variant: 'pending' };
-  return { label: `Valid until ${expiry.toLocaleDateString()}`, variant: 'success' };
+function complianceBadge(driver: DriverEligibility) {
+  if (driver.compliance.status === 'eligible') {
+    return { variant: 'success' as const, label: 'Eligible' };
+  }
+  if (driver.compliance.status === 'eligible_expiring_soon') {
+    return { variant: 'pending' as const, label: 'Eligible · expiring soon' };
+  }
+  if (driver.compliance.status === 'awaiting_verification') {
+    return { variant: 'pending' as const, label: 'Licence review pending' };
+  }
+  if (driver.compliance.status === 'temporarily_unavailable') {
+    return { variant: 'emergency' as const, label: 'Unavailable' };
+  }
+  return { variant: 'error' as const, label: 'Not eligible' };
 }
 
 export function DriverAssignment({ allocationId, currentDriverId }: DriverAssignmentProps) {
   const router = useRouter();
-  const [drivers, setDrivers] = useState<DriverInfo[]>([]);
   const [selectedDriverId, setSelectedDriverId] = useState(currentDriverId || '');
+  const [selectedOption, setSelectedOption] = useState<EmployeeSearchOption | null>(null);
+  const [currentEligibility, setCurrentEligibility] = useState<DriverEligibility | null>(null);
+  const [selectedEligibility, setSelectedEligibility] = useState<DriverEligibility | null>(null);
   const [replacementReason, setReplacementReason] = useState('');
   const [unassignmentReason, setUnassignmentReason] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingCurrent, setIsLoadingCurrent] = useState(Boolean(currentDriverId));
+  const [isCheckingEligibility, setIsCheckingEligibility] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    async function loadDrivers() {
-      try {
-        const res = await fetch('/api/drivers');
-        const json = await res.json();
-        if (json.success) {
-          setDrivers(json.data);
-        }
-      } catch {
-        // Silent fail
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadDrivers();
-  }, []);
+  const fetchEligibility = useCallback(async (employeeId: string) => {
+    const params = new URLSearchParams({
+      allocationId,
+      employeeId,
+      limit: '1',
+    });
+    const response = await fetch(`/api/allocations/drivers?${params}`, { cache: 'no-store' });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(json.error || 'Unable to validate driver eligibility');
+    const driver = Array.isArray(json.data) ? (json.data[0] as DriverEligibility | undefined) : undefined;
+    if (!driver) throw new Error('This employee is not configured as a driver for your organisation.');
+    return driver;
+  }, [allocationId]);
 
-  const isReplacement = Boolean(currentDriverId && selectedDriverId && selectedDriverId !== currentDriverId);
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentDriverId) {
+      setCurrentEligibility(null);
+      setSelectedEligibility(null);
+      setSelectedOption(null);
+      setIsLoadingCurrent(false);
+      return;
+    }
+
+    setIsLoadingCurrent(true);
+    fetchEligibility(currentDriverId)
+      .then((driver) => {
+        if (cancelled) return;
+        setCurrentEligibility(driver);
+        setSelectedEligibility(driver);
+        setSelectedOption(toEmployeeOption(driver));
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Unable to load current driver');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingCurrent(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDriverId, fetchEligibility]);
+
+  const isReplacement = Boolean(
+    currentDriverId && selectedDriverId && selectedDriverId !== currentDriverId,
+  );
+
+  const handleSelection = useCallback(async (employee: EmployeeSearchOption | null) => {
+    setError('');
+    setReplacementReason('');
+    setSelectedOption(employee);
+    const employeeId = employee?.id || '';
+    setSelectedDriverId(employeeId);
+
+    if (!employeeId) {
+      setSelectedEligibility(null);
+      return;
+    }
+    if (employeeId === currentDriverId && currentEligibility) {
+      setSelectedEligibility(currentEligibility);
+      return;
+    }
+
+    setSelectedEligibility(null);
+    setIsCheckingEligibility(true);
+    try {
+      const driver = await fetchEligibility(employeeId);
+      setSelectedEligibility(driver);
+      setSelectedOption(toEmployeeOption(driver));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to validate driver eligibility');
+    } finally {
+      setIsCheckingEligibility(false);
+    }
+  }, [currentDriverId, currentEligibility, fetchEligibility]);
 
   const handleAssign = useCallback(async () => {
-    if (!selectedDriverId) return;
+    if (!selectedDriverId || !selectedEligibility?.eligible) return;
     if (currentDriverId && selectedDriverId === currentDriverId) {
       setError('Choose a different driver before replacing the current assignment.');
       return;
@@ -107,7 +200,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
     } finally {
       setIsSaving(false);
     }
-  }, [allocationId, currentDriverId, replacementReason, selectedDriverId, router]);
+  }, [allocationId, currentDriverId, replacementReason, selectedDriverId, selectedEligibility, router]);
 
   const handleUnassign = useCallback(async () => {
     if (!unassignmentReason.trim()) {
@@ -126,6 +219,8 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || 'Failed to unassign driver');
       setSelectedDriverId('');
+      setSelectedOption(null);
+      setSelectedEligibility(null);
       setReplacementReason('');
       setUnassignmentReason('');
       router.refresh();
@@ -136,42 +231,16 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
     }
   }, [allocationId, router, unassignmentReason]);
 
-  const selectedDriver = drivers.find((d) => d.id === selectedDriverId);
-  const currentDriver = drivers.find((d) => d.id === currentDriverId);
-
-  // Get the best licence for the selected driver
-  const bestLicence = selectedDriver?.licences
-    .filter((l) => l.verificationStatus !== 'expired')
-    .sort((a, b) => {
-      const aExpiry = new Date(a.expiryDate).getTime();
-      const bExpiry = new Date(b.expiryDate).getTime();
-      return bExpiry - aExpiry;
-    })[0];
-
-  const currentBestLicence = currentDriver?.licences
-    .filter((licence) => licence.verificationStatus !== 'expired')
-    .sort((a, b) => new Date(b.expiryDate).getTime() - new Date(a.expiryDate).getTime())[0];
-
-  const selectedEmployeeOption: EmployeeSearchOption | null = selectedDriver ? {
-    id: selectedDriver.id,
-    fullName: `${selectedDriver.firstName} ${selectedDriver.lastName}`,
-    firstName: selectedDriver.firstName,
-    lastName: selectedDriver.lastName,
-    employeeNumber: selectedDriver.employeeNumber,
-    email: null,
-    jobTitle: selectedDriver.jobTitle,
-    departmentName: null,
-    officeName: null,
-    driverStatus: selectedDriver.driverStatus,
-    availabilityStatus: null,
-  } : null;
-
   const assignmentBlocked = Boolean(
-    !selectedDriver ||
-    selectedDriver.activeLicenceCount === 0 ||
-    (currentDriverId && selectedDriverId === currentDriverId) ||
-    (isReplacement && !replacementReason.trim()),
+    !selectedDriverId ||
+      !selectedEligibility?.eligible ||
+      isCheckingEligibility ||
+      (currentDriverId && selectedDriverId === currentDriverId) ||
+      (isReplacement && !replacementReason.trim()),
   );
+
+  const selectedBadge = selectedEligibility ? complianceBadge(selectedEligibility) : null;
+  const currentBadge = currentEligibility ? complianceBadge(currentEligibility) : null;
 
   return (
     <div className="space-y-3">
@@ -180,7 +249,13 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
         <span className="text-sm font-medium text-ink-700">Driver Assignment</span>
       </div>
 
-      {currentDriverId && currentDriver && (
+      {currentDriverId && isLoadingCurrent && (
+        <div className="flex items-center gap-2 rounded-[8px] border border-border bg-muted/30 p-3 text-xs text-ink-500">
+          <Loader2 className="h-4 w-4 animate-spin" /> Checking current driver compliance…
+        </div>
+      )}
+
+      {currentDriverId && currentEligibility && (
         <div className="space-y-3 rounded-[8px] border border-status-success-border bg-status-success-bg/30 p-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
@@ -189,20 +264,25 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-medium text-ink-950">
-                  {currentDriver.firstName} {currentDriver.lastName}
+                  {currentEligibility.firstName} {currentEligibility.lastName}
                 </p>
                 <p className="text-xs text-ink-500">
-                  {currentDriver.jobTitle || 'Driver'} · {currentDriver.employeeNumber}
+                  {currentEligibility.jobTitle || 'Driver'} · {currentEligibility.employeeNumber}
                 </p>
-                {currentBestLicence && (
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                    <Badge variant={getLicenceStatus(currentBestLicence.expiryDate).variant} size="sm">
-                      {getLicenceStatus(currentBestLicence.expiryDate).label}
-                    </Badge>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  {currentBadge && <Badge variant={currentBadge.variant} size="sm">{currentBadge.label}</Badge>}
+                  {currentEligibility.licenceNumber && (
                     <span className="text-xs text-ink-400">
-                      Class {currentBestLicence.licenceClass} · {currentBestLicence.licenceNumber}
+                      {currentEligibility.licenceClass ? `Class ${currentEligibility.licenceClass} · ` : ''}
+                      {currentEligibility.licenceNumber}
+                      {currentEligibility.licenceExpiry ? ` · expires ${new Date(currentEligibility.licenceExpiry).toLocaleDateString()}` : ''}
                     </span>
-                  </div>
+                  )}
+                </div>
+                {!currentEligibility.eligible && currentEligibility.compliance.reasons.length > 0 && (
+                  <p className="mt-1.5 text-xs text-status-error-text">
+                    Current compliance: {currentEligibility.compliance.reasons.join(' · ')}
+                  </p>
                 )}
               </div>
             </div>
@@ -241,97 +321,92 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       )}
 
       <div className="space-y-2">
-        {isLoading ? (
-          <div className="animate-pulse rounded-[8px] bg-muted p-3">
-            <div className="h-4 w-3/4 rounded bg-ink-200" />
+        <EmployeeCombobox
+          kind="driver"
+          value={selectedDriverId}
+          selectedOption={selectedOption}
+          onSelect={handleSelection}
+          placeholder={currentDriverId ? 'Search for a replacement driver…' : 'Search available drivers…'}
+        />
+
+        {currentDriverId && selectedDriverId === currentDriverId && (
+          <p className="text-xs text-ink-500">
+            Search and select a different eligible driver to make a replacement.
+          </p>
+        )}
+
+        {isCheckingEligibility && (
+          <div className="flex items-center gap-2 rounded-[8px] border border-border bg-muted/30 p-3 text-xs text-ink-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Checking licence, availability, vehicle class and schedule…
           </div>
-        ) : (
-          <>
-            <EmployeeCombobox
-              kind="driver"
-              value={selectedDriverId}
-              selectedOption={selectedEmployeeOption}
-              onSelect={(employee) => {
-                setSelectedDriverId(employee?.id || '');
-                setReplacementReason('');
+        )}
+
+        {isReplacement && (
+          <div className="space-y-1.5 rounded-[8px] border border-border bg-muted/30 p-3">
+            <label htmlFor={`driver-replacement-reason-${allocationId}`} className="text-xs font-medium text-ink-700">
+              Replacement reason <span className="text-status-error-text">*</span>
+            </label>
+            <textarea
+              id={`driver-replacement-reason-${allocationId}`}
+              value={replacementReason}
+              onChange={(event) => {
+                setReplacementReason(event.target.value);
                 setError('');
               }}
-              placeholder={currentDriverId ? 'Search for a replacement driver…' : 'Search available drivers…'}
+              rows={3}
+              maxLength={500}
+              placeholder="Record why the current driver is being replaced…"
+              className="w-full resize-y rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-ink-950 outline-none transition-colors placeholder:text-ink-400 focus:border-ink-400 focus:ring-2 focus:ring-ink-200"
             />
+            <p className="text-xs text-ink-500">
+              This reason is recorded in the audit trail and shared with the affected driver.
+            </p>
+          </div>
+        )}
 
-            {currentDriverId && selectedDriverId === currentDriverId && (
-              <p className="text-xs text-ink-500">
-                Search and select a different eligible driver to make a replacement.
-              </p>
-            )}
-
-            {isReplacement && (
-              <div className="space-y-1.5 rounded-[8px] border border-border bg-muted/30 p-3">
-                <label htmlFor={`driver-replacement-reason-${allocationId}`} className="text-xs font-medium text-ink-700">
-                  Replacement reason <span className="text-status-error-text">*</span>
-                </label>
-                <textarea
-                  id={`driver-replacement-reason-${allocationId}`}
-                  value={replacementReason}
-                  onChange={(event) => setReplacementReason(event.target.value)}
-                  rows={3}
-                  maxLength={500}
-                  placeholder="Record why the current driver is being replaced…"
-                  className="w-full resize-y rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-ink-950 outline-none transition-colors placeholder:text-ink-400 focus:border-ink-400 focus:ring-2 focus:ring-ink-200"
-                />
-                <p className="text-xs text-ink-500">
-                  This reason is recorded in the audit trail and shared with the affected driver.
-                </p>
-              </div>
-            )}
-
-            {selectedDriver && (
-              <div className="rounded-[8px] border border-border bg-muted/50 p-2.5">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-ink-700">
-                      Licence: {selectedDriver.activeLicenceCount} valid / {selectedDriver.licenceCount} total
-                    </p>
-                    {bestLicence && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={getLicenceStatus(bestLicence.expiryDate).variant} size="sm">
-                          {getLicenceStatus(bestLicence.expiryDate).label}
-                        </Badge>
-                        <span className="text-xs text-ink-400">
-                          Class {bestLicence.licenceClass}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    loading={isSaving}
-                    disabled={assignmentBlocked}
-                    onClick={handleAssign}
-                  >
-                    <UserPlus className="h-3.5 w-3.5" />
-                    {currentDriverId ? 'Replace Driver' : 'Assign'}
-                  </Button>
+        {selectedEligibility && selectedDriverId !== currentDriverId && (
+          <div className={`rounded-[8px] border p-3 ${selectedEligibility.eligible ? 'border-status-success-border bg-status-success-bg/20' : 'border-status-error-border bg-status-error-bg/10'}`}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedEligibility.eligible ? <CheckCircle2 className="h-4 w-4 text-status-success-text" /> : <AlertTriangle className="h-4 w-4 text-status-error-text" />}
+                  <p className="text-sm font-medium text-ink-950">
+                    {selectedEligibility.firstName} {selectedEligibility.lastName}
+                  </p>
+                  {selectedBadge && <Badge variant={selectedBadge.variant} size="sm">{selectedBadge.label}</Badge>}
                 </div>
+                <p className="text-xs text-ink-500">
+                  {selectedEligibility.employeeNumber}
+                  {selectedEligibility.licenceClass ? ` · Class ${selectedEligibility.licenceClass}` : ''}
+                  {selectedEligibility.licenceNumber ? ` · ${selectedEligibility.licenceNumber}` : ''}
+                </p>
+                {selectedEligibility.compliance.reasons.length > 0 && (
+                  <div className="space-y-1">
+                    {selectedEligibility.compliance.reasons.map((reason) => (
+                      <p key={reason} className={`text-xs ${selectedEligibility.eligible ? 'text-status-pending-text' : 'text-status-error-text'}`}>
+                        {reason}
+                      </p>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-
-            {selectedDriver && selectedDriver.activeLicenceCount === 0 && (
-              <div className="flex items-center gap-1.5 rounded-[6px] bg-status-error-bg px-2.5 py-1.5">
-                <XCircle className="h-3.5 w-3.5 text-status-error-text" />
-                <span className="text-xs font-medium text-status-error-text">
-                  No valid licences — driver cannot be assigned
-                </span>
-              </div>
-            )}
-          </>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={isSaving}
+                disabled={assignmentBlocked}
+                onClick={handleAssign}
+                className="self-start"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                {currentDriverId ? 'Replace Driver' : 'Assign'}
+              </Button>
+            </div>
+          </div>
         )}
       </div>
 
-      {error && (
-        <p className="text-xs text-status-error-text">{error}</p>
-      )}
+      {error && <p className="text-xs text-status-error-text">{error}</p>}
     </div>
   );
 }
