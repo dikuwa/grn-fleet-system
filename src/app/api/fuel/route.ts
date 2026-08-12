@@ -18,8 +18,12 @@ import {
 import { Permissions } from '@/lib/permissions';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { fuelScopeCondition, tripScopeCondition } from '@/lib/record-scope';
-import { createScopedNotifications } from '@/lib/notification-service';
+import {
+  createScopedNotifications,
+  resolvePermissionRecipients,
+} from '@/lib/notification-service';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 /** GET /api/fuel — list fuel transactions within the active record scope. */
 export async function GET(request: NextRequest) {
@@ -484,6 +488,12 @@ export async function POST(req: NextRequest) {
     if (!transaction) throw new Error('Fuel transaction committed but could not be reloaded');
 
     const { activeWorkspace } = await getSessionWorkspace(session);
+    const reviewerIds = reimbursement
+      ? (await resolvePermissionRecipients(session.tenantId, Permissions.FUEL_VERIFY)).filter(
+          (userId) => userId !== session.user.id,
+        )
+      : [];
+
     await Promise.allSettled([
       createScopedNotifications({
         tenantId: session.tenantId,
@@ -503,6 +513,22 @@ export async function POST(req: NextRequest) {
         workspace: activeWorkspace,
         priority: reimbursement ? 'high' : 'normal',
       }),
+      reimbursement
+        ? createScopedNotifications({
+            tenantId: session.tenantId,
+            recipientUserIds: reviewerIds,
+            category: 'action_required',
+            eventType: 'reimbursement_review_required',
+            title: 'Personal Fuel Reimbursement Requires Review',
+            body: `A personal fuel reimbursement claim for N$${amountNumber.toFixed(2)} is ready for Transport Office review.`,
+            entityType: 'reimbursement',
+            entityId: reimbursement.id,
+            actionUrl: `/dashboard/reimbursements/${reimbursement.id}`,
+            workspace: WorkspaceIds.TRANSPORT_ADMIN,
+            workflowStage: 'reimbursement_review',
+            priority: 'high',
+          })
+        : Promise.resolve([]),
     ]);
 
     return NextResponse.json(
