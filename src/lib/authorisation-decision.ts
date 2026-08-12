@@ -92,6 +92,7 @@ export async function processAuthorisationDecision(input: {
         reference: transportRequests.reference,
         scope: transportRequests.scope,
         status: transportRequests.status,
+        vehicleRequirements: transportRequests.vehicleRequirements,
       })
       .from(transportRequests)
       .where(and(eq(transportRequests.id, instance.requestId), eq(transportRequests.tenantId, session.tenantId)))
@@ -343,12 +344,20 @@ export async function processAuthorisationDecision(input: {
     }
   }
 
+  const stagedRequirements = (requestRecord.vehicleRequirements || {}) as Record<string, unknown>;
+  const stagedPhysicalAuthorityNumber =
+    typeof stagedRequirements.physicalTripAuthorityNumber === 'string' &&
+    stagedRequirements.physicalTripAuthorityNumber.trim()
+      ? stagedRequirements.physicalTripAuthorityNumber.trim()
+      : null;
+
   await provisionTripAuthority({
     tripId: allocationContext.tripId,
     tenantId: session.tenantId,
     requestId: instance.requestId,
     allocationId: allocationContext.allocationId,
     actorUserId: session.user.id,
+    manualAuthorityNumber: stagedPhysicalAuthorityNumber,
   });
 
   const requestStatus = workflowStepToStatus(
