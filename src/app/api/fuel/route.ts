@@ -286,8 +286,12 @@ export async function POST(req: NextRequest) {
       }
     } else if (resolvedTripId) {
       const [tenantTrip] = await db
-        .select({ id: trips.id })
+        .select({
+          id: trips.id,
+          allocatedDriverEmployeeId: vehicleAllocations.driverEmployeeId,
+        })
         .from(trips)
+        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
         .where(
           and(
             eq(trips.id, resolvedTripId),
@@ -299,10 +303,28 @@ export async function POST(req: NextRequest) {
       if (!tenantTrip) {
         return NextResponse.json({ error: 'Trip does not match this tenant and vehicle' }, { status: 422 });
       }
+      if (
+        driverEmployeeId &&
+        tenantTrip.allocatedDriverEmployeeId &&
+        String(driverEmployeeId) !== tenantTrip.allocatedDriverEmployeeId
+      ) {
+        return NextResponse.json(
+          { error: 'Fuel recorded against a trip must remain attributed to that trip’s allocated driver' },
+          { status: 422 },
+        );
+      }
     }
 
     let resolvedDriverId: string | null = currentEmployeeId;
-    if (isManager && driverEmployeeId) {
+    if (isManager && resolvedTripId) {
+      const [tripDriver] = await db
+        .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
+        .from(trips)
+        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+        .where(and(eq(trips.id, resolvedTripId), eq(trips.tenantId, session.tenantId)))
+        .limit(1);
+      resolvedDriverId = tripDriver?.driverEmployeeId ?? null;
+    } else if (isManager && driverEmployeeId) {
       const [driverEmp] = await db
         .select({ id: employees.id, isDriver: employees.isDriver, employmentStatus: employees.employmentStatus })
         .from(employees)
@@ -315,14 +337,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Selected driver is not an active driver' }, { status: 422 });
       }
       resolvedDriverId = driverEmp.id;
-    } else if (isManager && resolvedTripId) {
-      const [tripDriver] = await db
-        .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
-        .from(trips)
-        .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
-        .where(and(eq(trips.id, resolvedTripId), eq(trips.tenantId, session.tenantId)))
-        .limit(1);
-      resolvedDriverId = tripDriver?.driverEmployeeId ?? null;
     }
 
     let reimbursementClaimantId: string | null = null;
@@ -529,55 +543,95 @@ export async function PATCH(req: NextRequest) {
       );
     }
     const action = body.action as 'verify' | 'reject';
-    if (action === 'reject' && !body.reason?.trim()) {
+    const reason = body.reason?.trim() || null;
+    if (action === 'reject' && !reason) {
       return NextResponse.json({ error: 'A rejection reason is required' }, { status: 422 });
     }
 
     const db = getDb();
     const [transaction] = await db
-      .select({ id: fuelTransactions.id, isVerified: fuelTransactions.isVerified, anomalyState: fuelTransactions.anomalyState })
+      .select({
+        id: fuelTransactions.id,
+        isVerified: fuelTransactions.isVerified,
+        anomalyState: fuelTransactions.anomalyState,
+      })
       .from(fuelTransactions)
       .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
       .where(and(eq(fuelTransactions.id, body.transactionId), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
     if (!transaction) return NextResponse.json({ error: 'Fuel transaction not found' }, { status: 404 });
 
-    const isVerified = action === 'verify';
-    const nextState = isVerified ? 'verified' : 'rejected';
-    const reason = body.reason?.trim() || null;
+    if (transaction.isVerified) {
+      if (action === 'verify') {
+        return NextResponse.json({ success: true, state: 'verified', idempotentReplay: true });
+      }
+      return NextResponse.json(
+        { error: 'A verified fuel transaction cannot be rejected through ordinary review. Use an audited correction workflow.' },
+        { status: 409 },
+      );
+    }
+    if (transaction.anomalyState === 'rejected' && action === 'reject') {
+      return NextResponse.json({ success: true, state: 'rejected', idempotentReplay: true });
+    }
 
-    await runAtomicMutations((executor) => [
-      executor
-        .update(fuelTransactions)
-        .set({
-          isVerified,
-          verifiedByUserId: session.user.id,
-          anomalyState: nextState,
-          anomalyNotes: reason,
-          updatedAt: new Date(),
-        })
-        .where(eq(fuelTransactions.id, transaction.id)),
-      executor.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: `fuel_${action}`,
-        actorUserId: session.user.id,
-        action,
-        entityType: 'fuel_transaction',
-        entityId: transaction.id,
-        before: { isVerified: transaction.isVerified, anomalyState: transaction.anomalyState },
-        after: { isVerified, anomalyState: nextState },
-        reason,
-        sourceChannel: 'web',
-      }),
-    ]);
+    const nextVerified = action === 'verify';
+    const nextState = nextVerified ? 'verified' : 'rejected';
+    const now = new Date();
+
+    await db.execute(sql`
+      WITH transitioned AS (
+        UPDATE fuel_transactions
+        SET is_verified = ${nextVerified},
+            verified_by_user_id = ${session.user.id},
+            anomaly_state = ${nextState},
+            anomaly_notes = ${reason},
+            updated_at = ${now}
+        WHERE id = ${transaction.id}::uuid
+          AND is_verified = ${transaction.isVerified}
+          AND anomaly_state IS NOT DISTINCT FROM ${transaction.anomalyState}
+        RETURNING id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id, action,
+          entity_type, entity_id, summary, before, after, reason, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${Date.now()},
+          ${`fuel_${action}`},
+          ${session.user.id},
+          ${action},
+          'fuel_transaction',
+          id,
+          ${`Fuel transaction ${action === 'verify' ? 'verified' : 'rejected'}`},
+          jsonb_build_object('isVerified', ${transaction.isVerified}, 'anomalyState', ${transaction.anomalyState}),
+          jsonb_build_object('isVerified', ${nextVerified}, 'anomalyState', ${nextState}),
+          ${reason},
+          'web'
+        FROM transitioned
+        RETURNING id
+      )
+      SELECT count(*) AS transitioned_count FROM transitioned
+    `);
 
     const [updated] = await db
       .select()
       .from(fuelTransactions)
       .where(eq(fuelTransactions.id, transaction.id))
       .limit(1);
-    return NextResponse.json({ success: true, data: updated });
+    if (!updated) return NextResponse.json({ error: 'Fuel transaction no longer exists' }, { status: 404 });
+
+    if (updated.isVerified !== nextVerified || updated.anomalyState !== nextState) {
+      return NextResponse.json(
+        {
+          error: `This fuel transaction changed to '${updated.anomalyState}' while you were reviewing it. Refresh before taking another action.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({ success: true, data: updated, state: nextState, idempotentReplay: false });
   } catch (error) {
     console.error('[fuel] PATCH failed:', error);
     return NextResponse.json({ error: 'Failed to review fuel transaction' }, { status: 500 });
