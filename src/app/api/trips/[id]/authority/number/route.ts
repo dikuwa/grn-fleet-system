@@ -6,14 +6,11 @@ import { tripAuthorities } from '@/db/schema/trips';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
-
-function normalizeAuthorityNumber(value: string): string {
-  return value
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/[^A-Z0-9/-]/gi, '')
-    .toUpperCase();
-}
+import {
+  ManualAuthorityNumberError,
+  normaliseManualAuthorityNumber,
+  validateManualAuthorityNumber,
+} from '@/lib/trip-authority';
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireRequestAuth(request);
@@ -24,14 +21,19 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const { id: tripId } = await params;
   const body = await request.json();
-  const authorityNumber = normalizeAuthorityNumber(String(body.authorityNumber || ''));
-  const reason = String(body.reason || '').trim();
-  if (!/^TA-[A-Z0-9/-]{4,40}$/.test(authorityNumber)) {
-    return NextResponse.json(
-      { error: 'Use an authority number beginning with TA- and containing letters or numbers.' },
-      { status: 400 },
+  let authorityNumber: string;
+  try {
+    authorityNumber = validateManualAuthorityNumber(
+      normaliseManualAuthorityNumber(body.authorityNumber),
     );
+  } catch (error) {
+    if (error instanceof ManualAuthorityNumberError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
   }
+
+  const reason = String(body.reason || '').trim();
   if (reason.length < 10) {
     return NextResponse.json(
       { error: 'Record an operational reason of at least 10 characters.' },
