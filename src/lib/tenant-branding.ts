@@ -90,7 +90,7 @@ export async function resolveTenantBranding(
 const documentImageCache = new Map<string, { value: string; expiresAt: number }>();
 
 function decodeDataImage(source: string): Buffer | null {
-  const match = source.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/s);
+  const match = source.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,([\s\S]+)$/);
   if (!match) return null;
   try {
     return Buffer.from(match[1], 'base64');
