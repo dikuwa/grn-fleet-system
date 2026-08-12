@@ -326,8 +326,12 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
           value={selectedDriverId}
           selectedOption={selectedOption}
           onSelect={handleSelection}
-          placeholder={currentDriverId ? 'Search for a replacement driver…' : 'Search available drivers…'}
+          showUnavailable
+          placeholder={currentDriverId ? 'Search all drivers for a replacement…' : 'Search all drivers…'}
         />
+        <p className="text-xs text-ink-500">
+          Drivers who are unavailable or non-compliant remain searchable so you can see the exact reason they cannot be assigned.
+        </p>
 
         {currentDriverId && selectedDriverId === currentDriverId && (
           <p className="text-xs text-ink-500">
