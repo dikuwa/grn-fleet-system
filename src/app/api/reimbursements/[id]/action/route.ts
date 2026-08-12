@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { reimbursements, fuelTransactions } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
+import { employees } from '@/db/schema/people';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, sql } from 'drizzle-orm';
+import {
+  createScopedNotifications,
+  resolveActionNotifications,
+} from '@/lib/notification-service';
 
 // Ordinary Transport Office actions are deliberately forward-only. Paid claims
 // are financially final here; reopening/reversing one requires a separate,
@@ -59,19 +64,27 @@ export async function POST(
       .select({
         id: reimbursements.id,
         state: reimbursements.state,
+        transactionId: reimbursements.transactionId,
+        amount: reimbursements.amount,
+        claimantUserId: employees.userId,
       })
       .from(reimbursements)
       .innerJoin(fuelTransactions, eq(reimbursements.transactionId, fuelTransactions.id))
       .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .where(and(eq(reimbursements.id, id), eq(vehicles.tenantId, session.tenantId)))
+      .innerJoin(employees, eq(reimbursements.claimantEmployeeId, employees.id))
+      .where(
+        and(
+          eq(reimbursements.id, id),
+          eq(vehicles.tenantId, session.tenantId),
+          eq(employees.tenantId, session.tenantId),
+        ),
+      )
       .limit(1);
 
     if (!reimbursement) {
       return NextResponse.json({ error: 'Reimbursement not found' }, { status: 404 });
     }
 
-    // A same-action retry after a lost response is safe. No second audit event
-    // or financial mutation is created.
     if (reimbursement.state === actionType) {
       return NextResponse.json({ success: true, state: actionType, idempotentReplay: true });
     }
@@ -88,9 +101,6 @@ export async function POST(
     const paidAt = actionType === 'paid' ? now : null;
     const approvedByUserId = actionType === 'approved' ? session.user.id : null;
 
-    // Compare-and-set the exact state we just reviewed. The audit row is
-    // inserted from the transitioned CTE, so a racing request that loses the
-    // state claim cannot create a false audit event.
     await db.execute(sql`
       WITH transitioned AS (
         UPDATE reimbursements
@@ -150,6 +160,42 @@ export async function POST(
         { status: 409 },
       );
     }
+
+    // Once an officer successfully acts, remove the action-required alert from
+    // every reviewer. The claimant receives an outcome-only notification with
+    // no privileged Transport Office URL, so ordinary staff cannot be linked
+    // into a workspace they do not own.
+    await Promise.allSettled([
+      resolveActionNotifications({
+        tenantId: session.tenantId,
+        entityType: 'reimbursement',
+        entityId: reimbursement.id,
+        eventTypes: ['reimbursement_review_required'],
+      }),
+      reimbursement.claimantUserId
+        ? createScopedNotifications({
+            tenantId: session.tenantId,
+            recipientUserIds: [reimbursement.claimantUserId],
+            category: 'outcome',
+            eventType: `reimbursement_${actionType}_outcome`,
+            title:
+              actionType === 'approved'
+                ? 'Fuel Reimbursement Approved'
+                : actionType === 'paid'
+                  ? 'Fuel Reimbursement Paid'
+                  : 'Fuel Reimbursement Rejected',
+            body:
+              actionType === 'paid'
+                ? `Your personal fuel reimbursement of N$${Number(reimbursement.amount).toFixed(2)} has been marked as paid.`
+                : actionType === 'approved'
+                  ? `Your personal fuel reimbursement of N$${Number(reimbursement.amount).toFixed(2)} has been approved and is awaiting payment.`
+                  : `Your personal fuel reimbursement of N$${Number(reimbursement.amount).toFixed(2)} was rejected.${cleanNotes ? ` Reason: ${cleanNotes}` : ''}`,
+            entityType: 'reimbursement',
+            entityId: reimbursement.id,
+            priority: actionType === 'rejected' ? 'high' : 'normal',
+          })
+        : Promise.resolve([]),
+    ]);
 
     return NextResponse.json({ success: true, state: actionType, idempotentReplay: false });
   } catch (error) {
