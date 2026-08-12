@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicles, vehicleStatusEvents } from '@/db/schema/fleet';
+import { vehicles } from '@/db/schema/fleet';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 
 /**
  * POST /api/fleet/[id]/decommission
@@ -29,9 +29,9 @@ export async function POST(
     const db = getDb();
     const { id } = await params;
 
-    // Verify vehicle exists and belongs to this tenant
+    // Verify vehicle exists and belongs to this tenant.
     const [vehicle] = await db
-      .select()
+      .select({ id: vehicles.id, status: vehicles.status })
       .from(vehicles)
       .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
       .limit(1);
@@ -40,17 +40,8 @@ export async function POST(
       return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 });
     }
 
-    // Prevent decommission of vehicles on active trips
-    if (vehicle.status === 'issued' || vehicle.status === 'allocated') {
-      return NextResponse.json(
-        { error: 'Cannot decommission a vehicle that is currently on an active trip or allocation. Complete or cancel the trip first.' },
-        { status: 409 },
-      );
-    }
-
     const body = await req.json();
     const targetStatus = body.status || 'written_off';
-
     if (!['written_off', 'out_of_service'].includes(targetStatus)) {
       return NextResponse.json(
         { error: 'Decommission status must be "written_off" or "out_of_service"' },
@@ -58,46 +49,92 @@ export async function POST(
       );
     }
 
-    if (!body.reason?.trim()) {
+    const reason = String(body.reason || '').trim();
+    if (!reason) {
+      return NextResponse.json({ error: 'Decommission reason is required' }, { status: 400 });
+    }
+
+    // Same-state retries are safe and do not create duplicate history rows.
+    if (vehicle.status === targetStatus) {
+      return NextResponse.json({
+        success: true,
+        idempotentReplay: true,
+        data: { vehicle, event: null },
+      });
+    }
+
+    // Vehicle mutation and status-history creation must succeed together. The
+    // candidate row is locked and the UPDATE re-checks operational status inside
+    // the same statement, so an allocation/issue race cannot be overwritten by
+    // a stale preflight read.
+    await db.execute(sql`
+      WITH candidate AS (
+        SELECT id, status, notes
+        FROM vehicles
+        WHERE id = ${id}::uuid
+          AND tenant_id = ${session.tenantId}::uuid
+        FOR UPDATE
+      ),
+      transitioned AS (
+        UPDATE vehicles AS v
+        SET status = ${targetStatus},
+            is_active = ${targetStatus === 'out_of_service'},
+            notes = CASE
+              WHEN c.notes IS NULL OR c.notes = '' THEN ${`[DECOMMISSIONED: ${reason}]`}
+              ELSE c.notes || E'\n' || ${`[DECOMMISSIONED: ${reason}]`}
+            END,
+            updated_by = ${session.user.id},
+            updated_at = NOW()
+        FROM candidate AS c
+        WHERE v.id = c.id
+          AND c.status NOT IN ('issued', 'allocated')
+        RETURNING v.id, c.status AS previous_status
+      )
+      INSERT INTO vehicle_status_events (
+        vehicle_id,
+        previous_status,
+        new_status,
+        reason,
+        changed_by_user_id
+      )
+      SELECT
+        id,
+        previous_status,
+        ${targetStatus},
+        ${reason},
+        ${session.user.id}
+      FROM transitioned
+    `);
+
+    const [updated] = await db
+      .select()
+      .from(vehicles)
+      .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
+      .limit(1);
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Vehicle no longer exists' }, { status: 404 });
+    }
+    if (updated.status !== targetStatus) {
       return NextResponse.json(
-        { error: 'Decommission reason is required' },
-        { status: 400 },
+        {
+          error:
+            'Cannot decommission a vehicle that is currently on an active trip or allocation. Complete or cancel the operational workflow first.',
+        },
+        { status: 409 },
       );
     }
 
-    // Record status change event
-    await db.insert(vehicleStatusEvents).values({
-      vehicleId: id,
-      previousStatus: vehicle.status,
-      newStatus: targetStatus,
-      reason: body.reason.trim(),
-      changedByUserId: session.user.id,
-    });
-
-    // Update vehicle
-    const [updated] = await db
-      .update(vehicles)
-      .set({
-        status: targetStatus,
-        isActive: targetStatus === 'out_of_service', // Only out_of_service stays active
-        notes: vehicle.notes
-          ? `${vehicle.notes}\n[DECOMMISSIONED: ${body.reason.trim()}]`
-          : `[DECOMMISSIONED: ${body.reason.trim()}]`,
-        updatedBy: session.user.id,
-        updatedAt: new Date(),
-      })
-      .where(eq(vehicles.id, id))
-      .returning();
-
     return NextResponse.json({
       success: true,
+      idempotentReplay: false,
       data: {
         vehicle: updated,
-        event: { previousStatus: vehicle.status, newStatus: targetStatus, reason: body.reason.trim() },
+        event: { previousStatus: vehicle.status, newStatus: targetStatus, reason },
       },
     });
   } catch (error) {
     console.error('[fleet/decommission] POST failed:', error);
-    return NextResponse.json({ error: 'Failed to decommission vehicle: ' + String(error) }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to decommission vehicle' }, { status: 500 });
   }
 }
