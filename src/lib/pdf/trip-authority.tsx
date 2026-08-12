@@ -140,10 +140,6 @@ const STANDARD_CONDITIONS = [
   'This document must be produced when requested by an authorised officer.',
 ];
 
-/**
- * Official warning language retained from the approved physical Trip Authority
- * reference. Rendered in red, compact, near the document footer.
- */
 const OFFICIAL_WARNINGS = [
   'Any unauthorised or unnecessary distance will be surcharged',
   'This authority must be returned with the vehicle log statement on completion of the trip',
@@ -199,6 +195,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
             <DocumentFieldGrid
               columns={1}
               labelWidth={36}
+              labelColor={officialRedTheme.primary}
               fields={[
                 { label: 'Scope', value: humanizeKey(data.scope) },
                 { label: 'Purpose', value: data.purpose },
@@ -213,6 +210,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
           <DocumentSection title="B. Vehicle Particulars" theme={officialRedTheme}>
             <DocumentFieldGrid
               labelWidth={48}
+              labelColor={officialRedTheme.primary}
               fields={[
                 { label: 'Registration no./plate', value: data.vehicle.licenceNumber },
                 { label: 'Fuel type', value: humanizeKey(data.vehicle.fuelType ?? '') },
