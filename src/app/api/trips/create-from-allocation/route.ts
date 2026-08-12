@@ -91,20 +91,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const [existingTrip] = await db
-      .select()
-      .from(trips)
-      .where(and(eq(trips.allocationId, allocationId), eq(trips.tenantId, tenantId)))
-      .limit(1);
+    const replayExistingTrip = async () => {
+      const [[existingTrip], [requestReservation]] = await Promise.all([
+        db
+          .select()
+          .from(trips)
+          .where(and(eq(trips.allocationId, allocationId), eq(trips.tenantId, tenantId)))
+          .limit(1),
+        db
+          .select({ physicalTripAuthorityNumber: transportRequests.physicalTripAuthorityNumber })
+          .from(transportRequests)
+          .where(
+            and(
+              eq(transportRequests.id, allocation.requestId),
+              eq(transportRequests.tenantId, tenantId),
+            ),
+          )
+          .limit(1),
+      ]);
 
-    if (existingTrip) {
-      // Retry-safe replay: a lost HTTP response after the transaction committed
-      // must not strand the operator on the allocation page. Do not, however,
-      // let a retry mutate the already-staged paper number.
-      if (
-        rawManualAuthorityNumber &&
-        rawManualAuthorityNumber !== allocation.physicalTripAuthorityNumber
-      ) {
+      if (!existingTrip) return null;
+      const reservedNumber = requestReservation?.physicalTripAuthorityNumber ?? null;
+      if (rawManualAuthorityNumber && rawManualAuthorityNumber !== reservedNumber) {
         return NextResponse.json(
           {
             error:
@@ -119,19 +127,19 @@ export async function POST(req: NextRequest) {
         trip: existingTrip,
         authority: null,
         alreadyExists: true,
-        authorityNumberMode: allocation.physicalTripAuthorityNumber ? 'manual' : 'automatic',
-        manualAuthorityNumber: allocation.physicalTripAuthorityNumber,
+        authorityNumberMode: reservedNumber ? 'manual' : 'automatic',
+        manualAuthorityNumber: reservedNumber,
         message: 'This trip was already created. Continuing with the existing operational trip.',
       });
-    }
+    };
+
+    const existingReplay = await replayExistingTrip();
+    if (existingReplay) return existingReplay;
 
     let manualAuthorityNumber: string | null = null;
     if (rawManualAuthorityNumber) {
       manualAuthorityNumber = validateManualAuthorityNumber(rawManualAuthorityNumber);
 
-      // Give a clear message before the database-level uniqueness guards fire.
-      // The unique indexes on both reserved request numbers and issued authority
-      // numbers remain the concurrency-safe final backstop.
       const [[issuedDuplicate], [reservedDuplicate]] = await Promise.all([
         db
           .select({ id: tripAuthorities.id })
@@ -162,9 +170,6 @@ export async function POST(req: NextRequest) {
     const now = new Date();
     const tripId = randomUUID();
     const auditId = randomUUID();
-    // Keep a compatibility mirror in the already-established request snapshot
-    // until every authority provisioning caller reads the dedicated reservation
-    // columns. The dedicated columns + unique index are the authoritative source.
     const nextVehicleRequirements = {
       ...(allocation.vehicleRequirements ?? {}),
       physicalTripAuthorityNumber: manualAuthorityNumber,
@@ -219,8 +224,12 @@ export async function POST(req: NextRequest) {
         }),
       ]);
     } catch (error) {
-      if ((error as { code?: string }).code === '23505' && manualAuthorityNumber) {
-        return NextResponse.json({ error: DUPLICATE_PHYSICAL_NUMBER_MESSAGE }, { status: 409 });
+      if ((error as { code?: string }).code === '23505') {
+        const replay = await replayExistingTrip();
+        if (replay) return replay;
+        if (manualAuthorityNumber) {
+          return NextResponse.json({ error: DUPLICATE_PHYSICAL_NUMBER_MESSAGE }, { status: 409 });
+        }
       }
       throw error;
     }
