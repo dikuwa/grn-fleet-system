@@ -60,7 +60,9 @@ const OPERATIONAL_GATE_ORDER = [
 ] as const;
 
 function resolveOperatorSteps(data: ReadinessData, tripStatus: string) {
-  const rank = new Map(OPERATIONAL_GATE_ORDER.map((key, index) => [key, index]));
+  const rank = new Map<string, number>(
+    OPERATIONAL_GATE_ORDER.map((key, index) => [key, index]),
+  );
   const ordered = [...data.gates].sort(
     (a, b) => (rank.get(a.key) ?? 999) - (rank.get(b.key) ?? 999),
   );
