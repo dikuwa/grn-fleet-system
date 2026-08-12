@@ -21,7 +21,7 @@ import {
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import {
   getSessionRoleNames,
   requireDashboardAction,
@@ -76,9 +76,24 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
       })
       .from(trips)
-      .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
-      .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
-      .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+      .leftJoin(
+        vehicles,
+        and(eq(trips.vehicleId, vehicles.id), eq(vehicles.tenantId, session.tenantId)),
+      )
+      .leftJoin(
+        transportRequests,
+        and(
+          eq(trips.requestId, transportRequests.id),
+          eq(transportRequests.tenantId, session.tenantId),
+        ),
+      )
+      .leftJoin(
+        employees,
+        and(
+          eq(transportRequests.requesterEmployeeId, employees.id),
+          eq(employees.tenantId, session.tenantId),
+        ),
+      )
       .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .where(
         and(
@@ -121,7 +136,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
                 lastName: employees.lastName,
               })
               .from(tripAuthorisedDrivers)
-              .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
+              .innerJoin(
+                employees,
+                and(
+                  eq(employees.id, tripAuthorisedDrivers.employeeId),
+                  eq(employees.tenantId, session.tenantId),
+                ),
+              )
               .where(eq(tripAuthorisedDrivers.authorityId, authority.id)),
             db
               .select()
@@ -141,7 +162,19 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
                   eq(vehicleInspections.tenantId, session.tenantId),
                 ),
               ),
-            db.select().from(fuelTransactions).where(eq(fuelTransactions.tripId, id)),
+            db
+              .select()
+              .from(fuelTransactions)
+              .where(
+                and(
+                  eq(fuelTransactions.tripId, id),
+                  sql`exists (
+                    select 1 from vehicles tenant_vehicle
+                    where tenant_vehicle.id = ${fuelTransactions.vehicleId}
+                      and tenant_vehicle.tenant_id = ${session.tenantId}::uuid
+                  )`,
+                ),
+              ),
             db
               .select()
               .from(tripExpenses)
