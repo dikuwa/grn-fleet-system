@@ -28,7 +28,10 @@ export function DocumentViewerActions({
     <div className="flex flex-col items-end gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="secondary" size="sm" asChild>
-          <a href={`/api/documents/${documentId}/pdf`}>
+          <a
+            href={`/api/documents/${documentId}/pdf`}
+            download={`${documentType}-${documentId}.pdf`}
+          >
             <Download className="h-4 w-4" /> Download PDF
           </a>
         </Button>

@@ -144,6 +144,54 @@ export class ManualAuthorityNumberError extends Error {
 
 export const MAX_MANUAL_AUTHORITY_NUMBER_LENGTH = 60;
 
+const MANUAL_AUTHORITY_NUMBER_IN_USE =
+  'This Trip Authority number is already in use. Check the physical document number and try again.';
+
+/**
+ * Decision returned when a database insert raises a unique-constraint
+ * violation (23505) while provisioning an authority.
+ */
+export type AuthorityInsertConflictDecision =
+  { kind: 'rethrow' } | { kind: 'manual-number-conflict' } | { kind: 'idempotent' };
+
+/**
+ * Pure classification of a unique-constraint failure during authority insert.
+ *
+ * A 23505 can come from three sources:
+ *  - the trip/tenant unique constraint, when a concurrent retry already
+ *    committed the identical authority (idempotent return), or
+ *  - the tenant + authority_number unique constraint, when a manual physical
+ *    number collides with another trip under concurrency (TOCTOU between the
+ *    pre-check and the insert), or
+ *  - an unrelated unique violation on child records (rethrow).
+ *
+ * The caller reports whether the raced authority (and its mandatory primary
+ * driver + version 1) were found and matched; this function reduces the
+ * branching to a testable decision.
+ */
+export function classifyAuthorityInsertConflict(params: {
+  error: unknown;
+  manualAuthorityNumber?: string | null;
+  racedAuthorityFound: boolean;
+  racedDriverMatches: boolean;
+  racedVersionExists: boolean;
+}): AuthorityInsertConflictDecision {
+  if ((params.error as { code?: string }).code !== '23505') {
+    return { kind: 'rethrow' };
+  }
+  if (params.racedAuthorityFound && params.racedDriverMatches && params.racedVersionExists) {
+    return { kind: 'idempotent' };
+  }
+  if (normaliseManualAuthorityNumber(params.manualAuthorityNumber)) {
+    return { kind: 'manual-number-conflict' };
+  }
+  return { kind: 'rethrow' };
+}
+
+export function manualAuthorityNumberInUseError(): ManualAuthorityNumberError {
+  return new ManualAuthorityNumberError(MANUAL_AUTHORITY_NUMBER_IN_USE);
+}
+
 /**
  * Trim and normalise a manually entered physical authority number. Empty and
  * whitespace-only input collapses to an empty string, which callers treat as
@@ -228,9 +276,7 @@ async function selectAuthorityNumber(input: {
     )
     .limit(1);
   if (duplicate) {
-    throw new ManualAuthorityNumberError(
-      'This Trip Authority number is already in use. Check the physical document number and try again.',
-    );
+    throw manualAuthorityNumberInUseError();
   }
 
   return {
@@ -694,46 +740,47 @@ export async function provisionTripAuthority(input: {
         ),
       )
       .limit(1);
-    if (!raced) {
-      // A manual number may have collided on the tenant+number unique index
-      // for a different trip (TOCTOU between pre-check and insert).
-      if (normaliseManualAuthorityNumber(input.manualAuthorityNumber)) {
-        throw new ManualAuthorityNumberError(
-          'This Trip Authority number is already in use. Check the physical document number and try again.',
-        );
-      }
-      throw error;
-    }
-    const [[racedDriver], [racedVersion]] = await Promise.all([
-      db
-        .select({ employeeId: tripAuthorisedDrivers.employeeId })
-        .from(tripAuthorisedDrivers)
-        .where(
-          and(
-            eq(tripAuthorisedDrivers.authorityId, raced.id),
-            eq(tripAuthorisedDrivers.driverType, 'primary'),
-          ),
-        )
-        .limit(1),
-      db
-        .select({ id: tripAuthorityVersions.id })
-        .from(tripAuthorityVersions)
-        .where(
-          and(
-            eq(tripAuthorityVersions.authorityId, raced.id),
-            eq(tripAuthorityVersions.version, 1),
-          ),
-        )
-        .limit(1),
-    ]);
-    if (racedDriver?.employeeId !== driver.employeeId || !racedVersion) {
-      if (normaliseManualAuthorityNumber(input.manualAuthorityNumber)) {
-        throw new ManualAuthorityNumberError(
-          'This Trip Authority number is already in use. Check the physical document number and try again.',
-        );
-      }
-      throw error;
-    }
+    const racedDriverMatches =
+      raced === undefined
+        ? false
+        : ((
+            await db
+              .select({ employeeId: tripAuthorisedDrivers.employeeId })
+              .from(tripAuthorisedDrivers)
+              .where(
+                and(
+                  eq(tripAuthorisedDrivers.authorityId, raced.id),
+                  eq(tripAuthorisedDrivers.driverType, 'primary'),
+                ),
+              )
+              .limit(1)
+          )[0]?.employeeId ?? null) === driver.employeeId;
+    const racedVersionExists =
+      raced === undefined
+        ? false
+        : Boolean(
+            (
+              await db
+                .select({ id: tripAuthorityVersions.id })
+                .from(tripAuthorityVersions)
+                .where(
+                  and(
+                    eq(tripAuthorityVersions.authorityId, raced.id),
+                    eq(tripAuthorityVersions.version, 1),
+                  ),
+                )
+                .limit(1)
+            )[0],
+          );
+    const decision = classifyAuthorityInsertConflict({
+      error,
+      manualAuthorityNumber: input.manualAuthorityNumber,
+      racedAuthorityFound: raced !== undefined,
+      racedDriverMatches,
+      racedVersionExists,
+    });
+    if (decision.kind === 'manual-number-conflict') throw manualAuthorityNumberInUseError();
+    if (decision.kind !== 'idempotent') throw error;
     return { authority: raced, verificationToken: null };
   }
 

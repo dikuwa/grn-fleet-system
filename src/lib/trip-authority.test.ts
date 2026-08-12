@@ -3,6 +3,8 @@ import {
   assertTripAuthorityProvisioningInvariants,
   assertAuthorityTransition,
   canTransitionAuthority,
+  classifyAuthorityInsertConflict,
+  manualAuthorityNumberInUseError,
   maskLicenceNumber,
   MAX_MANUAL_AUTHORITY_NUMBER_LENGTH,
   ManualAuthorityNumberError,
@@ -130,5 +132,92 @@ describe('Trip Authority lifecycle', () => {
         ...patch,
       }),
     ).toThrow();
+  });
+});
+
+describe('authority insert conflict classification (concurrent unique violations)', () => {
+  const uniqueViolation = { code: '23505' } as unknown;
+
+  it('rethrows non-unique-constraint failures untouched', () => {
+    expect(
+      classifyAuthorityInsertConflict({
+        error: new Error('connection reset'),
+        manualAuthorityNumber: 'PB-42',
+        racedAuthorityFound: true,
+        racedDriverMatches: true,
+        racedVersionExists: true,
+      }),
+    ).toEqual({ kind: 'rethrow' });
+  });
+
+  it('treats a fully matching raced authority as an idempotent retry', () => {
+    expect(
+      classifyAuthorityInsertConflict({
+        error: uniqueViolation,
+        manualAuthorityNumber: undefined,
+        racedAuthorityFound: true,
+        racedDriverMatches: true,
+        racedVersionExists: true,
+      }),
+    ).toEqual({ kind: 'idempotent' });
+  });
+
+  it('maps a manual number collision on another trip to a manual-number conflict', () => {
+    // TOCTOU race: the pre-check passed, then the tenant+number unique index
+    // rejected the insert for a *different* trip with the same manual number.
+    expect(
+      classifyAuthorityInsertConflict({
+        error: uniqueViolation,
+        manualAuthorityNumber: 'PB-42',
+        racedAuthorityFound: false,
+        racedDriverMatches: false,
+        racedVersionExists: false,
+      }),
+    ).toEqual({ kind: 'manual-number-conflict' });
+  });
+
+  it('maps a mismatched raced authority with a manual number to a manual-number conflict', () => {
+    expect(
+      classifyAuthorityInsertConflict({
+        error: uniqueViolation,
+        manualAuthorityNumber: 'PB-42',
+        racedAuthorityFound: true,
+        racedDriverMatches: false,
+        racedVersionExists: false,
+      }),
+    ).toEqual({ kind: 'manual-number-conflict' });
+  });
+
+  it('rethrows an unmatched raced authority when no manual number was supplied', () => {
+    expect(
+      classifyAuthorityInsertConflict({
+        error: uniqueViolation,
+        manualAuthorityNumber: undefined,
+        racedAuthorityFound: true,
+        racedDriverMatches: false,
+        racedVersionExists: false,
+      }),
+    ).toEqual({ kind: 'rethrow' });
+  });
+
+  it('treats whitespace-only manual input as absent (automatic path rethrows)', () => {
+    expect(
+      classifyAuthorityInsertConflict({
+        error: uniqueViolation,
+        manualAuthorityNumber: '   ',
+        racedAuthorityFound: false,
+        racedDriverMatches: false,
+        racedVersionExists: false,
+      }),
+    ).toEqual({ kind: 'rethrow' });
+  });
+
+  it('produces the canonical in-use error message', () => {
+    const error = manualAuthorityNumberInUseError();
+    expect(error).toBeInstanceOf(ManualAuthorityNumberError);
+    expect(error.code).toBe('MANUAL_AUTHORITY_NUMBER_INVALID');
+    expect(error.message).toBe(
+      'This Trip Authority number is already in use. Check the physical document number and try again.',
+    );
   });
 });

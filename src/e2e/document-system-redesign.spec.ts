@@ -74,7 +74,13 @@ test.describe.serial('GovFleet document-system redesign', () => {
     browser,
   }) => {
     test.setTimeout(120_000);
-    const { api, context } = await authenticatedContext(browser, 'admin@kavangoeast.gov.na');
+    // The documents workspace is served to transport administrators, not the
+    // tenant administrator account, so the spec drives document flows as
+    // transport.admin@kavangoeast.test.
+    const { api, context } = await authenticatedContext(
+      browser,
+      'transport.admin@kavangoeast.test',
+    );
     const page = await context.newPage();
 
     const requestHref = await firstDocument(page, api, 'transport_request');
@@ -179,7 +185,10 @@ test.describe.serial('GovFleet document-system redesign', () => {
     browser,
   }) => {
     test.setTimeout(120_000);
-    const { api, context } = await authenticatedContext(browser, 'admin@kavangoeast.gov.na');
+    const { api, context } = await authenticatedContext(
+      browser,
+      'transport.admin@kavangoeast.test',
+    );
     const page = await context.newPage();
     const documentHref = await firstDocument(page, api, 'transport_request');
     const documentId = documentHref.split('/').pop()!;
