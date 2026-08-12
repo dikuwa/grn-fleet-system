@@ -139,32 +139,52 @@ export async function PATCH(
     }
 
     const now = new Date();
-    const auditEvent = {
-      tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: `trip_authority_amendment_${body.action === 'approve' ? 'approved' : 'rejected'}`,
-      actorUserId: session.user.id,
-      action: body.action!,
-      entityType: 'trip_amendment',
-      entityId: body.amendmentId,
-      before: record.amendment.originalValue,
-      after: record.amendment.newValue,
-      reason: comment || record.amendment.reason,
-      sourceChannel: 'web',
-    } as const;
+    const auditBefore = JSON.stringify(record.amendment.originalValue ?? {});
+    const auditAfter = JSON.stringify(record.amendment.newValue ?? {});
+    const decisionReason = comment || record.amendment.reason;
 
     if (body.action === 'reject') {
-      await runAtomicMutations((tx) => [
-        tx.update(tripAmendments).set({
-          status: 'rejected',
-          approvedByUserId: session.user.id,
-          approvedAt: now,
-        }).where(and(
-          eq(tripAmendments.id, body.amendmentId!),
-          eq(tripAmendments.status, 'pending'),
-        )),
-        tx.insert(auditEvents).values(auditEvent),
-      ]);
+      // Claim-and-audit in one statement so a concurrent approval/rejection
+      // cannot leave a second, false decision event after the pending row has
+      // already been consumed by another operator.
+      await db.execute(sql`
+        WITH amendment_claim AS (
+          UPDATE trip_amendments
+          SET status = 'rejected',
+              approved_by_user_id = ${session.user.id},
+              approved_at = ${now}
+          WHERE id = ${body.amendmentId}::uuid
+            AND authority_id = ${record.authority.id}::uuid
+            AND status = 'pending'
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id, action,
+            entity_type, entity_id, before, after, reason, source_channel
+          )
+          SELECT
+            ${session.tenantId}::uuid,
+            ${Date.now()},
+            'trip_authority_amendment_rejected',
+            ${session.user.id},
+            'reject',
+            'trip_amendment',
+            ${body.amendmentId}::uuid,
+            ${auditBefore}::jsonb,
+            ${auditAfter}::jsonb,
+            ${decisionReason},
+            'web'
+          FROM amendment_claim
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM amendment_claim) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN '1'
+          ELSE 'atomic_authority_amendment_failed_' || (SELECT count(*) FROM amendment_claim)::text
+        END AS integer) AS committed
+      `);
       return NextResponse.json({ success: true });
     }
 
@@ -192,9 +212,6 @@ export async function PATCH(
     const purpose = amendmentType === 'purpose_clarification' ? String(values.purpose || '') : null;
     const specialConditions = amendmentType === 'special_authorisation' ? String(values.specialConditions || '') : null;
     const specialAuthorityGranted = amendmentType === 'special_authorisation' ? values.specialAuthorityGranted === true : null;
-    const auditBefore = JSON.stringify(record.amendment.originalValue ?? {});
-    const auditAfter = JSON.stringify(record.amendment.newValue ?? {});
-    const decisionReason = comment || record.amendment.reason;
 
     // One statement owns the full approval transition. The pending amendment is
     // claimed first; every dependent write is chained to that claim. If the
