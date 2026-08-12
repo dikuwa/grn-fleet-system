@@ -9,15 +9,12 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
   FileText,
-  Download,
   Clock,
   Database,
   ChevronLeft,
   CheckCircle2,
   XCircle,
-  Link2,
   History,
-  Eye,
 } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
@@ -28,11 +25,11 @@ import { DocumentLifecycleActions } from './lifecycle-actions';
 import { CreateShareLinkButton } from './create-share-link';
 import { ShareActions } from './share-actions';
 import { QRDisplay } from './qr-display';
+import { DocumentViewerActions } from './document-viewer-actions';
 import { DocumentContent } from '@/components/documents/document-content';
 import { TenantLogo } from '@/components/documents/tenant-logo';
 import { resolveTenantBranding } from '@/lib/tenant-branding';
 import { documentTypeLabel, formatDocumentStatus, formatHumanValue } from '@/lib/human-readable';
-import { ShareLinkItem } from './share-link-item';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -159,16 +156,6 @@ export default async function DocumentDetailPage({ params }: PageProps) {
             <ChevronLeft className="h-4 w-4" /> Back
           </Link>
         </Button>
-        <Button variant="primary" size="sm" asChild>
-          <a href={`/api/documents/${doc.id}/pdf`}>
-            <Download className="h-4 w-4" /> Download PDF
-          </a>
-        </Button>
-        <Button variant="secondary" size="sm" asChild>
-          <a href={`/api/documents/${doc.id}/pdf?preview=1`} target="_blank" rel="noreferrer">
-            <Eye className="h-4 w-4" /> Preview PDF
-          </a>
-        </Button>
         <DocumentLifecycleActions documentId={doc.id} currentStatus={doc.status} />
         <ShareActions
           shareUrl={shareUrl || undefined}
@@ -226,18 +213,14 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Document Preview Section */}
+      {/* Document Preview Section — Download PDF / Preview / Print live here */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <CardTitle>Document Preview</CardTitle>
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm">
-              <Download className="h-4 w-4" /> PDF
-            </Button>
-            <Button variant="secondary" size="sm">
-              <Eye className="h-4 w-4" /> Preview
-            </Button>
-          </div>
+          <DocumentViewerActions
+            documentId={doc.id}
+            documentType={documentTypeLabel(doc.documentType)}
+          />
         </CardHeader>
         <CardContent>
           <div className="border-border bg-muted/30 overflow-auto rounded-[10px] border p-3 sm:p-6">
@@ -297,30 +280,40 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Metadata Grid */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Document Metadata</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="border-border/50 flex justify-between border-b pb-2">
-              <span className="text-ink-500">Type</span>
-              <span className="text-ink-950 font-medium">
+      {/* Compact Document Metadata — supporting information, not the focus */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Document Metadata</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-3 xl:grid-cols-4">
+            <div>
+              <dt className="text-ink-500 text-[11px] font-medium tracking-wider uppercase">
+                Type
+              </dt>
+              <dd className="text-ink-950 mt-0.5 text-sm font-medium">
                 {documentTypeLabel(doc.documentType)}
-              </span>
+              </dd>
             </div>
-            <div className="border-border/50 flex justify-between border-b pb-2">
-              <span className="text-ink-500">Version</span>
-              <span className="text-ink-950 font-medium">{doc.documentVersion}</span>
+            <div>
+              <dt className="text-ink-500 text-[11px] font-medium tracking-wider uppercase">
+                Version
+              </dt>
+              <dd className="text-ink-950 mt-0.5 text-sm font-medium">{doc.documentVersion}</dd>
             </div>
-            <div className="border-border/50 flex justify-between border-b pb-2">
-              <span className="text-ink-500">Template Version</span>
-              <span className="text-ink-950 font-medium">{doc.templateVersion || 'N/A'}</span>
+            <div>
+              <dt className="text-ink-500 text-[11px] font-medium tracking-wider uppercase">
+                Template
+              </dt>
+              <dd className="text-ink-950 mt-0.5 text-sm font-medium">
+                {doc.templateVersion || 'N/A'}
+              </dd>
             </div>
-            <div className="border-border/50 flex justify-between border-b pb-2">
-              <span className="text-ink-500">Status</span>
-              <span className="font-medium">
+            <div>
+              <dt className="text-ink-500 text-[11px] font-medium tracking-wider uppercase">
+                Status
+              </dt>
+              <dd className="mt-0.5">
                 <Badge
                   variant={
                     doc.status === 'issued'
@@ -333,66 +326,41 @@ export default async function DocumentDetailPage({ params }: PageProps) {
                 >
                   {formatDocumentStatus(doc.status)}
                 </Badge>
-              </span>
+              </dd>
             </div>
-            <div className="border-border/50 flex justify-between border-b pb-2">
-              <span className="text-ink-500">Redaction Profile</span>
-              <span className="text-ink-950 font-medium">
+            <div>
+              <dt className="text-ink-500 text-[11px] font-medium tracking-wider uppercase">
+                Redaction
+              </dt>
+              <dd className="text-ink-950 mt-0.5 text-sm font-medium">
                 {formatHumanValue(doc.redactionProfile, 'redactionProfile')}
-              </span>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-ink-500 text-[11px] font-medium tracking-wider uppercase">
+                Generated by
+              </dt>
+              <dd className="text-ink-950 mt-0.5 text-sm font-medium">{creatorName}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-500 text-[11px] font-medium tracking-wider uppercase">
+                Created
+              </dt>
+              <dd className="text-ink-950 mt-0.5 text-sm font-medium">
+                {formatDateTime(doc.createdAt)}
+              </dd>
             </div>
             {doc.hash && (
-              <div className="border-border/50 flex justify-between border-b pb-2">
-                <span className="text-ink-500">Hash</span>
-                <span className="text-ink-600 max-w-[200px] truncate font-mono text-xs">
-                  {doc.hash}
-                </span>
+              <div className="col-span-2 md:col-span-3 xl:col-span-4">
+                <dt className="text-ink-500 text-[11px] font-medium tracking-wider uppercase">
+                  Document hash (SHA256)
+                </dt>
+                <dd className="text-ink-600 mt-0.5 truncate font-mono text-xs">{doc.hash}</dd>
               </div>
             )}
-            <div className="border-border/50 flex justify-between border-b pb-2">
-              <span className="text-ink-500">Generated By</span>
-              <span className="text-ink-950 font-medium">{creatorName}</span>
-            </div>
-            <div className="flex justify-between pb-2">
-              <span className="text-ink-500">Created</span>
-              <span className="text-ink-950 font-medium">{formatDateTime(doc.createdAt)}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Secure Sharing</CardTitle>
-            <CreateShareLinkButton documentId={doc.id} disabled={doc.status === 'draft'} />
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {activeShares.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <Link2 className="text-ink-300 mb-2 h-8 w-8" />
-                <p className="text-ink-500 text-sm">No active share links</p>
-                <p className="text-ink-400 mt-1 text-xs">
-                  Create a secure share link to share this document externally.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {activeShares.map((share) => (
-                  <ShareLinkItem
-                    key={share.id}
-                    id={share.id}
-                    shareUrl={`${baseUrl}/v/${share.shortSlug}`}
-                    expiresAt={share.expiresAt}
-                    currentViews={share.currentViews}
-                    maxViews={share.maxViews}
-                    lastAccessedAt={share.lastAccessedAt}
-                    verificationCode={share.verificationCode}
-                  />
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          </dl>
+        </CardContent>
+      </Card>
 
       {/* QR Code */}
       <QRDisplay shareUrl={shareUrl} documentTitle={doc.documentType} />

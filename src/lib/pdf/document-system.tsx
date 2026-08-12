@@ -1,8 +1,25 @@
 /* eslint-disable jsx-a11y/alt-text -- React-PDF Image renders PDF content, not an HTML img element. */
 import React from 'react';
 import path from 'node:path';
-import { Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import { existsSync } from 'node:fs';
+import { Font, Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
+
+/**
+ * The official Allura signature font is bundled locally so official PDFs never
+ * depend on third-party network availability at render time. If the asset is
+ * ever missing, rendering falls back to the built-in Helvetica-Oblique.
+ */
+export const ALLURA_FONT_PATH = path.join(
+  process.cwd(),
+  'public',
+  'official',
+  'Allura-Regular.ttf',
+);
+export const SIGNATURE_FONT = existsSync(ALLURA_FONT_PATH) ? 'Allura' : 'Helvetica-Oblique';
+if (SIGNATURE_FONT === 'Allura') {
+  Font.register({ family: 'Allura', src: ALLURA_FONT_PATH });
+}
 
 /**
  * The PDF renderer deliberately uses the built-in Helvetica family.  The former
@@ -103,12 +120,12 @@ export const documentStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 0.9,
-    paddingBottom: 7,
-    marginBottom: 7,
-    minHeight: 72,
+    paddingBottom: 8,
+    marginBottom: 8,
+    minHeight: 96,
   },
-  headerLogoZone: { width: '18%', justifyContent: 'center', alignItems: 'flex-start' },
-  logo: { width: 54, height: 58, objectFit: 'contain' },
+  headerLogoZone: { width: '20%', justifyContent: 'center', alignItems: 'flex-start' },
+  logo: { width: 76, height: 82, objectFit: 'contain' },
   headerOrgZone: {
     width: '64%',
     justifyContent: 'center',
@@ -222,10 +239,18 @@ export const documentStyles = StyleSheet.create({
   footerCentre: { width: '38%', textAlign: 'center' },
   footerRight: { width: '17%', textAlign: 'right' },
   signatureRow: { flexDirection: 'row', gap: 8, marginTop: 3 },
-  signature: { flex: 1, minHeight: 34, borderTopWidth: 0.5, paddingTop: 2 },
+  signature: { flex: 1, minHeight: 34, paddingTop: 2 },
   signatureStatement: { fontSize: 5.2, textAlign: 'center', minHeight: 13, color: '#344054' },
-  signatureImage: { height: 14, maxWidth: 78, objectFit: 'contain', objectPosition: 'left' },
-  signatureName: { fontSize: 8.4, fontFamily: 'Helvetica-Oblique', marginTop: 0.5 },
+  signatureImage: { height: 15, maxWidth: 82, objectFit: 'contain', objectPosition: 'left' },
+  signatureName: { fontSize: 9.6, fontFamily: SIGNATURE_FONT, marginTop: 0.5 },
+  warnings: { marginTop: 2, marginBottom: 2 },
+  warning: {
+    fontSize: 6.3,
+    fontFamily: 'Helvetica-Bold',
+    textAlign: 'center',
+    lineHeight: 1.35,
+    textTransform: 'uppercase',
+  },
   finalBlock: {},
   spacer: { height: 4 },
 });
@@ -457,17 +482,15 @@ export function DocumentSignature({
   statement,
   signedAt,
   signatureUrl,
-  theme = defaultTenantTheme,
 }: {
   name: unknown;
   role: unknown;
   statement?: string;
   signedAt?: unknown;
   signatureUrl?: string;
-  theme?: PdfTheme;
 }) {
   return (
-    <View style={[documentStyles.signature, { borderTopColor: theme.primary }]}>
+    <View style={documentStyles.signature}>
       {statement ? (
         <SafePdfText value={statement} style={documentStyles.signatureStatement} />
       ) : null}
@@ -480,6 +503,29 @@ export function DocumentSignature({
         }
         style={documentStyles.muted}
       />
+    </View>
+  );
+}
+
+/**
+ * Compact red official warnings rendered near the document footer. The text is
+ * always presented in the official accent and never styled as a heavy box.
+ */
+export function DocumentWarnings({
+  items,
+  theme = officialRedTheme,
+}: {
+  items: string[];
+  theme?: PdfTheme;
+}) {
+  if (!items.length) return null;
+  return (
+    <View style={documentStyles.warnings} wrap={false}>
+      {items.map((item) => (
+        <Text key={item} style={[documentStyles.warning, { color: theme.primary }]}>
+          {item}
+        </Text>
+      ))}
     </View>
   );
 }
@@ -513,7 +559,6 @@ export function DocumentExecutiveCertification({
             statement={statement}
             signedAt={generatedAt}
             signatureUrl={branding?.executiveSignatureUrl}
-            theme={theme}
           />
         </View>
       </View>

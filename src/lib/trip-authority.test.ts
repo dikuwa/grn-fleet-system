@@ -4,6 +4,10 @@ import {
   assertAuthorityTransition,
   canTransitionAuthority,
   maskLicenceNumber,
+  MAX_MANUAL_AUTHORITY_NUMBER_LENGTH,
+  ManualAuthorityNumberError,
+  normaliseManualAuthorityNumber,
+  validateManualAuthorityNumber,
 } from '@/lib/trip-authority';
 
 const validProvisioningContext = {
@@ -43,7 +47,9 @@ describe('Trip Authority lifecycle', () => {
   it('enforces the normal driver lifecycle', () => {
     expect(canTransitionAuthority('awaiting_driver_acceptance', 'driver_accepted')).toBe(true);
     expect(canTransitionAuthority('driver_accepted', 'awaiting_pre_trip_inspection')).toBe(true);
-    expect(canTransitionAuthority('awaiting_pre_trip_inspection', 'ready_for_departure')).toBe(true);
+    expect(canTransitionAuthority('awaiting_pre_trip_inspection', 'ready_for_departure')).toBe(
+      true,
+    );
     expect(canTransitionAuthority('ready_for_departure', 'in_progress')).toBe(true);
     expect(canTransitionAuthority('in_progress', 'returned')).toBe(true);
     expect(canTransitionAuthority('returned', 'awaiting_arrival_inspection')).toBe(true);
@@ -56,14 +62,40 @@ describe('Trip Authority lifecycle', () => {
     expect(canTransitionAuthority('in_progress', 'closed')).toBe(false);
     expect(canTransitionAuthority('cancelled', 'in_progress')).toBe(false);
     expect(canTransitionAuthority('expired', 'ready_for_departure')).toBe(false);
-    expect(() => assertAuthorityTransition('ready_for_departure', 'closed')).toThrow(
-      /cannot move/,
-    );
+    expect(() => assertAuthorityTransition('ready_for_departure', 'closed')).toThrow(/cannot move/);
   });
 
   it('masks licence numbers for official presentation', () => {
     expect(maskLicenceNumber('N12345678')).toBe('*****5678');
     expect(maskLicenceNumber('1234')).toBe('****');
+  });
+
+  it('normalises manual authority numbers before selection', () => {
+    expect(normaliseManualAuthorityNumber('  TA-2026-PB-0042  ')).toBe('TA-2026-PB-0042');
+    expect(normaliseManualAuthorityNumber('PB 42  /  2026')).toBe('PB 42 / 2026');
+    expect(normaliseManualAuthorityNumber('   ')).toBe('');
+    expect(normaliseManualAuthorityNumber(undefined)).toBe('');
+    expect(normaliseManualAuthorityNumber(null)).toBe('');
+  });
+
+  it('accepts valid manual physical authority numbers of any shape', () => {
+    expect(validateManualAuthorityNumber('TA-2026-PB-0042')).toBe('TA-2026-PB-0042');
+    expect(validateManualAuthorityNumber('PB 42/2026')).toBe('PB 42/2026');
+  });
+
+  it('rejects empty manual numbers with a clear validation error', () => {
+    expect(() => validateManualAuthorityNumber('')).toThrow(ManualAuthorityNumberError);
+    expect(() => validateManualAuthorityNumber('')).toThrow(/leave the field blank/i);
+  });
+
+  it('rejects manual numbers that exceed the sensible length limit', () => {
+    expect(() =>
+      validateManualAuthorityNumber('X'.repeat(MAX_MANUAL_AUTHORITY_NUMBER_LENGTH + 1)),
+    ).toThrow(ManualAuthorityNumberError);
+  });
+
+  it('rejects manual numbers containing control characters', () => {
+    expect(() => validateManualAuthorityNumber('PB\u0000-42')).toThrow(ManualAuthorityNumberError);
   });
 
   it('accepts one exact current assignment with a valid driver, capacity, and recorded authoriser', () => {
@@ -72,11 +104,23 @@ describe('Trip Authority lifecycle', () => {
 
   it.each([
     ['cross-tenant trip', { trip: { ...validProvisioningContext.trip, tenantId: 'tenant-2' } }],
-    ['mismatched allocation', { trip: { ...validProvisioningContext.trip, allocationId: 'old-allocation' } }],
-    ['cancelled allocation', { allocation: { ...validProvisioningContext.allocation, state: 'cancelled' } }],
+    [
+      'mismatched allocation',
+      { trip: { ...validProvisioningContext.trip, allocationId: 'old-allocation' } },
+    ],
+    [
+      'cancelled allocation',
+      { allocation: { ...validProvisioningContext.allocation, state: 'cancelled' } },
+    ],
     ['superseded allocation', { currentAllocationId: 'allocation-2' }],
-    ['wrong tenant driver', { driver: { ...validProvisioningContext.driver, tenantId: 'tenant-2' } }],
-    ['expired licence', { driver: { ...validProvisioningContext.driver, licenceExpiry: '2027-01-09' } }],
+    [
+      'wrong tenant driver',
+      { driver: { ...validProvisioningContext.driver, tenantId: 'tenant-2' } },
+    ],
+    [
+      'expired licence',
+      { driver: { ...validProvisioningContext.driver, licenceExpiry: '2027-01-09' } },
+    ],
     ['capacity overflow', { passengerCount: 5 }],
     ['wrong authoriser', { recordedAuthoriserUserId: 'authoriser-2' }],
   ])('rejects %s', (_label, patch) => {

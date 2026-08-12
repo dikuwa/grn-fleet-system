@@ -19,7 +19,7 @@ import {
   requirePermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { provisionTripAuthority } from '@/lib/trip-authority';
+import { provisionTripAuthority, ManualAuthorityNumberError } from '@/lib/trip-authority';
 import { auditEvents } from '@/db/schema';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
@@ -140,6 +140,10 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const allocationId = typeof body?.allocationId === 'string' ? body.allocationId.trim() : '';
+    const manualAuthorityNumber =
+      typeof body?.manualAuthorityNumber === 'string' && body.manualAuthorityNumber.trim()
+        ? body.manualAuthorityNumber.trim()
+        : null;
     if (!allocationId) {
       return NextResponse.json({ error: 'allocationId is required' }, { status: 400 });
     }
@@ -158,11 +162,13 @@ export async function POST(request: NextRequest) {
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
-      .where(and(
-        eq(vehicleAllocations.id, allocationId),
-        eq(vehicles.tenantId, tenantId),
-        eq(transportRequests.tenantId, tenantId),
-      ))
+      .where(
+        and(
+          eq(vehicleAllocations.id, allocationId),
+          eq(vehicles.tenantId, tenantId),
+          eq(transportRequests.tenantId, tenantId),
+        ),
+      )
       .limit(1);
 
     if (!allocation) {
@@ -174,9 +180,19 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
-    if (!['approved', 'approved_emergency', 'authorised', 'ready_for_issue', 'vehicle_allocated'].includes(allocation.requestStatus)) {
+    if (
+      ![
+        'approved',
+        'approved_emergency',
+        'authorised',
+        'ready_for_issue',
+        'vehicle_allocated',
+      ].includes(allocation.requestStatus)
+    ) {
       return NextResponse.json(
-        { error: `Transport request is not ready for trip creation (current: ${allocation.requestStatus})` },
+        {
+          error: `Transport request is not ready for trip creation (current: ${allocation.requestStatus})`,
+        },
         { status: 409 },
       );
     }
@@ -211,6 +227,7 @@ export async function POST(request: NextRequest) {
         requestId: allocation.requestId,
         allocationId: allocation.id,
         actorUserId: session.user.id,
+        manualAuthorityNumber,
       });
       const [driver] = await db
         .select({ userId: employees.userId })
@@ -251,6 +268,9 @@ export async function POST(request: NextRequest) {
       );
     } catch (authorityError) {
       await db.delete(trips).where(and(eq(trips.id, trip.id), eq(trips.tenantId, tenantId)));
+      if (authorityError instanceof ManualAuthorityNumberError) {
+        return NextResponse.json({ error: authorityError.message }, { status: 409 });
+      }
       throw authorityError;
     }
   } catch (error) {

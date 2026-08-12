@@ -164,6 +164,27 @@ function formatLitres(n: number | string): string {
   return `${v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} L`;
 }
 
+/**
+ * Theme-aware medal treatment for the Top Fuel Consumers ranking.
+ * Ranks 1–3 use subtle gold, silver and bronze surfaces; rank 5 uses a muted
+ * green; the remaining ranks stay neutral. Ranking order and data are never
+ * affected — this is presentation only, with accessible contrast in both themes.
+ */
+function rankBadgeClasses(rank: number): string {
+  switch (rank) {
+    case 1:
+      return 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-200';
+    case 2:
+      return 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300';
+    case 3:
+      return 'border-orange-300 bg-orange-50 text-orange-900 dark:border-orange-700/60 dark:bg-orange-900/30 dark:text-orange-200';
+    case 5:
+      return 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-900/30 dark:text-emerald-200';
+    default:
+      return 'border-border bg-muted/60 text-ink-700';
+  }
+}
+
 /** Fetch report data from API */
 async function fetchReportData(type: ReportType, period: TimeRange) {
   const url =
@@ -570,11 +591,9 @@ function ReportFuel({ data }: { data: Record<string, unknown> | null }) {
                   </div>
                   <div
                     aria-label={`Rank ${i + 1}`}
-                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border text-xs font-semibold tabular-nums ${
-                      i === 0
-                        ? 'border-brand-300 bg-brand-50 text-brand-800 dark:border-brand-800 dark:bg-brand-950/40 dark:text-brand-200'
-                        : 'border-border bg-muted/60 text-ink-700'
-                    }`}
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border text-xs font-semibold tabular-nums ${rankBadgeClasses(
+                      i + 1,
+                    )}`}
                   >
                     {i + 1}
                   </div>

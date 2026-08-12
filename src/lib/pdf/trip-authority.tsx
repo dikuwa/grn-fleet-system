@@ -17,6 +17,7 @@ import {
   DocumentTable,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
+  DocumentWarnings,
   SafePdfText,
   documentStyles,
   officialRedTheme,
@@ -136,6 +137,15 @@ const STANDARD_CONDITIONS = [
   'The driver must comply with traffic laws and the institution’s fleet policies.',
   'Accidents, breakdowns and incidents must be reported immediately.',
   'This document must be produced when requested by an authorised officer.',
+];
+
+/**
+ * Official warning language retained from the approved physical Trip Authority
+ * reference. Rendered in red, compact, near the document footer.
+ */
+const OFFICIAL_WARNINGS = [
+  'Any unauthorised or unnecessary distance will be surcharged',
+  'This authority must be returned with the vehicle log statement on completion of the trip',
 ];
 
 function dateTime(date?: string, time?: string, locale = 'en-NA') {
@@ -421,7 +431,6 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
           <DocumentSection title="H. Approvals" theme={officialRedTheme} wrap={false}>
             <View style={documentStyles.signatureRow}>
               <DocumentSignature
-                theme={officialRedTheme}
                 statement="I confirm that the trip request has been reviewed and is approved."
                 name={data.transportOfficer?.name}
                 role={data.transportOfficer?.designation || 'Transport Officer'}
@@ -429,7 +438,6 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
                 signatureUrl={data.transportOfficer?.signatureUrl}
               />
               <DocumentSignature
-                theme={officialRedTheme}
                 statement="I authorise the use of the above vehicle for the specified trip."
                 name={data.authoriser?.name}
                 role={data.authoriser?.designation || 'Authorising Officer'}
@@ -437,7 +445,6 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
                 signatureUrl={data.authoriser?.signatureUrl}
               />
               <DocumentSignature
-                theme={officialRedTheme}
                 statement="I acknowledge receipt of this Trip Authority and accept responsibility."
                 name={data.driver?.name}
                 role="Driver"
@@ -455,6 +462,8 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
             theme={officialRedTheme}
           />
         </View>
+
+        <DocumentWarnings items={OFFICIAL_WARNINGS} theme={officialRedTheme} />
 
         <DocumentVerificationFooter
           branding={branding}
