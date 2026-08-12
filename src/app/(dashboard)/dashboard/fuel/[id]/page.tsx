@@ -23,15 +23,22 @@ import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getServerSession } from '@/lib/session';
-import { getSessionPermissions } from '@/lib/auth-helpers';
+import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { FuelReviewActions } from './FuelReviewActions';
+import { resolveDashboardAccess, type DashboardRecordScope } from '@/lib/dashboard-access';
+import { fuelScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-async function fetchFuelDetail(id: string, tenantId: string) {
+async function fetchFuelDetail(
+  id: string,
+  tenantId: string,
+  userId: string,
+  recordScope: DashboardRecordScope,
+) {
   const db = getDb();
   const driverEmp = alias(employees, 'fuel_driver');
   const recorderEmp = alias(employees, 'fuel_recorder');
@@ -66,7 +73,12 @@ async function fetchFuelDetail(id: string, tenantId: string) {
     .leftJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
     .leftJoin(driverEmp, eq(fuelTransactions.driverEmployeeId, driverEmp.id))
     .leftJoin(recorderEmp, eq(fuelTransactions.recordedByUserId, recorderEmp.userId))
-    .where(and(eq(fuelTransactions.id, id), eq(vehicles.tenantId, tenantId)))
+    .where(
+      and(
+        eq(fuelTransactions.id, id),
+        fuelScopeCondition({ tenantId, userId, recordScope }),
+      ),
+    )
     .then((r) => r[0] ?? null);
 
   if (!transaction) notFound();
@@ -110,9 +122,13 @@ export default async function FuelDetailPage({ params }: PageProps) {
     );
   }
 
+  const roleNames = await getSessionRoleNames(session);
+  const access = resolveDashboardAccess('/dashboard/fuel', roleNames);
+  if (!access.allowed || !access.recordScope) notFound();
+
   let data: Awaited<ReturnType<typeof fetchFuelDetail>>;
   try {
-    data = await fetchFuelDetail(id, session.tenantId);
+    data = await fetchFuelDetail(id, session.tenantId, session.user.id, access.recordScope);
   } catch (error) {
     console.error('Fuel detail query failed:', error);
     return (
@@ -132,7 +148,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
 
   const { transaction: t, receipts, reimbursement } = data;
   const permissions = await getSessionPermissions(session);
-  const canVerify = permissions.includes(Permissions.FUEL_VERIFY);
+  const canVerify = access.actions.includes('update') && permissions.includes(Permissions.FUEL_VERIFY);
 
   return (
     <div className="space-y-6">
@@ -155,7 +171,6 @@ export default async function FuelDetailPage({ params }: PageProps) {
         </Button>
       </PageHeader>
 
-      {/* Summary Card */}
       <Card>
         <CardContent className="pt-4">
           <div className="flex items-center gap-4">
@@ -206,7 +221,6 @@ export default async function FuelDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Details Grid */}
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -308,7 +322,6 @@ export default async function FuelDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {/* Reimbursement */}
         {reimbursement && (
           <Card>
             <CardHeader>
@@ -350,11 +363,17 @@ export default async function FuelDetailPage({ params }: PageProps) {
                   <p className="text-ink-700 text-sm">{reimbursement.notes}</p>
                 </div>
               )}
+              {access.recordScope === 'tenant' && (
+                <Button variant="secondary" size="sm" asChild>
+                  <Link href={`/dashboard/reimbursements/${reimbursement.id}`}>
+                    Open reimbursement claim
+                  </Link>
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}
 
-        {/* Receipts */}
         <Card>
           <CardHeader>
             <CardTitle>Receipts ({receipts.length})</CardTitle>
