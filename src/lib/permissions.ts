@@ -214,6 +214,7 @@ export function isPermissionAvailableInWorkspace(
       Permissions.TRIP_CLOSE,
       Permissions.TRIP_VIEW,
       Permissions.TRIP_MANAGE,
+      Permissions.TRIP_AUTHORITY_OVERRIDE_NUMBER,
       Permissions.TRIP_INCIDENT_MANAGE,
       Permissions.INCIDENT_COMPLETE_DETAILS,
       Permissions.INCIDENT_INVESTIGATE,
@@ -463,6 +464,7 @@ export const RoleDefinitions = {
       Permissions.TRIP_CLOSE,
       Permissions.TRIP_MANAGE,
       Permissions.TRIP_VIEW,
+      Permissions.TRIP_AUTHORITY_OVERRIDE_NUMBER,
       Permissions.TRIP_INCIDENT_MANAGE,
       Permissions.STAFF_MANAGE,
       Permissions.STAFF_IMPORT,
@@ -750,5 +752,9 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   files: {
     label: 'File Storage',
     permissions: [Permissions.FILE_UPLOAD, Permissions.FILE_VIEW],
+  },
+  emergencyContacts: {
+    label: 'Emergency Contacts',
+    permissions: [Permissions.EMERGENCY_CONTACTS_MANAGE],
   },
 };

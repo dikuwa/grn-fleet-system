@@ -271,18 +271,8 @@ const CURRENT_ACCESS_GROUP_LABELS: Readonly<Record<string, string>> = {
   reports: 'Reports',
   programmes: 'Programmes',
   files: 'Files',
+  emergencyContacts: 'Emergency Contacts',
 };
-
-/**
- * Codes not covered by `PermissionGroups` (the UI grouping) are mapped here so
- * the summary never silently drops an actual grant.
- */
-const EXTRA_ACCESS_GROUPS: ReadonlyArray<{ label: string; match: (code: string) => boolean }> = [
-  {
-    label: 'Emergency contacts',
-    match: (code) => code === Permissions.EMERGENCY_CONTACTS_MANAGE,
-  },
-];
 
 /**
  * Derive human-readable capability areas from actual permission codes.
@@ -295,9 +285,6 @@ export function summarizeCurrentAccess(permissionCodes: readonly string[]): stri
     if (group.permissions.some((permission) => present.has(permission))) {
       areas.push(CURRENT_ACCESS_GROUP_LABELS[groupKey] ?? group.label);
     }
-  }
-  for (const extra of EXTRA_ACCESS_GROUPS) {
-    if (permissionCodes.some((code) => extra.match(code))) areas.push(extra.label);
   }
   return areas;
 }

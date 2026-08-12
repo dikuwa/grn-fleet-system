@@ -32,9 +32,9 @@ describe('summarizeCurrentAccess', () => {
     ]);
   });
 
-  it('never silently drops grants outside the main groups', () => {
+  it('never silently drops grants that sit outside the operational groups', () => {
     expect(summarizeCurrentAccess([Permissions.EMERGENCY_CONTACTS_MANAGE])).toEqual([
-      'Emergency contacts',
+      'Emergency Contacts',
     ]);
   });
 
