@@ -9,6 +9,8 @@ interface ClosureReviewActionsProps {
   tripId: string;
   tripStatus: string;
   hasReturnInspection: boolean;
+  reconciliationReady: boolean;
+  reconciliationBlockers: string[];
 }
 
 type ClosureDecision = 'closed' | 'requires_correction' | 'follow_up';
@@ -17,6 +19,8 @@ export function ClosureReviewActions({
   tripId,
   tripStatus,
   hasReturnInspection,
+  reconciliationReady,
+  reconciliationBlockers,
 }: ClosureReviewActionsProps) {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -27,6 +31,13 @@ export function ClosureReviewActions({
   } | null>(null);
 
   const submitDecision = async (decision: ClosureDecision) => {
+    if (decision === 'closed' && !reconciliationReady) {
+      setActionResult({
+        success: false,
+        message: reconciliationBlockers[0] || 'Resolve reconciliation blockers before closing.',
+      });
+      return;
+    }
     if (decision !== 'closed' && !reviewNotes.trim()) {
       setActionResult({
         success: false,
@@ -84,11 +95,6 @@ export function ClosureReviewActions({
     );
   }
 
-  // Administrative closure is never available before the official return
-  // inspection exists. The API enforces the same rule, but keeping the UI in
-  // sync prevents Transport Officers from seeing a Close action that can only
-  // return a 409. Further reconciliation gates (fuel/expenses/incidents) remain
-  // server-authoritative and their exact error is surfaced if they are pending.
   const canReview = tripStatus === 'closure_review' && hasReturnInspection;
 
   return (
@@ -105,6 +111,12 @@ export function ClosureReviewActions({
         />
       )}
 
+      {canReview && !reconciliationReady && reconciliationBlockers.length > 0 && (
+        <p className="text-[10px] leading-4 text-status-pending-text">
+          Close blocked: {reconciliationBlockers.join(' · ')}
+        </p>
+      )}
+
       <div className="flex flex-wrap items-center gap-1.5">
         {canReview && (
           <>
@@ -117,7 +129,13 @@ export function ClosureReviewActions({
                 submitDecision('closed');
               }}
               loading={isSubmitting}
+              disabled={isSubmitting || !reconciliationReady}
               className="h-7 px-2.5 text-[11px]"
+              title={
+                reconciliationReady
+                  ? 'Close reconciled trip'
+                  : reconciliationBlockers.join('; ') || 'Reconciliation is incomplete'
+              }
             >
               <CheckSquare className="h-3 w-3" />
               Close
