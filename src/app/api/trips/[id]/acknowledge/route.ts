@@ -117,7 +117,9 @@ export async function POST(
     if (!employee || employee.id !== trip.driverEmployeeId) {
       return NextResponse.json({ error: 'Only the primary assigned driver may acknowledge this trip' }, { status: 403 });
     }
-    if (trip.driverAcknowledgedAt && trip.authorityStatus === 'driver_accepted') {
+    // Once the acknowledgement is durably recorded, retries must stay idempotent
+    // even if a later workflow step has already advanced the authority status.
+    if (trip.driverAcknowledgedAt) {
       return NextResponse.json({ success: true, alreadyAcknowledged: true });
     }
     if (trip.status !== 'pending') {
