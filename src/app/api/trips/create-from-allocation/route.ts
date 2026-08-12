@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
@@ -7,14 +8,15 @@ import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { runAtomicMutations } from '@/lib/db-atomic';
 import {
   ManualAuthorityNumberError,
   normaliseManualAuthorityNumber,
   validateManualAuthorityNumber,
 } from '@/lib/trip-authority';
 
-const PHYSICAL_AUTHORITY_KEY = 'physicalTripAuthorityNumber';
-const PHYSICAL_AUTHORITY_SET_BY_KEY = 'physicalTripAuthorityNumberSetByUserId';
+const DUPLICATE_PHYSICAL_NUMBER_MESSAGE =
+  'This physical Trip Authority number is already reserved or in use in this organisation. Check the paper document number and try again.';
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,7 +46,6 @@ export async function POST(req: NextRequest) {
         vehicleId: vehicleAllocations.vehicleId,
         state: vehicleAllocations.state,
         requestStatus: transportRequests.status,
-        vehicleRequirements: transportRequests.vehicleRequirements,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
@@ -105,118 +106,115 @@ export async function POST(req: NextRequest) {
     if (rawManualAuthorityNumber) {
       manualAuthorityNumber = validateManualAuthorityNumber(rawManualAuthorityNumber);
 
-      const [issuedDuplicate] = await db
-        .select({ id: tripAuthorities.id })
-        .from(tripAuthorities)
-        .where(
-          and(
-            eq(tripAuthorities.tenantId, tenantId),
-            eq(tripAuthorities.authorityNumber, manualAuthorityNumber),
-          ),
-        )
-        .limit(1);
-      if (issuedDuplicate) {
-        return NextResponse.json(
-          {
-            error:
-              'This Trip Authority number is already in use. Check the physical document number and try again.',
-          },
-          { status: 409 },
-        );
-      }
-
-      const [stagedDuplicate] = await db
-        .select({ id: transportRequests.id })
-        .from(transportRequests)
-        .where(
-          and(
-            eq(transportRequests.tenantId, tenantId),
-            ne(transportRequests.id, allocation.requestId),
-            sql`${transportRequests.vehicleRequirements}->>${PHYSICAL_AUTHORITY_KEY} = ${manualAuthorityNumber}`,
-          ),
-        )
-        .limit(1);
-      if (stagedDuplicate) {
-        return NextResponse.json(
-          {
-            error:
-              'This physical Trip Authority number is already reserved on another transport request in this organisation.',
-          },
-          { status: 409 },
-        );
+      // Give a clear message before the database-level uniqueness guards fire.
+      // The unique indexes on both reserved request numbers and issued authority
+      // numbers remain the concurrency-safe final backstop.
+      const [[issuedDuplicate], [reservedDuplicate]] = await Promise.all([
+        db
+          .select({ id: tripAuthorities.id })
+          .from(tripAuthorities)
+          .where(
+            and(
+              eq(tripAuthorities.tenantId, tenantId),
+              eq(tripAuthorities.authorityNumber, manualAuthorityNumber),
+            ),
+          )
+          .limit(1),
+        db
+          .select({ id: transportRequests.id })
+          .from(transportRequests)
+          .where(
+            and(
+              eq(transportRequests.tenantId, tenantId),
+              eq(transportRequests.physicalTripAuthorityNumber, manualAuthorityNumber),
+            ),
+          )
+          .limit(1),
+      ]);
+      if (issuedDuplicate || reservedDuplicate) {
+        return NextResponse.json({ error: DUPLICATE_PHYSICAL_NUMBER_MESSAGE }, { status: 409 });
       }
     }
 
-    const nextVehicleRequirements = {
-      ...(allocation.vehicleRequirements ?? {}),
-      [PHYSICAL_AUTHORITY_KEY]: manualAuthorityNumber,
-      [PHYSICAL_AUTHORITY_SET_BY_KEY]: manualAuthorityNumber ? session.user.id : null,
-    };
-
-    await db
-      .update(transportRequests)
-      .set({ vehicleRequirements: nextVehicleRequirements, updatedAt: new Date() })
-      .where(
-        and(
-          eq(transportRequests.id, allocation.requestId),
-          eq(transportRequests.tenantId, tenantId),
-        ),
-      );
+    const now = new Date();
+    const tripId = randomUUID();
+    const auditId = randomUUID();
 
     try {
-      const [trip] = await db
-        .insert(trips)
-        .values({
+      await runAtomicMutations((tx) => [
+        tx.update(transportRequests)
+          .set({
+            physicalTripAuthorityNumber: manualAuthorityNumber,
+            physicalTripAuthorityNumberSetByUserId: manualAuthorityNumber ? session.user.id : null,
+            physicalTripAuthorityNumberSetAt: manualAuthorityNumber ? now : null,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(transportRequests.id, allocation.requestId),
+              eq(transportRequests.tenantId, tenantId),
+            ),
+          ),
+        tx.insert(trips).values({
+          id: tripId,
           tenantId,
           requestId: allocation.requestId,
           allocationId: allocation.id,
           vehicleId: allocation.vehicleId,
           status: 'pending',
-        })
-        .returning();
-
-      await db.insert(auditEvents).values({
-        tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'trip_created_from_allocation',
-        actorUserId: session.user.id,
-        action: 'create',
-        entityType: 'trip',
-        entityId: trip.id,
-        summary: manualAuthorityNumber
-          ? `Trip created; physical Trip Authority number ${manualAuthorityNumber} reserved for final authorisation`
-          : 'Trip created; Trip Authority number will be generated automatically at final authorisation',
-        after: {
-          allocationId: allocation.id,
-          requestId: allocation.requestId,
-          authorityNumberMode: manualAuthorityNumber ? 'manual' : 'automatic',
-          physicalTripAuthorityNumber: manualAuthorityNumber,
-        },
-        sourceChannel: 'web',
-      });
-
-      return NextResponse.json({
-        trip,
-        authority: null,
-        authorityNumberMode: manualAuthorityNumber ? 'manual' : 'automatic',
-        manualAuthorityNumber,
-        message: manualAuthorityNumber
-          ? 'Trip created. The physical Trip Authority number is reserved and will be applied after final authorisation.'
-          : 'Trip created. GRN FLEET will generate the Trip Authority number automatically after final authorisation.',
-      });
-    } catch (tripError) {
-      await db
-        .update(transportRequests)
-        .set({ vehicleRequirements: allocation.vehicleRequirements ?? {}, updatedAt: new Date() })
-        .where(
-          and(
-            eq(transportRequests.id, allocation.requestId),
-            eq(transportRequests.tenantId, tenantId),
-          ),
-        )
-        .catch(() => undefined);
-      throw tripError;
+          createdAt: now,
+          updatedAt: now,
+        }),
+        tx.insert(auditEvents).values({
+          id: auditId,
+          tenantId,
+          tenantSequence: Date.now(),
+          eventType: 'trip_created_from_allocation',
+          actorUserId: session.user.id,
+          action: 'create',
+          entityType: 'trip',
+          entityId: tripId,
+          summary: manualAuthorityNumber
+            ? `Trip created; physical Trip Authority number ${manualAuthorityNumber} reserved for final authorisation`
+            : 'Trip created; Trip Authority number will be generated automatically at final authorisation',
+          after: {
+            allocationId: allocation.id,
+            requestId: allocation.requestId,
+            authorityNumberMode: manualAuthorityNumber ? 'manual' : 'automatic',
+            physicalTripAuthorityNumber: manualAuthorityNumber,
+          },
+          sourceChannel: 'web',
+        }),
+      ]);
+    } catch (error) {
+      if ((error as { code?: string }).code === '23505' && manualAuthorityNumber) {
+        return NextResponse.json({ error: DUPLICATE_PHYSICAL_NUMBER_MESSAGE }, { status: 409 });
+      }
+      throw error;
     }
+
+    const [trip] = await db
+      .select()
+      .from(trips)
+      .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)))
+      .limit(1);
+
+    if (!trip) {
+      return NextResponse.json(
+        { error: 'Trip creation committed but the trip could not be reloaded. Refresh the allocation.' },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      trip,
+      authority: null,
+      authorityNumberMode: manualAuthorityNumber ? 'manual' : 'automatic',
+      manualAuthorityNumber,
+      message: manualAuthorityNumber
+        ? 'Trip created. The physical Trip Authority number is reserved and will be applied after final authorisation.'
+        : 'Trip created. GRN FLEET will generate the Trip Authority number automatically after final authorisation.',
+    });
   } catch (error) {
     console.error('[trips/create-from-allocation] POST failed:', error);
     if (error instanceof ManualAuthorityNumberError) {
