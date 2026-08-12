@@ -3,19 +3,24 @@ import { getDb } from '@/db';
 import { fuelTransactions, fuelReceipts, reimbursements } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, desc, sql, gte, inArray } from 'drizzle-orm';
 
 /**
  * GET /api/fleet/expenses
- * Returns expense data: fuel costs, reimbursements, and receipt coverage
+ * Returns expense data: fuel costs, reimbursements, and receipt coverage.
+ * This is the tenant-wide Audit view and must not be widened by the broader
+ * FUEL_VIEW permission shared with operational roles.
  */
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    const routeCheck = await requireDashboardAction(session, '/dashboard/fleet/expenses', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
 
     const permCheck = await requirePermission(session, Permissions.FUEL_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
@@ -28,10 +33,18 @@ export async function GET(req: NextRequest) {
     const now = new Date();
     let startDate: Date;
     switch (period) {
-      case '30d': startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
-      case '7d': startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
-      case '1y': startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000); break;
-      default: startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000); break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '1y':
+        startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
     }
 
     // Fuel transactions summary
@@ -62,7 +75,12 @@ export async function GET(req: NextRequest) {
 
     // Receipt coverage
     const transactionIds = fuelRows.map((r) => r.id);
-    let receiptRows: Array<{ transactionId: string; id: string; mimeType: string; isVerified: boolean }> = [];
+    let receiptRows: Array<{
+      transactionId: string;
+      id: string;
+      mimeType: string;
+      isVerified: boolean;
+    }> = [];
     if (transactionIds.length > 0) {
       receiptRows = await db
         .select({
@@ -75,7 +93,9 @@ export async function GET(req: NextRequest) {
         .where(inArray(fuelReceipts.transactionId, transactionIds));
     }
     const receiptSet = new Set(receiptRows.map((r) => r.transactionId));
-    const verifiedReceiptSet = new Set(receiptRows.filter((r) => r.isVerified).map((r) => r.transactionId));
+    const verifiedReceiptSet = new Set(
+      receiptRows.filter((r) => r.isVerified).map((r) => r.transactionId),
+    );
 
     // Missing receipts (transactions without uploaded receipt)
     const missingReceipts = fuelRows.filter((r) => !receiptSet.has(r.id));
@@ -93,7 +113,13 @@ export async function GET(req: NextRequest) {
       .from(reimbursements)
       .innerJoin(fuelTransactions, eq(reimbursements.transactionId, fuelTransactions.id))
       .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
-      .leftJoin(employees, eq(reimbursements.claimantEmployeeId, employees.id))
+      .leftJoin(
+        employees,
+        and(
+          eq(reimbursements.claimantEmployeeId, employees.id),
+          eq(employees.tenantId, session.tenantId),
+        ),
+      )
       .where(eq(vehicles.tenantId, session.tenantId))
       .orderBy(desc(reimbursements.createdAt));
 
@@ -114,7 +140,8 @@ export async function GET(req: NextRequest) {
         totalFuelCost,
         totalLitres,
         avgCostPerLitre: totalLitres > 0 ? totalFuelCost / totalLitres : 0,
-        receiptCoverage: fuelRows.length > 0 ? Math.round((receiptSet.size / fuelRows.length) * 100) : 0,
+        receiptCoverage:
+          fuelRows.length > 0 ? Math.round((receiptSet.size / fuelRows.length) * 100) : 0,
         verifiedReceipts: verifiedReceiptSet.size,
         missingReceiptCount: missingReceipts.length,
         flaggedAnomalies,
