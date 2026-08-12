@@ -33,6 +33,7 @@ interface VehicleImportRow {
 }
 
 const MAX_IMPORT_ROWS = 1000;
+const IMPORTABLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 
 function optionalNonNegativeInteger(value: string | undefined, label: string) {
   if (!value?.trim()) return null;
@@ -74,7 +75,11 @@ export async function POST(request: NextRequest) {
     // single-vehicle create route. Only rows that would insert a new active
     // licence number count as incoming capacity; updates do not consume slots.
     const uniqueLicenceNumbers = Array.from(
-      new Set(rows.map((row) => row.licence_number?.trim()).filter((value): value is string => Boolean(value))),
+      new Set(
+        rows
+          .map((row) => row.licence_number?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
     );
     const existingLicenceRows = uniqueLicenceNumbers.length
       ? await db
@@ -132,7 +137,6 @@ export async function POST(request: NextRequest) {
     let validCount = 0;
     let errorCount = 0;
 
-    // Process each row
     for (const row of rows) {
       try {
         const licenceNumber = row.licence_number?.trim();
@@ -151,8 +155,13 @@ export async function POST(request: NextRequest) {
         const seatedCapacity = optionalNonNegativeInteger(row.seated_capacity, 'Seated capacity');
         const standingCapacity = optionalNonNegativeInteger(row.standing_capacity, 'Standing capacity');
         const importedOdometer = optionalNonNegativeInteger(row.current_odometer, 'Current odometer');
+        const importedStatus = row.status?.trim() || null;
+        if (importedStatus && !IMPORTABLE_STATUSES.has(importedStatus)) {
+          throw new Error(
+            'Status must be available, provisional, maintenance, or out_of_service. Allocation, issued, and written-off states are managed by dedicated workflows.',
+          );
+        }
 
-        // Check for duplicate active licence number within tenant.
         const [existing] = await db
           .select({
             id: vehicles.id,
@@ -170,8 +179,16 @@ export async function POST(request: NextRequest) {
           .limit(1);
 
         if (existing) {
-          // Blank CSV cells must never reset an operational vehicle from
-          // maintenance/issued/etc. to available or roll its odometer backwards.
+          if (
+            importedStatus &&
+            importedStatus !== existing.status &&
+            ['allocated', 'issued'].includes(existing.status)
+          ) {
+            throw new Error(
+              `Vehicle is currently ${existing.status}; its status cannot be overridden by an import while the operational workflow is active.`,
+            );
+          }
+
           await db
             .update(vehicles)
             .set({
@@ -191,7 +208,7 @@ export async function POST(request: NextRequest) {
               grossVehicleMassKg,
               seatedCapacity,
               standingCapacity,
-              status: row.status?.trim() || existing.status,
+              status: importedStatus || existing.status,
               currentOdometer:
                 importedOdometer === null
                   ? existing.currentOdometer
@@ -210,7 +227,6 @@ export async function POST(request: NextRequest) {
             commitEntityId: existing.id,
           });
         } else {
-          // Insert new vehicle
           const [vehicle] = await db
             .insert(vehicles)
             .values({
@@ -232,7 +248,7 @@ export async function POST(request: NextRequest) {
               grossVehicleMassKg,
               seatedCapacity,
               standingCapacity,
-              status: row.status?.trim() || 'available',
+              status: importedStatus || 'available',
               currentOdometer: importedOdometer ?? 0,
               notes: row.notes?.trim() || null,
               createdBy: userId,
@@ -262,7 +278,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update batch status
     const batchStatus =
       errorCount > 0 && validCount > 0
         ? 'partially_committed'
