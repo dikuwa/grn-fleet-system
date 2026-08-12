@@ -12,6 +12,7 @@
 
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import { DOCUMENT_FONT_STACK } from './document-system';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,7 +43,7 @@ const styles = StyleSheet.create({
   page: {
     padding: 40,
     paddingBottom: 60,
-    fontFamily: 'Helvetica',
+    fontFamily: DOCUMENT_FONT_STACK,
     fontSize: 9,
     lineHeight: 1.4,
     color: '#1a1a1a',

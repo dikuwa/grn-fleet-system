@@ -22,9 +22,53 @@ if (SIGNATURE_FONT === 'Allura') {
 }
 
 /**
- * The PDF renderer deliberately uses the built-in Helvetica family.  The former
- * implementation downloaded fonts from GitHub and Google during every render,
- * which made production documents depend on third-party network availability.
+ * Official document family — clean thermal/receipt typography.
+ *
+ * "Fake Receipt" (Typodermic / Raymond Larabie, CC0 public domain) is the
+ * primary typeface: a low-resolution cash-register style face that makes the
+ * documents read as physical receipt-like official records. "Share Tech Mono"
+ * (Carrois / Ralph du Carrois, SIL OFL 1.1) is the real fallback used for any
+ * codepoint Fake Receipt cannot render.
+ *
+ * Both are bundled locally under /public/official so generated PDFs never
+ * depend on third-party network availability at render time. react-pdf resolves
+ * a fontFamily array as a per-glyph fallback stack, so a missing Fake Receipt
+ * glyph automatically renders with Share Tech Mono (no tofu / missing blocks).
+ */
+export const FAKE_RECEIPT_FONT_PATH = path.join(
+  process.cwd(),
+  'public',
+  'official',
+  'FakeReceipt-Regular.otf',
+);
+export const SHARE_TECH_MONO_FONT_PATH = path.join(
+  process.cwd(),
+  'public',
+  'official',
+  'ShareTechMono-Regular.ttf',
+);
+export const DOCUMENT_FONT = 'Fake Receipt';
+export const DOCUMENT_FONT_FALLBACK = 'Share Tech Mono';
+const documentFontsPresent =
+  existsSync(FAKE_RECEIPT_FONT_PATH) && existsSync(SHARE_TECH_MONO_FONT_PATH);
+/**
+ * Shared document typography stack. Falls back to the built-in Helvetica if the
+ * bundled assets are ever missing so document rendering never breaks.
+ */
+export const DOCUMENT_FONT_STACK: string[] = documentFontsPresent
+  ? [DOCUMENT_FONT, DOCUMENT_FONT_FALLBACK]
+  : ['Helvetica'];
+if (documentFontsPresent) {
+  Font.register({ family: DOCUMENT_FONT, src: FAKE_RECEIPT_FONT_PATH });
+  Font.register({ family: DOCUMENT_FONT_FALLBACK, src: SHARE_TECH_MONO_FONT_PATH });
+}
+
+/**
+ * The official document family is bundled locally (see DOCUMENT_FONT_STACK
+ * above) so generated PDFs never depend on third-party network availability at
+ * render time. Fake Receipt is the primary typeface; Share Tech Mono is the
+ * embedded fallback; Allura is reserved for signatures. If the bundled document
+ * fonts are ever missing, the stack degrades to the built-in Helvetica.
  */
 const OFFICIAL_RED = '#C1121F';
 const INK = '#172033';
@@ -107,7 +151,7 @@ export const documentStyles = StyleSheet.create({
     paddingTop: 32,
     paddingHorizontal: 24,
     paddingBottom: 50,
-    fontFamily: 'Helvetica',
+    fontFamily: DOCUMENT_FONT_STACK,
     fontSize: 7.4,
     lineHeight: 1.25,
     color: INK,
@@ -134,7 +178,7 @@ export const documentStyles = StyleSheet.create({
   },
   organisation: {
     fontSize: 10.2,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: DOCUMENT_FONT_STACK,
     color: INK,
     textAlign: 'center',
     marginTop: 2,
@@ -151,8 +195,8 @@ export const documentStyles = StyleSheet.create({
     fontSize: 5.5,
     textAlign: 'center',
   },
-  title: { fontSize: 11.4, fontFamily: 'Helvetica-Bold', textAlign: 'center', lineHeight: 1.16 },
-  reference: { fontSize: 7.2, fontFamily: 'Helvetica-Bold', marginTop: 2, textAlign: 'center' },
+  title: { fontSize: 11.4, fontFamily: DOCUMENT_FONT_STACK, textAlign: 'center', lineHeight: 1.16 },
+  reference: { fontSize: 7.2, fontFamily: DOCUMENT_FONT_STACK, marginTop: 2, textAlign: 'center' },
   meta: { color: MUTED, fontSize: 5.8, marginTop: 1, textAlign: 'center' },
   muted: { color: MUTED, fontSize: 6.3 },
   statusBadge: {
@@ -162,14 +206,14 @@ export const documentStyles = StyleSheet.create({
     paddingVertical: 1.5,
     paddingHorizontal: 4,
     fontSize: 5.8,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: DOCUMENT_FONT_STACK,
     textTransform: 'uppercase',
     marginTop: 2,
   },
   section: { marginBottom: 3.5 },
   sectionTitle: {
     fontSize: 7.7,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: DOCUMENT_FONT_STACK,
     textTransform: 'uppercase',
     borderWidth: 0.55,
     paddingHorizontal: 4,
@@ -186,7 +230,7 @@ export const documentStyles = StyleSheet.create({
   column: { flex: 1 },
   fieldGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   field: { width: '50%', flexDirection: 'row', paddingVertical: 1.7, paddingRight: 5 },
-  fieldLabel: { width: '40%', color: MUTED, fontSize: 6.2, fontFamily: 'Helvetica-Bold' },
+  fieldLabel: { width: '40%', color: MUTED, fontSize: 6.2, fontFamily: DOCUMENT_FONT_STACK },
   fieldValue: { width: '60%', color: INK, fontSize: 6.7 },
   table: { width: '100%' },
   tableHeader: { flexDirection: 'row', borderBottomWidth: 0.65, paddingVertical: 2 },
@@ -195,7 +239,7 @@ export const documentStyles = StyleSheet.create({
   tableHeading: {
     paddingHorizontal: 2.5,
     fontSize: 5.9,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: DOCUMENT_FONT_STACK,
     textTransform: 'uppercase',
   },
   empty: { paddingVertical: 4, color: MUTED, fontSize: 6.5 },
@@ -209,7 +253,7 @@ export const documentStyles = StyleSheet.create({
   verifyQrCol: { width: 37, justifyContent: 'center' },
   qrSmall: { width: 34, height: 34, objectFit: 'contain' },
   verifyDetailsCol: { flex: 1, justifyContent: 'center' },
-  verifyTitle: { fontSize: 6.5, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
+  verifyTitle: { fontSize: 6.5, fontFamily: DOCUMENT_FONT_STACK, marginBottom: 2 },
   verifyLabel: { fontSize: 5.2, color: MUTED, textTransform: 'uppercase' },
   verifyValue: { fontSize: 5.9, color: INK, marginBottom: 1.5 },
   watermark: {
@@ -220,7 +264,7 @@ export const documentStyles = StyleSheet.create({
     fontSize: 48,
     color: '#DDE3EA',
     opacity: 0.34,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: DOCUMENT_FONT_STACK,
     letterSpacing: 7,
   },
   footer: {
@@ -246,7 +290,7 @@ export const documentStyles = StyleSheet.create({
   warnings: { marginTop: 2, marginBottom: 2 },
   warning: {
     fontSize: 6.3,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: DOCUMENT_FONT_STACK,
     textAlign: 'center',
     lineHeight: 1.35,
     textTransform: 'uppercase',
@@ -317,7 +361,7 @@ export function DocumentHeader({
         <Image src={coatOfArmsPath} style={documentStyles.logo} />
       </View>
       <View style={documentStyles.headerOrgZone}>
-        <Text style={{ fontSize: 7, fontFamily: 'Helvetica-Bold', textAlign: 'center' }}>
+        <Text style={{ fontSize: 7, fontFamily: DOCUMENT_FONT_STACK, textAlign: 'center' }}>
           REPUBLIC OF NAMIBIA
         </Text>
         <Text style={[documentStyles.title, { color: theme.primary }]}>{title.toUpperCase()}</Text>

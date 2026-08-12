@@ -3,6 +3,26 @@
 /* Class-based dark mode variant for Tailwind v4 */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+  Self-hosted official document fonts — Fake Receipt (primary, CC0) and
+  Share Tech Mono (fallback, SIL OFL 1.1). Bundled under /public/official so the
+  browser document preview and browser-print flow never depend on a remote CDN.
+*/
+@font-face {
+  font-family: 'Fake Receipt';
+  src: url('/official/FakeReceipt-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Share Tech Mono';
+  src: url('/official/ShareTechMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
   /* Brand palette */
   --color-brand-950: #102a4c;
@@ -55,7 +75,7 @@
   /* Typography */
   --font-family-onest: 'Onest', sans-serif;
   --font-family-signature: 'Allura', cursive;
-  --font-family-document: 'IBM Plex Mono', 'Space Mono', 'DM Mono', 'Courier Prime', monospace;
+  --font-family-document: 'Fake Receipt', 'Share Tech Mono', monospace;
 
   /* Spacing */
   --spacing-input: 40px;
@@ -258,6 +278,10 @@ body {
 @layer utilities {
   .font-signature {
     font-family: var(--font-allura), var(--font-family-signature);
+  }
+  /* Official document body typography: Fake Receipt -> Share Tech Mono */
+  .font-document {
+    font-family: var(--font-family-document);
   }
   /* Hide scrollbar for clean drawers */
   .scrollbar-none {

@@ -21,6 +21,7 @@ import {
   SafePdfText,
   documentStyles,
   officialRedTheme,
+  DOCUMENT_FONT_STACK,
 } from './document-system';
 
 export interface TripAuthorityData {
@@ -279,7 +280,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
               <Text
                 style={{
                   color: officialRedTheme.primary,
-                  fontFamily: 'Helvetica-Bold',
+                  fontFamily: DOCUMENT_FONT_STACK,
                   fontSize: 6.7,
                   marginBottom: 2,
                 }}
@@ -346,10 +347,10 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
             }
           />
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 3 }}>
-            <Text style={{ width: '28%', fontFamily: 'Helvetica-Bold' }}>
+            <Text style={{ width: '28%', fontFamily: DOCUMENT_FONT_STACK }}>
               Total estimated distance
             </Text>
-            <Text style={{ width: '15%', textAlign: 'right', fontFamily: 'Helvetica-Bold' }}>
+            <Text style={{ width: '15%', textAlign: 'right', fontFamily: DOCUMENT_FONT_STACK }}>
               {data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : '—'}
             </Text>
           </View>
