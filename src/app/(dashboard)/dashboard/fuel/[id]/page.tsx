@@ -147,6 +147,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
   }
 
   const { transaction: t, receipts, reimbursement } = data;
+  const anomalyState = t.anomalyState ?? 'none';
   const permissions = await getSessionPermissions(session);
   const canVerify = access.actions.includes('update') && permissions.includes(Permissions.FUEL_VERIFY);
 
@@ -164,7 +165,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
         description={`${t.licenceNumber}${t.vehicleRegisterNumber ? ` · ${t.vehicleRegisterNumber}` : ''} · ${formatDate(t.transactionAt)}`}
       >
         {!t.isVerified && canVerify && (
-          <FuelReviewActions transactionId={t.id} anomalyState={t.anomalyState} />
+          <FuelReviewActions transactionId={t.id} anomalyState={anomalyState} />
         )}
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fuel">
@@ -177,7 +178,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
         <CardContent className="pt-4">
           <div className="flex items-center gap-4">
             <div
-              className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-[10px] ${t.anomalyState !== 'none' ? 'bg-status-error-bg text-status-error-text' : 'bg-brand-50 text-brand-700'}`}
+              className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-[10px] ${anomalyState !== 'none' ? 'bg-status-error-bg text-status-error-text' : 'bg-brand-50 text-brand-700'}`}
             >
               <Fuel className="h-7 w-7" />
             </div>
@@ -198,9 +199,9 @@ export default async function FuelDetailPage({ params }: PageProps) {
                 >
                   {t.paymentMethod.replace(/_/g, ' ')}
                 </Badge>
-                {t.anomalyState !== 'none' && (
+                {anomalyState !== 'none' && (
                   <Badge variant="error" size="sm">
-                    Flagged: {t.anomalyState}
+                    Flagged: {anomalyState}
                   </Badge>
                 )}
                 <Badge variant={t.isVerified ? 'success' : 'pending'} size="sm">
