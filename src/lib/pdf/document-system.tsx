@@ -7,8 +7,7 @@ import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 
 /**
  * The official Allura signature font is bundled locally so official PDFs never
- * depend on third-party network availability at render time. If the asset is
- * ever missing, rendering falls back to the built-in Helvetica-Oblique.
+ * depend on third-party network availability at render time.
  */
 export const ALLURA_FONT_PATH = path.join(
   process.cwd(),
@@ -22,54 +21,33 @@ if (SIGNATURE_FONT === 'Allura') {
 }
 
 /**
- * Official document family — clean thermal/receipt typography.
+ * Official document family typography.
  *
- * "Fake Receipt" (Typodermic / Raymond Larabie, CC0 public domain) is the
- * primary typeface: a low-resolution cash-register style face that makes the
- * documents read as physical receipt-like official records. "Share Tech Mono"
- * (Carrois / Ralph du Carrois, SIL OFL 1.1) is the real fallback used for any
- * codepoint Fake Receipt cannot render.
- *
- * Both are bundled locally under /public/official so generated PDFs never
- * depend on third-party network availability at render time. react-pdf resolves
- * a fontFamily array as a per-glyph fallback stack, so a missing Fake Receipt
- * glyph automatically renders with Share Tech Mono (no tofu / missing blocks).
+ * Space Mono is the primary document face. Share Tech Mono remains the bundled
+ * fallback. Space Mono is loaded from the canonical Google Fonts repository
+ * until the TTF is bundled locally; the fallback ensures PDF generation remains
+ * usable if the remote font cannot be fetched.
  */
-export const FAKE_RECEIPT_FONT_PATH = path.join(
-  process.cwd(),
-  'public',
-  'official',
-  'FakeReceipt-Regular.otf',
-);
+export const SPACE_MONO_FONT_URL =
+  'https://raw.githubusercontent.com/google/fonts/main/ofl/spacemono/SpaceMono-Regular.ttf';
 export const SHARE_TECH_MONO_FONT_PATH = path.join(
   process.cwd(),
   'public',
   'official',
   'ShareTechMono-Regular.ttf',
 );
-export const DOCUMENT_FONT = 'Fake Receipt';
+export const DOCUMENT_FONT = 'Space Mono';
 export const DOCUMENT_FONT_FALLBACK = 'Share Tech Mono';
-const documentFontsPresent =
-  existsSync(FAKE_RECEIPT_FONT_PATH) && existsSync(SHARE_TECH_MONO_FONT_PATH);
-/**
- * Shared document typography stack. Falls back to the built-in Helvetica if the
- * bundled assets are ever missing so document rendering never breaks.
- */
-export const DOCUMENT_FONT_STACK: string[] = documentFontsPresent
+const shareTechMonoPresent = existsSync(SHARE_TECH_MONO_FONT_PATH);
+export const DOCUMENT_FONT_STACK: string[] = shareTechMonoPresent
   ? [DOCUMENT_FONT, DOCUMENT_FONT_FALLBACK]
-  : ['Helvetica'];
-if (documentFontsPresent) {
-  Font.register({ family: DOCUMENT_FONT, src: FAKE_RECEIPT_FONT_PATH });
+  : [DOCUMENT_FONT, 'Helvetica'];
+
+Font.register({ family: DOCUMENT_FONT, src: SPACE_MONO_FONT_URL });
+if (shareTechMonoPresent) {
   Font.register({ family: DOCUMENT_FONT_FALLBACK, src: SHARE_TECH_MONO_FONT_PATH });
 }
 
-/**
- * The official document family is bundled locally (see DOCUMENT_FONT_STACK
- * above) so generated PDFs never depend on third-party network availability at
- * render time. Fake Receipt is the primary typeface; Share Tech Mono is the
- * embedded fallback; Allura is reserved for signatures. If the bundled document
- * fonts are ever missing, the stack degrades to the built-in Helvetica.
- */
 const OFFICIAL_RED = '#C1121F';
 const INK = '#172033';
 const MUTED = '#667085';
@@ -91,7 +69,7 @@ export const officialRedTheme: PdfTheme = {
   tint: '#FFF7F7',
   ink: INK,
   muted: MUTED,
-  rule: '#E8B8BB',
+  rule: '#F0C9CB',
 };
 
 const defaultTenantTheme: PdfTheme = {
@@ -153,17 +131,16 @@ export const documentStyles = StyleSheet.create({
     paddingBottom: 50,
     fontFamily: DOCUMENT_FONT_STACK,
     fontSize: 7.4,
-    lineHeight: 1.25,
+    lineHeight: 1.28,
     color: INK,
   },
   officialPage: {
-    borderWidth: 0.8,
-    borderColor: OFFICIAL_RED,
+    borderWidth: 0,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomWidth: 0.9,
+    borderBottomWidth: 0.55,
     paddingBottom: 8,
     marginBottom: 8,
     minHeight: 96,
@@ -201,7 +178,7 @@ export const documentStyles = StyleSheet.create({
   muted: { color: MUTED, fontSize: 6.3 },
   statusBadge: {
     alignSelf: 'flex-end',
-    borderWidth: 0.6,
+    borderWidth: 0.35,
     borderColor: RULE,
     paddingVertical: 1.5,
     paddingHorizontal: 4,
@@ -210,21 +187,20 @@ export const documentStyles = StyleSheet.create({
     textTransform: 'uppercase',
     marginTop: 2,
   },
-  section: { marginBottom: 3.5 },
+  section: { marginBottom: 4 },
   sectionTitle: {
     fontSize: 7.7,
     fontFamily: DOCUMENT_FONT_STACK,
     textTransform: 'uppercase',
-    borderWidth: 0.55,
+    borderBottomWidth: 0.3,
     paddingHorizontal: 4,
-    paddingVertical: 2,
+    paddingVertical: 2.2,
     marginBottom: 0,
   },
   sectionBody: {
-    borderLeftWidth: 0.45,
-    borderRightWidth: 0.45,
-    borderBottomWidth: 0.45,
-    padding: 3,
+    paddingHorizontal: 3.5,
+    paddingTop: 2.5,
+    paddingBottom: 2,
   },
   sectionRow: { flexDirection: 'row', gap: 6 },
   column: { flex: 1 },
@@ -233,8 +209,8 @@ export const documentStyles = StyleSheet.create({
   fieldLabel: { width: '40%', color: MUTED, fontSize: 6.2, fontFamily: DOCUMENT_FONT_STACK },
   fieldValue: { width: '60%', color: INK, fontSize: 6.7 },
   table: { width: '100%' },
-  tableHeader: { flexDirection: 'row', borderBottomWidth: 0.65, paddingVertical: 2 },
-  tableRow: { flexDirection: 'row', borderBottomWidth: 0.35, paddingVertical: 2, minHeight: 11 },
+  tableHeader: { flexDirection: 'row', borderBottomWidth: 0.3, paddingVertical: 2.2 },
+  tableRow: { flexDirection: 'row', borderBottomWidth: 0.18, paddingVertical: 2.1, minHeight: 11 },
   tableCell: { paddingHorizontal: 2.5, fontSize: 6.25 },
   tableHeading: {
     paddingHorizontal: 2.5,
@@ -245,7 +221,7 @@ export const documentStyles = StyleSheet.create({
   empty: { paddingVertical: 4, color: MUTED, fontSize: 6.5 },
   verificationBlock: {
     marginTop: 3,
-    borderWidth: 0.55,
+    borderWidth: 0.3,
     padding: 3.5,
     flexDirection: 'row',
     gap: 6,
@@ -272,7 +248,7 @@ export const documentStyles = StyleSheet.create({
     bottom: 12,
     left: 24,
     right: 24,
-    borderTopWidth: 0.5,
+    borderTopWidth: 0.25,
     paddingTop: 3,
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -282,11 +258,11 @@ export const documentStyles = StyleSheet.create({
   footerLeft: { width: '45%' },
   footerCentre: { width: '38%', textAlign: 'center' },
   footerRight: { width: '17%', textAlign: 'right' },
-  signatureRow: { flexDirection: 'row', gap: 8, marginTop: 3 },
-  signature: { flex: 1, minHeight: 34, paddingTop: 2 },
-  signatureStatement: { fontSize: 5.2, textAlign: 'center', minHeight: 13, color: '#344054' },
-  signatureImage: { height: 15, maxWidth: 82, objectFit: 'contain', objectPosition: 'left' },
-  signatureName: { fontSize: 9.6, fontFamily: SIGNATURE_FONT, marginTop: 0.5 },
+  signatureRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  signature: { flex: 1, minHeight: 48, paddingTop: 2, paddingHorizontal: 2 },
+  signatureStatement: { fontSize: 5.35, textAlign: 'center', minHeight: 16, color: '#344054' },
+  signatureImage: { height: 22, maxWidth: 96, objectFit: 'contain', objectPosition: 'left' },
+  signatureName: { fontSize: 14.5, lineHeight: 1.05, fontFamily: SIGNATURE_FONT, marginTop: 2 },
   warnings: { marginTop: 2, marginBottom: 2 },
   warning: {
     fontSize: 6.3,
@@ -352,9 +328,8 @@ export function DocumentHeader({
   coatOfArmsPath?: string;
   theme?: PdfTheme;
 }) {
-  const contact = [branding?.phone, branding?.email, branding?.website]
-    .filter(Boolean)
-    .join('  ·  ');
+  const contact = [branding?.phone, branding?.email, branding?.website].filter(Boolean).join('  ·  ');
+  const tenantLogo = branding?.documentLogoUrl || branding?.logoUrl;
   return (
     <View style={[documentStyles.header, { borderBottomColor: theme.primary }]}>
       <View style={documentStyles.headerLogoZone}>
@@ -369,29 +344,21 @@ export function DocumentHeader({
           OFFICE / MINISTRY / DEPARTMENT / MUNICIPALITY
         </Text>
         <Text style={documentStyles.organisation}>
-          {safePdfValue(branding?.organisationName, 'GOVERNMENT FLEET')}
+          {safePdfValue(branding?.organisationName, 'Government Fleet')}
         </Text>
-        {branding?.division ? (
-          <SafePdfText value={branding.division} style={documentStyles.orgDetail} />
-        ) : null}
-        {branding?.address ? (
-          <SafePdfText value={branding.address} style={documentStyles.orgDetail} />
-        ) : null}
+        {branding?.division ? <SafePdfText value={branding.division} style={documentStyles.orgDetail} /> : null}
+        {branding?.address ? <SafePdfText value={branding.address} style={documentStyles.orgDetail} /> : null}
         {contact ? <SafePdfText value={contact} style={documentStyles.orgDetail} /> : null}
       </View>
       <View style={documentStyles.headerTitleZone}>
-        {branding?.logoUrl ? <Image src={branding.logoUrl} style={documentStyles.logo} /> : null}
-        {showIdentity && reference ? (
-          <SafePdfText value={reference} style={documentStyles.reference} />
-        ) : null}
+        {tenantLogo ? <Image src={tenantLogo} style={documentStyles.logo} /> : null}
+        {showIdentity && reference ? <SafePdfText value={reference} style={documentStyles.reference} /> : null}
         {showIdentity && (version || issueDate) ? (
           <Text style={documentStyles.meta}>
             {[version ? `Version ${version}` : null, issueDate].filter(Boolean).join(' · ')}
           </Text>
         ) : null}
-        {showIdentity && status ? (
-          <SafePdfText value={status} style={documentStyles.statusBadge} />
-        ) : null}
+        {showIdentity && status ? <SafePdfText value={status} style={documentStyles.statusBadge} /> : null}
         {showIdentity && qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
       </View>
     </View>
@@ -414,21 +381,16 @@ export function DocumentSection({
   breakBefore?: boolean;
 }) {
   return (
-    <View
-      style={documentStyles.section}
-      wrap={wrap}
-      minPresenceAhead={minPresenceAhead}
-      break={breakBefore}
-    >
+    <View style={documentStyles.section} wrap={wrap} minPresenceAhead={minPresenceAhead} break={breakBefore}>
       <Text
         style={[
           documentStyles.sectionTitle,
-          { color: theme.primary, borderColor: theme.rule, backgroundColor: theme.tint },
+          { color: theme.primary, borderBottomColor: theme.rule, backgroundColor: theme.tint },
         ]}
       >
         {title}
       </Text>
-      <View style={[documentStyles.sectionBody, { borderColor: theme.rule }]}>{children}</View>
+      <View style={documentStyles.sectionBody}>{children}</View>
     </View>
   );
 }
@@ -437,26 +399,25 @@ export function DocumentFieldGrid({
   fields,
   columns = 2,
   labelWidth = 40,
+  labelColor,
 }: {
   fields: Array<{ label: string; value: unknown }>;
   columns?: 1 | 2 | 3;
   labelWidth?: number;
+  labelColor?: string;
 }) {
   return (
     <View style={documentStyles.fieldGrid}>
       {fields.map((field, index) => (
-        <View
-          key={`${field.label}-${index}`}
-          style={[documentStyles.field, { width: `${100 / columns}%` }]}
-        >
+        <View key={`${field.label}-${index}`} style={[documentStyles.field, { width: `${100 / columns}%` }]}>
           <SafePdfText
             value={field.label}
-            style={[documentStyles.fieldLabel, { width: `${labelWidth}%` }]}
+            style={[
+              documentStyles.fieldLabel,
+              { width: `${labelWidth}%`, ...(labelColor ? { color: labelColor } : {}) },
+            ]}
           />
-          <SafePdfText
-            value={field.value}
-            style={[documentStyles.fieldValue, { width: `${100 - labelWidth}%` }]}
-          />
+          <SafePdfText value={field.value} style={[documentStyles.fieldValue, { width: `${100 - labelWidth}%` }]} />
         </View>
       ))}
     </View>
@@ -487,32 +448,19 @@ export function DocumentTable({
     ...(heading ? documentStyles.tableHeading : documentStyles.tableCell),
     width: column.width || fallbackWidth,
     textAlign: column.align || 'left',
+    ...(heading ? { color: theme.primary } : {}),
   });
   return (
     <View style={documentStyles.table} minPresenceAhead={22}>
-      <View
-        style={[
-          documentStyles.tableHeader,
-          { backgroundColor: theme.tint, borderBottomColor: theme.primary },
-        ]}
-        fixed
-      >
+      <View style={[documentStyles.tableHeader, { backgroundColor: theme.tint, borderBottomColor: theme.rule }]} fixed>
         {columns.map((column) => (
           <SafePdfText key={column.key} value={column.label} style={cellStyle(column, true)} />
         ))}
       </View>
       {rows.map((row, index) => (
-        <View
-          key={index}
-          style={[documentStyles.tableRow, { borderBottomColor: theme.rule }]}
-          wrap={false}
-        >
+        <View key={index} style={[documentStyles.tableRow, { borderBottomColor: theme.rule }]} wrap={false}>
           {columns.map((column) => (
-            <SafePdfText
-              key={column.key}
-              value={row[column.key]}
-              style={cellStyle(column, false)}
-            />
+            <SafePdfText key={column.key} value={row[column.key]} style={cellStyle(column, false)} />
           ))}
         </View>
       ))}
@@ -535,26 +483,18 @@ export function DocumentSignature({
 }) {
   return (
     <View style={documentStyles.signature}>
-      {statement ? (
-        <SafePdfText value={statement} style={documentStyles.signatureStatement} />
-      ) : null}
+      {statement ? <SafePdfText value={statement} style={documentStyles.signatureStatement} /> : null}
       {signatureUrl ? <Image src={signatureUrl} style={documentStyles.signatureImage} /> : null}
       <SafePdfText value={name} style={documentStyles.signatureName} />
       <SafePdfText value={role} style={documentStyles.muted} />
       <SafePdfText
-        value={
-          signedAt ? `Digitally approved · ${safePdfValue(signedAt)}` : 'Signature not applied'
-        }
+        value={signedAt ? `Digitally approved · ${safePdfValue(signedAt)}` : 'Signature not applied'}
         style={documentStyles.muted}
       />
     </View>
   );
 }
 
-/**
- * Compact red official warnings rendered near the document footer. The text is
- * always presented in the official accent and never styled as a heavy box.
- */
 export function DocumentWarnings({
   items,
   theme = officialRedTheme,
@@ -587,15 +527,10 @@ export function DocumentExecutiveCertification({
 }) {
   return (
     <View style={{ marginTop: 5 }} wrap={false}>
-      <Text
-        style={[
-          documentStyles.sectionTitle,
-          { color: theme.primary, borderColor: theme.rule, backgroundColor: theme.tint },
-        ]}
-      >
+      <Text style={[documentStyles.sectionTitle, { color: theme.primary, borderBottomColor: theme.rule, backgroundColor: theme.tint }]}>
         Executive certification
       </Text>
-      <View style={[documentStyles.sectionBody, { borderColor: theme.rule }]}>
+      <View style={documentStyles.sectionBody}>
         <View style={documentStyles.signatureRow}>
           <DocumentSignature
             name={branding?.executiveSignatoryName}
@@ -627,15 +562,10 @@ export function DocumentVerificationBlock({
 }) {
   return (
     <View style={[documentStyles.verificationBlock, { borderColor: theme.rule }]} wrap={false}>
-      <View style={documentStyles.verifyQrCol}>
-        {qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
-      </View>
+      <View style={documentStyles.verifyQrCol}>{qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}</View>
       <View style={documentStyles.verifyDetailsCol}>
         <SafePdfText value="Verification code" style={documentStyles.verifyLabel} />
-        <SafePdfText
-          value={verificationCode}
-          style={[documentStyles.verifyTitle, { color: theme.primary }]}
-        />
+        <SafePdfText value={verificationCode} style={[documentStyles.verifyTitle, { color: theme.primary }]} />
       </View>
       <View style={documentStyles.verifyDetailsCol}>
         <SafePdfText value="Short link" style={documentStyles.verifyLabel} />
@@ -644,10 +574,7 @@ export function DocumentVerificationBlock({
       <View style={{ ...documentStyles.verifyDetailsCol, flex: 1.35 }}>
         <SafePdfText value="Document hash (SHA256)" style={documentStyles.verifyLabel} />
         <SafePdfText value={documentHash} style={documentStyles.verifyValue} />
-        <SafePdfText
-          value={`${branding?.organisationName || 'Government Fleet'} · Official digital record`}
-          style={documentStyles.verifyLabel}
-        />
+        <SafePdfText value={`${branding?.organisationName || 'Government Fleet'} · Official digital record`} style={documentStyles.verifyLabel} />
       </View>
     </View>
   );
@@ -667,10 +594,7 @@ export function DocumentVerificationFooter({
   return (
     <View style={[documentStyles.footer, { borderTopColor: theme.primary }]} fixed>
       <SafePdfText
-        value={
-          branding?.documentFooter ||
-          `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`
-        }
+        value={branding?.documentFooter || `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`}
         style={documentStyles.footerLeft}
       />
       <SafePdfText
@@ -681,10 +605,7 @@ export function DocumentVerificationFooter({
         }
         style={documentStyles.footerCentre}
       />
-      <Text
-        style={documentStyles.footerRight}
-        render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`}
-      />
+      <Text style={documentStyles.footerRight} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
     </View>
   );
 }

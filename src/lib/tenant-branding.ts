@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import sharp from 'sharp';
 import { getDb } from '@/db';
 import { tenantBranding, tenants } from '@/db/schema/tenants';
 import { getSignedFileUrl } from '@/lib/storage';
@@ -17,6 +18,8 @@ export interface ResolvedTenantBranding {
   registrationNumber?: string;
   motto?: string;
   logoUrl?: string;
+  /** Render-safe PNG used by React-PDF. Kept separate so snapshot identity cannot replace it. */
+  documentLogoUrl?: string;
   sealUrl?: string;
   primaryColor: string;
   accentColor: string;
@@ -86,17 +89,58 @@ export async function resolveTenantBranding(
 
 const documentImageCache = new Map<string, { value: string; expiresAt: number }>();
 
+function decodeDataImage(source: string): Buffer | null {
+  const match = source.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,([\s\S]+)$/);
+  if (!match) return null;
+  try {
+    return Buffer.from(match[1], 'base64');
+  } catch {
+    return null;
+  }
+}
+
+function absoluteDocumentImageUrl(source: string): string {
+  if (!source.startsWith('/')) return source;
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL;
+  if (!baseUrl) return source;
+  const normalizedBase = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
+  return `${normalizedBase.replace(/\/$/, '')}${source}`;
+}
+
+async function readDocumentImage(source?: string): Promise<Buffer | null> {
+  if (!source) return null;
+  if (source.startsWith('data:')) return decodeDataImage(source);
+  const resolvedSource = absoluteDocumentImageUrl(source);
+  if (resolvedSource.startsWith('/')) return null;
+  try {
+    const response = await fetch(resolvedSource, { signal: AbortSignal.timeout(5_000) });
+    const contentType = response.headers.get('content-type') || '';
+    if (!response.ok || !contentType.startsWith('image/')) return null;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return bytes.byteLength <= 3_000_000 ? bytes : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * React-PDF is most reliable with PNG/JPEG. Tenant branding may be uploaded as
+ * WebP, so convert every document image to a self-contained PNG before render.
+ */
 async function embedDocumentImage(source?: string): Promise<string | undefined> {
-  if (!source || source.startsWith('data:')) return source;
+  if (!source) return undefined;
   const cached = documentImageCache.get(source);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const input = await readDocumentImage(source);
+  if (!input) return source;
+
   try {
-    const response = await fetch(source, { signal: AbortSignal.timeout(5_000) });
-    const contentType = response.headers.get('content-type') || '';
-    if (!response.ok || !contentType.startsWith('image/')) return source;
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > 3_000_000) return source;
-    const value = `data:${contentType.split(';')[0]};base64,${Buffer.from(bytes).toString('base64')}`;
+    const png = await sharp(input).png().toBuffer();
+    const value = `data:image/png;base64,${png.toString('base64')}`;
     documentImageCache.set(source, { value, expiresAt: Date.now() + 5 * 60_000 });
     return value;
   } catch {
@@ -110,9 +154,11 @@ export async function resolveTenantDocumentBranding(
 ): Promise<ResolvedTenantBranding | null> {
   const branding = await resolveTenantBranding(tenantId);
   if (!branding) return null;
+  const documentLogoUrl = await embedDocumentImage(branding.logoUrl);
   return {
     ...branding,
-    logoUrl: await embedDocumentImage(branding.logoUrl),
+    logoUrl: documentLogoUrl,
+    documentLogoUrl,
     sealUrl: await embedDocumentImage(branding.sealUrl),
     executiveSignatureUrl: await embedDocumentImage(branding.executiveSignatureUrl),
   };
