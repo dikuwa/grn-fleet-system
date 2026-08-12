@@ -1,7 +1,7 @@
 -- Transport Administrators are operationally responsible for vehicle issue readiness
 -- and may perform the official departure/return inspection themselves.
-INSERT INTO role_permissions (id, role_id, permission_code)
-SELECT gen_random_uuid(), r.id, 'inspection:perform'
+INSERT INTO role_permissions (role_id, permission_code)
+SELECT r.id, 'inspection:perform'
 FROM roles r
 WHERE r.name = 'Transport Administrator'
   AND r.is_system = true
