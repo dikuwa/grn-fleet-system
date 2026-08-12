@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/input';
 import { useToast } from '@/lib/use-toast';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -81,7 +82,10 @@ const STATUS_VARIANT: Record<string, 'success' | 'pending' | 'info' | 'error' | 
   completed: 'success',
 };
 
-const ALLOWED_ACTIONS: Record<string, { action: string; label: string; variant: 'primary' | 'secondary' | 'destructive' }[]> = {
+const ALLOWED_ACTIONS: Record<
+  string,
+  { action: string; label: string; variant: 'primary' | 'secondary' | 'destructive' }[]
+> = {
   draft: [
     { action: 'submit', label: 'Submit for Review', variant: 'primary' },
     { action: 'archive', label: 'Archive', variant: 'secondary' },
@@ -135,6 +139,7 @@ export default function ProgrammeDetailPage() {
   const [actionDialog, setActionDialog] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [isWorking, setIsWorking] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['programme', id],
@@ -188,13 +193,16 @@ export default function ProgrammeDetailPage() {
   );
 
   const deleteDraft = useCallback(async () => {
-    if (!window.confirm('Delete this draft programme? This cannot be undone.')) return;
     setIsWorking(true);
     try {
       const res = await fetch(`/api/programmes/${id}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Delete failed');
-      toast({ title: 'Programme Deleted', description: 'Draft programme removed.', variant: 'success' });
+      toast({
+        title: 'Programme Deleted',
+        description: 'Draft programme removed.',
+        variant: 'success',
+      });
       router.push('/dashboard/programmes');
     } catch (err) {
       toast({
@@ -210,7 +218,7 @@ export default function ProgrammeDetailPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
+        <Loader2 className="text-ink-400 h-6 w-6 animate-spin" />
       </div>
     );
   }
@@ -218,11 +226,20 @@ export default function ProgrammeDetailPage() {
   if (error || !programme) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Programmes', href: '/dashboard/programmes' }]} />
+        <Breadcrumbs
+          items={[
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Programmes', href: '/dashboard/programmes' },
+          ]}
+        />
         <EmptyState
           icon={<FileText className="h-8 w-8" />}
           title="Programme not found"
-          description={error instanceof Error ? error.message : 'This programme does not exist or you do not have access to it.'}
+          description={
+            error instanceof Error
+              ? error.message
+              : 'This programme does not exist or you do not have access to it.'
+          }
           action={{ label: 'Back to Programmes', href: '/dashboard/programmes' }}
         />
       </div>
@@ -259,7 +276,12 @@ export default function ProgrammeDetailPage() {
             </Button>
           )}
           {programme.status === 'draft' && (
-            <Button variant="destructive" size="sm" onClick={deleteDraft} loading={isWorking}>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setConfirmDeleteOpen(true)}
+              loading={isWorking}
+            >
               <Trash2 className="h-4 w-4" /> Delete
             </Button>
           )}
@@ -303,7 +325,7 @@ export default function ProgrammeDetailPage() {
               )}
               {programme.purpose && (
                 <div>
-                  <p className="text-ink-500 mb-1 text-xs font-medium uppercase tracking-wider">
+                  <p className="text-ink-500 mb-1 text-xs font-medium tracking-wider uppercase">
                     Purpose / Travel Requirement
                   </p>
                   <p className="text-ink-700 text-sm">{programme.purpose}</p>
@@ -311,7 +333,7 @@ export default function ProgrammeDetailPage() {
               )}
               {programme.plannedActivities && (
                 <div>
-                  <p className="text-ink-500 mb-1 text-xs font-medium uppercase tracking-wider">
+                  <p className="text-ink-500 mb-1 text-xs font-medium tracking-wider uppercase">
                     Planned Activities
                   </p>
                   <p className="text-ink-700 text-sm whitespace-pre-line">
@@ -321,38 +343,42 @@ export default function ProgrammeDetailPage() {
               )}
 
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-                <div className="rounded-[8px] bg-muted p-3">
-                  <p className="text-[11px] text-ink-500 uppercase tracking-wider">Start</p>
+                <div className="bg-muted rounded-[8px] p-3">
+                  <p className="text-ink-500 text-[11px] tracking-wider uppercase">Start</p>
                   <p className="text-ink-950 mt-0.5 flex items-center gap-1.5 text-sm font-medium">
-                    <CalendarDays className="h-4 w-4 text-ink-400" /> {formatDate(programme.startDate)}
+                    <CalendarDays className="text-ink-400 h-4 w-4" />{' '}
+                    {formatDate(programme.startDate)}
                   </p>
                 </div>
-                <div className="rounded-[8px] bg-muted p-3">
-                  <p className="text-[11px] text-ink-500 uppercase tracking-wider">End</p>
+                <div className="bg-muted rounded-[8px] p-3">
+                  <p className="text-ink-500 text-[11px] tracking-wider uppercase">End</p>
                   <p className="text-ink-950 mt-0.5 flex items-center gap-1.5 text-sm font-medium">
-                    <CalendarDays className="h-4 w-4 text-ink-400" /> {formatDate(programme.endDate)}
+                    <CalendarDays className="text-ink-400 h-4 w-4" />{' '}
+                    {formatDate(programme.endDate)}
                   </p>
                 </div>
-                <div className="rounded-[8px] bg-muted p-3">
-                  <p className="text-[11px] text-ink-500 uppercase tracking-wider">Venue</p>
+                <div className="bg-muted rounded-[8px] p-3">
+                  <p className="text-ink-500 text-[11px] tracking-wider uppercase">Venue</p>
                   <p className="text-ink-950 mt-0.5 flex items-center gap-1.5 text-sm font-medium">
-                    <MapPin className="h-4 w-4 text-ink-400" /> {programme.venue || '—'}
+                    <MapPin className="text-ink-400 h-4 w-4" /> {programme.venue || '—'}
                   </p>
                 </div>
-                <div className="rounded-[8px] bg-muted p-3">
-                  <p className="text-[11px] text-ink-500 uppercase tracking-wider">Participants</p>
+                <div className="bg-muted rounded-[8px] p-3">
+                  <p className="text-ink-500 text-[11px] tracking-wider uppercase">Participants</p>
                   <p className="text-ink-950 mt-0.5 flex items-center gap-1.5 text-sm font-medium">
-                    <Users className="h-4 w-4 text-ink-400" /> {programme.expectedParticipants ?? '—'}
+                    <Users className="text-ink-400 h-4 w-4" />{' '}
+                    {programme.expectedParticipants ?? '—'}
                   </p>
                 </div>
-                <div className="rounded-[8px] bg-muted p-3">
-                  <p className="text-[11px] text-ink-500 uppercase tracking-wider">Est. Distance</p>
+                <div className="bg-muted rounded-[8px] p-3">
+                  <p className="text-ink-500 text-[11px] tracking-wider uppercase">Est. Distance</p>
                   <p className="text-ink-950 mt-0.5 flex items-center gap-1.5 text-sm font-medium">
-                    <Gauge className="h-4 w-4 text-ink-400" /> {programme.estimatedKilometres ? `${programme.estimatedKilometres} km` : '—'}
+                    <Gauge className="text-ink-400 h-4 w-4" />{' '}
+                    {programme.estimatedKilometres ? `${programme.estimatedKilometres} km` : '—'}
                   </p>
                 </div>
-                <div className="rounded-[8px] bg-muted p-3">
-                  <p className="text-[11px] text-ink-500 uppercase tracking-wider">Department</p>
+                <div className="bg-muted rounded-[8px] p-3">
+                  <p className="text-ink-500 text-[11px] tracking-wider uppercase">Department</p>
                   <p className="text-ink-950 mt-0.5 text-sm font-medium">
                     {programme.departmentName || programme.department || '—'}
                   </p>
@@ -361,7 +387,7 @@ export default function ProgrammeDetailPage() {
 
               {programme.reviewNotes && (
                 <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200">
-                  <p className="mb-1 text-xs font-medium uppercase tracking-wider">
+                  <p className="mb-1 text-xs font-medium tracking-wider uppercase">
                     Reviewer Notes
                   </p>
                   {programme.reviewNotes}
@@ -369,7 +395,7 @@ export default function ProgrammeDetailPage() {
               )}
               {programme.rejectionReason && (
                 <div className="rounded-[8px] border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800/40 dark:bg-red-950/20 dark:text-red-300">
-                  <p className="mb-1 text-xs font-medium uppercase tracking-wider">
+                  <p className="mb-1 text-xs font-medium tracking-wider uppercase">
                     Rejection Reason
                   </p>
                   {programme.rejectionReason}
@@ -385,9 +411,9 @@ export default function ProgrammeDetailPage() {
             </CardHeader>
             <CardContent>
               {linkedRequests.length === 0 ? (
-                <p className="py-4 text-center text-xs text-ink-400">
-                  No transport requests are linked to this programme yet. Published programmes
-                  can be selected when creating a transport request.
+                <p className="text-ink-400 py-4 text-center text-xs">
+                  No transport requests are linked to this programme yet. Published programmes can
+                  be selected when creating a transport request.
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -420,9 +446,10 @@ export default function ProgrammeDetailPage() {
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               <div>
-                <p className="text-ink-500 text-xs uppercase tracking-wider">Owner</p>
+                <p className="text-ink-500 text-xs tracking-wider uppercase">Owner</p>
                 <p className="text-ink-950 font-medium">
-                  {[programme.ownerFirstName, programme.ownerLastName].filter(Boolean).join(' ') || '—'}
+                  {[programme.ownerFirstName, programme.ownerLastName].filter(Boolean).join(' ') ||
+                    '—'}
                 </p>
                 {programme.ownerJobTitle && (
                   <p className="text-ink-500 text-xs">{programme.ownerJobTitle}</p>
@@ -430,14 +457,16 @@ export default function ProgrammeDetailPage() {
               </div>
               {programme.officeName && (
                 <div>
-                  <p className="text-ink-500 text-xs uppercase tracking-wider">Office</p>
+                  <p className="text-ink-500 text-xs tracking-wider uppercase">Office</p>
                   <p className="text-ink-950 font-medium">{programme.officeName}</p>
                 </div>
               )}
               {(programme.regionName || programme.region) && (
                 <div>
-                  <p className="text-ink-500 text-xs uppercase tracking-wider">Region</p>
-                  <p className="text-ink-950 font-medium">{programme.regionName || programme.region}</p>
+                  <p className="text-ink-500 text-xs tracking-wider uppercase">Region</p>
+                  <p className="text-ink-950 font-medium">
+                    {programme.regionName || programme.region}
+                  </p>
                 </div>
               )}
             </CardContent>
@@ -471,7 +500,7 @@ export default function ProgrammeDetailPage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {actionDialog ? ACTION_LABEL[actionDialog] ?? 'Confirm Action' : ''}
+              {actionDialog ? (ACTION_LABEL[actionDialog] ?? 'Confirm Action') : ''}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -509,9 +538,7 @@ export default function ProgrammeDetailPage() {
               </p>
             )}
             {actionDialog === 'complete' && (
-              <p className="text-ink-600 text-sm">
-                Mark this programme as completed.
-              </p>
+              <p className="text-ink-600 text-sm">Mark this programme as completed.</p>
             )}
 
             <div className="flex justify-end gap-2">
@@ -531,6 +558,16 @@ export default function ProgrammeDetailPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onOpenChange={setConfirmDeleteOpen}
+        title="Delete draft programme?"
+        description="This draft programme and its supporting data will be permanently removed. This cannot be undone."
+        confirmLabel="Delete programme"
+        variant="destructive"
+        onConfirm={deleteDraft}
+      />
     </div>
   );
 }

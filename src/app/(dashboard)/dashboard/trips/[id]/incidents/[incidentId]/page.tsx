@@ -18,6 +18,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { InvestigationPanel } from '@/components/incidents/InvestigationPanel';
 import { InsuranceTrackingPanel } from '@/components/incidents/InsuranceTrackingPanel';
 import { TechnicalClearanceForm } from '@/components/incidents/TechnicalClearanceForm';
@@ -84,6 +85,7 @@ function IncidentDetailInner() {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const [completingDetails, setCompletingDetails] = useState(false);
+  const [confirmCompleteOpen, setConfirmCompleteOpen] = useState(false);
 
   const fetchIncident = useCallback(async () => {
     setLoading(true);
@@ -161,7 +163,6 @@ function IncidentDetailInner() {
   }, [incidentId, incident, toast]);
 
   const completeDetails = useCallback(async () => {
-    if (!window.confirm('Mark this incident\'s details as complete?')) return;
     setCompletingDetails(true);
     try {
       const res = await fetch(`/api/incidents/${incidentId}/complete`, { method: 'POST' });
@@ -183,16 +184,16 @@ function IncidentDetailInner() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
-        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
-        <span className="ml-2 text-sm text-ink-500">Loading incident...</span>
+        <Loader2 className="text-brand-500 h-6 w-6 animate-spin" />
+        <span className="text-ink-500 ml-2 text-sm">Loading incident...</span>
       </div>
     );
   }
 
   if (!incident) {
     return (
-      <div className="text-center py-24 text-ink-500">
-        <AlertTriangle className="h-12 w-12 mx-auto mb-3 text-ink-300" />
+      <div className="text-ink-500 py-24 text-center">
+        <AlertTriangle className="text-ink-300 mx-auto mb-3 h-12 w-12" />
         <p>Incident not found</p>
         <Button size="compact" variant="secondary" onClick={fetchIncident} className="mt-3">
           Try again
@@ -223,46 +224,43 @@ function IncidentDetailInner() {
         description={`Incident ${incident.id.slice(0, 8)} — reported ${new Date(incident.occurredAt).toLocaleDateString()}`}
       >
         <div className="flex gap-2">
-            <Button
-              size="compact"
-              variant="secondary"
-              onClick={fetchIncident}
-              title="Refresh"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-            <Button
-              size="compact"
-              variant="secondary"
-              onClick={generateReport}
-              disabled={generatingReport}
-            >
-              {generatingReport
-                ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
-                : <FileText className="h-4 w-4 mr-1" />
-              }
-              Generate MVAR
-            </Button>
-            <Button
-              size="compact"
-              variant="primary"
-              onClick={downloadReport}
-              disabled={downloadingReport}
-            >
-              {downloadingReport
-                ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
-                : <Download className="h-4 w-4 mr-1" />
-              }
-              Download PDF
-            </Button>
+          <Button size="compact" variant="secondary" onClick={fetchIncident} title="Refresh">
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Button
+            size="compact"
+            variant="secondary"
+            onClick={generateReport}
+            disabled={generatingReport}
+          >
+            {generatingReport ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <FileText className="mr-1 h-4 w-4" />
+            )}
+            Generate MVAR
+          </Button>
+          <Button
+            size="compact"
+            variant="primary"
+            onClick={downloadReport}
+            disabled={downloadingReport}
+          >
+            {downloadingReport ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-1 h-4 w-4" />
+            )}
+            Download PDF
+          </Button>
         </div>
       </PageHeader>
 
       {/* Overview cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-ink-500">Severity</p>
+            <p className="text-ink-500 text-xs">Severity</p>
             <Badge variant={severityBadge} size="sm" className="mt-1 capitalize">
               {incident.severity}
             </Badge>
@@ -270,24 +268,26 @@ function IncidentDetailInner() {
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-ink-500">Type</p>
-            <p className="text-sm font-medium mt-1 capitalize">{incident.incidentType.replace(/_/g, ' ')}</p>
+            <p className="text-ink-500 text-xs">Type</p>
+            <p className="mt-1 text-sm font-medium capitalize">
+              {incident.incidentType.replace(/_/g, ' ')}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-ink-500">Occurrence</p>
-            <div className="flex items-center gap-1 text-sm mt-1">
-              <Clock className="h-3.5 w-3.5 text-ink-400" />
+            <p className="text-ink-500 text-xs">Occurrence</p>
+            <div className="mt-1 flex items-center gap-1 text-sm">
+              <Clock className="text-ink-400 h-3.5 w-3.5" />
               {new Date(incident.occurredAt).toLocaleString()}
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-ink-500">Location</p>
-            <div className="flex items-center gap-1 text-sm mt-1">
-              <MapPin className="h-3.5 w-3.5 text-ink-400" />
+            <p className="text-ink-500 text-xs">Location</p>
+            <div className="mt-1 flex items-center gap-1 text-sm">
+              <MapPin className="text-ink-400 h-3.5 w-3.5" />
               {incident.location || 'Not recorded'}
             </div>
           </CardContent>
@@ -300,9 +300,9 @@ function IncidentDetailInner() {
           <CardTitle className="text-sm font-semibold">Safety & Impact</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <div className="flex items-center gap-2">
-              <Car className="h-4 w-4 text-ink-400" />
+              <Car className="text-ink-400 h-4 w-4" />
               <span className="text-ink-600">Vehicle safe:</span>
               <span className="font-medium">{incident.safeToContinue ? 'Yes' : 'No'}</span>
             </div>
@@ -312,7 +312,9 @@ function IncidentDetailInner() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-ink-600">Injuries:</span>
-              <span className="font-medium">{incident.injuries ? `${incident.numberInjured} reported` : 'None'}</span>
+              <span className="font-medium">
+                {incident.injuries ? `${incident.numberInjured} reported` : 'None'}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-ink-600">Third party:</span>
@@ -328,10 +330,10 @@ function IncidentDetailInner() {
           <CardTitle className="text-sm font-semibold">Description</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-ink-700 whitespace-pre-wrap">{incident.description}</p>
+          <p className="text-ink-700 text-sm whitespace-pre-wrap">{incident.description}</p>
           {incident.detailsRequired && (
             <>
-              <div className="mt-3 rounded-lg bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 p-3 text-sm text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950/30 dark:text-yellow-200">
                 <AlertTriangle className="h-4 w-4" />
                 Additional details required before this incident can be finalised.
               </div>
@@ -339,13 +341,13 @@ function IncidentDetailInner() {
                 <Button
                   size="compact"
                   variant="primary"
-                  onClick={completeDetails}
+                  onClick={() => setConfirmCompleteOpen(true)}
                   disabled={completingDetails}
                 >
                   {completingDetails ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
                   ) : (
-                    <CheckCircle2 className="h-4 w-4 mr-1" />
+                    <CheckCircle2 className="mr-1 h-4 w-4" />
                   )}
                   Complete Details
                 </Button>
@@ -368,7 +370,7 @@ function IncidentDetailInner() {
               {incident.attachmentKeys.map((key, i) => (
                 <span
                   key={key}
-                  className="inline-flex items-center gap-1 rounded-lg bg-surface-hover px-3 py-1.5 text-xs text-ink-600 border border-border"
+                  className="bg-surface-hover text-ink-600 border-border inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs"
                 >
                   <FileText className="h-3 w-3" />
                   Attachment {i + 1}
@@ -380,9 +382,12 @@ function IncidentDetailInner() {
       )}
 
       {/* MVA Workflow panels — only show for accidents or when data already exists */}
-      {(hasMvaFields || incident.incidentType.includes('accident') || incident.severity === 'critical' || incident.severity === 'serious') && (
+      {(hasMvaFields ||
+        incident.incidentType.includes('accident') ||
+        incident.severity === 'critical' ||
+        incident.severity === 'serious') && (
         <div className="space-y-6">
-          <h2 className="text-lg font-semibold text-ink-900 flex items-center gap-2">
+          <h2 className="text-ink-900 flex items-center gap-2 text-lg font-semibold">
             <FileText className="h-5 w-5" />
             Motor Vehicle Accident Report
           </h2>
@@ -395,7 +400,9 @@ function IncidentDetailInner() {
               investigationNotes: incident.investigationNotes,
               investigationClosedAt: incident.investigationClosedAt,
               accidentReportNumber: incident.accidentReportNumber,
-              witnessStatements: incident.witnessStatements as Array<Record<string, unknown>> | null,
+              witnessStatements: incident.witnessStatements as Array<
+                Record<string, unknown>
+              > | null,
             }}
             onUpdate={fetchIncident}
           />
@@ -415,7 +422,8 @@ function IncidentDetailInner() {
           <TechnicalClearanceForm
             incidentId={incidentId}
             data={{
-              technicalClearanceStatus: incident.technicalClearanceStatus as TechnicalClearanceStatus,
+              technicalClearanceStatus:
+                incident.technicalClearanceStatus as TechnicalClearanceStatus,
               technicalClearanceAt: incident.technicalClearanceAt,
               technicalClearanceByUserId: incident.technicalClearanceByUserId,
             }}
@@ -423,6 +431,15 @@ function IncidentDetailInner() {
           />
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmCompleteOpen}
+        onOpenChange={setConfirmCompleteOpen}
+        title="Complete incident details?"
+        description="Marking the details as complete finalises the incident record. Missing or incomplete details will be locked from further editing."
+        confirmLabel="Complete details"
+        onConfirm={completeDetails}
+      />
     </div>
   );
 }
@@ -436,7 +453,7 @@ export default function IncidentDetailPage() {
     <Suspense
       fallback={
         <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+          <Loader2 className="text-brand-500 h-6 w-6 animate-spin" />
         </div>
       }
     >

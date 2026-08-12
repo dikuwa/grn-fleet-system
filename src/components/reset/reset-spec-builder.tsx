@@ -3,7 +3,8 @@
 import { CalendarClock, Database, Layers3, ShieldAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input, Label } from '@/components/ui/input';
+import { Label } from '@/components/ui/input';
+import { StyledDateInput } from '@/components/ui/styled-select';
 import {
   RESET_ALWAYS_PROTECTED,
   RESET_CATEGORY_CATALOG,
@@ -17,6 +18,9 @@ export interface ResetBuilderValue {
   categories: ResetCategoryId[];
   cutoff: string;
 }
+
+/** Cutoff picker may not select today or the future — computed once at load. */
+const CUTOFF_MAX_DATE = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 
 const PRESETS = [
   {
@@ -173,10 +177,10 @@ export function ResetSpecBuilder({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="reset-cutoff">Older than</Label>
-            <Input
+            <StyledDateInput
               id="reset-cutoff"
               type="date"
-              max={new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)}
+              max={CUTOFF_MAX_DATE}
               value={value.cutoff}
               onChange={(event) => onChange({ ...value, cutoff: event.target.value })}
             />

@@ -6,40 +6,15 @@ import { account, user } from '@/db/schema/better-auth';
 import { userProfiles } from '@/db/schema/auth';
 import { roleAssignments, rolePermissions, roles, tenantMemberships } from '@/db/schema/tenants';
 import { getSessionRoleNames, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
-import { Permissions, type PermissionCode } from '@/lib/permissions';
+import { Permissions } from '@/lib/permissions';
 import {
   PlatformSystemRoles,
   SystemRoles,
   WorkspaceIds,
   type PlatformSystemRole,
 } from '@/lib/workspaces';
-
-const ROLE_PERMISSIONS: Record<PlatformSystemRole, PermissionCode[]> = {
-  [SystemRoles.PLATFORM_ADMIN]: [
-    Permissions.PLATFORM_ADMIN,
-    Permissions.PLATFORM_SUPPORT,
-    Permissions.TENANT_VIEW,
-    Permissions.TENANT_MANAGE,
-    Permissions.SITE_MANAGE,
-    Permissions.BILLING_MANAGE,
-    Permissions.RESET_MANAGE,
-    Permissions.DEMO_MANAGE,
-    Permissions.AUDIT_READ,
-    Permissions.AUDIT_EXPORT,
-    Permissions.EMERGENCY_CONTACTS_MANAGE,
-  ],
-  [SystemRoles.PLATFORM_SUPPORT]: [
-    Permissions.PLATFORM_SUPPORT,
-    Permissions.TENANT_VIEW,
-    Permissions.DEMO_MANAGE,
-    Permissions.EMERGENCY_CONTACTS_MANAGE,
-  ],
-  [SystemRoles.PLATFORM_AUDITOR]: [
-    Permissions.TENANT_VIEW,
-    Permissions.AUDIT_READ,
-    Permissions.AUDIT_EXPORT,
-  ],
-};
+import { PLATFORM_ROLE_PERMISSIONS } from '@/lib/role-metadata';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 async function requirePlatformAdmin(request: NextRequest) {
   const auth = await requireRequestAuth(request);
@@ -82,7 +57,10 @@ async function ensurePlatformRole(tenantId: string, roleName: PlatformSystemRole
   await db
     .insert(rolePermissions)
     .values(
-      ROLE_PERMISSIONS[roleName].map((permissionCode) => ({ roleId: role.id, permissionCode })),
+      (PLATFORM_ROLE_PERMISSIONS[roleName] ?? []).map((permissionCode) => ({
+        roleId: role.id,
+        permissionCode,
+      })),
     )
     .onConflictDoNothing();
 
@@ -258,6 +236,17 @@ export async function POST(request: NextRequest) {
       .insert(roleAssignments)
       .values({ tenantMembershipId: membership.id, roleId: role.id, startDate: now });
 
+    await recordAuditEvent({
+      tenantId: auth.session.tenantId,
+      actorUserId: auth.session.user.id,
+      eventType: 'platform_user_created',
+      action: 'create',
+      entityType: 'platform_user',
+      entityId: userId,
+      after: { name, email, roleName },
+      summary: `Platform user created: ${name} (${email}) as ${roleName}`,
+    });
+
     return NextResponse.json(
       {
         success: true,
@@ -346,6 +335,28 @@ export async function PATCH(request: NextRequest) {
         .values({ tenantMembershipId: membership.id, roleId: role.id, startDate: new Date() });
     }
 
+    if (nextStatus || roleName) {
+      const [platformUserRow] = await db
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1);
+      await recordAuditEvent({
+        tenantId: auth.session.tenantId,
+        actorUserId: auth.session.user.id,
+        eventType: 'platform_user_updated',
+        action: 'update',
+        entityType: 'platform_user',
+        entityId: userId,
+        before: { roleName: currentRole?.name ?? null, status: membership.status },
+        after: {
+          roleName: roleName ?? currentRole?.name ?? null,
+          status: nextStatus ?? membership.status,
+        },
+        summary: `Platform access updated for ${platformUserRow?.email ?? userId}`,
+      });
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Platform Users] PATCH failed:', error);
@@ -368,7 +379,7 @@ export async function DELETE(request: NextRequest) {
 
     const db = getDb();
     const [membership] = await db
-      .select({ id: tenantMemberships.id })
+      .select({ id: tenantMemberships.id, status: tenantMemberships.status })
       .from(tenantMemberships)
       .where(
         and(
@@ -407,6 +418,24 @@ export async function DELETE(request: NextRequest) {
       .update(tenantMemberships)
       .set({ status: 'access_removed' })
       .where(eq(tenantMemberships.id, membership.id));
+
+    const [platformUserRow] = await db
+      .select({ email: user.email })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    await recordAuditEvent({
+      tenantId: auth.session.tenantId,
+      actorUserId: auth.session.user.id,
+      eventType: 'platform_user_removed',
+      action: 'delete',
+      entityType: 'platform_user',
+      entityId: userId,
+      before: { roleName: currentRole?.name ?? null, status: membership.status },
+      after: { status: 'access_removed' },
+      summary: `Platform access removed for ${platformUserRow?.email ?? userId}`,
+    });
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Platform Users] DELETE failed:', error);

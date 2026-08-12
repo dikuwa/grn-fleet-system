@@ -5,10 +5,12 @@
  * POST  /api/admin/roles — Create a tenant custom role
  * PATCH /api/admin/roles — Update a tenant role
  *
- * Built-in tenant role names are routing contracts and cannot be renamed.
- * Tenant Administrators may still tailor their descriptions and stored
- * permission sets. Custom roles remain fully tenant-editable. Every grant is
- * restricted to permissions valid in the Tenant Administrator workspace.
+ * Built-in tenant role names are routing contracts and cannot be renamed, and
+ * their system permission baseline cannot be removed. Tenant Administrators
+ * may still tailor descriptions and add configurable permissions. Custom roles
+ * remain fully tenant-editable. Every grant is restricted to permissions valid
+ * in the Tenant Administrator workspace (system baseline permissions are the
+ * only exception, and only for built-in roles).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -24,15 +26,49 @@ import {
 import { isPlatformSystemRole, WorkspaceIds } from '@/lib/workspaces';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { SYSTEM_ROLE_REQUIRED_PERMISSIONS, permissionLabel } from '@/lib/role-metadata';
 
-function normalizePermissionCodes(value: unknown): PermissionCode[] | null {
-  if (!Array.isArray(value)) return null;
+const MAX_ROLE_DESCRIPTION_LENGTH = 500;
+const REQUIRED_PERMISSION_LOCK_MESSAGE =
+  'Required system permissions cannot be removed. They are part of the built-in role the application relies on for its workflows.';
+
+function normalizeDescription(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed.slice(0, MAX_ROLE_DESCRIPTION_LENGTH) : null;
+}
+
+type PermissionValidation =
+  | { ok: true; codes: PermissionCode[] }
+  | { ok: false; reason: 'invalid' | 'missing-required'; missingRequired?: string[] };
+
+/**
+ * Validate a submitted permission set.
+ *
+ * For system roles the role's system baseline (`required`) is always allowed —
+ * those codes are managed by the platform and may legitimately live outside the
+ * Tenant Administrator grantable policy. Every baseline code must remain in the
+ * submitted set; removing any of them is rejected. Custom roles may only carry
+ * permissions that are available in the Tenant Administrator workspace.
+ */
+function validateRolePermissionCodes(
+  value: unknown,
+  required: readonly string[],
+): PermissionValidation {
+  if (!Array.isArray(value)) return { ok: false, reason: 'invalid' };
   const unique = [...new Set(value.filter((code): code is string => typeof code === 'string'))];
-  const allowed = unique.filter((code) =>
-    isPermissionAvailableInWorkspace(code as PermissionCode, WorkspaceIds.TENANT_ADMIN),
-  );
-  if (allowed.length !== unique.length) return null;
-  return allowed as PermissionCode[];
+  for (const code of unique) {
+    const tenantValid = isPermissionAvailableInWorkspace(
+      code as PermissionCode,
+      WorkspaceIds.TENANT_ADMIN,
+    );
+    if (!tenantValid && !required.includes(code)) return { ok: false, reason: 'invalid' };
+  }
+  const missingRequired = required.filter((code) => !unique.includes(code));
+  if (missingRequired.length > 0) {
+    return { ok: false, reason: 'missing-required', missingRequired };
+  }
+  return { ok: true, codes: unique as PermissionCode[] };
 }
 
 function databaseCode(error: unknown) {
@@ -112,6 +148,9 @@ export async function GET(request: NextRequest) {
       isSystem: role.isSystem,
       memberCount: memberCountByRole.get(role.id) || 0,
       permissionCodes: permsByRole.get(role.id) || [],
+      requiredPermissionCodes: role.isSystem
+        ? (SYSTEM_ROLE_REQUIRED_PERMISSIONS[role.name] ?? [])
+        : [],
       editable: true,
       nameEditable: !role.isSystem,
     }));
@@ -134,22 +173,29 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    const description = typeof body?.description === 'string' ? body.description.trim() : '';
-    const permissionCodes = normalizePermissionCodes(body?.permissionCodes ?? []);
+    const description = normalizeDescription(body?.description);
+    const permissionValidation = validateRolePermissionCodes(body?.permissionCodes ?? [], []);
 
     if (!name) return NextResponse.json({ error: 'Role name is required' }, { status: 400 });
+    if (name.length > 80) {
+      return NextResponse.json(
+        { error: 'Role name must be 80 characters or fewer' },
+        { status: 400 },
+      );
+    }
     if (isPlatformSystemRole(name)) {
       return NextResponse.json(
         { error: 'Platform roles are managed only from Platform Users.' },
         { status: 403 },
       );
     }
-    if (permissionCodes === null) {
+    if (!permissionValidation.ok) {
       return NextResponse.json(
         { error: 'One or more selected permissions are not available to tenant roles.' },
         { status: 400 },
       );
     }
+    const permissionCodes = permissionValidation.codes;
 
     const db = getDb();
     const [existing] = await db
@@ -242,21 +288,53 @@ export async function PATCH(request: NextRequest) {
         { status: 403 },
       );
     }
+    if (existing.isSystem && !SYSTEM_ROLE_REQUIRED_PERMISSIONS[existing.name]) {
+      // Fail closed: a built-in role whose system definition is not recognised
+      // must not silently lose its protection.
+      return NextResponse.json(
+        {
+          error: `"${existing.name}" is marked as a built-in role but its system definition is not recognised. Contact the platform administrator.`,
+        },
+        { status: 409 },
+      );
+    }
     const name =
       body?.name === undefined ? undefined : typeof body.name === 'string' ? body.name.trim() : '';
     const description =
-      body?.description === undefined
-        ? undefined
-        : typeof body.description === 'string'
-          ? body.description.trim()
-          : '';
-    const permissionCodes =
-      body?.permissionCodes === undefined
-        ? undefined
-        : normalizePermissionCodes(body.permissionCodes);
+      body?.description === undefined ? undefined : normalizeDescription(body.description);
+    let permissionCodes: PermissionCode[] | undefined;
+    if (body?.permissionCodes !== undefined) {
+      const required = existing.isSystem
+        ? (SYSTEM_ROLE_REQUIRED_PERMISSIONS[existing.name] ?? [])
+        : [];
+      const validation = validateRolePermissionCodes(body.permissionCodes, required);
+      if (!validation.ok) {
+        if (validation.reason === 'missing-required' && existing.isSystem) {
+          return NextResponse.json(
+            {
+              error: `${REQUIRED_PERMISSION_LOCK_MESSAGE} ${validation.missingRequired
+                ?.map(permissionLabel)
+                .join(', ')}.`,
+            },
+            { status: 409 },
+          );
+        }
+        return NextResponse.json(
+          { error: 'One or more selected permissions are not available to tenant roles.' },
+          { status: 400 },
+        );
+      }
+      permissionCodes = validation.codes;
+    }
 
     if (name !== undefined && !name)
       return NextResponse.json({ error: 'Role name cannot be empty' }, { status: 400 });
+    if (name !== undefined && name.length > 80) {
+      return NextResponse.json(
+        { error: 'Role name must be 80 characters or fewer' },
+        { status: 400 },
+      );
+    }
     if (name !== undefined && isPlatformSystemRole(name)) {
       return NextResponse.json(
         { error: 'Tenant roles cannot use a reserved platform role name.' },
@@ -267,12 +345,6 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         { error: 'Built-in role names are used for workspace routing and cannot be renamed.' },
         { status: 409 },
-      );
-    }
-    if (permissionCodes === null) {
-      return NextResponse.json(
-        { error: 'One or more selected permissions are not available to tenant roles.' },
-        { status: 400 },
       );
     }
 
@@ -322,6 +394,11 @@ export async function PATCH(request: NextRequest) {
       return mutations;
     });
 
+    const beforeCodes = existingPermissions.map((permission) => permission.permissionCode);
+    const afterCodes = permissionCodes ?? beforeCodes;
+    const permissionAdded = afterCodes.filter((code) => !beforeCodes.includes(code));
+    const permissionRemoved = beforeCodes.filter((code) => !afterCodes.includes(code));
+
     await recordAuditEvent({
       tenantId: session.tenantId,
       actorUserId: session.user.id,
@@ -332,15 +409,17 @@ export async function PATCH(request: NextRequest) {
       before: {
         name: existing.name,
         description: existing.description,
-        permissionCodes: existingPermissions.map((permission) => permission.permissionCode),
+        permissionCodes: beforeCodes,
       },
       after: {
         name: name ?? existing.name,
         description: description === undefined ? existing.description : description || null,
-        permissionCodes:
-          permissionCodes ?? existingPermissions.map((permission) => permission.permissionCode),
+        permissionCodes: afterCodes,
+        permissionAdded,
+        permissionRemoved,
+        isSystem: existing.isSystem,
       },
-      summary: `Custom role updated: ${name ?? existing.name}`,
+      summary: `${existing.isSystem ? 'Protected system role' : 'Custom role'} updated: ${name ?? existing.name}${existing.isSystem ? ' (system identity and required permissions preserved)' : ''}`,
     });
 
     return NextResponse.json({ success: true });

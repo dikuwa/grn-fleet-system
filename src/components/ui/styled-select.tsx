@@ -233,6 +233,7 @@ const StyledDateInput = React.forwardRef<HTMLInputElement, StyledDateInputProps>
           <input
             ref={ref}
             type="hidden"
+            id={props.id}
             name={props.name}
             value={resolvedValue}
             disabled={props.disabled}

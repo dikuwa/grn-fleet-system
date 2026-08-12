@@ -150,7 +150,8 @@ export function isPermissionAvailableInWorkspace(
     Permissions.PROGRAMME_SUBMIT,
   ];
   if (commonRequestPermissions.includes(permission) && workspace !== W.PLATFORM_ADMIN) return true;
-  if (commonProgrammePermissions.includes(permission) && workspace !== W.PLATFORM_ADMIN) return true;
+  if (commonProgrammePermissions.includes(permission) && workspace !== W.PLATFORM_ADMIN)
+    return true;
 
   const policies: Record<string, readonly PermissionCode[]> = {
     [W.PERSONAL]: [...commonRequestPermissions, Permissions.FILE_VIEW, Permissions.FILE_UPLOAD],
@@ -328,6 +329,10 @@ export function isPermissionAvailableInWorkspace(
  * Predefined role definitions with their permissions
  */
 export const RoleDefinitions = {
+  // Platform baselines must stay in lockstep with `PLATFORM_ROLE_PERMISSIONS`
+  // in `src/lib/role-metadata.ts` (which derives from these) and with the
+  // platform workspace policy above. The seed and the Platform Users API both
+  // grant from this single definition.
   PLATFORM_SUPER_ADMIN: {
     name: 'Platform Super Administrator',
     isSystem: true,
@@ -335,17 +340,25 @@ export const RoleDefinitions = {
       Permissions.TENANT_MANAGE,
       Permissions.TENANT_VIEW,
       Permissions.PLATFORM_ADMIN,
+      Permissions.PLATFORM_SUPPORT,
       Permissions.SITE_MANAGE,
       Permissions.BILLING_MANAGE,
       Permissions.RESET_MANAGE,
       Permissions.DEMO_MANAGE,
       Permissions.AUDIT_READ,
+      Permissions.AUDIT_EXPORT,
+      Permissions.EMERGENCY_CONTACTS_MANAGE,
     ],
   },
   PLATFORM_SUPPORT: {
     name: 'Platform Support Administrator',
     isSystem: true,
-    permissions: [Permissions.PLATFORM_SUPPORT, Permissions.TENANT_VIEW],
+    permissions: [
+      Permissions.PLATFORM_SUPPORT,
+      Permissions.TENANT_VIEW,
+      Permissions.DEMO_MANAGE,
+      Permissions.EMERGENCY_CONTACTS_MANAGE,
+    ],
   },
   PLATFORM_AUDITOR: {
     name: 'Platform Auditor',
@@ -696,11 +709,7 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   },
   userAccounts: {
     label: 'User Accounts',
-    permissions: [
-      Permissions.USER_VIEW,
-      Permissions.USER_MANAGE_STATUS,
-      Permissions.USER_INVITE,
-    ],
+    permissions: [Permissions.USER_VIEW, Permissions.USER_MANAGE_STATUS, Permissions.USER_INVITE],
   },
   audit: {
     label: 'Audit',

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Shield, UserCog, UserMinus, UserRoundCheck } from 'lucide-react';
+import { Lock, Plus, RefreshCw, Shield, UserCog, UserMinus, UserRoundCheck } from 'lucide-react';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,12 @@ import { Input, Label } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
-import { SystemRoles } from '@/lib/workspaces';
+import { PlatformSystemRoles, SystemRoles } from '@/lib/workspaces';
+import {
+  PLATFORM_ROLE_PERMISSIONS,
+  roleResponsibility,
+  summarizeCurrentAccess,
+} from '@/lib/role-metadata';
 
 type PlatformUser = {
   id: string;
@@ -39,23 +44,24 @@ type CreatedCredentials = {
   temporaryPassword: string;
 };
 
-const ROLE_OPTIONS = [
-  {
-    value: SystemRoles.PLATFORM_ADMIN,
-    label: 'Platform Super Administrator',
-    description: 'Full platform administration and tenant operations.',
-  },
-  {
-    value: SystemRoles.PLATFORM_SUPPORT,
-    label: 'Platform Support Administrator',
-    description: 'Demo, tenant visibility and support operations.',
-  },
-  {
-    value: SystemRoles.PLATFORM_AUDITOR,
-    label: 'Platform Auditor',
-    description: 'Read-only tenant visibility and platform audit/export.',
-  },
-];
+/**
+ * Platform roles are fixed system roles. Labels, responsibilities and current
+ * access all come from `src/lib/role-metadata.ts` so the UI, the Platform
+ * Users API and the workspace policy stay in lockstep.
+ */
+const ROLE_OPTIONS = PlatformSystemRoles.map((name) => ({
+  value: name,
+  label: name,
+  responsibility: roleResponsibility(name, null),
+  currentAccess: summarizeCurrentAccess(PLATFORM_ROLE_PERMISSIONS[name] ?? []),
+}));
+
+/** Single-line "Current access" summary for a platform role name. */
+function platformRoleAccess(name: string | null | undefined): string {
+  return name
+    ? summarizeCurrentAccess(PLATFORM_ROLE_PERMISSIONS[name] ?? []).join(' · ') || '—'
+    : '—';
+}
 
 export default function PlatformUsersPage() {
   const { toast } = useToast();
@@ -181,7 +187,7 @@ export default function PlatformUsersPage() {
   };
 
   const roleSummary = useMemo(
-    () => ROLE_OPTIONS.find((role) => role.value === roleName)?.description ?? '',
+    () => ROLE_OPTIONS.find((role) => role.value === roleName)?.responsibility ?? '',
     [roleName],
   );
 
@@ -207,7 +213,8 @@ export default function PlatformUsersPage() {
             <p className="text-ink-600 mt-1 text-xs leading-relaxed">
               GovFleet always requires at least one active Platform Super Administrator. Support and
               Auditor roles can assist with their assigned operations, but cannot add, remove,
-              suspend, promote, or demote platform users.
+              suspend, promote, or demote platform users. Platform roles are protected system roles
+              — their capabilities are fixed by GovFleet and cannot be changed here.
             </p>
           </div>
         </div>
@@ -266,13 +273,40 @@ export default function PlatformUsersPage() {
                   {platformUser.username ? ` · ${platformUser.username}` : ''}
                 </p>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-ink-400 text-[10px] font-medium tracking-wide uppercase">
                   Platform role
                 </p>
-                <p className="text-ink-700 mt-1 text-sm">
-                  {platformUser.roleName || 'No platform role'}
-                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <p className="text-ink-700 text-sm">
+                    {platformUser.roleName || 'No platform role'}
+                  </p>
+                  {platformUser.roleName && (
+                    <>
+                      <Badge variant="info" size="sm">
+                        System
+                      </Badge>
+                      <Badge variant="warning" size="sm">
+                        <Lock className="h-3 w-3" aria-hidden="true" /> Protected
+                      </Badge>
+                    </>
+                  )}
+                </div>
+                {platformUser.roleName && (
+                  <p className="text-ink-500 mt-1 line-clamp-2 text-xs leading-relaxed">
+                    {roleResponsibility(platformUser.roleName, null)}
+                  </p>
+                )}
+                {platformUser.roleName && (
+                  <div className="mt-1 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs">
+                    <span className="text-ink-400 text-[10px] font-medium tracking-wide uppercase">
+                      Current access
+                    </span>
+                    <span className="text-ink-600">
+                      {platformRoleAccess(platformUser.roleName)}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 <Button
@@ -304,7 +338,8 @@ export default function PlatformUsersPage() {
             <DialogTitle>Add platform user</DialogTitle>
             <DialogDescription>
               Create a separate platform account with only the role needed for the work they will
-              perform.
+              perform. Platform roles are protected system roles: their capabilities are fixed by
+              GovFleet.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -344,7 +379,8 @@ export default function PlatformUsersPage() {
                   </option>
                 ))}
               </StyledSelect>
-              <p className="text-ink-500 text-xs">{roleSummary}</p>
+              {roleSummary && <p className="text-ink-500 text-xs">{roleSummary}</p>}
+              <p className="text-ink-400 text-xs">Current access: {platformRoleAccess(roleName)}</p>
             </div>
           </div>
           <DialogFooter>
@@ -383,6 +419,22 @@ export default function PlatformUsersPage() {
                       </option>
                     ))}
                   </StyledSelect>
+                  {editing.roleName && (
+                    <p className="text-ink-500 text-xs">
+                      {roleResponsibility(editing.roleName, null)}
+                    </p>
+                  )}
+                  {editing.roleName && (
+                    <p className="text-ink-400 text-xs">
+                      Current access: {platformRoleAccess(editing.roleName)}
+                    </p>
+                  )}
+                  {editing.roleName && (
+                    <p className="text-ink-400 text-[11px]">
+                      Platform roles are protected system roles. Capabilities are fixed by GovFleet
+                      and cannot be changed here.
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label>Status</Label>

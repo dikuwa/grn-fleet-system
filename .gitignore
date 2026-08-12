@@ -52,6 +52,7 @@
 
 # local test/desktop artifacts
 .freebuff/
+/artifacts/
 
 # development data reset artifacts (backups + reports)
 /data-reset-backups

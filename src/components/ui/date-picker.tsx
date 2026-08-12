@@ -135,16 +135,25 @@ export function DatePicker({
                 ...(maxDate ? [{ after: maxDate }] : []),
               ]}
             />
-            <div className="border-border border-t p-2.5">
+            <div className="border-border flex items-center gap-2 border-t p-2.5">
               <input
                 type="text"
                 value={inputValue}
                 onChange={handleInputChange}
                 placeholder="dd/mm/yyyy"
                 inputMode="numeric"
-                className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-9 w-full rounded-[7px] border px-3 text-sm focus:ring-2 focus:outline-none"
+                className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 h-9 min-w-0 flex-1 rounded-[7px] border px-3 text-sm focus:ring-2 focus:outline-none"
                 aria-label="Type date in dd/mm/yyyy format"
               />
+              {value ? (
+                <button
+                  type="button"
+                  onClick={() => handleSelect(undefined)}
+                  className="text-ink-500 hover:text-ink-900 hover:bg-muted focus:ring-brand-600 h-9 shrink-0 rounded-[7px] px-3 text-xs font-medium transition-colors focus:ring-2 focus:outline-none"
+                >
+                  Clear
+                </button>
+              ) : null}
             </div>
           </Popover.Content>
         </Popover.Portal>
