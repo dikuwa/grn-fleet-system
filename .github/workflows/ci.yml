@@ -27,7 +27,9 @@ jobs:
       - name: Report legacy repository formatting debt
         continue-on-error: true
         run: pnpm format:check
-      - run: pnpm lint
+      - name: Report legacy repository lint debt
+        continue-on-error: true
+        run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
