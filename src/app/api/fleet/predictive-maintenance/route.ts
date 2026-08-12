@@ -3,6 +3,7 @@ import { getDb } from '@/db';
 import { vehicles } from '@/db/schema/fleet';
 import {
   getSessionRoleNames,
+  requireDashboardAction,
   requirePermission,
   requireRequestAuth,
 } from '@/lib/auth-helpers';
@@ -25,13 +26,26 @@ export async function GET(req: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    // VEHICLE_VIEW is shared by several operational workspaces. The predictive
+    // maintenance screen is intentionally Maintenance-only, so direct API calls
+    // must pass the same route matrix as the page itself before scope resolution.
+    const routeCheck = await requireDashboardAction(
+      session,
+      '/dashboard/fleet/predictive-maintenance',
+      'view',
+    );
+    if (routeCheck instanceof NextResponse) return routeCheck;
+
     const permCheck = await requirePermission(session, Permissions.VEHICLE_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
 
     const roleNames = await getSessionRoleNames(session);
     const access = resolveDashboardAccess('/dashboard/fleet/predictive-maintenance', roleNames);
-    const db = getDb();
+    if (!access.allowed || !access.recordScope) {
+      return NextResponse.json({ error: 'Predictive maintenance access is not available' }, { status: 403 });
+    }
 
+    const db = getDb();
     const visibleVehicles = await db
       .select({ id: vehicles.id })
       .from(vehicles)
@@ -39,7 +53,7 @@ export async function GET(req: NextRequest) {
         vehicleScopeCondition({
           tenantId: session.tenantId,
           userId: session.user.id,
-          recordScope: access.recordScope ?? 'related',
+          recordScope: access.recordScope,
         }),
       );
 
