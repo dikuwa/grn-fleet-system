@@ -3,7 +3,14 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { CheckSquare, RotateCcw, CheckCircle2, Undo2, Clock3 } from 'lucide-react';
+import {
+  CheckSquare,
+  RotateCcw,
+  CheckCircle2,
+  Undo2,
+  Clock3,
+  ArrowRight,
+} from 'lucide-react';
 
 interface ClosureReviewActionsProps {
   tripId: string;
@@ -96,9 +103,49 @@ export function ClosureReviewActions({
   }
 
   const canReview = tripStatus === 'closure_review' && hasReturnInspection;
+  const currentStep = !hasReturnInspection
+    ? 'Complete arrival inspection'
+    : reconciliationReady
+      ? 'Reconciliation checks complete'
+      : reconciliationBlockers[0] || 'Resolve reconciliation requirements';
+  const nextStep = !hasReturnInspection
+    ? 'Review fuel, expenses and incidents'
+    : reconciliationReady
+      ? 'Close the trip'
+      : reconciliationBlockers.length > 1
+        ? 'Resolve the remaining reconciliation blockers'
+        : 'Close the trip';
 
   return (
     <div className="min-w-[240px] space-y-2" onClick={(event) => event.stopPropagation()}>
+      <div className="rounded-[8px] border border-border bg-muted/30 p-2.5">
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+          <div className="min-w-0">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+              Current step
+            </p>
+            <p
+              className={`mt-0.5 text-[11px] font-semibold leading-4 ${
+                reconciliationReady
+                  ? 'text-status-success-text'
+                  : hasReturnInspection
+                    ? 'text-status-pending-text'
+                    : 'text-ink-950'
+              }`}
+            >
+              {currentStep}
+            </p>
+          </div>
+          <ArrowRight className="hidden h-3.5 w-3.5 text-ink-400 sm:block" aria-hidden="true" />
+          <div className="min-w-0 border-t border-border pt-2 sm:border-l sm:border-t-0 sm:pl-2 sm:pt-0">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+              Next step
+            </p>
+            <p className="mt-0.5 text-[11px] font-semibold leading-4 text-ink-950">{nextStep}</p>
+          </div>
+        </div>
+      </div>
+
       {canReview && (
         <textarea
           value={reviewNotes}
