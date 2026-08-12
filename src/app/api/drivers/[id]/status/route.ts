@@ -79,6 +79,12 @@ export async function PATCH(
     if (!employee.isDriver) {
       return NextResponse.json({ error: 'Employee is not registered as a driver' }, { status: 400 });
     }
+    if (action === 'reactivate' && employee.employmentStatus !== 'active') {
+      return NextResponse.json(
+        { error: 'Only an active staff member can be reactivated as an operational driver.' },
+        { status: 409 },
+      );
+    }
 
     const [profile] = await db
       .select({ id: driverProfiles.id, driverStatus: driverProfiles.driverStatus })
@@ -229,6 +235,13 @@ export async function PATCH(
               AND dl.is_verified = true
               AND dl.expiry_date >= ${today}
           )
+          AND EXISTS (
+            SELECT 1
+            FROM employees e
+            WHERE e.id = ${employee.id}::uuid
+              AND e.tenant_id = ${session.tenantId}::uuid
+              AND e.employment_status = 'active'
+          )
         RETURNING id
       ),
       employee_update AS (
@@ -236,6 +249,7 @@ export async function PATCH(
         SET availability_status = 'available', updated_at = ${now}
         WHERE id = ${employee.id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
+          AND employment_status = 'active'
           AND availability_status = 'temporarily_unavailable'
           AND EXISTS (SELECT 1 FROM profile_claim)
         RETURNING id
