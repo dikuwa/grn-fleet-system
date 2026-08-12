@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Play, CheckSquare, KeyRound, UserCheck, Repeat } from 'lucide-react';
+import { CheckSquare, KeyRound, Repeat, Clock3 } from 'lucide-react';
 import Link from 'next/link';
 import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
 
@@ -39,7 +39,6 @@ export function TripActions({
   vehicleId,
   vehicle,
   canManage,
-  canDrive,
   canInspect,
   canReplaceVehicle = false,
   currentOdometer,
@@ -54,20 +53,6 @@ export function TripActions({
   const handleReplaceSuccess = useCallback(() => {
     router.refresh();
   }, [router]);
-
-  const handleStartTrip = useCallback(async () => {
-    setIsWorking(true);
-    setError('');
-    try {
-      const res = await fetch(`/api/trips/${tripId}/start`, { method: 'POST' });
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed to start trip');
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start trip');
-    } finally {
-      setIsWorking(false);
-    }
-  }, [tripId, router]);
 
   const handleDepartureInspection = useCallback(() => {
     router.push(`/dashboard/inspections/new?type=departure&tripId=${tripId}&vehicleId=${vehicleId}`);
@@ -98,26 +83,6 @@ export function TripActions({
     }
   }, [tripId, currentOdometer, router]);
 
-  const handleAcknowledge = useCallback(async () => {
-    setIsWorking(true);
-    setError('');
-    try {
-      const res = await fetch(`/api/trips/${tripId}/acknowledge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to acknowledge');
-      }
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to acknowledge');
-    } finally {
-      setIsWorking(false);
-    }
-  }, [tripId, router]);
-
   const replacementDialog = canReplaceVehicle && allocationId && vehicle ? (
     <VehicleReplacementDialog
       open={replaceDialogOpen}
@@ -131,13 +96,17 @@ export function TripActions({
 
   if (status === 'pending') {
     return (
-      <div className="flex flex-wrap gap-2">
-        {canDrive && !hasAcknowledge && (
-          <Button variant="secondary" size="sm" loading={isWorking} onClick={handleAcknowledge}>
-            <UserCheck className="h-4 w-4" /> Driver Acknowledge
-          </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {canInspect && !hasAcknowledge && !hasDepartureInspection && (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-status-pending-bg/40 bg-status-pending-bg/10 px-2.5 py-1.5 text-xs text-status-pending-text"
+            title="The assigned driver must accept the Trip Authority before the official departure inspection can begin."
+          >
+            <Clock3 className="h-3.5 w-3.5" />
+            Waiting for driver acknowledgement
+          </span>
         )}
-        {canInspect && !hasDepartureInspection && (
+        {canInspect && hasAcknowledge && !hasDepartureInspection && (
           <Button variant="secondary" size="sm" onClick={handleDepartureInspection}>
             <CheckSquare className="h-4 w-4" /> Departure Inspection
           </Button>
@@ -152,10 +121,10 @@ export function TripActions({
             <KeyRound className="h-4 w-4" /> Issue Vehicle
           </Button>
         )}
-        {canDrive && hasIssue && (
-          <Button variant="primary" size="sm" loading={isWorking} onClick={handleStartTrip}>
-            <Play className="h-4 w-4" /> Start Trip
-          </Button>
+        {hasIssue && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-status-success-text">
+            <CheckSquare className="h-3.5 w-3.5" /> Vehicle issued — waiting for the driver to start the trip
+          </span>
         )}
         {error && <p className="mt-1 w-full text-xs text-status-error-text">{error}</p>}
         {replacementDialog}

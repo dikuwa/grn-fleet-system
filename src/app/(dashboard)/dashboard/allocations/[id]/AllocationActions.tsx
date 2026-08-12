@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Truck, XCircle, Info } from 'lucide-react';
+import { Truck, XCircle, Info, ArrowRight, CheckCircle2 } from 'lucide-react';
 
 interface AllocationActionsProps {
   allocationId: string;
@@ -86,6 +86,30 @@ export function AllocationActions({ allocationId, hasTrip }: AllocationActionsPr
 
   return (
     <div className="flex flex-col items-start gap-2 sm:items-end">
+      <div className="w-full max-w-sm min-w-[260px] rounded-[8px] border border-border bg-muted/30 p-3 text-left">
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+          <div className="min-w-0">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-ink-500">Current step</p>
+            <p className={`mt-0.5 text-xs font-semibold ${hasTrip ? 'text-status-success-text' : 'text-ink-950'}`}>
+              {hasTrip ? 'Operational trip created' : 'Confirm allocation and create trip'}
+            </p>
+          </div>
+          <ArrowRight className="hidden h-3.5 w-3.5 text-ink-400 sm:block" aria-hidden="true" />
+          <div className="min-w-0 border-t border-border pt-2 sm:border-l sm:border-t-0 sm:pl-2 sm:pt-0">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-ink-500">Next step</p>
+            <p className="mt-0.5 text-xs font-semibold text-ink-950">
+              {hasTrip ? 'Complete trip release readiness' : 'Final authorisation, driver acceptance and inspection'}
+            </p>
+          </div>
+        </div>
+        {hasTrip && (
+          <p className="mt-2 flex items-center gap-1.5 text-[10px] text-ink-500">
+            <CheckCircle2 className="h-3.5 w-3.5 text-status-success-text" />
+            Continue from the trip workspace; do not create a second operational trip.
+          </p>
+        )}
+      </div>
+
       <div className="flex w-full flex-col items-end gap-2">
         {!hasTrip && (
           <div className="border-border bg-surface w-full max-w-sm min-w-[260px] rounded-[8px] border p-3 text-left shadow-sm">

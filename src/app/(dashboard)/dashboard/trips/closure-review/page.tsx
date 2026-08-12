@@ -1,9 +1,18 @@
 import { getDb, isDbConnected } from '@/db';
-import { trips, tripClosures, vehicleAllocations, vehicleInspections } from '@/db/schema/trips';
+import {
+  fuelTransactions,
+  tripAuthorities,
+  tripClosures,
+  tripExpenses,
+  tripIncidents,
+  trips,
+  vehicleAllocations,
+  vehicleInspections,
+} from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { eq, and, desc, inArray } from 'drizzle-orm';
+import { eq, and, desc, inArray, ne } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -43,14 +52,25 @@ interface ClosureTrip {
   requesterLastName: string | null;
   hasReturnInspection: boolean;
   hasClosureRecord: boolean;
+  reconciliationReady: boolean;
+  reconciliationBlockers: string[];
 }
 
 const TRIP_STATUS_LABELS: Record<string, string> = {
   closure_review: statusConfig('closure_review').label,
 };
 
-const TRIP_STATUS_VARIANTS: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'> = {
-  closure_review: statusConfig('closure_review').variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency',
+const TRIP_STATUS_VARIANTS: Record<
+  string,
+  'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency'
+> = {
+  closure_review: statusConfig('closure_review').variant as
+    | 'success'
+    | 'pending'
+    | 'info'
+    | 'error'
+    | 'cancelled'
+    | 'emergency',
 };
 
 async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]> {
@@ -70,6 +90,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       requesterFirstName: employees.firstName,
       requesterLastName: employees.lastName,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      authorityStatus: tripAuthorities.status,
     })
     .from(trips)
     .innerJoin(
@@ -79,6 +100,10 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
     .innerJoin(
       transportRequests,
       and(eq(trips.requestId, transportRequests.id), eq(transportRequests.tenantId, tenantId)),
+    )
+    .innerJoin(
+      tripAuthorities,
+      and(eq(tripAuthorities.tripId, trips.id), eq(tripAuthorities.tenantId, tenantId)),
     )
     .leftJoin(
       employees,
@@ -96,17 +121,26 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
     new Set(rows.map((row) => row.driverEmployeeId).filter((id): id is string => Boolean(id))),
   );
 
-  const [inspRows, closureRows, driverRows] = await Promise.all([
+  const [
+    inspRows,
+    closureRows,
+    driverRows,
+    unverifiedFuelRows,
+    unverifiedExpenseRows,
+    unsafeIncidentRows,
+  ] = await Promise.all([
     tripIds.length
       ? db
           .select({ tripId: vehicleInspections.tripId })
           .from(vehicleInspections)
-          .where(and(
-            eq(vehicleInspections.tenantId, tenantId),
-            inArray(vehicleInspections.tripId, tripIds),
-            eq(vehicleInspections.type, 'return'),
-            inArray(vehicleInspections.status, ['completed', 'failed']),
-          ))
+          .where(
+            and(
+              eq(vehicleInspections.tenantId, tenantId),
+              inArray(vehicleInspections.tripId, tripIds),
+              eq(vehicleInspections.type, 'return'),
+              inArray(vehicleInspections.status, ['completed', 'failed']),
+            ),
+          )
       : Promise.resolve([] as Array<{ tripId: string | null }>),
     tripIds.length
       ? db
@@ -119,15 +153,72 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
           .select({ id: employees.id, firstName: employees.firstName, lastName: employees.lastName })
           .from(employees)
           .where(and(eq(employees.tenantId, tenantId), inArray(employees.id, driverIds)))
-      : Promise.resolve([] as Array<{ id: string; firstName: string | null; lastName: string | null }>),
+      : Promise.resolve(
+          [] as Array<{ id: string; firstName: string | null; lastName: string | null }>,
+        ),
+    tripIds.length
+      ? db
+          .select({ tripId: fuelTransactions.tripId })
+          .from(fuelTransactions)
+          .innerJoin(
+            vehicles,
+            and(eq(fuelTransactions.vehicleId, vehicles.id), eq(vehicles.tenantId, tenantId)),
+          )
+          .where(and(inArray(fuelTransactions.tripId, tripIds), eq(fuelTransactions.isVerified, false)))
+      : Promise.resolve([] as Array<{ tripId: string | null }>),
+    tripIds.length
+      ? db
+          .select({ tripId: tripExpenses.tripId })
+          .from(tripExpenses)
+          .where(
+            and(
+              eq(tripExpenses.tenantId, tenantId),
+              inArray(tripExpenses.tripId, tripIds),
+              ne(tripExpenses.verificationStatus, 'verified'),
+            ),
+          )
+      : Promise.resolve([] as Array<{ tripId: string }>),
+    tripIds.length
+      ? db
+          .select({ tripId: tripIncidents.tripId })
+          .from(tripIncidents)
+          .where(
+            and(
+              eq(tripIncidents.tenantId, tenantId),
+              inArray(tripIncidents.tripId, tripIds),
+              eq(tripIncidents.safeToContinue, false),
+              ne(tripIncidents.status, 'resolved'),
+            ),
+          )
+      : Promise.resolve([] as Array<{ tripId: string }>),
   ]);
 
   const returnInspTripIds = new Set(inspRows.map((row) => row.tripId));
   const closureTripIds = new Set(closureRows.map((row) => row.tripId));
+  const unverifiedFuelTripIds = new Set(unverifiedFuelRows.map((row) => row.tripId));
+  const unverifiedExpenseTripIds = new Set(unverifiedExpenseRows.map((row) => row.tripId));
+  const unsafeIncidentTripIds = new Set(unsafeIncidentRows.map((row) => row.tripId));
   const driverMap = new Map(driverRows.map((driver) => [driver.id, driver]));
 
   return rows.map((row) => {
     const driver = row.driverEmployeeId ? driverMap.get(row.driverEmployeeId) : null;
+    const hasReturnInspection = returnInspTripIds.has(row.id);
+    const reconciliationBlockers: string[] = [];
+
+    if (!hasReturnInspection) reconciliationBlockers.push('Return inspection required');
+    if (!['awaiting_reconciliation', 'completed'].includes(row.authorityStatus)) {
+      reconciliationBlockers.push(
+        `Trip Authority is ${row.authorityStatus.replace(/_/g, ' ')}`,
+      );
+    }
+    if (unverifiedFuelTripIds.has(row.id)) reconciliationBlockers.push('Fuel verification pending');
+    if (unverifiedExpenseTripIds.has(row.id)) {
+      reconciliationBlockers.push('Expense verification pending');
+    }
+    if (unsafeIncidentTripIds.has(row.id)) {
+      reconciliationBlockers.push('Safety-critical incident unresolved');
+    }
+
     return {
       id: row.id,
       status: row.status,
@@ -142,8 +233,10 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       requesterLastName: row.requesterLastName,
       driverFirstName: driver?.firstName ?? null,
       driverLastName: driver?.lastName ?? null,
-      hasReturnInspection: returnInspTripIds.has(row.id),
+      hasReturnInspection,
       hasClosureRecord: closureTripIds.has(row.id),
+      reconciliationReady: reconciliationBlockers.length === 0,
+      reconciliationBlockers,
     };
   });
 }
@@ -153,7 +246,9 @@ export default async function ClosureReviewPage() {
   if (!session) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Closure Review' }]} />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Closure Review' }]}
+        />
         <PageHeader title="Trip Closure Review" description="Trips awaiting closure approval" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" />
       </div>
@@ -169,7 +264,9 @@ export default async function ClosureReviewPage() {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Closure Review' }]} />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Closure Review' }]}
+        />
         <PageHeader title="Trip Closure Review" description="Trips awaiting closure approval" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" />
       </div>
@@ -183,23 +280,32 @@ export default async function ClosureReviewPage() {
     console.error('Closure review query failed:', error);
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Closure Review' }]} />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Closure Review' }]}
+        />
         <PageHeader title="Trip Closure Review" description="Trips awaiting closure approval" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Data" description="The database query failed." />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Unable to Load Data"
+          description="The database query failed."
+        />
       </div>
     );
   }
 
   const closureReviewCount = closureTrips.length;
   const needInspection = closureTrips.filter((trip) => !trip.hasReturnInspection).length;
+  const readyForReconciliation = closureTrips.filter((trip) => trip.reconciliationReady).length;
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Trips', href: '/dashboard/trips' },
-        { label: 'Closure Review' },
-      ]} />
+      <Breadcrumbs
+        items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Trips', href: '/dashboard/trips' },
+          { label: 'Closure Review' },
+        ]}
+      />
       <PageHeader
         title="Trip Closure Review"
         description={`${closureReviewCount} trip${closureReviewCount !== 1 ? 's' : ''} awaiting closure approval`}
@@ -229,7 +335,7 @@ export default async function ClosureReviewPage() {
         <Card>
           <CardContent className="pt-4 text-center">
             <p className="text-2xl font-[650] tabular-nums text-status-info-text">
-              {closureReviewCount - needInspection}
+              {readyForReconciliation}
             </p>
             <p className="flex items-center justify-center gap-1 text-xs text-ink-500">
               <CheckCircle2 className="h-3 w-3" /> Ready for Reconciliation
@@ -254,34 +360,83 @@ export default async function ClosureReviewPage() {
                 className="rounded-[10px] border border-border bg-surface p-4 transition-all hover:border-brand-100 hover:shadow-sm"
               >
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <Link href={`/dashboard/trips/${trip.id}`} className="min-w-0 flex-1 rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+                  <Link
+                    href={`/dashboard/trips/${trip.id}`}
+                    className="min-w-0 flex-1 rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                  >
                     <div className="flex min-w-0 items-start gap-4">
                       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
                         <Clock className="h-6 w-6" />
                       </div>
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-[650] text-ink-950">{trip.make} {trip.model}</p>
-                          <span className="text-xs tabular-nums text-ink-500">{trip.licenceNumber}</span>
-                          <StatusBadge status={variant} label={TRIP_STATUS_LABELS[trip.status] ?? trip.status} />
-                          {!trip.hasReturnInspection && <Badge variant="emergency" size="sm">Missing Inspection</Badge>}
-                          {trip.hasClosureRecord && <Badge variant="info" size="sm">Closure Recorded</Badge>}
+                          <p className="text-sm font-[650] text-ink-950">
+                            {trip.make} {trip.model}
+                          </p>
+                          <span className="text-xs tabular-nums text-ink-500">
+                            {trip.licenceNumber}
+                          </span>
+                          <StatusBadge
+                            status={variant}
+                            label={TRIP_STATUS_LABELS[trip.status] ?? trip.status}
+                          />
+                          {!trip.hasReturnInspection && (
+                            <Badge variant="emergency" size="sm">
+                              Missing Inspection
+                            </Badge>
+                          )}
+                          {trip.reconciliationReady ? (
+                            <Badge variant="success" size="sm">
+                              Reconciliation Ready
+                            </Badge>
+                          ) : trip.hasReturnInspection ? (
+                            <Badge variant="pending" size="sm">
+                              {trip.reconciliationBlockers.length} blocker
+                              {trip.reconciliationBlockers.length === 1 ? '' : 's'}
+                            </Badge>
+                          ) : null}
+                          {trip.hasClosureRecord && (
+                            <Badge variant="info" size="sm">
+                              Closure Recorded
+                            </Badge>
+                          )}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
                           {trip.requestReference && (
-                            <span className="flex items-center gap-1"><FileText className="h-3 w-3" />{trip.requestReference}</span>
+                            <span className="flex items-center gap-1">
+                              <FileText className="h-3 w-3" />
+                              {trip.requestReference}
+                            </span>
                           )}
                           {trip.driverFirstName && (
-                            <span className="flex items-center gap-1"><User className="h-3 w-3" />Driver: {trip.driverFirstName} {trip.driverLastName}</span>
+                            <span className="flex items-center gap-1">
+                              <User className="h-3 w-3" />
+                              Driver: {trip.driverFirstName} {trip.driverLastName}
+                            </span>
                           )}
                           {trip.requesterFirstName && (
-                            <span className="flex items-center gap-1"><User className="h-3 w-3" />Requester: {trip.requesterFirstName} {trip.requesterLastName}</span>
+                            <span className="flex items-center gap-1">
+                              <User className="h-3 w-3" />
+                              Requester: {trip.requesterFirstName} {trip.requesterLastName}
+                            </span>
                           )}
-                          {trip.returnedAt && <span className="tabular-nums">Returned {formatDateTime(trip.returnedAt)}</span>}
+                          {trip.returnedAt && (
+                            <span className="tabular-nums">
+                              Returned {formatDateTime(trip.returnedAt)}
+                            </span>
+                          )}
                           {trip.requestPurpose && (
-                            <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{trip.requestPurpose}</span>
+                            <span className="flex items-center gap-1">
+                              <MapPin className="h-3 w-3" />
+                              {trip.requestPurpose}
+                            </span>
                           )}
                         </div>
+                        {trip.hasReturnInspection && !trip.reconciliationReady && (
+                          <p className="mt-2 text-[11px] leading-4 text-status-pending-text">
+                            {trip.reconciliationBlockers.join(' · ')}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </Link>
@@ -291,6 +446,8 @@ export default async function ClosureReviewPage() {
                         tripId={trip.id}
                         tripStatus={trip.status}
                         hasReturnInspection={trip.hasReturnInspection}
+                        reconciliationReady={trip.reconciliationReady}
+                        reconciliationBlockers={trip.reconciliationBlockers}
                       />
                     )}
                     <Button variant="ghost" size="sm" asChild>

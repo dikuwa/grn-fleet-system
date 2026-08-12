@@ -4,7 +4,18 @@ import { useState, useEffect, useCallback } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, AlertTriangle, Clock, RefreshCw, ChevronDown, ChevronUp, ClipboardCheck } from 'lucide-react';
+import {
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Clock,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  ClipboardCheck,
+  ArrowRight,
+  CircleDot,
+} from 'lucide-react';
 
 interface ReadinessGate {
   key: string;
@@ -29,6 +40,64 @@ interface ReadinessData {
 interface ReleaseReadinessCheckProps {
   tripId: string;
   status: string;
+}
+
+const OPERATIONAL_GATE_ORDER = [
+  'request_approvals',
+  'releasing_officer_acted',
+  'vehicle_allocated',
+  'driver_allocated',
+  'driver_active_employee',
+  'driver_licence_valid',
+  'driver_licence_class_match',
+  'vehicle_no_blocking_defects',
+  'trip_authority',
+  'driver_acknowledged',
+  'departure_inspection',
+  'authority_validity',
+  'vehicle_documents',
+  'vehicle_issued',
+] as const;
+
+function resolveOperatorSteps(data: ReadinessData, tripStatus: string) {
+  const rank = new Map<string, number>(
+    OPERATIONAL_GATE_ORDER.map((key, index) => [key, index]),
+  );
+  const ordered = [...data.gates].sort(
+    (a, b) => (rank.get(a.key) ?? 999) - (rank.get(b.key) ?? 999),
+  );
+  const unresolved = ordered.filter((gate) => gate.status !== 'pass');
+  const current = unresolved.find((gate) => gate.required) ?? unresolved[0];
+
+  if (current) {
+    const currentPosition = ordered.findIndex((gate) => gate.key === current.key);
+    const next = ordered
+      .slice(currentPosition + 1)
+      .find((gate) => gate.required && gate.status !== 'pass');
+
+    return {
+      current: current.label,
+      currentDetail: current.detail,
+      currentState: current.status === 'blocking' || current.status === 'fail' ? 'blocked' : 'pending',
+      next: next?.label ?? (current.key === 'vehicle_issued' ? 'Driver starts the authorised trip' : 'Complete release and issue vehicle'),
+    };
+  }
+
+  if (tripStatus === 'in_progress') {
+    return {
+      current: 'Trip is in progress',
+      currentDetail: 'Release is complete. Monitor the active trip and any incidents or route changes.',
+      currentState: 'complete',
+      next: 'Driver returns vehicle for arrival inspection',
+    };
+  }
+
+  return {
+    current: 'Release conditions complete',
+    currentDetail: 'All required release checks have passed for the current vehicle and driver.',
+    currentState: 'complete',
+    next: 'Driver starts the authorised trip',
+  };
 }
 
 export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckProps) {
@@ -57,12 +126,10 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
       const fetchTimer = setTimeout(fetchReadiness, 0);
       return () => clearTimeout(fetchTimer);
     }
-    // Clear stale data when status leaves scope
     const clearTimer = setTimeout(() => setData(null), 0);
     return () => clearTimeout(clearTimer);
   }, [tripId, status, fetchReadiness]);
 
-  // Don't render for closed/completed trips
   if (!['pending', 'in_progress'].includes(status)) {
     return null;
   }
@@ -71,6 +138,7 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
   const isBlocked = data?.summary.locked;
   const blockingGates = data?.gates.filter((g) => g.status === 'blocking') || [];
   const pendingGates = data?.gates.filter((g) => g.status === 'pending') || [];
+  const operatorSteps = data ? resolveOperatorSteps(data, status) : null;
 
   return (
     <Card className="border-2 border-brand-200">
@@ -101,7 +169,7 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
-            className="rounded-[6px] p-1.5 text-ink-500 hover:bg-muted transition-colors"
+            className="rounded-[6px] p-1.5 text-ink-500 transition-colors hover:bg-muted"
             aria-label={expanded ? 'Collapse' : 'Expand'}
           >
             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -109,7 +177,6 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
         </div>
       </CardHeader>
       <CardContent>
-        {/* Overall Status Banner */}
         {data && (
           <div
             className={`mb-4 rounded-[8px] border p-3 ${
@@ -146,7 +213,37 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
           </div>
         )}
 
-        {/* Progress Bar */}
+        {operatorSteps && (
+          <div className="mb-4 grid gap-2 rounded-[10px] border border-border bg-muted/30 p-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+                <CircleDot className="h-3.5 w-3.5" />
+                Current step
+              </div>
+              <p
+                className={`mt-1 text-sm font-semibold ${
+                  operatorSteps.currentState === 'blocked'
+                    ? 'text-status-error-text'
+                    : operatorSteps.currentState === 'complete'
+                      ? 'text-status-success-text'
+                      : 'text-ink-950'
+                }`}
+              >
+                {operatorSteps.current}
+              </p>
+              <p className="mt-0.5 text-xs leading-5 text-ink-500">{operatorSteps.currentDetail}</p>
+            </div>
+            <ArrowRight className="hidden h-4 w-4 text-ink-400 sm:block" aria-hidden="true" />
+            <div className="min-w-0 border-t border-border pt-2 sm:border-l sm:border-t-0 sm:pl-3 sm:pt-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-500">Next step</p>
+              <p className="mt-1 text-sm font-semibold text-ink-950">{operatorSteps.next}</p>
+              <p className="mt-0.5 text-xs leading-5 text-ink-500">
+                This becomes actionable when the current required step is completed.
+              </p>
+            </div>
+          </div>
+        )}
+
         {data && (
           <div className="mb-4">
             <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -168,7 +265,6 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
           </div>
         )}
 
-        {/* Gate Checklist */}
         {expanded && data && (
           <div className="space-y-2">
             {data.gates.map((gate) => {
@@ -237,7 +333,6 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
           </div>
         )}
 
-        {/* Loading State */}
         {loading && !data && (
           <div className="flex items-center justify-center py-8">
             <div className="flex items-center gap-2 text-sm text-ink-500">
@@ -247,7 +342,6 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
           </div>
         )}
 
-        {/* Error State */}
         {error && (
           <div className="flex items-center gap-2 rounded-[8px] border border-status-error-bg/30 bg-status-error-bg/10 p-3">
             <AlertTriangle className="h-4 w-4 shrink-0 text-status-error-text" />
