@@ -2,7 +2,7 @@
  * Driver eligibility picker for the Vehicle Allocation flow.
  *
  * GET /api/allocations/drivers?requestId=&vehicleId=&startDate=&endDate=&q=&page=&limit=
- * GET /api/allocations/drivers?allocationId=&q=&page=&limit=
+ * GET /api/allocations/drivers?allocationId=&employeeId=&q=&page=&limit=
  *
  * Returns every tenant driver with a real-time compliance verdict for the
  * selected request + vehicle, so the Transport Officer can see why a known
@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const allocationId = searchParams.get('allocationId')?.trim() || null;
+    const employeeId = searchParams.get('employeeId')?.trim() || null;
     let requestId = searchParams.get('requestId')?.trim() || null;
     let vehicleId = searchParams.get('vehicleId')?.trim() || null;
     const q = searchParams.get('q')?.trim() || '';
@@ -169,6 +170,12 @@ export async function GET(request: NextRequest) {
 
     // Every tenant driver — including currently-ineligible ones, so officers
     // understand why a known driver cannot be selected.
+    const driverEmployeeConditions: SQL[] = [
+      eq(employees.tenantId, tenantId),
+      eq(employees.isDriver, true),
+    ];
+    if (employeeId) driverEmployeeConditions.push(eq(employees.id, employeeId));
+
     const driverEmployees = await db
       .select({
         id: employees.id,
@@ -185,7 +192,7 @@ export async function GET(request: NextRequest) {
       .from(employees)
       .leftJoin(departments, eq(employees.departmentId, departments.id))
       .leftJoin(offices, eq(employees.officeId, offices.id))
-      .where(and(eq(employees.tenantId, tenantId), eq(employees.isDriver, true)))
+      .where(and(...driverEmployeeConditions))
       .orderBy(asc(employees.lastName), asc(employees.firstName));
 
     if (driverEmployees.length === 0) {
@@ -324,7 +331,7 @@ export async function GET(request: NextRequest) {
     let filtered = drivers;
     if (q) {
       const needle = q.toLowerCase();
-      filtered = drivers.filter(
+      filtered = filtered.filter(
         (driver) =>
           driver.firstName.toLowerCase().includes(needle) ||
           driver.lastName.toLowerCase().includes(needle) ||
