@@ -68,9 +68,21 @@ async function fetchActiveTrips(tenantId: string) {
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
     })
     .from(trips)
-    .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
-    .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
-    .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+    .leftJoin(
+      vehicles,
+      and(eq(trips.vehicleId, vehicles.id), eq(vehicles.tenantId, tenantId)),
+    )
+    .leftJoin(
+      transportRequests,
+      and(eq(trips.requestId, transportRequests.id), eq(transportRequests.tenantId, tenantId)),
+    )
+    .leftJoin(
+      employees,
+      and(
+        eq(transportRequests.requesterEmployeeId, employees.id),
+        eq(employees.tenantId, tenantId),
+      ),
+    )
     .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
     .where(and(eq(trips.tenantId, tenantId), inArray(trips.status, [...ACTIVE_TRIP_STATUSES])))
     .orderBy(desc(trips.startedAt));

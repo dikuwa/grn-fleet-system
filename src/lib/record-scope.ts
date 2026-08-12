@@ -96,6 +96,7 @@ export function fuelScopeCondition(context: RecordScopeContext): SQL {
         inner join ${employees} e on e.id = va.driver_employee_id
         where t.id = ${fuelTransactions.tripId}
           and t.tenant_id = ${context.tenantId}
+          and e.tenant_id = ${context.tenantId}
           and e.user_id = ${context.userId}
       )`,
       sql`exists (
@@ -104,6 +105,7 @@ export function fuelScopeCondition(context: RecordScopeContext): SQL {
         inner join ${employees} e on e.id = rd.employee_id
         where t.id = ${fuelTransactions.tripId}
           and t.tenant_id = ${context.tenantId}
+          and e.tenant_id = ${context.tenantId}
           and e.user_id = ${context.userId}
           and rd.driver_type in ('assigned', 'additional')
       )`,
@@ -118,7 +120,9 @@ export function inspectionScopeCondition(context: RecordScopeContext): SQL {
   const assignedTrip = sql`exists (
     select 1 from ${trips} t
     left join ${vehicleAllocations} va on va.id = t.allocation_id
-    left join ${employees} primary_driver on primary_driver.id = va.driver_employee_id
+    left join ${employees} primary_driver
+      on primary_driver.id = va.driver_employee_id
+     and primary_driver.tenant_id = ${context.tenantId}
     where t.id = ${vehicleInspections.tripId}
       and t.tenant_id = ${context.tenantId}
       and (
@@ -149,6 +153,7 @@ export function inspectionScopeCondition(context: RecordScopeContext): SQL {
         select 1 from ${trips} t
         inner join ${transportRequests} tr on tr.id = t.request_id
         where t.id = ${vehicleInspections.tripId}
+          and t.tenant_id = ${context.tenantId}
           and tr.tenant_id = ${context.tenantId}
           and (tr.requester_user_id = ${context.userId} or tr.entered_by_user_id = ${context.userId})
       )`,
@@ -166,11 +171,16 @@ export function vehicleScopeCondition(context: RecordScopeContext): SQL {
         select 1 from ${trips} t
         inner join ${vehicleAllocations} va on va.id = t.allocation_id
         inner join ${employees} e on e.id = va.driver_employee_id
-        where t.vehicle_id = ${vehicles.id} and e.user_id = ${context.userId}
+        where t.vehicle_id = ${vehicles.id}
+          and t.tenant_id = ${context.tenantId}
+          and e.tenant_id = ${context.tenantId}
+          and e.user_id = ${context.userId}
       )`,
       sql`exists (
         select 1 from ${vehicleInspections} vi
-        where vi.vehicle_id = ${vehicles.id} and vi.inspector_user_id = ${context.userId}
+        where vi.vehicle_id = ${vehicles.id}
+          and vi.tenant_id = ${context.tenantId}
+          and vi.inspector_user_id = ${context.userId}
       )`,
       sql`exists (
         select 1 from ${maintenanceEvents} me
@@ -202,6 +212,7 @@ export function documentScopeCondition(context: RecordScopeContext): SQL {
         and exists (
           select 1 from ${transportRequests} tr
           where tr.id = ${generatedDocuments.entityId}
+            and tr.tenant_id = ${context.tenantId}
             and (tr.requester_user_id = ${context.userId} or tr.entered_by_user_id = ${context.userId})
         )
       )`,
@@ -211,7 +222,10 @@ export function documentScopeCondition(context: RecordScopeContext): SQL {
           select 1 from ${trips} t
           inner join ${vehicleAllocations} va on va.id = t.allocation_id
           inner join ${employees} e on e.id = va.driver_employee_id
-          where t.id = ${generatedDocuments.entityId} and e.user_id = ${context.userId}
+          where t.id = ${generatedDocuments.entityId}
+            and t.tenant_id = ${context.tenantId}
+            and e.tenant_id = ${context.tenantId}
+            and e.user_id = ${context.userId}
         )
       )`,
     )!,

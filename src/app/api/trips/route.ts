@@ -72,8 +72,18 @@ export async function GET(request: NextRequest) {
           licenceNumber: vehicles.licenceNumber,
           vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
           requestReference: transportRequests.reference,
-          hasDepartureInspection: sql<boolean>`EXISTS (SELECT 1 FROM vehicle_inspections vi WHERE vi.trip_id = ${trips.id} AND vi.type = 'departure')`,
-          hasReturnInspection: sql<boolean>`EXISTS (SELECT 1 FROM vehicle_inspections vi WHERE vi.trip_id = ${trips.id} AND vi.type = 'return')`,
+          hasDepartureInspection: sql<boolean>`EXISTS (
+            SELECT 1 FROM vehicle_inspections vi
+            WHERE vi.trip_id = ${trips.id}
+              AND vi.tenant_id = ${tenantId}::uuid
+              AND vi.type = 'departure'
+          )`,
+          hasReturnInspection: sql<boolean>`EXISTS (
+            SELECT 1 FROM vehicle_inspections vi
+            WHERE vi.trip_id = ${trips.id}
+              AND vi.tenant_id = ${tenantId}::uuid
+              AND vi.type = 'return'
+          )`,
           purpose: transportRequests.purpose,
           routeKm: sql<number>`COALESCE((
             SELECT SUM(COALESCE(rr.total_kilometres, rr.mapped_distance_km, 0))
@@ -82,8 +92,14 @@ export async function GET(request: NextRequest) {
           ), 0)`.as('route_km'),
         })
         .from(trips)
-        .leftJoin(vehicles, eq(trips.vehicleId, vehicles.id))
-        .leftJoin(transportRequests, eq(trips.requestId, transportRequests.id))
+        .leftJoin(
+          vehicles,
+          and(eq(trips.vehicleId, vehicles.id), eq(vehicles.tenantId, tenantId)),
+        )
+        .leftJoin(
+          transportRequests,
+          and(eq(trips.requestId, transportRequests.id), eq(transportRequests.tenantId, tenantId)),
+        )
         .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
         .where(where)
         .orderBy(desc(trips.createdAt))

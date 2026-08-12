@@ -13,15 +13,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
-import { auditEvents } from '@/db/schema/audit';
 import {
   requireDashboardAction,
   requirePermission,
   requireRequestAuth,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { runAtomicMutations } from '@/lib/db-atomic';
-import { eq, and, lt, sql } from 'drizzle-orm';
+import { eq, and, lt, inArray, sql } from 'drizzle-orm';
 
 export async function POST(req: NextRequest) {
   try {
@@ -41,18 +39,10 @@ export async function POST(req: NextRequest) {
     const tenantId = session.tenantId;
     const now = new Date();
 
-    // Find all in-progress trips where the confirmed allocation period has
-    // ended. Tenant-owned vehicle joins are explicit so presentation metadata
-    // cannot cross tenant boundaries even if bad historical data exists.
-    const overdueTrips = await db
-      .select({
-        id: trips.id,
-        vehicleId: trips.vehicleId,
-        endAt: vehicleAllocations.endAt,
-        make: vehicles.make,
-        model: vehicles.model,
-        licenceNumber: vehicles.licenceNumber,
-      })
+    // Resolve candidates for a useful response, but do not trust this snapshot
+    // for the mutation itself. The write below re-checks every lifecycle guard.
+    const candidates = await db
+      .select({ id: trips.id })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .innerJoin(
@@ -68,7 +58,7 @@ export async function POST(req: NextRequest) {
         ),
       );
 
-    if (overdueTrips.length === 0) {
+    if (candidates.length === 0) {
       return NextResponse.json({
         success: true,
         checked: true,
@@ -77,52 +67,75 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const overdueIds = overdueTrips.map((trip) => trip.id);
+    // Claim only rows that are still genuinely overdue at write time, then
+    // create audit events from those claimed rows in the same SQL statement.
+    // This prevents a concurrent return from producing a false return_due audit.
+    await db.execute(sql`
+      WITH overdue_claim AS (
+        UPDATE trips AS t
+        SET status = 'return_due', updated_at = ${now}
+        FROM vehicle_allocations AS va, vehicles AS v
+        WHERE t.tenant_id = ${tenantId}::uuid
+          AND t.status = 'in_progress'
+          AND va.id = t.allocation_id
+          AND va.state = 'confirmed'
+          AND va.end_at < ${now}
+          AND v.id = t.vehicle_id
+          AND v.tenant_id = ${tenantId}::uuid
+        RETURNING t.id, t.vehicle_id, t.allocation_id
+      ),
+      audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id,
+          action, entity_type, entity_id, summary, source_channel
+        )
+        SELECT
+          ${tenantId}::uuid,
+          (extract(epoch from clock_timestamp()) * 1000000)::bigint + row_number() OVER (),
+          'trip_return_due',
+          ${session.user.id},
+          'system_flag',
+          'trip',
+          claim.id,
+          'Trip flagged return_due: ' || v.make || ' ' || v.model || ' (' || v.licence_number ||
+            ') — allocation ended at ' || va.end_at::text,
+          'system'
+        FROM overdue_claim claim
+        INNER JOIN vehicle_allocations va ON va.id = claim.allocation_id
+        INNER JOIN vehicles v ON v.id = claim.vehicle_id AND v.tenant_id = ${tenantId}::uuid
+        RETURNING entity_id
+      )
+      SELECT count(*) AS updated_count FROM audit_insert
+    `);
 
-    // The trip transition and its audit rows must commit together. Vehicle
-    // status remains issued while a trip is merely overdue; return_due is a
-    // trip lifecycle state, not a vehicle lifecycle state.
-    await runAtomicMutations((tx) => {
-      const queries: any[] = [
-        tx
-          .update(trips)
-          .set({
-            status: 'return_due',
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(trips.tenantId, tenantId),
-              eq(trips.status, 'in_progress'),
-              sql`${trips.id} = ANY(${overdueIds}::uuid[])`,
-            ),
-          ),
-      ];
-
-      for (const trip of overdueTrips) {
-        queries.push(
-          tx.insert(auditEvents).values({
-            tenantId,
-            tenantSequence: 0,
-            eventType: 'trip_return_due',
-            actorUserId: session.user.id,
-            action: 'system_flag',
-            entityType: 'trip',
-            entityId: trip.id,
-            summary: `Trip flagged return_due: ${trip.make} ${trip.model} (${trip.licenceNumber}) — allocation ended at ${trip.endAt.toISOString()}`,
-            sourceChannel: 'system',
-          }),
-        );
-      }
-
-      return queries;
-    });
+    const candidateIds = candidates.map((trip) => trip.id);
+    const updatedTrips = await db
+      .select({
+        id: trips.id,
+        endAt: vehicleAllocations.endAt,
+        make: vehicles.make,
+        model: vehicles.model,
+        licenceNumber: vehicles.licenceNumber,
+      })
+      .from(trips)
+      .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+      .innerJoin(
+        vehicles,
+        and(eq(trips.vehicleId, vehicles.id), eq(vehicles.tenantId, tenantId)),
+      )
+      .where(
+        and(
+          eq(trips.tenantId, tenantId),
+          eq(trips.status, 'return_due'),
+          inArray(trips.id, candidateIds),
+        ),
+      );
 
     return NextResponse.json({
       success: true,
       checked: true,
-      overdueCount: overdueTrips.length,
-      updatedTrips: overdueTrips.map((trip) => ({
+      overdueCount: updatedTrips.length,
+      updatedTrips: updatedTrips.map((trip) => ({
         id: trip.id,
         vehicle: `${trip.make} ${trip.model}`,
         licence: trip.licenceNumber,
