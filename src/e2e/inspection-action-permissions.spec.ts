@@ -13,9 +13,10 @@ async function signedInApi(username: string) {
 }
 
 test.describe('official inspection action permissions', () => {
-  test('Inspector may reach inspection execution while Transport Administrator may only review', async () => {
+  test('Inspector and Transport Administrator reach inspection execution; requester is denied', async () => {
     const inspector = await signedInApi('inspector');
     const transport = await signedInApi('transport-admin');
+    const requester = await signedInApi('requester');
 
     const inspectorPost = await inspector.post('/api/inspections', {
       data: {},
@@ -27,14 +28,25 @@ test.describe('official inspection action permissions', () => {
     const transportPost = await transport.post('/api/inspections', {
       data: {},
     });
-    // Transport Administration can schedule/review inspection records but is
-    // not an official Inspector and must not perform the inspection itself.
-    expect(transportPost.status()).toBe(403);
+    // PR #30 grants TRANSPORT_ADMIN inspection:perform (role grant + workspace
+    // policy), so the Transport Administrator reaches the domain validator too.
+    expect(transportPost.status()).toBe(400);
 
     const transportContext = await transport.get('/api/inspections/context?type=departure');
-    expect(transportContext.status()).toBe(403);
+    // The seed guarantees an active departure template (the reservation spec's
+    // inspection helper hard-depends on it), so 200 is deterministic — and 403
+    // must never be returned to the Transport Administrator anymore.
+    expect(transportContext.status()).toBe(200);
+
+    const requesterPost = await requester.post('/api/inspections', {
+      data: {},
+    });
+    // The server-side permission gate still exists: a requester without
+    // INSPECTION_PERFORM is denied before payload validation.
+    expect(requesterPost.status()).toBe(403);
 
     await inspector.dispose();
     await transport.dispose();
+    await requester.dispose();
   });
 });
