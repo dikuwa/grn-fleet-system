@@ -39,7 +39,6 @@ export default function NewFuelEntryPage() {
     paymentMethod: 'fuel_card',
     fillType: 'full',
     notes: '',
-    employeeNumber: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
@@ -52,6 +51,8 @@ export default function NewFuelEntryPage() {
   const [vehicleDropdown, setVehicleDropdown] = useState(false);
   const [driverId, setDriverId] = useState('');
   const [driverOption, setDriverOption] = useState<EmployeeSearchOption | null>(null);
+  const [claimantId, setClaimantId] = useState('');
+  const [claimantOption, setClaimantOption] = useState<EmployeeSearchOption | null>(null);
   const tripId = searchParams.get('tripId') || '';
 
   useEffect(() => {
@@ -70,7 +71,6 @@ export default function NewFuelEntryPage() {
     setDraftSaved(false);
   }, []);
 
-  // Search vehicles dynamically
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (vehicleSearch.length < 2) {
@@ -84,18 +84,27 @@ export default function NewFuelEntryPage() {
         const list = json.vehicles || json.data?.vehicles || json.rows || json.data || [];
         setVehicles(Array.isArray(list) ? list : []);
         setVehicleDropdown(true);
-      } catch { /* ignore */ } finally { setVehicleLoading(false); }
+      } catch {
+        // Search failures are surfaced by an empty result state; form submission remains server-validated.
+      } finally {
+        setVehicleLoading(false);
+      }
     }, 300);
     return () => clearTimeout(timer);
   }, [vehicleSearch]);
 
-  // Auto-save draft for offline recovery
   const saveDraftLocally = useCallback(async () => {
     try {
       const draft = await saveDraft({
         id: draftId || undefined,
         draftType: 'fuel',
-        formData: { ...formData, tripId, receiptFile } as unknown as Record<string, unknown>,
+        formData: {
+          ...formData,
+          tripId,
+          claimantEmployeeId: claimantId || null,
+          driverEmployeeId: driverId || null,
+          receiptFile,
+        } as unknown as Record<string, unknown>,
         userId: session?.user?.id || null,
         tenantId: profile?.tenantId || null,
         syncStatus: 'pending',
@@ -106,19 +115,24 @@ export default function NewFuelEntryPage() {
     } catch (err) {
       console.error('Failed to save draft:', err);
     }
-  }, [formData, session, profile, draftId, receiptFile, tripId]);
+  }, [formData, session, profile, draftId, receiptFile, tripId, claimantId, driverId]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
     if (!isOnline) {
-      // Save as offline draft
       try {
         await saveDraft({
           id: draftId || undefined,
           draftType: 'fuel',
-          formData: { ...formData, tripId, receiptFile, employeeNumber: formData.employeeNumber } as unknown as Record<string, unknown>,
+          formData: {
+            ...formData,
+            tripId,
+            claimantEmployeeId: claimantId || null,
+            driverEmployeeId: driverId || null,
+            receiptFile,
+          } as unknown as Record<string, unknown>,
           userId: session?.user?.id || null,
           tenantId: profile?.tenantId || null,
           syncStatus: 'pending',
@@ -137,9 +151,12 @@ export default function NewFuelEntryPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vehicleGrn: formData.vehicleGrn,
+          vehicleId: formData.vehicleId || undefined,
           tripId: tripId || undefined,
           tripRef: formData.tripRef || null,
           driverEmployeeId: driverId || undefined,
+          claimantEmployeeId:
+            formData.paymentMethod === 'personal_reimbursement' ? claimantId || undefined : undefined,
           clientSyncId: crypto.randomUUID(),
           transactionAt: formData.transactionDate,
           stationName: formData.stationName,
@@ -147,25 +164,15 @@ export default function NewFuelEntryPage() {
           litres: formData.litres,
           amount: formData.amount,
           odometerReading: formData.odometerReading,
+          referenceNumber: formData.referenceNumber || null,
           paymentMethod: formData.paymentMethod,
           fillType: formData.fillType,
-          employeeNumber: formData.paymentMethod === 'personal_reimbursement' ? formData.employeeNumber || undefined : undefined,
-          recordedByUserId: session?.user?.id || 'system',
-          tenantId: profile?.tenantId,
+          notes: formData.notes || null,
         }),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to record transaction');
 
-      if (!res.ok) {
-        // Partial success — transaction was created but reimbursement setup failed
-        if (data.transactionCreated) {
-          // Transaction saved, redirect with warning about reimbursement
-          if (draftId) await deleteDraft(draftId);
-          router.push('/dashboard/fuel?warning=reimbursement_pending');
-          return;
-        }
-        throw new Error(data.error || 'Failed to record transaction');
-      }
       if (receiptFile && data.data?.id) {
         const receiptForm = new FormData();
         receiptForm.append('file', receiptFile);
@@ -181,8 +188,18 @@ export default function NewFuelEntryPage() {
           variant: receiptData.flags?.length ? 'pending' : 'success',
         });
       }
-      // Clean up draft if it exists
+
       if (draftId) await deleteDraft(draftId);
+      if (data.reimbursement?.id) {
+        toast({
+          title: 'Fuel entry and reimbursement recorded',
+          description: `N$${Number(formData.amount).toFixed(2)} claim is pending Transport Office review.`,
+          variant: 'success',
+        });
+        router.push(`/dashboard/fuel/${data.data.id}`);
+        return;
+      }
+
       toast({ title: 'Fuel entry recorded', description: `${formData.litres}L of ${formData.fuelType} for ${formData.vehicleGrn}`, variant: 'success' });
       router.push('/dashboard/fuel');
     } catch (err) {
@@ -190,7 +207,7 @@ export default function NewFuelEntryPage() {
       toast({ title: 'Failed to record', description: err instanceof Error ? err.message : 'Transaction could not be saved', variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [router, formData, session, profile, draftId, isOnline, receiptFile, toast, tripId, driverId]);
+  }, [router, formData, session, profile, draftId, isOnline, receiptFile, toast, tripId, driverId, claimantId]);
 
   return (
     <div className="space-y-6">
@@ -253,6 +270,7 @@ export default function NewFuelEntryPage() {
               </div>
               <div className="space-y-1.5"><Label>Trip Reference</Label><Input placeholder="Optional trip ref" value={formData.tripRef} onChange={(e) => updateForm({ tripRef: e.target.value })} /></div>
             </div>
+
             <div className="space-y-1.5">
               <Label>Driver (on behalf of)</Label>
               <EmployeeCombobox
@@ -265,30 +283,59 @@ export default function NewFuelEntryPage() {
                 }}
                 placeholder="Optional — attribute this entry to a driver"
               />
-              <p className="text-ink-500 text-xs">
-                Leave blank to attribute the entry to the trip&apos;s allocated driver.
-              </p>
+              <p className="text-ink-500 text-xs">Leave blank to attribute the entry to the trip&apos;s allocated driver.</p>
             </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5"><Label required>Transaction Date</Label><StyledDateInput type="datetime-local" value={formData.transactionDate} onChange={(e) => updateForm({ transactionDate: e.target.value })} required /></div>
               <div className="space-y-1.5"><Label>Station Name</Label><Input placeholder="e.g. Total Energies, Rundu" value={formData.stationName} onChange={(e) => updateForm({ stationName: e.target.value })} /></div>
             </div>
+
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5"><Label required>Fuel Type</Label><StyledSelect value={formData.fuelType} onChange={(e) => updateForm({ fuelType: e.target.value })}><option value="diesel">Diesel</option><option value="petrol">Petrol</option><option value="unleaded">Unleaded</option></StyledSelect></div>
               <div className="space-y-1.5"><Label required>Litres</Label><Input type="number" step="0.01" placeholder="e.g. 45.5" value={formData.litres} onChange={(e) => updateForm({ litres: e.target.value })} required /></div>
               <div className="space-y-1.5"><Label required>Amount (NAD)</Label><Input type="number" step="0.01" placeholder="e.g. 850.00" value={formData.amount} onChange={(e) => updateForm({ amount: e.target.value })} required /></div>
             </div>
+
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5"><Label>Odometer Reading</Label><Input type="number" placeholder="km" value={formData.odometerReading} onChange={(e) => updateForm({ odometerReading: e.target.value })} /></div>
               <div className="space-y-1.5"><Label>Receipt Reference</Label><Input placeholder="Receipt #" value={formData.referenceNumber} onChange={(e) => updateForm({ referenceNumber: e.target.value })} /></div>
-              <div className="space-y-1.5"><Label required>Payment Method</Label><StyledSelect value={formData.paymentMethod} onChange={(e) => updateForm({ paymentMethod: e.target.value })}><option value="fuel_card">Fuel Card</option><option value="cash">Cash</option><option value="personal_reimbursement">Personal Reimbursement</option></StyledSelect></div>
+              <div className="space-y-1.5"><Label required>Payment Method</Label><StyledSelect value={formData.paymentMethod} onChange={(e) => {
+                const paymentMethod = e.target.value;
+                updateForm({ paymentMethod });
+                if (paymentMethod !== 'personal_reimbursement') {
+                  setClaimantId('');
+                  setClaimantOption(null);
+                }
+              }}><option value="fuel_card">Fuel Card</option><option value="cash">Cash</option><option value="personal_reimbursement">Personal Reimbursement</option></StyledSelect></div>
             </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5"><Label required>Fill Type</Label><StyledSelect value={formData.fillType} onChange={(e) => updateForm({ fillType: e.target.value })}><option value="full">Full Tank</option><option value="partial">Partial Fill</option></StyledSelect></div>
               {formData.paymentMethod === 'personal_reimbursement' && (
-                <div className="space-y-1.5"><Label required>Employee Number</Label><Input placeholder="Your employee number for reimbursement" value={formData.employeeNumber} onChange={(e) => updateForm({ employeeNumber: e.target.value })} required={formData.paymentMethod === 'personal_reimbursement'} /></div>
+                <div className="space-y-1.5">
+                  <Label>Employee who paid personally</Label>
+                  <EmployeeCombobox
+                    kind="employee"
+                    value={claimantId}
+                    selectedOption={claimantOption}
+                    onSelect={(option) => {
+                      setClaimantId(option?.id || '');
+                      setClaimantOption(option);
+                    }}
+                    placeholder="Search employee by name or number…"
+                  />
+                  <p className="text-xs text-ink-500">Transport staff must select the claimant. Drivers recording their own active-trip fuel may leave this blank; the server links the claim to their employee record.</p>
+                </div>
               )}
             </div>
+
+            {formData.paymentMethod === 'personal_reimbursement' && (
+              <div className="rounded-[8px] border border-status-pending-border bg-status-pending-bg/20 px-3 py-2 text-xs text-status-pending-text">
+                Current step: record the personal fuel purchase. Next step: the reimbursement claim is created with this fuel entry and appears in Transport Office review as Pending.
+              </div>
+            )}
+
             <div className="space-y-1.5"><Label>Notes</Label><Textarea placeholder="Any additional notes..." value={formData.notes} onChange={(e) => updateForm({ notes: e.target.value })} /></div>
             <div className="space-y-1.5">
               <Label>Fuel receipt</Label>
