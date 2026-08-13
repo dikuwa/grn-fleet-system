@@ -172,8 +172,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Departure is blocked by an unresolved safety-critical defect' }, { status: 409 });
     }
 
+    // The latest inspection for this exact trip/current vehicle is authoritative.
+    // A failed re-inspection must supersede an older pass.
     const [inspection] = await db
-      .select({ id: vehicleInspections.id, odometerReading: vehicleInspections.odometerReading })
+      .select({
+        id: vehicleInspections.id,
+        odometerReading: vehicleInspections.odometerReading,
+        status: vehicleInspections.status,
+        overallPass: vehicleInspections.overallPass,
+      })
       .from(vehicleInspections)
       .where(
         and(
@@ -181,14 +188,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           eq(vehicleInspections.tripId, id),
           eq(vehicleInspections.vehicleId, tripRecord.vehicleId),
           eq(vehicleInspections.type, 'departure'),
-          eq(vehicleInspections.status, 'completed'),
-          eq(vehicleInspections.overallPass, true),
         ),
       )
+      .orderBy(desc(vehicleInspections.createdAt))
       .limit(1);
-    if (!inspection) {
+    if (!inspection || inspection.status !== 'completed' || inspection.overallPass !== true) {
       return NextResponse.json(
-        { error: 'The currently allocated vehicle requires a passed pre-departure inspection' },
+        { error: 'The latest pre-departure inspection for the currently allocated vehicle must be completed and passed' },
         { status: 409 },
       );
     }
@@ -207,6 +213,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const fuelLevel = body.fuelLevel.trim();
     const auditSequence = Date.now();
 
+    // Claim departure only if every safety/lifecycle prerequisite is still true
+    // at mutation time. This closes the window where a new blocking defect,
+    // failed re-inspection, reassignment or status change could occur after the
+    // initial validation but before the trip transitioned to in_progress.
     await db.execute(sql`
       WITH trip_claim AS (
         UPDATE trips
@@ -215,6 +225,62 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'pending'
           AND issued_at IS NOT NULL
+          AND vehicle_id = ${tripRecord.vehicleId}::uuid
+          AND allocation_id = ${tripRecord.allocationId}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM vehicle_allocations va
+            WHERE va.id = trips.allocation_id
+              AND va.vehicle_id = trips.vehicle_id
+              AND va.driver_employee_id = ${employee.id}::uuid
+              AND va.state = 'confirmed'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM transport_requests tr
+            WHERE tr.id = trips.request_id
+              AND tr.tenant_id = ${session.tenantId}::uuid
+              AND tr.status = 'vehicle_issued'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM trip_authorities ta
+            WHERE ta.trip_id = trips.id
+              AND ta.tenant_id = ${session.tenantId}::uuid
+              AND ta.status = 'ready_for_departure'
+              AND (ta.valid_from IS NULL OR ta.valid_from <= ${now})
+              AND (ta.valid_until IS NULL OR ta.valid_until >= ${now})
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM vehicles v
+            WHERE v.id = trips.vehicle_id
+              AND v.tenant_id = ${session.tenantId}::uuid
+              AND v.status = 'available'
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM vehicle_defects vd
+            WHERE vd.vehicle_id = trips.vehicle_id
+              AND vd.is_blocking = true
+              AND vd.resolved_at IS NULL
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM vehicle_inspections vi
+            WHERE vi.id = (
+              SELECT latest.id
+              FROM vehicle_inspections latest
+              WHERE latest.tenant_id = ${session.tenantId}::uuid
+                AND latest.trip_id = trips.id
+                AND latest.vehicle_id = trips.vehicle_id
+                AND latest.type = 'departure'
+              ORDER BY latest.created_at DESC
+              LIMIT 1
+            )
+              AND vi.status = 'completed'
+              AND vi.overall_pass = true
+          )
         RETURNING id, request_id, vehicle_id
       ),
       authority_claim AS (
