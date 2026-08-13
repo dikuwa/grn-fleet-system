@@ -205,9 +205,17 @@ export async function getApprovalDetail(input: {
     currentStep?.requiredPermission &&
       input.permissionCodes.includes(currentStep.requiredPermission as PermissionCode),
   );
+  const currentConfig = (currentStep?.config || {}) as Record<string, unknown>;
+  const conflictExcludedUserIds = Array.isArray(currentConfig.conflictExcludedUserIds)
+    ? currentConfig.conflictExcludedUserIds.filter(
+        (id): id is string => typeof id === 'string',
+      )
+    : [];
+  const isConflictExcluded = conflictExcludedUserIds.includes(input.userId);
   const canViewActive = Boolean(
     instance.status === 'active' &&
       currentStep &&
+      !isConflictExcluded &&
       (currentStep.assignedUserId === input.userId ||
         (!currentStep.assignedUserId && hasStepPermission)),
   );
