@@ -11,6 +11,16 @@ const nextConfig = {
     ],
   },
   reactCompiler: false,
+  rewrites: async () => ({
+    beforeFiles: [
+      {
+        source: '/api/fuel/receipts/scan',
+        destination: '/api/fuel/receipts/scan-v2',
+      },
+    ],
+    afterFiles: [],
+    fallback: [],
+  }),
   headers: async () => [
     // Security headers (from previously separate next.config.ts)
     {
