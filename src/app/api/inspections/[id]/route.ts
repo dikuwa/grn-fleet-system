@@ -55,7 +55,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         licenceNumber: vehicles.licenceNumber,
       })
       .from(vehicleInspections)
-      .leftJoin(vehicles, eq(vehicleInspections.vehicleId, vehicles.id))
+      .leftJoin(
+        vehicles,
+        and(
+          eq(vehicleInspections.vehicleId, vehicles.id),
+          eq(vehicles.tenantId, session.tenantId),
+        ),
+      )
       .where(
         and(
           eq(vehicleInspections.id, id),
