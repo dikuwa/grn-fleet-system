@@ -11,15 +11,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicleInspections } from '@/db/schema/trips';
 import { and, count, eq } from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-    const db = getDb();
+    const routeCheck = await requireDashboardAction(session, '/dashboard/inspections', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
 
+    const db = getDb();
     const [row] = await db
       .select({ total: count() })
       .from(vehicleInspections)
