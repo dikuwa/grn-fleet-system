@@ -19,6 +19,8 @@
       }
     ],
     "paths": {
+      "@/lib/workflow-engine": ["./src/lib/workflow-engine-safe.ts"],
+      "@/lib/inngest/functions": ["./src/lib/inngest/functions-safe.ts"],
       "@/*": ["./src/*"]
     }
   },

@@ -98,6 +98,15 @@ export async function resolveActionableApprovalInstanceIds(input: {
       const step = status?.currentStep;
       if (!status || status.instance.status !== 'active' || !step) return false;
       if (step.actionType === 'acknowledge') return false;
+
+      const config = (step.config || {}) as Record<string, unknown>;
+      const excludedUserIds = Array.isArray(config.conflictExcludedUserIds)
+        ? config.conflictExcludedUserIds.filter(
+            (id): id is string => typeof id === 'string',
+          )
+        : [];
+      if (excludedUserIds.includes(input.userId)) return false;
+
       if (step.assignedUserId) return step.assignedUserId === input.userId;
       return Boolean(
         step.requiredPermission &&

@@ -6,7 +6,7 @@ import {
   roleAssignments,
   roles,
 } from '@/db/schema';
-import { and, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, lte, notInArray, or } from 'drizzle-orm';
 import { anyNamibiaLicenceClassCovers } from '@/lib/namibia-licence';
 
 export const EMPLOYMENT_STATUSES = [
@@ -121,9 +121,18 @@ export async function resolveRoleHolder(input: {
   roleId: string;
   at?: Date;
   requireCapability?: 'approve' | 'sign' | 'allocate' | 'assign_driver' | 'reconcile';
+  /**
+   * Optional separation-of-duty exclusions. Role resolution skips these users
+   * rather than pre-assigning a conflicted requester/traveller and deadlocking
+   * every other eligible officer behind the explicit assignment guard.
+   */
+  excludeUserIds?: string[];
+  excludeEmployeeIds?: string[];
 }) {
   const db = getDb();
   const at = input.at || new Date();
+  const excludedUserIds = [...new Set((input.excludeUserIds || []).filter(Boolean))];
+  const excludedEmployeeIds = [...new Set((input.excludeEmployeeIds || []).filter(Boolean))];
   const capabilityColumn = {
     approve: roleDelegations.canApprove,
     sign: roleDelegations.canSign,
@@ -151,6 +160,8 @@ export async function resolveRoleHolder(input: {
       eq(capabilityColumn, true),
       eq(employees.employmentStatus, 'active'),
       eq(employees.availabilityStatus, 'available'),
+      excludedUserIds.length ? notInArray(employees.userId, excludedUserIds) : undefined,
+      excludedEmployeeIds.length ? notInArray(employees.id, excludedEmployeeIds) : undefined,
     ))
     .limit(1);
   if (acting?.userId) return { ...acting, isActing: true };
@@ -178,6 +189,8 @@ export async function resolveRoleHolder(input: {
       or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, at)),
       eq(employees.employmentStatus, 'active'),
       eq(employees.availabilityStatus, 'available'),
+      excludedUserIds.length ? notInArray(employees.userId, excludedUserIds) : undefined,
+      excludedEmployeeIds.length ? notInArray(employees.id, excludedEmployeeIds) : undefined,
     ))
     .limit(1);
   return substantive ? { ...substantive, isActing: false } : null;
