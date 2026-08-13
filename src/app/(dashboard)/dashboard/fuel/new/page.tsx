@@ -16,6 +16,57 @@ import { saveDraft, deleteDraft } from '@/lib/offline-drafts';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 import { useQuery } from '@tanstack/react-query';
 
+type ReceiptScanFields = {
+  supplier?: string;
+  stationLocation?: string;
+  transactionDate?: string;
+  transactionTime?: string;
+  transactionReference?: string;
+  fuelType?: string;
+  amount?: number;
+  litres?: number;
+  odometer?: number;
+  registrationNumber?: string;
+  receiptNumber?: string;
+};
+
+type ReceiptScanResult = {
+  status?: string;
+  engine?: string;
+  manualEntryRequired?: boolean;
+  fields?: ReceiptScanFields;
+  extractionConfidence?: number;
+  flags?: string[];
+  matchedVehicle?: { id: string; licenceNumber: string } | null;
+};
+
+function toLocalDateTime(dateValue?: string, timeValue?: string) {
+  if (!dateValue) return '';
+  const raw = dateValue.trim();
+  let date = '';
+  const iso = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  const local = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+  if (iso) date = `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+  else if (local) date = `${local[3]}-${local[2].padStart(2, '0')}-${local[1].padStart(2, '0')}`;
+  if (!date) return '';
+  const time = timeValue?.match(/([0-2]?\d):([0-5]\d)/);
+  return `${date}T${time ? `${time[1].padStart(2, '0')}:${time[2]}` : '00:00'}`;
+}
+
+function normaliseFuelType(value?: string) {
+  const fuel = value?.toLowerCase() || '';
+  if (fuel.includes('diesel')) return 'diesel';
+  if (fuel.includes('unleaded') || fuel.includes('ulp')) return 'unleaded';
+  if (fuel.includes('petrol')) return 'petrol';
+  return '';
+}
+
+function differs(extracted: unknown, confirmed: string | number) {
+  if (extracted === undefined || extracted === null) return true;
+  if (typeof confirmed === 'number') return Number(extracted) !== confirmed;
+  return String(extracted).trim().toLowerCase() !== confirmed.trim().toLowerCase();
+}
+
 export default function NewFuelEntryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -45,6 +96,8 @@ export default function NewFuelEntryPage() {
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptScan, setReceiptScan] = useState<ReceiptScanResult | null>(null);
+  const [isScanningReceipt, setIsScanningReceipt] = useState(false);
   const [vehicleSearch, setVehicleSearch] = useState(searchParams.get('vehicle') || '');
   const [vehicles, setVehicles] = useState<Array<{ id: string; licenceNumber: string; make: string; model: string }>>([]);
   const [vehicleLoading, setVehicleLoading] = useState(false);
@@ -70,6 +123,53 @@ export default function NewFuelEntryPage() {
     setFormData((prev) => ({ ...prev, ...patch }));
     setDraftSaved(false);
   }, []);
+
+  const scanReceipt = useCallback(async (file: File) => {
+    if (!isOnline) return;
+    setIsScanningReceipt(true);
+    try {
+      const scanForm = new FormData();
+      scanForm.append('file', file);
+      const response = await fetch('/api/fuel/receipts/scan', { method: 'POST', body: scanForm });
+      const result = (await response.json()) as ReceiptScanResult & { error?: string };
+      if (!response.ok) throw new Error(result.error || 'Receipt scan failed');
+      setReceiptScan(result);
+
+      const fields = result.fields || {};
+      const scannedDate = toLocalDateTime(fields.transactionDate, fields.transactionTime);
+      const scannedFuel = normaliseFuelType(fields.fuelType);
+      setFormData((prev) => ({
+        ...prev,
+        vehicleGrn: prev.vehicleGrn || result.matchedVehicle?.licenceNumber || '',
+        vehicleId: prev.vehicleId || result.matchedVehicle?.id || '',
+        transactionDate: prev.transactionDate || scannedDate,
+        stationName: prev.stationName || fields.stationLocation || fields.supplier || '',
+        fuelType: prev.fuelType === 'diesel' && scannedFuel && scannedFuel !== 'diesel' ? scannedFuel : prev.fuelType,
+        litres: prev.litres || (fields.litres === undefined ? '' : String(fields.litres)),
+        amount: prev.amount || (fields.amount === undefined ? '' : String(fields.amount)),
+        odometerReading: prev.odometerReading || (fields.odometer === undefined ? '' : String(fields.odometer)),
+        referenceNumber: prev.referenceNumber || fields.receiptNumber || fields.transactionReference || '',
+      }));
+      if (!vehicleSearch && result.matchedVehicle?.licenceNumber) setVehicleSearch(result.matchedVehicle.licenceNumber);
+
+      toast({
+        title: result.manualEntryRequired ? 'Receipt scan needs manual entry' : 'Receipt scanned — review the fields',
+        description: result.flags?.length
+          ? `Check: ${result.flags.join(', ').replaceAll('_', ' ')}`
+          : 'Extracted values were applied only where the form was still blank.',
+        variant: result.flags?.length || result.manualEntryRequired ? 'pending' : 'success',
+      });
+    } catch (error) {
+      setReceiptScan({ status: 'ocr_failed', manualEntryRequired: true, flags: [] });
+      toast({
+        title: 'Receipt scan unavailable',
+        description: `${error instanceof Error ? error.message : 'OCR could not read this receipt'}. You can still enter the values manually and save the original image.`,
+        variant: 'pending',
+      });
+    } finally {
+      setIsScanningReceipt(false);
+    }
+  }, [isOnline, toast, vehicleSearch]);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -180,11 +280,49 @@ export default function NewFuelEntryPage() {
         const receiptResponse = await fetch('/api/fuel/receipts', { method: 'POST', body: receiptForm });
         const receiptData = await receiptResponse.json();
         if (!receiptResponse.ok) throw new Error(receiptData.error || 'Fuel entry saved, but receipt OCR failed');
+
+        const receiptId = receiptData.data?.id as string | undefined;
+        if (receiptId) {
+          const extracted = (receiptData.fields || {}) as Record<string, unknown>;
+          const [transactionDate, transactionTime] = formData.transactionDate.split('T');
+          const candidates: Record<string, string | number> = {};
+          if (formData.stationName) candidates.stationLocation = formData.stationName;
+          if (transactionDate) candidates.transactionDate = transactionDate;
+          if (transactionTime) candidates.transactionTime = transactionTime.slice(0, 5);
+          if (formData.referenceNumber) candidates.receiptNumber = formData.referenceNumber;
+          if (formData.fuelType) candidates.fuelType = formData.fuelType;
+          if (formData.amount) candidates.amount = Number(formData.amount);
+          if (formData.litres) candidates.litres = Number(formData.litres);
+          if (formData.odometerReading) candidates.odometer = Number(formData.odometerReading);
+          if (formData.vehicleGrn) candidates.registrationNumber = formData.vehicleGrn;
+
+          const corrections = Object.fromEntries(
+            Object.entries(candidates).filter(([field, value]) => differs(extracted[field], value)),
+          );
+          if (Object.keys(corrections).length > 0) {
+            const correctionResponse = await fetch('/api/fuel/receipts', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ receiptId, action: 'correct', corrections }),
+            });
+            const correctionData = await correctionResponse.json();
+            if (!correctionResponse.ok) throw new Error(correctionData.error || 'Receipt correction could not be saved');
+          }
+
+          const confirmResponse = await fetch('/api/fuel/receipts', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ receiptId, action: 'confirm' }),
+          });
+          const confirmData = await confirmResponse.json();
+          if (!confirmResponse.ok) throw new Error(confirmData.error || 'Receipt confirmation could not be saved');
+        }
+
         toast({
-          title: receiptData.manualEntryRequired ? 'Receipt saved — enter details manually' : 'Receipt OCR completed',
+          title: receiptData.manualEntryRequired ? 'Receipt saved with confirmed manual values' : 'Receipt OCR reviewed and confirmed',
           description: receiptData.flags?.length
-            ? `Review required: ${receiptData.flags.join(', ').replaceAll('_', ' ')}`
-            : 'Extracted receipt fields are ready for confirmation.',
+            ? `Evidence saved; Transport Office should review: ${receiptData.flags.join(', ').replaceAll('_', ' ')}`
+            : 'The original image and your confirmed receipt values were preserved.',
           variant: receiptData.flags?.length ? 'pending' : 'success',
         });
       }
@@ -201,7 +339,7 @@ export default function NewFuelEntryPage() {
       }
 
       toast({ title: 'Fuel entry recorded', description: `${formData.litres}L of ${formData.fuelType} for ${formData.vehicleGrn}`, variant: 'success' });
-      router.push('/dashboard/fuel');
+      router.push(`/dashboard/fuel/${data.data.id}`);
     } catch (err) {
       console.error('Fuel entry failed:', err);
       toast({ title: 'Failed to record', description: err instanceof Error ? err.message : 'Transaction could not be saved', variant: 'error' });
@@ -342,15 +480,44 @@ export default function NewFuelEntryPage() {
               <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-canvas px-4 py-3 text-center hover:border-brand-400 dark:hover:border-brand-500">
                 <Camera className="h-6 w-6 text-brand-700" />
                 <span className="text-sm font-medium text-ink-800">{receiptFile ? receiptFile.name : 'Take photo or choose receipt image'}</span>
-                <span className="text-xs text-ink-500">The original is preserved and OCR fields remain editable.</span>
+                <span className="text-xs text-ink-500">The original is preserved. OCR only fills blank values; review and edit the transaction fields before saving.</span>
                 <input
                   type="file"
                   accept="image/*"
                   capture="environment"
                   className="sr-only"
-                  onChange={(event) => setReceiptFile(event.target.files?.[0] || null)}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    setReceiptFile(file);
+                    setReceiptScan(null);
+                    if (file && isOnline) void scanReceipt(file);
+                  }}
                 />
               </label>
+              {receiptFile && isOnline && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void scanReceipt(receiptFile)} loading={isScanningReceipt}>
+                    <Camera className="h-4 w-4" /> Rescan receipt
+                  </Button>
+                  {receiptScan && (
+                    <span className="text-xs text-ink-500">
+                      {receiptScan.manualEntryRequired
+                        ? 'OCR unavailable — manual values will be saved with the original image.'
+                        : `${receiptScan.engine || 'OCR'} · ${Math.round((receiptScan.extractionConfidence || 0) * 100)}% confidence`}
+                    </span>
+                  )}
+                </div>
+              )}
+              {receiptScan?.flags?.length ? (
+                <div className="rounded-[8px] border border-status-pending-border bg-status-pending-bg/20 px-3 py-2 text-xs text-status-pending-text">
+                  Review before saving: {receiptScan.flags.join(', ').replaceAll('_', ' ')}. These flags do not block manual correction.
+                </div>
+              ) : null}
+              {receiptScan && !receiptScan.manualEntryRequired && (
+                <div className="rounded-[8px] border border-border bg-muted/30 px-3 py-2 text-xs text-ink-600">
+                  OCR is provisional. The editable transaction fields above are the values that will be treated as your confirmation; the stored receipt keeps the original extraction plus an audit trail of any corrections.
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -361,7 +528,7 @@ export default function NewFuelEntryPage() {
             {draftSaved ? 'Saved!' : 'Save Draft'}
           </Button>
           <Button variant="secondary" size="sm" asChild><Link href="/dashboard/fuel">Cancel</Link></Button>
-          <Button variant="primary" size="sm" type="submit" loading={isSubmitting}>
+          <Button variant="primary" size="sm" type="submit" loading={isSubmitting} disabled={isScanningReceipt}>
             {isOnline ? <><CheckCircle2 className="h-4 w-4" /> Record Transaction</> : <><Save className="h-4 w-4" /> Queue Offline</>}
           </Button>
         </div>
