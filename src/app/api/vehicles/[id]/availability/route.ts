@@ -11,11 +11,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicles, vehicleDefects, maintenanceEvents } from '@/db/schema/fleet';
 import { vehicleAllocations } from '@/db/schema/trips';
-import {eq, and, ne, gte, isNull, lt, gt} from 'drizzle-orm';
+import { eq, and, ne, gte, isNull, lt, gt } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 
 interface Blocker {
-  type: 'overlapping_allocation' | 'critical_defect' | 'maintenance_block' | 'vehicle_status';
+  type: 'overlapping_allocation' | 'blocking_defect' | 'major_defect' | 'maintenance_block' | 'vehicle_status';
   detail: string;
   severity: 'error' | 'warning';
 }
@@ -59,27 +59,32 @@ export async function GET(
       });
     }
 
-    // 3. Check for critical unresolved defects
-    const criticalDefects = await db
+    // 3. `isBlocking` is the canonical safety gate used by inspection, issue and
+    // start workflows. Do not infer operational eligibility from severity alone:
+    // a major defect may explicitly be blocking, while a legacy critical record
+    // may have been intentionally cleared by setting its blocking flag false.
+    const blockingDefects = await db
       .select()
       .from(vehicleDefects)
       .where(
         and(
           eq(vehicleDefects.vehicleId, id),
-          eq(vehicleDefects.severity, 'critical'),
+          eq(vehicleDefects.isBlocking, true),
           isNull(vehicleDefects.resolvedAt),
         ),
       );
 
-    if (criticalDefects.length > 0) {
+    if (blockingDefects.length > 0) {
       blockers.push({
-        type: 'critical_defect',
-        detail: `${criticalDefects.length} critical defect${criticalDefects.length > 1 ? 's' : ''} unresolved: ${criticalDefects.map((d) => d.description).join('; ')}`,
+        type: 'blocking_defect',
+        detail: `${blockingDefects.length} unresolved blocking defect${blockingDefects.length > 1 ? 's' : ''}: ${blockingDefects.map((d) => d.description).join('; ')}`,
         severity: 'error',
       });
     }
 
-    // Also check major defects (warning level)
+    // Non-blocking major defects remain visible as warnings so an officer can
+    // make an informed allocation decision without incorrectly treating them as
+    // safety clearance failures.
     const majorDefects = await db
       .select()
       .from(vehicleDefects)
@@ -87,14 +92,15 @@ export async function GET(
         and(
           eq(vehicleDefects.vehicleId, id),
           eq(vehicleDefects.severity, 'major'),
+          eq(vehicleDefects.isBlocking, false),
           isNull(vehicleDefects.resolvedAt),
         ),
       );
 
     if (majorDefects.length > 0) {
       blockers.push({
-        type: 'critical_defect',
-        detail: `${majorDefects.length} major defect${majorDefects.length > 1 ? 's' : ''} unresolved (restricted use)`,
+        type: 'major_defect',
+        detail: `${majorDefects.length} unresolved non-blocking major defect${majorDefects.length > 1 ? 's' : ''} (restricted use)`,
         severity: 'warning',
       });
     }
