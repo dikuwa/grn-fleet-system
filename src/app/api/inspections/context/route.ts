@@ -10,8 +10,15 @@ import {
 } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
-import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
+import { tripScopeCondition } from '@/lib/record-scope';
 
 const VALID_TYPES = ['departure', 'return'] as const;
 type InspectionType = (typeof VALID_TYPES)[number];
@@ -31,6 +38,12 @@ export async function GET(request: NextRequest) {
     if (routeCheck instanceof NextResponse) return routeCheck;
     const permissionCheck = await requirePermission(session, Permissions.INSPECTION_PERFORM);
     if (permissionCheck instanceof NextResponse) return permissionCheck;
+
+    const roleNames = await getSessionRoleNames(session);
+    const access = resolveDashboardAccess('/dashboard/inspections/new', roleNames);
+    if (!access.allowed || !access.actions.includes('create')) {
+      return NextResponse.json({ error: 'Inspection access denied' }, { status: 403 });
+    }
 
     const requestedType = new URL(request.url).searchParams.get('type') || 'departure';
     if (!VALID_TYPES.includes(requestedType as InspectionType)) {
@@ -97,6 +110,11 @@ export async function GET(request: NextRequest) {
         eq(trips.tenantId, session.tenantId),
         eq(transportRequests.tenantId, session.tenantId),
         eq(vehicles.tenantId, session.tenantId),
+        tripScopeCondition({
+          tenantId: session.tenantId,
+          userId: session.user.id,
+          recordScope: access.recordScope ?? 'assigned',
+        }),
         inArray(trips.status, lifecycleStatuses),
       ))
       .orderBy(trips.createdAt);
