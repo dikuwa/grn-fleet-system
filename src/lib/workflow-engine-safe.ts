@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   employees,
@@ -37,9 +37,6 @@ export class WorkflowEngine extends BaseWorkflowEngine {
       return status;
     }
 
-    const assignedUserId = currentStep.assignedUserId;
-    if (!assignedUserId) return status;
-
     const db = getDb();
     const [request] = await db
       .select({
@@ -53,11 +50,29 @@ export class WorkflowEngine extends BaseWorkflowEngine {
       .limit(1);
     if (!request) return status;
 
-    const excludeUserIds = [request.requesterUserId].filter((id): id is string => Boolean(id));
     const excludeEmployeeIds = [
       request.requesterEmployeeId,
       request.travellerEmployeeId,
     ].filter((id): id is string => Boolean(id));
+    const excludeUserIds = [request.requesterUserId].filter((id): id is string => Boolean(id));
+
+    // Convert request participant employee IDs to user IDs as well so
+    // permission-routed queues/reminders can hide the conflicted traveller,
+    // not merely reject them later at action time.
+    if (excludeEmployeeIds.length > 0) {
+      const participantUsers = await db
+        .select({ userId: employees.userId })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.tenantId, request.tenantId),
+            inArray(employees.id, excludeEmployeeIds),
+          ),
+        );
+      for (const participant of participantUsers) {
+        if (participant.userId) excludeUserIds.push(participant.userId);
+      }
+    }
 
     // Final authorisation also enforces release/authorise separation of duty.
     if (currentStep.actionType === 'authorise') {
@@ -74,8 +89,36 @@ export class WorkflowEngine extends BaseWorkflowEngine {
       if (releaseAction?.actorUserId) excludeUserIds.push(releaseAction.actorUserId);
     }
 
-    let assignedIsConflicted = excludeUserIds.includes(assignedUserId);
-    if (!assignedIsConflicted && excludeEmployeeIds.length > 0) {
+    const uniqueExcludeUserIds = [...new Set(excludeUserIds)];
+    const uniqueExcludeEmployeeIds = [...new Set(excludeEmployeeIds)];
+    const assignedUserId = currentStep.assignedUserId;
+
+    // A genuinely unassigned permission-routed step is valid. Attach the
+    // separation-of-duty exclusions so queue/reminder callers can suppress
+    // conflicted users while still allowing every other qualified user.
+    if (!assignedUserId) {
+      const unassigned = {
+        ...currentStep,
+        config: {
+          ...(currentStep.config || {}),
+          conflictExcludedUserIds: uniqueExcludeUserIds,
+          conflictExcludedEmployeeIds: uniqueExcludeEmployeeIds,
+        },
+      };
+      return {
+        ...status,
+        currentStep: unassigned,
+        definition: {
+          ...status.definition,
+          steps: status.definition.steps.map((step) =>
+            step.stepOrder === unassigned.stepOrder ? unassigned : step,
+          ),
+        },
+      };
+    }
+
+    let assignedIsConflicted = uniqueExcludeUserIds.includes(assignedUserId);
+    if (!assignedIsConflicted && uniqueExcludeEmployeeIds.length > 0) {
       const [assignedEmployee] = await db
         .select({ id: employees.id })
         .from(employees)
@@ -87,7 +130,7 @@ export class WorkflowEngine extends BaseWorkflowEngine {
         )
         .limit(1);
       assignedIsConflicted = Boolean(
-        assignedEmployee && excludeEmployeeIds.includes(assignedEmployee.id),
+        assignedEmployee && uniqueExcludeEmployeeIds.includes(assignedEmployee.id),
       );
     }
 
@@ -116,8 +159,8 @@ export class WorkflowEngine extends BaseWorkflowEngine {
         tenantId: request.tenantId,
         roleId: role.roleId,
         requireCapability: capability,
-        excludeUserIds,
-        excludeEmployeeIds,
+        excludeUserIds: uniqueExcludeUserIds,
+        excludeEmployeeIds: uniqueExcludeEmployeeIds,
       });
       if (!holder?.userId) continue;
 
@@ -128,6 +171,8 @@ export class WorkflowEngine extends BaseWorkflowEngine {
           ...(currentStep.config || {}),
           conflictSafeResolution: true,
           conflictedAssignedUserId: assignedUserId,
+          conflictExcludedUserIds: uniqueExcludeUserIds,
+          conflictExcludedEmployeeIds: uniqueExcludeEmployeeIds,
           resolvedRoleId: role.roleId,
           resolvedEmployeeId: holder.employeeId,
           resolvedCapacity: holder.capacity,
@@ -159,6 +204,8 @@ export class WorkflowEngine extends BaseWorkflowEngine {
         ...(currentStep.config || {}),
         conflictSafeResolution: true,
         conflictedAssignedUserId: assignedUserId,
+        conflictExcludedUserIds: uniqueExcludeUserIds,
+        conflictExcludedEmployeeIds: uniqueExcludeEmployeeIds,
         assignmentFallback: 'permission_routed',
       },
     };
@@ -173,5 +220,19 @@ export class WorkflowEngine extends BaseWorkflowEngine {
         ),
       },
     };
+  }
+
+  override async getCurrentStepRecipients(instanceId: string, tenantId: string): Promise<string[]> {
+    const recipients = await super.getCurrentStepRecipients(instanceId, tenantId);
+    if (recipients.length === 0) return recipients;
+
+    const status = await this.getWorkflowStatus(instanceId);
+    const config = (status?.currentStep?.config || {}) as Record<string, unknown>;
+    const excluded = Array.isArray(config.conflictExcludedUserIds)
+      ? config.conflictExcludedUserIds.filter((id): id is string => typeof id === 'string')
+      : [];
+    if (excluded.length === 0) return recipients;
+    const excludedSet = new Set(excluded);
+    return recipients.filter((userId) => !excludedSet.has(userId));
   }
 }
