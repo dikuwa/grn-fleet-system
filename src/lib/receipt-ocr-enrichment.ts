@@ -18,6 +18,11 @@ function lineValue(text: string, label: RegExp): string | undefined {
   return line.replace(label, '').replace(/^[\s.:#-]+/, '').trim() || undefined;
 }
 
+/**
+ * Fill station-specific labels that generic receipt parsing can miss.
+ * Existing parsed values always win so enrichment cannot silently replace
+ * stronger OCR output or user-confirmed values.
+ */
 export function enrichFuelReceiptFields(text: string, base: ReceiptFields): ReceiptFields {
   const clean = text.replace(/\r/g, '');
   const lines = clean.split('\n').map((line) => line.trim()).filter(Boolean);
