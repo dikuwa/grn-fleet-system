@@ -18,24 +18,40 @@ function lineValue(text: string, label: RegExp): string | undefined {
   return line.replace(label, '').replace(/^[\s.:#-]+/, '').trim() || undefined;
 }
 
+function usableBase(value: string | undefined, invalid: RegExp): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || invalid.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 export function enrichFuelReceiptFields(text: string, base: ReceiptFields): ReceiptFields {
   const clean = text.replace(/\r/g, '');
   const lines = clean.split('\n').map((line) => line.trim()).filter(Boolean);
 
   const transactionReference =
-    base.transactionReference ||
+    usableBase(base.transactionReference, /^(?:txid|id|ref|reference|no|number)$/i) ||
     firstMatch(clean, [/(?:P24\s*TXID|TXID)\s*[.:#-]*\s*([A-Z0-9-]{4,})/i]);
+
+  const normalizedPump = lineValue(clean, /^PUMP\s*(?:NO|NUMBER|#)?\b/i)?.match(/[0-9A-Z]{1,4}/i)?.[0];
   const pumpNumber =
-    base.pumpNumber ||
-    firstMatch(clean, [/(?:PUMP)\s*(?:NO|NUMBER|#)?\s*[.:#-]*\s*([0-9A-Z]{1,4})/i]);
+    usableBase(base.pumpNumber, /^(?:pump|no|number|#|pump\s*no)$/i) || normalizedPump;
+
+  const normalizedRegistration = lineValue(
+    clean,
+    /^(?:REGISTRATION|REG)\s*(?:NO|NUMBER|#)?\b/i,
+  )
+    ?.replace(/[^A-Z0-9-]/gi, '')
+    .toUpperCase();
   const registrationNumber =
-    base.registrationNumber ||
-    firstMatch(clean, [
-      /(?:REGISTRATION|REG)\s*(?:NO|NUMBER|#)?\s*[.:#-]*\s*([A-Z]{1,4}[- ]?[A-Z0-9]{2,8})/i,
-    ])?.toUpperCase().replace(/\s+/g, '');
+    usableBase(
+      base.registrationNumber,
+      /^(?:istration|registration|reg|no|number|registration\s*no)$/i,
+    )?.replace(/[^A-Z0-9-]/gi, '').toUpperCase() || normalizedRegistration;
+
   const attendant =
-    base.attendant ||
-    lineValue(clean, /^(?:ATTENDANT(?:\s*NAME)?|OPERATOR|CASHIER)\s*(?:NO|NUMBER|#)?/i);
+    usableBase(base.attendant, /^(?:attendant|name|operator|cashier|no|number)$/i) ||
+    lineValue(clean, /^(?:ATTENDANT(?:\s*NAME)?|OPERATOR|CASHIER)\s*(?:NO|NUMBER|#)?\b/i);
+
   const vehicleMake = base.vehicleMake || lineValue(clean, /^VEHICLE\s*MAKE/i);
   const vehicleModel = base.vehicleModel || lineValue(clean, /^VEHICLE\s*MODEL/i);
   const vehicleColour = base.vehicleColour || lineValue(clean, /^VEHICLE\s*COLOU?R/i);
