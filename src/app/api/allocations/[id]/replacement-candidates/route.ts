@@ -5,15 +5,16 @@
  *
  * Returns tenant vehicles that may replace the current allocation vehicle.
  * Candidate availability mirrors the canonical replacement service exactly:
- * fleet status must be `available` and there must be no overlapping
- * provisional/confirmed allocation in the requested period.
+ * fleet status must be `available`, there must be no unresolved blocking
+ * safety defect, and there must be no overlapping provisional/confirmed
+ * allocation in the requested period.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { vehicleAllocations } from '@/db/schema/trips';
-import { vehicles } from '@/db/schema/fleet';
-import { eq, and, ne, inArray, lt, gt } from 'drizzle-orm';
+import { vehicleDefects, vehicles } from '@/db/schema/fleet';
+import { eq, and, ne, inArray, lt, gt, isNull } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -76,29 +77,53 @@ export async function GET(
       .where(eq(vehicles.tenantId, tenantId))
       .orderBy(vehicles.make, vehicles.model);
 
-    const overlappingAllocations = await db
-      .select({ vehicleId: vehicleAllocations.vehicleId })
-      .from(vehicleAllocations)
-      .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
-      .where(
-        and(
-          eq(vehicles.tenantId, tenantId),
-          ne(vehicleAllocations.id, id),
-          ne(vehicleAllocations.vehicleId, currentVehicleId),
-          inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
-          lt(vehicleAllocations.startAt, endAt),
-          gt(vehicleAllocations.endAt, startAt),
+    const [overlappingAllocations, blockingDefects] = await Promise.all([
+      db
+        .select({ vehicleId: vehicleAllocations.vehicleId })
+        .from(vehicleAllocations)
+        .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
+        .where(
+          and(
+            eq(vehicles.tenantId, tenantId),
+            ne(vehicleAllocations.id, id),
+            ne(vehicleAllocations.vehicleId, currentVehicleId),
+            inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
+            lt(vehicleAllocations.startAt, endAt),
+            gt(vehicleAllocations.endAt, startAt),
+          ),
         ),
-      );
+      db
+        .select({ vehicleId: vehicleDefects.vehicleId })
+        .from(vehicleDefects)
+        .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+        .where(
+          and(
+            eq(vehicles.tenantId, tenantId),
+            eq(vehicleDefects.isBlocking, true),
+            isNull(vehicleDefects.resolvedAt),
+          ),
+        ),
+    ]);
 
     const overlappingVehicleIds = new Set(overlappingAllocations.map((row) => row.vehicleId));
+    const blockingVehicleIds = new Set(blockingDefects.map((row) => row.vehicleId));
 
     const result = allVehicles
       .filter((vehicle) => vehicle.id !== currentVehicleId)
-      .map((vehicle) => ({
-        ...vehicle,
-        available: vehicle.status === 'available' && !overlappingVehicleIds.has(vehicle.id),
-      }))
+      .map((vehicle) => {
+        const hasScheduleConflict = overlappingVehicleIds.has(vehicle.id);
+        const hasBlockingDefect = blockingVehicleIds.has(vehicle.id);
+        return {
+          ...vehicle,
+          available:
+            vehicle.status === 'available' && !hasScheduleConflict && !hasBlockingDefect,
+          blockers: [
+            ...(vehicle.status !== 'available' ? [`Vehicle status is ${vehicle.status}`] : []),
+            ...(hasScheduleConflict ? ['Vehicle is already allocated during this period'] : []),
+            ...(hasBlockingDefect ? ['Vehicle has an unresolved blocking safety defect'] : []),
+          ],
+        };
+      })
       .sort((a, b) => (a.available === b.available ? 0 : a.available ? -1 : 1));
 
     return NextResponse.json({ vehicles: result });
