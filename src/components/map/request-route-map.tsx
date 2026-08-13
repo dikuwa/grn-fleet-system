@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { LocateFixed, MapPinned, RotateCcw } from 'lucide-react';
 
 interface RouteData {
   id: string;
@@ -20,166 +19,420 @@ interface RouteMapProps {
   routes: RouteData[];
 }
 
+type LatLngLiteral = { lat: number; lng: number };
+
+type GoogleMap = {
+  fitBounds: (
+    bounds: GoogleBounds,
+    padding?: number | { top: number; right: number; bottom: number; left: number },
+  ) => void;
+  setCenter: (center: LatLngLiteral) => void;
+  setZoom: (zoom: number) => void;
+};
+
+type GoogleBounds = {
+  extend: (point: LatLngLiteral) => GoogleBounds;
+  isEmpty: () => boolean;
+};
+
+type GoogleMarker = {
+  addListener: (eventName: string, handler: () => void) => unknown;
+  setMap: (map: GoogleMap | null) => void;
+};
+
+type GooglePolyline = {
+  setMap: (map: GoogleMap | null) => void;
+};
+
+type GoogleInfoWindow = {
+  open: (options: { map: GoogleMap; anchor: GoogleMarker }) => void;
+  close: () => void;
+};
+
+type GoogleMapsApi = {
+  Map: new (
+    element: HTMLElement,
+    options: {
+      center: LatLngLiteral;
+      zoom: number;
+      mapId?: string;
+      mapTypeControl: boolean;
+      streetViewControl: boolean;
+      fullscreenControl: boolean;
+      zoomControl: boolean;
+      scaleControl: boolean;
+      clickableIcons: boolean;
+      gestureHandling: 'cooperative';
+      backgroundColor: string;
+    },
+  ) => GoogleMap;
+  LatLngBounds: new () => GoogleBounds;
+  Marker: new (options: {
+    map: GoogleMap;
+    position: LatLngLiteral;
+    title: string;
+    label?: { text: string; color: string; fontWeight: string; fontSize: string };
+    zIndex?: number;
+  }) => GoogleMarker;
+  Polyline: new (options: {
+    map: GoogleMap;
+    path: LatLngLiteral[];
+    strokeColor: string;
+    strokeOpacity: number;
+    strokeWeight: number;
+    geodesic: boolean;
+  }) => GooglePolyline;
+  InfoWindow: new (options: { content: string }) => GoogleInfoWindow;
+};
+
+type WindowWithGoogleMaps = Window & {
+  google?: {
+    maps?: GoogleMapsApi;
+  };
+};
+
+let googleMapsPromise: Promise<GoogleMapsApi> | null = null;
+
+function getGoogleMapsNamespace(): GoogleMapsApi | undefined {
+  return (window as WindowWithGoogleMaps).google?.maps;
+}
+
+function waitForGoogleMaps(timeoutMs = 12_000): Promise<GoogleMapsApi> {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const check = () => {
+      const maps = getGoogleMapsNamespace();
+      if (maps?.Map && maps.LatLngBounds && maps.Marker && maps.Polyline && maps.InfoWindow) {
+        resolve(maps);
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        reject(new Error('Google Maps did not become ready in time.'));
+        return;
+      }
+      window.setTimeout(check, 50);
+    };
+    check();
+  });
+}
+
+function loadGoogleMaps(): Promise<GoogleMapsApi> {
+  if (typeof window === 'undefined') {
+    return Promise.reject(new Error('Google Maps is only available in the browser.'));
+  }
+
+  const readyMaps = getGoogleMapsNamespace();
+  if (
+    readyMaps?.Map &&
+    readyMaps.LatLngBounds &&
+    readyMaps.Marker &&
+    readyMaps.Polyline &&
+    readyMaps.InfoWindow
+  ) {
+    return Promise.resolve(readyMaps);
+  }
+  if (googleMapsPromise) return googleMapsPromise;
+
+  const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY;
+  if (!key) {
+    return Promise.reject(new Error('Google Maps browser key is not configured.'));
+  }
+
+  googleMapsPromise = new Promise<GoogleMapsApi>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-maps-js-api]');
+    if (existing) {
+      waitForGoogleMaps().then(resolve).catch(reject);
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&v=weekly&language=en&region=NA`;
+    script.async = true;
+    script.defer = true;
+    script.dataset.mapsJsApi = 'true';
+    script.addEventListener('load', () => {
+      waitForGoogleMaps().then(resolve).catch(reject);
+    });
+    script.addEventListener('error', () => {
+      googleMapsPromise = null;
+      script.remove();
+      reject(new Error('Google Maps script failed to load.'));
+    });
+    document.head.appendChild(script);
+  }).catch((error) => {
+    googleMapsPromise = null;
+    throw error;
+  });
+
+  return googleMapsPromise;
+}
+
+function decodePolyline(polyline: string): LatLngLiteral[] {
+  const coordinates: LatLngLiteral[] = [];
+  let cursor = 0;
+  let latitude = 0;
+  let longitude = 0;
+
+  while (cursor < polyline.length) {
+    let byte: number;
+    let shift = 0;
+    let result = 0;
+
+    do {
+      byte = polyline.charCodeAt(cursor++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20 && cursor <= polyline.length);
+
+    latitude += (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+    shift = 0;
+    result = 0;
+
+    do {
+      byte = polyline.charCodeAt(cursor++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20 && cursor <= polyline.length);
+
+    longitude += (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+    coordinates.push({ lat: latitude / 1e5, lng: longitude / 1e5 });
+  }
+
+  return coordinates;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function formatDuration(minutes: number | null): string {
+  if (!minutes) return '';
+  const hours = Math.floor(minutes / 60);
+  const remaining = Math.round(minutes % 60);
+  if (!hours) return `~${remaining}m`;
+  return `~${hours}h${remaining ? ` ${remaining}m` : ''}`;
+}
+
+const ROUTE_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
+const NAMIBIA_CENTER = { lat: -22.5609, lng: 17.0658 };
+
 export default function RouteMap({ routes }: RouteMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstance = useRef<L.Map | null>(null);
+  const mapInstanceRef = useRef<GoogleMap | null>(null);
+  const boundsRef = useRef<GoogleBounds | null>(null);
+  const overlaysRef = useRef<Array<GoogleMarker | GooglePolyline>>([]);
+  const infoWindowsRef = useRef<GoogleInfoWindow[]>([]);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [retryKey, setRetryKey] = useState(0);
 
-  useEffect(() => {
-    if (!mapRef.current || mapInstance.current) return;
-
-    const map = L.map(mapRef.current, {
-      zoomControl: true,
-      attributionControl: true,
-    });
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      maxZoom: 18,
-    }).addTo(map);
-
-    mapInstance.current = map;
-
-    return () => {
-      map.remove();
-      mapInstance.current = null;
-    };
+  const fitRoute = useCallback(() => {
+    const map = mapInstanceRef.current;
+    const bounds = boundsRef.current;
+    if (!map || !bounds || bounds.isEmpty()) return;
+    map.fitBounds(bounds, { top: 56, right: 56, bottom: 56, left: 56 });
   }, []);
 
   useEffect(() => {
-    const map = mapInstance.current;
-    if (!map || routes.length === 0) return;
+    if (!mapRef.current) return;
+    let cancelled = false;
 
-    // Clear existing layers except the base tile layer
-    map.eachLayer((layer) => {
-      if (layer instanceof L.Marker || layer instanceof L.Polyline || layer instanceof L.CircleMarker) {
-        map.removeLayer(layer);
-      }
-    });
+    setLoadState('loading');
+    loadGoogleMaps()
+      .then((maps) => {
+        if (cancelled || !mapRef.current) return;
+        const mapId = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID;
+        mapInstanceRef.current = new maps.Map(mapRef.current, {
+          center: NAMIBIA_CENTER,
+          zoom: 6,
+          ...(mapId ? { mapId } : {}),
+          mapTypeControl: true,
+          streetViewControl: true,
+          fullscreenControl: true,
+          zoomControl: true,
+          scaleControl: true,
+          clickableIcons: true,
+          gestureHandling: 'cooperative',
+          backgroundColor: '#e5e7eb',
+        });
+        setLoadState('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setLoadState('error');
+      });
 
-    const bounds = L.latLngBounds([]);
-    const colors = ['#1F4E8C', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0891B2'];
+    return () => {
+      cancelled = true;
+      for (const overlay of overlaysRef.current) overlay.setMap(null);
+      for (const infoWindow of infoWindowsRef.current) infoWindow.close();
+      overlaysRef.current = [];
+      infoWindowsRef.current = [];
+      boundsRef.current = null;
+      mapInstanceRef.current = null;
+    };
+  }, [retryKey]);
 
-    routes.forEach((route, index) => {
-      const color = colors[index % colors.length];
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || loadState !== 'ready') return;
 
-      // Decode polyline if available
-      if (route.routePolyline) {
-        try {
-          const polylineCoords: [number, number][] = [];
-          let index = 0;
-          let lat = 0;
-          let lng = 0;
-          const polyline = route.routePolyline;
+    let disposed = false;
 
-          while (index < polyline.length) {
-            let b: number;
-            let shift = 0;
-            let result = 0;
+    loadGoogleMaps().then((maps) => {
+      if (disposed || !mapInstanceRef.current) return;
 
-            do {
-              b = polyline.charCodeAt(index++) - 63;
-              result |= (b & 0x1f) << shift;
-              shift += 5;
-            } while (b >= 0x20);
+      for (const overlay of overlaysRef.current) overlay.setMap(null);
+      for (const infoWindow of infoWindowsRef.current) infoWindow.close();
+      overlaysRef.current = [];
+      infoWindowsRef.current = [];
 
-            const dlat = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
-            lat += dlat;
+      const bounds = new maps.LatLngBounds();
+      boundsRef.current = bounds;
 
-            shift = 0;
-            result = 0;
-            do {
-              b = polyline.charCodeAt(index++) - 63;
-              result |= (b & 0x1f) << shift;
-              shift += 5;
-            } while (b >= 0x20);
+      routes.forEach((route, routeIndex) => {
+        const color = ROUTE_COLORS[routeIndex % ROUTE_COLORS.length];
+        const path = route.routePolyline ? decodePolyline(route.routePolyline) : [];
 
-            const dlng = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
-            lng += dlng;
-
-            polylineCoords.push([lat / 1e5, lng / 1e5]);
-          }
-
-          if (polylineCoords.length > 0) {
-            L.polyline(polylineCoords, {
-              color,
-              weight: 3,
-              opacity: 0.8,
-            }).addTo(map);
-            polylineCoords.forEach((c) => bounds.extend(c));
-          }
-        } catch {
-          // Polyline decoding failed — fall back to marker-only
+        if (path.length > 1) {
+          const polyline = new maps.Polyline({
+            map,
+            path,
+            strokeColor: color,
+            strokeOpacity: 0.92,
+            strokeWeight: 5,
+            geodesic: true,
+          });
+          overlaysRef.current.push(polyline);
+          path.forEach((point) => bounds.extend(point));
         }
-      }
 
-      // Origin marker
-      const origCoords = route.originCoordinates;
-      if (origCoords && typeof origCoords.lat === 'number' && typeof origCoords.lng === 'number') {
-        const originMarker = L.circleMarker([origCoords.lat, origCoords.lng], {
-          radius: 8,
-          fillColor: color,
-          color: '#ffffff',
-          weight: 2,
-          fillOpacity: 0.9,
-        }).addTo(map);
+        const endpoints: Array<{
+          kind: 'Origin' | 'Destination';
+          name: string;
+          coordinates: LatLngLiteral | null;
+          label: string;
+        }> = [
+          {
+            kind: 'Origin',
+            name: route.originName || 'Origin',
+            coordinates: route.originCoordinates,
+            label: 'A',
+          },
+          {
+            kind: 'Destination',
+            name: route.destinationName || 'Destination',
+            coordinates: route.destinationCoordinates,
+            label: 'B',
+          },
+        ];
 
-        originMarker.bindPopup(`
-          <div style="font-family: system-ui, sans-serif; min-width: 160px;">
-            <p style="font-weight:600;margin:0 0 2px;font-size:13px;">Origin</p>
-            <p style="margin:0 0 4px;font-size:12px;color:#666;">${route.originName || 'Unknown'}</p>
-            <p style="margin:0;font-size:11px;color:#999;">${route.mappedDistanceKm ? `${route.mappedDistanceKm} km` : ''}${route.mappedDurationMinutes ? ` · ~${Math.round(route.mappedDurationMinutes / 60)}h${route.mappedDurationMinutes % 60}m` : ''}</p>
-          </div>
-        `);
+        endpoints.forEach((endpoint) => {
+          if (!endpoint.coordinates) return;
+          const marker = new maps.Marker({
+            map,
+            position: endpoint.coordinates,
+            title: `${endpoint.kind}: ${endpoint.name}`,
+            label: {
+              text: endpoint.label,
+              color: '#ffffff',
+              fontWeight: '700',
+              fontSize: '12px',
+            },
+            zIndex: endpoint.kind === 'Origin' ? 20 : 21,
+          });
 
-        bounds.extend([origCoords.lat, origCoords.lng]);
-      }
+          const detailBits = [
+            route.mappedDistanceKm ? `${Math.round(route.mappedDistanceKm)} km` : '',
+            formatDuration(route.mappedDurationMinutes),
+          ].filter(Boolean);
+          const infoWindow = new maps.InfoWindow({
+            content: `<div style="min-width:190px;padding:4px 2px;font-family:system-ui,-apple-system,sans-serif;color:#111827"><div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin-bottom:3px">${endpoint.kind}</div><div style="font-size:14px;font-weight:700;line-height:1.25">${escapeHtml(endpoint.name)}</div>${detailBits.length ? `<div style="margin-top:6px;font-size:12px;color:#4b5563">${detailBits.join(' · ')}</div>` : ''}</div>`,
+          });
+          marker.addListener('click', () => {
+            for (const openWindow of infoWindowsRef.current) openWindow.close();
+            infoWindow.open({ map, anchor: marker });
+          });
+          overlaysRef.current.push(marker);
+          infoWindowsRef.current.push(infoWindow);
+          bounds.extend(endpoint.coordinates);
+        });
 
-      // Destination marker
-      const destCoords = route.destinationCoordinates;
-      if (destCoords && typeof destCoords.lat === 'number' && typeof destCoords.lng === 'number') {
-        const destMarker = L.circleMarker([destCoords.lat, destCoords.lng], {
-          radius: 8,
-          fillColor: color,
-          color: '#ffffff',
-          weight: 2,
-          fillOpacity: 0.9,
-          dashArray: '4',
-        }).addTo(map);
+        if (path.length < 2 && route.originCoordinates && route.destinationCoordinates) {
+          const fallbackLine = new maps.Polyline({
+            map,
+            path: [route.originCoordinates, route.destinationCoordinates],
+            strokeColor: color,
+            strokeOpacity: 0.55,
+            strokeWeight: 3,
+            geodesic: true,
+          });
+          overlaysRef.current.push(fallbackLine);
+          bounds.extend(route.originCoordinates);
+          bounds.extend(route.destinationCoordinates);
+        }
+      });
 
-        destMarker.bindPopup(`
-          <div style="font-family: system-ui, sans-serif; min-width: 160px;">
-            <p style="font-weight:600;margin:0 0 2px;font-size:13px;">Destination</p>
-            <p style="margin:0;font-size:12px;color:#666;">${route.destinationName || 'Unknown'}</p>
-          </div>
-        `);
-
-        bounds.extend([destCoords.lat, destCoords.lng]);
-      }
-
-      // Connect origin to destination with dashed line if no polyline
-      if (!route.routePolyline && origCoords && destCoords &&
-          typeof origCoords.lat === 'number' && typeof destCoords.lat === 'number') {
-        L.polyline(
-          [[origCoords.lat, origCoords.lng], [destCoords.lat, destCoords.lng]],
-          { color, weight: 2, opacity: 0.5, dashArray: '6, 8' },
-        ).addTo(map);
+      if (!bounds.isEmpty()) {
+        window.requestAnimationFrame(fitRoute);
+      } else {
+        map.setCenter(NAMIBIA_CENTER);
+        map.setZoom(6);
       }
     });
 
-    // Fit bounds with padding
-    if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
-    } else {
-      // Default to Namibia
-      map.setView([-22.0, 17.0], 6);
-    }
-  }, [routes]);
+    return () => {
+      disposed = true;
+    };
+  }, [fitRoute, loadState, routes]);
 
   return (
-    <div
-      ref={mapRef}
-      className="h-[350px] w-full rounded-[8px] border border-border overflow-hidden"
-      style={{ minHeight: '250px' }}
-    />
+    <div className="relative h-[350px] min-h-[250px] w-full overflow-hidden rounded-[8px] border border-border bg-muted/40 sm:h-[420px]">
+      <div ref={mapRef} className="absolute inset-0" aria-label="Interactive route map" />
+
+      {loadState === 'loading' && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/90 backdrop-blur-sm">
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
+            <MapPinned className="h-4 w-4 animate-pulse" />
+            Loading interactive map…
+          </div>
+        </div>
+      )}
+
+      {loadState === 'error' && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted/70 p-6">
+          <div className="max-w-sm rounded-xl border border-border bg-card p-5 text-center shadow-sm">
+            <MapPinned className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
+            <p className="text-sm font-semibold text-foreground">Interactive map unavailable</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              The route data is still available below. Check the Google Maps browser key or network connection.
+            </p>
+            <button
+              type="button"
+              onClick={() => setRetryKey((value) => value + 1)}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Retry map
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loadState === 'ready' && routes.length > 0 && (
+        <button
+          type="button"
+          onClick={fitRoute}
+          className="absolute bottom-6 left-3 z-[1] inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-md transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:left-4"
+          aria-label="Fit the complete route on the map"
+        >
+          <LocateFixed className="h-4 w-4" />
+          Fit route
+        </button>
+      )}
+    </div>
   );
 }
