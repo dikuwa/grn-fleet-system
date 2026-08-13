@@ -22,7 +22,10 @@ interface RouteMapProps {
 type LatLngLiteral = { lat: number; lng: number };
 
 type GoogleMap = {
-  fitBounds: (bounds: GoogleBounds, padding?: number | { top: number; right: number; bottom: number; left: number }) => void;
+  fitBounds: (
+    bounds: GoogleBounds,
+    padding?: number | { top: number; right: number; bottom: number; left: number },
+  ) => void;
   setCenter: (center: LatLngLiteral) => void;
   setZoom: (zoom: number) => void;
 };
@@ -82,21 +85,23 @@ type GoogleMapsApi = {
   InfoWindow: new (options: { content: string }) => GoogleInfoWindow;
 };
 
-declare global {
-  interface Window {
-    google?: {
-      maps?: GoogleMapsApi & Record<string, unknown>;
-    };
-  }
-}
+type WindowWithGoogleMaps = Window & {
+  google?: {
+    maps?: GoogleMapsApi;
+  };
+};
 
 let googleMapsPromise: Promise<GoogleMapsApi> | null = null;
+
+function getGoogleMapsNamespace(): GoogleMapsApi | undefined {
+  return (window as WindowWithGoogleMaps).google?.maps;
+}
 
 function waitForGoogleMaps(timeoutMs = 12_000): Promise<GoogleMapsApi> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const check = () => {
-      const maps = window.google?.maps;
+      const maps = getGoogleMapsNamespace();
       if (maps?.Map && maps.LatLngBounds && maps.Marker && maps.Polyline && maps.InfoWindow) {
         resolve(maps);
         return;
@@ -116,8 +121,14 @@ function loadGoogleMaps(): Promise<GoogleMapsApi> {
     return Promise.reject(new Error('Google Maps is only available in the browser.'));
   }
 
-  const readyMaps = window.google?.maps;
-  if (readyMaps?.Map && readyMaps.LatLngBounds && readyMaps.Marker && readyMaps.Polyline && readyMaps.InfoWindow) {
+  const readyMaps = getGoogleMapsNamespace();
+  if (
+    readyMaps?.Map &&
+    readyMaps.LatLngBounds &&
+    readyMaps.Marker &&
+    readyMaps.Polyline &&
+    readyMaps.InfoWindow
+  ) {
     return Promise.resolve(readyMaps);
   }
   if (googleMapsPromise) return googleMapsPromise;
