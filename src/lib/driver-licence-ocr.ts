@@ -13,6 +13,7 @@ export interface LicenceOcrFields {
 }
 
 const datePattern = /\b(\d{2}[./-]\d{2}[./-]\d{4}|\d{4}[./-]\d{2}[./-]\d{2})\b/g;
+const licenceCodePattern = /\b(A1|A|B|C1E|C1|CE|C|BE|EB)\b/gi;
 
 function normaliseDate(value?: string) {
   if (!value) return undefined;
@@ -23,6 +24,23 @@ function normaliseDate(value?: string) {
   return `${parts[2]}-${parts[1]}-${parts[0]}`;
 }
 
+function labelledLineValue(lines: string[], labels: RegExp[]): string | undefined {
+  for (const line of lines) {
+    for (const label of labels) {
+      const match = line.match(label);
+      if (match?.[1]) return match[1].trim();
+    }
+  }
+  return undefined;
+}
+
+function holderLicenceCodes(lines: string[]): string[] {
+  const labelled = lines.filter((line) => /(?:^|\s)(?:9\.?\s*)?(?:code|codes|licence\s*code|license\s*code)\s*[:|.-]/i.test(line));
+  const source = labelled.join(' ');
+  if (!source) return [];
+  return [...new Set([...source.toUpperCase().matchAll(licenceCodePattern)].map((match) => match[1]))];
+}
+
 export function parseNamibianLicenceOcr(text: string): LicenceOcrFields {
   const clean = text.replace(/\r/g, '').replace(/[ \t]+/g, ' ');
   const lines = clean.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -31,17 +49,30 @@ export function parseNamibianLicenceOcr(text: string): LicenceOcrFields {
     const line = lines.find((entry) => labels.some((label) => entry.toLowerCase().includes(label)));
     return line?.split(/[:|]/).slice(1).join(':').trim() || undefined;
   };
-  const codes = [...clean.toUpperCase().matchAll(/\b(A1|A|B|C1E|C1|CE|C|BE|EB)\b/g)].map((match) => match[1]);
+
+  const validity = labelledLineValue(lines, [
+    /(?:validity|valid)\s*[:|.-]?\s*(\d{2}[./-]\d{2}[./-]\d{4})\s*(?:-|to)\s*(\d{2}[./-]\d{2}[./-]\d{4})/i,
+  ]);
+  const validityLine = lines.find((line) => /(?:validity|valid)/i.test(line));
+  const validityDates = validityLine
+    ? [...validityLine.matchAll(datePattern)].map((match) => normaliseDate(match[1])).filter(Boolean) as string[]
+    : [];
+
+  const licenceNumber = labelledLineValue(lines, [
+    /(?:licen[cs]e)\s*(?:no|number)?\s*[.:#|-]*\s*([A-Z0-9-]{4,})/i,
+  ])?.replace(/\s/g, '');
+  const codes = holderLicenceCodes(lines);
   const id = clean.match(/\b\d{6,13}\b/)?.[0];
+
   return {
     holderName: findValue(['surname', 'name']),
     dateOfBirth: normaliseDate(findValue(['date of birth', 'birth'])) || dates[0],
     nationalIdNumber: findValue(['identity', 'id no', 'id number'])?.replace(/\s/g, '') || id,
-    validFrom: normaliseDate(findValue(['valid from'])) || dates.at(-2),
-    validUntil: normaliseDate(findValue(['valid until', 'expiry', 'valid to'])) || dates.at(-1),
-    licenceNumber: findValue(['licence no', 'license no', 'licence number'])?.replace(/\s/g, ''),
+    validFrom: normaliseDate(findValue(['valid from'])) || validityDates[0] || (validity ? normaliseDate(validity) : undefined) || dates.at(-2),
+    validUntil: normaliseDate(findValue(['valid until', 'expiry', 'valid to'])) || validityDates[1] || dates.at(-1),
+    licenceNumber: licenceNumber || findValue(['licence no', 'license no', 'licence number'])?.replace(/\s/g, ''),
     issueNumber: findValue(['issue no', 'issue number']),
-    licenceCodes: [...new Set(codes)],
+    licenceCodes: codes,
     driverRestrictionCode: findValue(['driver restriction']),
     professionalCategory: findValue(['professional authorisation', 'professional authorization', 'prdp']),
     professionalExpiry: normaliseDate(findValue(['professional expiry', 'prdp expiry'])),
