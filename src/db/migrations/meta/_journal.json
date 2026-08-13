@@ -60,6 +60,7 @@
     { "idx": 55, "version": "7", "when": 1786553400000, "tag": "0055_transport_admin_inspection_permission", "breakpoints": true },
     { "idx": 56, "version": "7", "when": 1786555200000, "tag": "0056_physical_trip_authority_reservation", "breakpoints": true },
     { "idx": 57, "version": "7", "when": 1786558800000, "tag": "0057_trip_allocation_uniqueness", "breakpoints": true },
-    { "idx": 58, "version": "7", "when": 1786562400000, "tag": "0058_physical_inspection_checklist", "breakpoints": true }
+    { "idx": 58, "version": "7", "when": 1786562400000, "tag": "0058_physical_inspection_checklist", "breakpoints": true },
+    { "idx": 59, "version": "7", "when": 1786566000000, "tag": "0059_default_inspection_templates", "breakpoints": true }
   ]
 }
