@@ -11,6 +11,9 @@ const nextConfig = {
     ],
   },
   reactCompiler: false,
+  // Route the existing fuel-entry scan URL through the hardened normalized
+  // scanner without changing the client contract. Keep this as a beforeFiles
+  // rewrite so it takes precedence over the legacy route implementation.
   rewrites: async () => ({
     beforeFiles: [
       {
