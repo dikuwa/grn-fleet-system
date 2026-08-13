@@ -113,9 +113,30 @@ export async function completeOfficialInspection(input: InspectionInput) {
     authorityId: tripAuthorities.id,
     authorityStatus: tripAuthorities.status,
   }).from(trips)
-    .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
-    .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
-    .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+    .innerJoin(
+      transportRequests,
+      and(
+        eq(transportRequests.id, trips.requestId),
+        eq(transportRequests.tenantId, tenantId),
+      ),
+    )
+    .innerJoin(
+      vehicleAllocations,
+      and(
+        eq(vehicleAllocations.id, trips.allocationId),
+        eq(vehicleAllocations.requestId, trips.requestId),
+        eq(vehicleAllocations.vehicleId, trips.vehicleId),
+      ),
+    )
+    .innerJoin(
+      tripAuthorities,
+      and(
+        eq(tripAuthorities.tripId, trips.id),
+        eq(tripAuthorities.requestId, trips.requestId),
+        eq(tripAuthorities.allocationId, trips.allocationId),
+        eq(tripAuthorities.tenantId, tenantId),
+      ),
+    )
     .where(and(
       eq(trips.id, input.tripId),
       eq(trips.tenantId, tenantId),
@@ -185,6 +206,10 @@ export async function completeOfficialInspection(input: InspectionInput) {
       comment: supplied.comment?.trim() || null,
     };
   });
+
+  if (!evaluatedItems.some((item) => item.result === 'pass' || item.result === 'fail')) {
+    fail('At least one checklist item must be assessed as pass or fail', 422);
+  }
 
   const photoKeys = Array.from(new Set((input.photoKeys ?? []).filter(Boolean)));
   const expectedPrefix = `tenant/${tenantId}/inspections/`;
