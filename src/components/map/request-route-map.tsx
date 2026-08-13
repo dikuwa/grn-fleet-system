@@ -49,6 +49,16 @@ type GoogleInfoWindow = {
   close: () => void;
 };
 
+type GoogleMarkerIcon = {
+  path: number;
+  scale: number;
+  fillColor: string;
+  fillOpacity: number;
+  strokeColor: string;
+  strokeOpacity: number;
+  strokeWeight: number;
+};
+
 type GoogleMapsApi = {
   Map: new (
     element: HTMLElement,
@@ -72,6 +82,7 @@ type GoogleMapsApi = {
     position: LatLngLiteral;
     title: string;
     label?: { text: string; color: string; fontWeight: string; fontSize: string };
+    icon?: GoogleMarkerIcon;
     zIndex?: number;
   }) => GoogleMarker;
   Polyline: new (options: {
@@ -83,6 +94,9 @@ type GoogleMapsApi = {
     geodesic: boolean;
   }) => GooglePolyline;
   InfoWindow: new (options: { content: string }) => GoogleInfoWindow;
+  SymbolPath: {
+    CIRCLE: number;
+  };
 };
 
 type WindowWithGoogleMaps = Window & {
@@ -97,12 +111,23 @@ function getGoogleMapsNamespace(): GoogleMapsApi | undefined {
   return (window as WindowWithGoogleMaps).google?.maps;
 }
 
+function isGoogleMapsReady(maps: GoogleMapsApi | undefined): maps is GoogleMapsApi {
+  return Boolean(
+    maps?.Map &&
+      maps.LatLngBounds &&
+      maps.Marker &&
+      maps.Polyline &&
+      maps.InfoWindow &&
+      maps.SymbolPath?.CIRCLE !== undefined,
+  );
+}
+
 function waitForGoogleMaps(timeoutMs = 12_000): Promise<GoogleMapsApi> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const check = () => {
       const maps = getGoogleMapsNamespace();
-      if (maps?.Map && maps.LatLngBounds && maps.Marker && maps.Polyline && maps.InfoWindow) {
+      if (isGoogleMapsReady(maps)) {
         resolve(maps);
         return;
       }
@@ -122,15 +147,7 @@ function loadGoogleMaps(): Promise<GoogleMapsApi> {
   }
 
   const readyMaps = getGoogleMapsNamespace();
-  if (
-    readyMaps?.Map &&
-    readyMaps.LatLngBounds &&
-    readyMaps.Marker &&
-    readyMaps.Polyline &&
-    readyMaps.InfoWindow
-  ) {
-    return Promise.resolve(readyMaps);
-  }
+  if (isGoogleMapsReady(readyMaps)) return Promise.resolve(readyMaps);
   if (googleMapsPromise) return googleMapsPromise;
 
   const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY;
@@ -220,6 +237,18 @@ function formatDuration(minutes: number | null): string {
 
 const ROUTE_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
 const NAMIBIA_CENTER = { lat: -22.5609, lng: 17.0658 };
+
+function createEndpointIcon(maps: GoogleMapsApi, color: string): GoogleMarkerIcon {
+  return {
+    path: maps.SymbolPath.CIRCLE,
+    scale: 13,
+    fillColor: color,
+    fillOpacity: 1,
+    strokeColor: '#ffffff',
+    strokeOpacity: 1,
+    strokeWeight: 3,
+  };
+}
 
 export default function RouteMap({ routes }: RouteMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -336,6 +365,7 @@ export default function RouteMap({ routes }: RouteMapProps) {
             map,
             position: endpoint.coordinates,
             title: `${endpoint.kind}: ${endpoint.name}`,
+            icon: createEndpointIcon(maps, color),
             label: {
               text: endpoint.label,
               color: '#ffffff',
