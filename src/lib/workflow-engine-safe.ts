@@ -8,6 +8,11 @@ import {
   workflowActions,
 } from '@/db/schema';
 import { resolveRoleHolder } from '@/lib/employee-lifecycle';
+import {
+  createScopedNotifications,
+  resolveActionNotifications,
+} from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 import { WorkflowEngine as BaseWorkflowEngine } from './workflow-engine';
 
 export * from './workflow-engine';
@@ -28,6 +33,46 @@ export * from './workflow-engine';
  * available. Action-time RBAC and separation-of-duty checks remain authoritative.
  */
 export class WorkflowEngine extends BaseWorkflowEngine {
+  override async initializeForRequest(requestId: string, tenantId: string) {
+    const result = await super.initializeForRequest(requestId, tenantId);
+    if (!result.ok) return result;
+
+    // The base initializer may have emitted its first assignment notification
+    // before conflict-safe runtime resolution was applied. If that assignment
+    // is conflicted, resolve the unsafe notification and issue the action alert
+    // only to the safe current-step recipient(s).
+    const status = await this.getWorkflowStatus(result.instance.id);
+    const config = (status?.currentStep?.config || {}) as Record<string, unknown>;
+    if (status?.currentStep && config.conflictSafeResolution === true) {
+      await resolveActionNotifications({
+        tenantId,
+        entityType: 'workflow_instance',
+        entityId: result.instance.id,
+        eventTypes: ['approval_assigned'],
+      });
+
+      const recipients = await this.getCurrentStepRecipients(result.instance.id, tenantId);
+      if (recipients.length > 0) {
+        await createScopedNotifications({
+          tenantId,
+          recipientUserIds: recipients,
+          category: 'action_required',
+          eventType: 'approval_assigned',
+          title: `Action Required — ${status.currentStep.label}`,
+          body: 'A newly submitted transport request is awaiting your action.',
+          entityType: 'workflow_instance',
+          entityId: result.instance.id,
+          actionUrl: `/dashboard/approvals/${result.instance.id}`,
+          workspace: WorkspaceIds.APPROVER,
+          workflowStage: String(status.currentStep.stepOrder),
+          priority: 'high',
+        });
+      }
+    }
+
+    return result;
+  }
+
   override async getWorkflowStatus(instanceId: string) {
     const status = await super.getWorkflowStatus(instanceId);
     if (!status?.currentStep || status.instance.status !== 'active') return status;
