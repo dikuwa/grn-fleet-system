@@ -6,7 +6,7 @@
 
 import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   trips,
@@ -16,7 +16,7 @@ import {
   vehicleAllocations,
 } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
-import { vehicles } from '@/db/schema/fleet';
+import { vehicleDefects, vehicles } from '@/db/schema/fleet';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -48,6 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         authorityStatus: tripAuthorities.status,
         authorityBeginningOdometer: tripAuthorities.beginningOdometer,
         vehicleOdometer: vehicles.currentOdometer,
+        vehicleStatus: vehicles.status,
       })
       .from(trips)
       .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
@@ -77,27 +78,52 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (trip.authorityStatus !== 'ready_for_departure') {
       return NextResponse.json({ error: `Trip Authority is not ready for physical issue (${trip.authorityStatus})` }, { status: 409 });
     }
+    if (trip.vehicleStatus !== 'available') {
+      return NextResponse.json({ error: `Vehicle is not available for issue (${trip.vehicleStatus})` }, { status: 409 });
+    }
     if (!trip.driverEmployeeId || !trip.driverAcknowledgedAt || trip.driverAcknowledgedByEmployeeId !== trip.driverEmployeeId) {
       return NextResponse.json({ error: 'The assigned driver must acknowledge the trip before issue' }, { status: 409 });
     }
 
+    // Only the latest official departure inspection for this exact trip/vehicle
+    // may authorise physical issue. An earlier pass must never override a later
+    // failed re-inspection.
     const [departureInspection] = await db
-      .select({ id: vehicleInspections.id, odometerReading: vehicleInspections.odometerReading })
+      .select({
+        id: vehicleInspections.id,
+        odometerReading: vehicleInspections.odometerReading,
+        status: vehicleInspections.status,
+        overallPass: vehicleInspections.overallPass,
+      })
       .from(vehicleInspections)
       .where(and(
         eq(vehicleInspections.tenantId, session.tenantId),
         eq(vehicleInspections.tripId, id),
         eq(vehicleInspections.vehicleId, trip.vehicleId),
         eq(vehicleInspections.type, 'departure'),
-        eq(vehicleInspections.status, 'completed'),
-        eq(vehicleInspections.overallPass, true),
       ))
+      .orderBy(desc(vehicleInspections.createdAt))
       .limit(1);
-    if (!departureInspection) {
+    if (!departureInspection || departureInspection.status !== 'completed' || departureInspection.overallPass !== true) {
       return NextResponse.json(
-        { error: 'The currently allocated vehicle requires a passed pre-departure inspection before issue' },
+        { error: 'The latest pre-departure inspection for the currently allocated vehicle must be completed and passed before issue' },
         { status: 409 },
       );
+    }
+
+    const [blockingDefect] = await db
+      .select({ id: vehicleDefects.id })
+      .from(vehicleDefects)
+      .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+      .where(and(
+        eq(vehicleDefects.vehicleId, trip.vehicleId),
+        eq(vehicles.tenantId, session.tenantId),
+        eq(vehicleDefects.isBlocking, true),
+        isNull(vehicleDefects.resolvedAt),
+      ))
+      .limit(1);
+    if (blockingDefect) {
+      return NextResponse.json({ error: 'Vehicle issue is blocked by an unresolved safety-critical defect' }, { status: 409 });
     }
 
     const body = (await req.json().catch(() => ({}))) as {
@@ -133,9 +159,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const issueId = randomUUID();
     const auditSequence = Date.now();
 
-    // Claim the still-unissued trip first. Every dependent write is chained to
-    // that claim, so two concurrent issue requests cannot both create a physical
-    // issue record even though trip_issues.allocation_id is not unique.
+    // Claim the still-unissued trip first. Re-evaluate every safety/lifecycle
+    // prerequisite inside the same SQL statement so a defect, re-inspection,
+    // vehicle status change, de-authorisation or driver reassignment occurring
+    // after the initial page read cannot race physical issue.
     await db.execute(sql`
       WITH trip_claim AS (
         UPDATE trips
@@ -144,6 +171,61 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'pending'
           AND issued_at IS NULL
+          AND vehicle_id = ${trip.vehicleId}::uuid
+          AND allocation_id = ${trip.allocationId}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM transport_requests tr
+            WHERE tr.id = trips.request_id
+              AND tr.tenant_id = ${session.tenantId}::uuid
+              AND tr.status = 'authorised'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM vehicle_allocations va
+            WHERE va.id = trips.allocation_id
+              AND va.state = 'confirmed'
+              AND va.driver_employee_id = ${trip.driverEmployeeId}::uuid
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM trip_authorities ta
+            WHERE ta.trip_id = trips.id
+              AND ta.tenant_id = ${session.tenantId}::uuid
+              AND ta.status = 'ready_for_departure'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM vehicles v
+            WHERE v.id = trips.vehicle_id
+              AND v.tenant_id = ${session.tenantId}::uuid
+              AND v.status = 'available'
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM vehicle_defects vd
+            INNER JOIN vehicles dv ON dv.id = vd.vehicle_id
+            WHERE vd.vehicle_id = trips.vehicle_id
+              AND dv.tenant_id = ${session.tenantId}::uuid
+              AND vd.is_blocking = true
+              AND vd.resolved_at IS NULL
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM vehicle_inspections vi
+            WHERE vi.id = (
+              SELECT latest.id
+              FROM vehicle_inspections latest
+              WHERE latest.tenant_id = ${session.tenantId}::uuid
+                AND latest.trip_id = trips.id
+                AND latest.vehicle_id = trips.vehicle_id
+                AND latest.type = 'departure'
+              ORDER BY latest.created_at DESC
+              LIMIT 1
+            )
+              AND vi.status = 'completed'
+              AND vi.overall_pass = true
+          )
         RETURNING id, request_id, allocation_id
       ),
       issue_insert AS (

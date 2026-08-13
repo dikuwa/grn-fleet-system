@@ -193,7 +193,9 @@ export const driverLicences = pgTable('driver_licences', {
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  uniqueIndex('uq_driver_licences_profile_version').on(table.driverProfileId, table.version),
+]);
 
 export const driverLicenceCodes = pgTable('driver_licence_codes', {
   id: uuid('id').primaryKey().defaultRandom(),
