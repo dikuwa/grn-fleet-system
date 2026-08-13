@@ -68,6 +68,14 @@ export const workflowInstances = pgTable('workflow_instances', {
   definitionVersion: integer('definition_version').notNull(),
   currentStepOrder: integer('current_step_order').notNull().default(0),
   status: text('status').notNull().default('active'), // active, completed, cancelled, overridden
+  // Per-request override for conflict-of-interest reassignment. Never write a
+  // request-specific alternate into workflow_steps because those rows are
+  // shared by every workflow instance using the definition.
+  currentAssignedUserId: text('current_assigned_user_id'),
+  currentAssignmentMeta: jsonb('current_assignment_meta')
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
