@@ -67,10 +67,21 @@ type GoogleMapsApi = {
     },
   ) => GoogleMap;
   LatLngBounds: new () => GoogleBounds;
+  SymbolPath: {
+    CIRCLE: number;
+  };
   Marker: new (options: {
     map: GoogleMap;
     position: LatLngLiteral;
     title: string;
+    icon?: {
+      path: number | string;
+      scale: number;
+      fillColor: string;
+      fillOpacity: number;
+      strokeColor: string;
+      strokeWeight: number;
+    };
     label?: { text: string; color: string; fontWeight: string; fontSize: string };
     zIndex?: number;
   }) => GoogleMarker;
@@ -102,7 +113,14 @@ function waitForGoogleMaps(timeoutMs = 12_000): Promise<GoogleMapsApi> {
     const startedAt = Date.now();
     const check = () => {
       const maps = getGoogleMapsNamespace();
-      if (maps?.Map && maps.LatLngBounds && maps.Marker && maps.Polyline && maps.InfoWindow) {
+      if (
+        maps?.Map &&
+        maps.LatLngBounds &&
+        maps.SymbolPath &&
+        maps.Marker &&
+        maps.Polyline &&
+        maps.InfoWindow
+      ) {
         resolve(maps);
         return;
       }
@@ -125,6 +143,7 @@ function loadGoogleMaps(): Promise<GoogleMapsApi> {
   if (
     readyMaps?.Map &&
     readyMaps.LatLngBounds &&
+    readyMaps.SymbolPath &&
     readyMaps.Marker &&
     readyMaps.Polyline &&
     readyMaps.InfoWindow
@@ -220,6 +239,10 @@ function formatDuration(minutes: number | null): string {
 
 const ROUTE_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
 const NAMIBIA_CENTER = { lat: -22.5609, lng: 17.0658 };
+const ENDPOINT_COLORS = {
+  Origin: '#15803d',
+  Destination: '#dc2626',
+} as const;
 
 export default function RouteMap({ routes }: RouteMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -336,6 +359,14 @@ export default function RouteMap({ routes }: RouteMapProps) {
             map,
             position: endpoint.coordinates,
             title: `${endpoint.kind}: ${endpoint.name}`,
+            icon: {
+              path: maps.SymbolPath.CIRCLE,
+              scale: 13,
+              fillColor: ENDPOINT_COLORS[endpoint.kind],
+              fillOpacity: 1,
+              strokeColor: '#ffffff',
+              strokeWeight: 3,
+            },
             label: {
               text: endpoint.label,
               color: '#ffffff',
