@@ -90,13 +90,28 @@ export async function GET(request: NextRequest) {
       currentOdometer: vehicles.currentOdometer,
     }).from(trips)
       .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
-      .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
+      .innerJoin(
+        vehicleAllocations,
+        and(
+          eq(vehicleAllocations.id, trips.allocationId),
+          eq(vehicleAllocations.requestId, trips.requestId),
+          eq(vehicleAllocations.vehicleId, trips.vehicleId),
+        ),
+      )
       .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
-      .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+      .innerJoin(
+        tripAuthorities,
+        and(
+          eq(tripAuthorities.tripId, trips.id),
+          eq(tripAuthorities.requestId, trips.requestId),
+          eq(tripAuthorities.allocationId, trips.allocationId),
+        ),
+      )
       .where(and(
         eq(trips.tenantId, session.tenantId),
         eq(transportRequests.tenantId, session.tenantId),
         eq(vehicles.tenantId, session.tenantId),
+        eq(tripAuthorities.tenantId, session.tenantId),
         inArray(trips.status, lifecycleStatuses),
       ))
       .orderBy(trips.createdAt);
