@@ -683,7 +683,12 @@ export class WorkflowEngine {
       const newStatus = result === 'rejected' ? 'rejected' : 'returned';
       await this.db
         .update(workflowInstances)
-        .set({ status: 'cancelled', updatedAt: new Date() })
+        .set({
+          status: 'cancelled',
+          currentAssignedUserId: null,
+          currentAssignmentMeta: {},
+          updatedAt: new Date(),
+        })
         .where(eq(workflowInstances.id, instance.id));
       await this.db
         .update(transportRequests)
@@ -722,6 +727,8 @@ export class WorkflowEngine {
         .set({
           currentStepOrder: currentStep.stepOrder,
           status: 'completed',
+          currentAssignedUserId: null,
+          currentAssignmentMeta: {},
           updatedAt: new Date(),
         })
         .where(eq(workflowInstances.id, instance.id));
@@ -759,7 +766,12 @@ export class WorkflowEngine {
     const businessStatus = workflowStepToStatus(nextStepOrder, nextStep.actionType, scope);
     await this.db
       .update(workflowInstances)
-      .set({ currentStepOrder: nextStepOrder, updatedAt: new Date() })
+      .set({
+        currentStepOrder: nextStepOrder,
+        currentAssignedUserId: null,
+        currentAssignmentMeta: {},
+        updatedAt: new Date(),
+      })
       .where(eq(workflowInstances.id, instance.id));
 
     // Chain the reminder + escalation timers for the step we just entered.
@@ -901,7 +913,12 @@ export class WorkflowEngine {
     // Complete the workflow immediately
     await this.db
       .update(workflowInstances)
-      .set({ status: 'overridden', updatedAt: new Date() })
+      .set({
+        status: 'overridden',
+        currentAssignedUserId: null,
+        currentAssignmentMeta: {},
+        updatedAt: new Date(),
+      })
       .where(eq(workflowInstances.id, instance.id));
 
     // Emergency override sets status to a reasonable business status
@@ -1086,7 +1103,7 @@ export class WorkflowEngine {
         .where(and(eq(workflowSteps.definitionId, instance.definitionId)))
         .orderBy(workflowSteps.stepOrder);
 
-      if (steps.length > 0) return this.resolveStepAssignments(steps, instance.requestId);
+      if (steps.length > 0) return this.resolveStepAssignments(steps, instance);
     }
 
     // Fall back to built-in defaults — resolve scope from the request
@@ -1101,17 +1118,17 @@ export class WorkflowEngine {
       scope === 'national'
         ? (NATIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[])
         : (REGIONAL_WORKFLOW_STEPS as unknown as (typeof workflowSteps.$inferSelect)[]);
-    return this.resolveStepAssignments(fallback, instance.requestId);
+    return this.resolveStepAssignments(fallback, instance);
   }
 
   private async resolveStepAssignments(
     steps: (typeof workflowSteps.$inferSelect)[],
-    requestId: string,
+    instance: typeof workflowInstances.$inferSelect,
   ) {
     const requestRows = await this.db
       .select({ tenantId: transportRequests.tenantId })
       .from(transportRequests)
-      .where(eq(transportRequests.id, requestId))
+      .where(eq(transportRequests.id, instance.requestId))
       .limit(1);
     if (!Array.isArray(requestRows)) return steps;
     const [request] = requestRows;
@@ -1120,11 +1137,29 @@ export class WorkflowEngine {
       steps.map(async (step) => {
         // The acknowledge step must NOT have a pre-assigned user — the
         // actual assigned driver is resolved dynamically at action time by
-        // looking up the allocation's driverEmployeeId.  Null out any stale
+        // looking up the allocation's driverEmployeeId. Null out any stale
         // assignedUserId that may have been set in the DB definition.
         if (step.actionType === 'acknowledge') {
           return { ...step, assignedUserId: null };
         }
+
+        // Conflict-of-interest reassignment belongs to one request instance,
+        // never to the shared workflow definition. The instance override wins
+        // only for its current step and is cleared when the workflow advances.
+        if (
+          step.stepOrder === instance.currentStepOrder &&
+          instance.currentAssignedUserId
+        ) {
+          return {
+            ...step,
+            assignedUserId: instance.currentAssignedUserId,
+            config: {
+              ...(step.config || {}),
+              ...(instance.currentAssignmentMeta || {}),
+            },
+          };
+        }
+
         if (!step.requiredPermission) return step;
         const roleQuery = this.db.select({ roleId: roles.id }).from(roles);
         if (typeof (roleQuery as { innerJoin?: unknown }).innerJoin !== 'function') return step;
@@ -1285,25 +1320,38 @@ export class WorkflowEngine {
             `${actingRow.first_name || ''} ${actingRow.last_name || ''}`.trim() ||
             'Alternate Officer';
 
-          // Update the step assignment to the alternate
-          await this.db
-            .update(workflowSteps)
+          // Persist the alternate on this workflow instance only. Mutating
+          // workflow_steps here would reroute every request sharing the same
+          // definition, which is a tenant-wide integrity violation.
+          const [reassignedInstance] = await this.db
+            .update(workflowInstances)
             .set({
-              assignedUserId: reassignedUserId,
-              config: {
+              currentAssignedUserId: reassignedUserId,
+              currentAssignmentMeta: {
                 ...(currentStep.config || {}),
                 conflictReassigned: true,
                 conflictedUserId: session.user.id,
                 reassignedAt: now.toISOString(),
                 reassignmentReason: 'Requester-authoriser conflict',
+                resolvedRoleId: role.roleId,
+                resolvedEmployeeId:
+                  typeof actingRow.employee_id === 'string' ? actingRow.employee_id : null,
+                resolvedCapacity: 'acting',
+                isActing: true,
+                delegationId:
+                  typeof actingRow.delegation_id === 'string' ? actingRow.delegation_id : null,
               },
+              updatedAt: now,
             })
             .where(
               and(
-                eq(workflowSteps.id, currentStep.id),
-                eq(workflowSteps.stepOrder, currentStep.stepOrder),
+                eq(workflowInstances.id, instance.id),
+                eq(workflowInstances.currentStepOrder, currentStep.stepOrder),
+                eq(workflowInstances.status, 'active'),
               ),
-            );
+            )
+            .returning({ id: workflowInstances.id });
+          if (!reassignedInstance) return null;
 
           // Notify the alternate
           await createScopedNotifications({
@@ -1363,24 +1411,33 @@ export class WorkflowEngine {
           const alternateName =
             `${sameRole.firstName || ''} ${sameRole.lastName || ''}`.trim() || 'Alternate Officer';
 
-          await this.db
-            .update(workflowSteps)
+          const [reassignedInstance] = await this.db
+            .update(workflowInstances)
             .set({
-              assignedUserId: sameRole.userId,
-              config: {
+              currentAssignedUserId: sameRole.userId,
+              currentAssignmentMeta: {
                 ...(currentStep.config || {}),
                 conflictReassigned: true,
                 conflictedUserId: session.user.id,
                 reassignedAt: now.toISOString(),
                 reassignmentReason: 'Requester-authoriser conflict',
+                resolvedRoleId: role.roleId,
+                resolvedEmployeeId: sameRole.id,
+                resolvedCapacity: 'substantive',
+                isActing: false,
+                delegationId: null,
               },
+              updatedAt: now,
             })
             .where(
               and(
-                eq(workflowSteps.id, currentStep.id),
-                eq(workflowSteps.stepOrder, currentStep.stepOrder),
+                eq(workflowInstances.id, instance.id),
+                eq(workflowInstances.currentStepOrder, currentStep.stepOrder),
+                eq(workflowInstances.status, 'active'),
               ),
-            );
+            )
+            .returning({ id: workflowInstances.id });
+          if (!reassignedInstance) return null;
 
           await createScopedNotifications({
             tenantId,
