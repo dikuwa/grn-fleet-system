@@ -31,6 +31,25 @@ Litres: 45.67 L
     expect(fields.stationLocation).toBe('TOTAL FOURWAYS');
   });
 
+  it('preserves already parsed receipt fields while filling missing normalized labels', () => {
+    const text = `
+TOTAL FOURWAYS
+P24 TxId.: TX-NORMALIZED-100
+Registration No.: N 77777 W
+`;
+    const base = {
+      supplier: 'USER CONFIRMED STATION',
+      transactionReference: 'KEEP-EXISTING',
+      registrationNumber: 'N00000W',
+    } as ReturnType<typeof parseFuelReceiptText>['fields'];
+
+    const fields = enrichFuelReceiptFields(text, base);
+
+    expect(fields.supplier).toBe('USER CONFIRMED STATION');
+    expect(fields.transactionReference).toBe('KEEP-EXISTING');
+    expect(fields.registrationNumber).toBe('N00000W');
+  });
+
   it('does not treat the generic reverse-side licence legend as driver entitlements', () => {
     const text = `
 REPUBLIC OF NAMIBIA
