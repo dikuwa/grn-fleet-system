@@ -2,8 +2,8 @@ import { randomUUID } from 'crypto';
 import { getDb } from '@/db';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
-import { vehicles } from '@/db/schema/fleet';
-import { and, eq, gt, inArray, lt, ne, sql } from 'drizzle-orm';
+import { vehicleDefects, vehicles } from '@/db/schema/fleet';
+import { and, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import type { AuthSession } from '@/lib/auth-helpers';
 
 export interface ReplaceVehicleInput {
@@ -162,6 +162,24 @@ export async function replaceVehicle(
     throw new VehicleReplaceError(`Replacement vehicle is not available (status: ${replacement.status})`, 409);
   }
 
+  const [blockingDefect] = await db
+    .select({ id: vehicleDefects.id })
+    .from(vehicleDefects)
+    .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+    .where(and(
+      eq(vehicleDefects.vehicleId, replacementVehicleId),
+      eq(vehicles.tenantId, tenantId),
+      eq(vehicleDefects.isBlocking, true),
+      isNull(vehicleDefects.resolvedAt),
+    ))
+    .limit(1);
+  if (blockingDefect) {
+    throw new VehicleReplaceError(
+      'Replacement vehicle has an unresolved blocking safety defect',
+      409,
+    );
+  }
+
   const [conflict] = await db
     .select({ id: vehicleAllocations.id })
     .from(vehicleAllocations)
@@ -228,6 +246,13 @@ export async function replaceVehicle(
         WHERE id = ${replacementVehicleId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND status = 'available'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM vehicle_defects vd
+            WHERE vd.vehicle_id = vehicles.id
+              AND vd.is_blocking = true
+              AND vd.resolved_at IS NULL
+          )
         RETURNING id
       ),
       allocation_claim AS (
@@ -439,7 +464,7 @@ export async function replaceVehicle(
   } catch (error) {
     if (String(error).includes('atomic_vehicle_replacement_failed')) {
       throw new VehicleReplaceError(
-        'The allocation, vehicle, or Trip Authority changed while the replacement was being saved. Refresh and try again.',
+        'The allocation, vehicle, Trip Authority, or replacement safety state changed while the replacement was being saved. Refresh and try again.',
         409,
       );
     }
