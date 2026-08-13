@@ -5,7 +5,8 @@
  *
  * Returns tenant vehicles that may replace the current allocation vehicle.
  * Candidate availability mirrors the canonical replacement service exactly:
- * fleet status must be `available`, there must be no unresolved blocking
+ * fleet status must be `available`, statutory vehicle compliance must remain
+ * valid through the allocation period, there must be no unresolved blocking
  * safety defect, and there must be no overlapping provisional/confirmed
  * allocation in the requested period.
  */
@@ -62,6 +63,7 @@ export async function GET(
     }
 
     const { startAt, endAt, vehicleId: currentVehicleId } = allocation;
+    const requiredThroughDate = endAt.toISOString().slice(0, 10);
 
     const allVehicles = await db
       .select({
@@ -72,6 +74,8 @@ export async function GET(
         vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
         currentOdometer: vehicles.currentOdometer,
         status: vehicles.status,
+        licenceExpiryDate: vehicles.licenceExpiryDate,
+        roadworthyTestDate: vehicles.roadworthyTestDate,
       })
       .from(vehicles)
       .where(eq(vehicles.tenantId, tenantId))
@@ -113,20 +117,36 @@ export async function GET(
       .map((vehicle) => {
         const hasScheduleConflict = overlappingVehicleIds.has(vehicle.id);
         const hasBlockingDefect = blockingVehicleIds.has(vehicle.id);
+        const licenceExpiresTooSoon = Boolean(
+          vehicle.licenceExpiryDate && vehicle.licenceExpiryDate < requiredThroughDate,
+        );
+        const roadworthyExpiresTooSoon = Boolean(
+          vehicle.roadworthyTestDate && vehicle.roadworthyTestDate < requiredThroughDate,
+        );
         return {
           ...vehicle,
           available:
-            vehicle.status === 'available' && !hasScheduleConflict && !hasBlockingDefect,
+            vehicle.status === 'available' &&
+            !hasScheduleConflict &&
+            !hasBlockingDefect &&
+            !licenceExpiresTooSoon &&
+            !roadworthyExpiresTooSoon,
           blockers: [
             ...(vehicle.status !== 'available' ? [`Vehicle status is ${vehicle.status}`] : []),
             ...(hasScheduleConflict ? ['Vehicle is already allocated during this period'] : []),
             ...(hasBlockingDefect ? ['Vehicle has an unresolved blocking safety defect'] : []),
+            ...(licenceExpiresTooSoon
+              ? [`Vehicle licence expires before the allocation ends (${vehicle.licenceExpiryDate})`]
+              : []),
+            ...(roadworthyExpiresTooSoon
+              ? [`Vehicle roadworthy validity ends before the allocation ends (${vehicle.roadworthyTestDate})`]
+              : []),
           ],
         };
       })
       .sort((a, b) => (a.available === b.available ? 0 : a.available ? -1 : 1));
 
-    return NextResponse.json({ vehicles: result });
+    return NextResponse.json({ vehicles: result, requiredThroughDate });
   } catch (error) {
     console.error('[Replacement Candidates] GET failed:', error);
     return NextResponse.json(
