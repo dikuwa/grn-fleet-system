@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { vehicleInspections } from '@/db/schema/trips';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import {
+  requireDashboardAction,
+  requirePermission,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
+import { Permissions } from '@/lib/permissions';
 
 const MAX_SYNC_ID_LENGTH = 128;
 
@@ -21,6 +26,16 @@ export async function GET(
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
+    const { session } = auth;
+
+    const routeCheck = await requireDashboardAction(
+      session,
+      '/dashboard/inspections/new',
+      'create',
+    );
+    if (routeCheck instanceof NextResponse) return routeCheck;
+    const permissionCheck = await requirePermission(session, Permissions.INSPECTION_PERFORM);
+    if (permissionCheck instanceof NextResponse) return permissionCheck;
 
     const { clientSyncId } = await params;
     const syncId = decodeURIComponent(clientSyncId || '').trim();
@@ -43,8 +58,8 @@ export async function GET(
       .from(vehicleInspections)
       .where(
         and(
-          eq(vehicleInspections.tenantId, auth.session.tenantId),
-          eq(vehicleInspections.inspectorUserId, auth.session.user.id),
+          eq(vehicleInspections.tenantId, session.tenantId),
+          eq(vehicleInspections.inspectorUserId, session.user.id),
           eq(vehicleInspections.clientSyncId, syncId),
         ),
       )
