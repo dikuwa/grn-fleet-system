@@ -19,6 +19,7 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 import { ensureRequestWorkflow } from '@/lib/request-workflow';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
+import { generateIdentityAwareTransportRequestDocument } from '@/lib/transport-request-document';
 
 export async function POST(request: NextRequest) {
   try {
@@ -306,6 +307,15 @@ export async function POST(request: NextRequest) {
       return workflow.error;
     }
 
+    const document = await generateIdentityAwareTransportRequestDocument({
+      requestId,
+      tenantId,
+      generatedByUserId: session.user.id,
+    }).catch((documentError) => {
+      console.error('[external-request] document snapshot generation failed:', documentError);
+      return null;
+    });
+
     await Promise.allSettled([
       recordAuditEvent({
         tenantId,
@@ -321,6 +331,7 @@ export async function POST(request: NextRequest) {
           responsibleEmployeeId: responsibleEmployee.id,
           externalDriverId: externalDriver?.id || null,
           workflowInstanceId: workflow.instance.id,
+          documentId: document?.id || null,
         },
         summary: `External transport request ${reference} submitted for ${externalRequester.organisationName}`,
       }),
@@ -341,6 +352,7 @@ export async function POST(request: NextRequest) {
           reference,
           status: 'submitted',
           workflowInstanceId: workflow.instance.id,
+          documentId: document?.id || null,
         },
       },
       { status: 201 },
