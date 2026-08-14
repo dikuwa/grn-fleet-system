@@ -468,6 +468,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
           branding={branding}
           verificationCode={data.verificationCode || data.reference}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
           theme={officialRedTheme}
         />
       </DocumentPage>

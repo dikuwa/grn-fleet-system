@@ -121,6 +121,7 @@ export const FuelReceiptDocument: React.FC<{ data: FuelReceiptData }> = ({ data 
         branding={data.branding}
         verificationCode={data.verificationCode}
         verificationUrl={data.verificationUrl}
+        documentHash={data.documentHash}
       />
     </DocumentPage>
   </Document>
@@ -208,6 +209,7 @@ export const DriverLogsheetDocument: React.FC<{ data: DriverLogsheetData }> = ({
           branding={data.branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
         />
       </DocumentPage>
     </Document>
@@ -319,6 +321,7 @@ export const IncidentRecordDocument: React.FC<{ data: IncidentRecordData }> = ({
         branding={data.branding}
         verificationCode={data.verificationCode}
         verificationUrl={data.verificationUrl}
+        documentHash={data.documentHash}
       />
     </DocumentPage>
   </Document>

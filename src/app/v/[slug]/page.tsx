@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, CircleSlash2, ShieldCheck } from 'lucide-react';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { TenantLogo } from '@/components/documents/tenant-logo';
-import { resolveShortSharedDocument } from '@/lib/share-token';
+import { resolvePublicVerification } from '@/lib/document-verification';
 import { resolveTenantBranding } from '@/lib/tenant-branding';
 import {
   documentTypeLabel,
@@ -19,15 +19,15 @@ const INVALID_STATES: Record<string, { title: string; message: string }> = {
   },
   revoked: {
     title: 'Link revoked',
-    message: 'The issuing organisation has revoked this secure link.',
+    message: 'The issuing organisation has revoked this secure share link.',
   },
   expired: {
     title: 'Link expired',
-    message: 'This secure link has reached its configured expiry date.',
+    message: 'This temporary share link has reached its configured expiry date.',
   },
   max_views_exceeded: {
     title: 'Access limit reached',
-    message: 'This secure link has reached its permitted number of views.',
+    message: 'This temporary share link has reached its permitted number of views.',
   },
   document_not_found: {
     title: 'Document unavailable',
@@ -40,7 +40,7 @@ function getVerificationState(status: string) {
     return {
       label: 'Draft — not officially issued',
       valid: false,
-      message: 'This record is available for review only and does not claim official validity.',
+      message: 'This record exists but has not been officially issued.',
     };
   }
   if (['revoked', 'superseded', 'cancelled', 'rejected', 'expired'].includes(status)) {
@@ -64,8 +64,8 @@ export default async function ShortVerificationPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const result = await resolveShortSharedDocument(slug);
-  if (!result.document || !result.shareLink) {
+  const result = await resolvePublicVerification(slug);
+  if (result.kind === 'invalid') {
     const state = INVALID_STATES[result.error || 'not_found'] || INVALID_STATES.not_found;
     return (
       <VerificationShell>
@@ -78,7 +78,7 @@ export default async function ShortVerificationPage({
     );
   }
 
-  const { document, shareLink } = result;
+  const document = result.document;
   const branding = await resolveTenantBranding(document.tenantId);
   const snapshot = document.snapshotData as Record<string, unknown>;
   const status = getVerificationState(document.status);
@@ -101,6 +101,11 @@ export default async function ShortVerificationPage({
   ]) {
     if (snapshot[key] !== undefined) summary.push([label, formatHumanValue(snapshot[key], key)]);
   }
+
+  const permanent = result.kind === 'permanent';
+  const verificationCode = permanent
+    ? result.verificationCode
+    : result.shareLink.verificationCode || result.shareLink.shortSlug;
 
   return (
     <VerificationShell>
@@ -157,20 +162,36 @@ export default async function ShortVerificationPage({
       </div>
 
       <div className="border-border bg-surface mt-4 rounded-xl border p-4 text-sm">
-        <p className="text-ink-500 text-xs">Verification code</p>
+        <p className="text-ink-500 text-xs">
+          {permanent ? 'Permanent verification code' : 'Temporary share verification code'}
+        </p>
         <p className="text-ink-950 mt-1 font-mono font-semibold tracking-wider">
-          {shareLink.verificationCode || shareLink.shortSlug}
+          {verificationCode}
         </p>
-        <p className="text-ink-500 mt-3 text-xs">
-          Link valid until {formatHumanDateTime(shareLink.expiresAt, branding?.locale)}
-        </p>
-        {shareLink.accessPolicy?.allowDownload === true && document.status !== 'draft' && (
-          <a
-            href={`/api/public/documents/${shareLink.shortSlug}/pdf`}
-            className="focus-ring bg-brand-800 mt-3 inline-flex min-h-10 items-center rounded-lg px-4 text-sm font-medium text-white"
-          >
-            Download verified PDF
-          </a>
+        {document.hash && (
+          <div className="mt-3">
+            <p className="text-ink-500 text-xs">Full document fingerprint (SHA-256)</p>
+            <p className="text-ink-700 mt-1 break-all font-mono text-[11px]">{document.hash}</p>
+          </div>
+        )}
+        {permanent ? (
+          <p className="text-ink-500 mt-3 text-xs">
+            This official verification identity does not expire. Document status may still change if the issuing organisation supersedes or cancels the record.
+          </p>
+        ) : (
+          <>
+            <p className="text-ink-500 mt-3 text-xs">
+              Temporary link valid until {formatHumanDateTime(result.shareLink.expiresAt, branding?.locale)}
+            </p>
+            {result.shareLink.accessPolicy?.allowDownload === true && document.status !== 'draft' && (
+              <a
+                href={`/api/public/documents/${result.shareLink.shortSlug}/pdf`}
+                className="focus-ring bg-brand-800 mt-3 inline-flex min-h-10 items-center rounded-lg px-4 text-sm font-medium text-white"
+              >
+                Download verified PDF
+              </a>
+            )}
+          </>
         )}
       </div>
     </VerificationShell>

@@ -466,6 +466,7 @@ export const TransportRequestDocument: React.FC<{
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
         />
       </DocumentPage>
     </Document>

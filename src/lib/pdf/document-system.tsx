@@ -255,9 +255,9 @@ export const documentStyles = StyleSheet.create({
     color: MUTED,
     fontSize: 5.3,
   },
-  footerLeft: { width: '45%' },
-  footerCentre: { width: '38%', textAlign: 'center' },
-  footerRight: { width: '17%', textAlign: 'right' },
+  footerLeft: { width: '34%' },
+  footerCentre: { width: '51%', textAlign: 'center' },
+  footerRight: { width: '15%', textAlign: 'right' },
   signatureRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   signature: { flex: 1, minHeight: 48, paddingTop: 2, paddingHorizontal: 2 },
   signatureStatement: { fontSize: 5.35, textAlign: 'center', minHeight: 16, color: '#344054' },
@@ -584,27 +584,30 @@ export function DocumentVerificationFooter({
   branding,
   verificationCode,
   verificationUrl,
+  documentHash,
   theme = tenantPdfTheme(branding),
 }: {
   branding?: ResolvedTenantBranding | null;
   verificationCode?: unknown;
   verificationUrl?: unknown;
+  documentHash?: unknown;
   theme?: PdfTheme;
 }) {
+  const verificationParts = verificationCode
+    ? [
+        `Verify: ${safePdfValue(verificationCode)}`,
+        verificationUrl ? safePdfValue(verificationUrl) : null,
+        documentHash ? `FP: ${safePdfValue(documentHash)}` : null,
+      ].filter(Boolean)
+    : ['Internal record'];
+
   return (
     <View style={[documentStyles.footer, { borderTopColor: theme.primary }]} fixed>
       <SafePdfText
         value={branding?.documentFooter || `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`}
         style={documentStyles.footerLeft}
       />
-      <SafePdfText
-        value={
-          verificationCode
-            ? `Verify: ${safePdfValue(verificationCode)}${verificationUrl ? ` · ${safePdfValue(verificationUrl)}` : ''}`
-            : 'Internal record'
-        }
-        style={documentStyles.footerCentre}
-      />
+      <SafePdfText value={verificationParts.join(' · ')} style={documentStyles.footerCentre} />
       <Text style={documentStyles.footerRight} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
     </View>
   );

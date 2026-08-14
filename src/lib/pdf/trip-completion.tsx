@@ -279,6 +279,7 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
         />
       </DocumentPage>
     </Document>

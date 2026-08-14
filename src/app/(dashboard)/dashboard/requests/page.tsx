@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { getDb, isDbConnected } from '@/db';
+import { externalParties } from '@/db/schema/external-parties';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { StyledSelect } from '@/components/ui/styled-select';
@@ -64,17 +65,22 @@ async function fetchRequests(
       .select({
         id: transportRequests.id,
         reference: transportRequests.reference,
+        requesterType: transportRequests.requesterType,
         scope: transportRequests.scope,
         status: transportRequests.status,
         purpose: transportRequests.purpose,
         department: transportRequests.department,
         submittedAt: transportRequests.submittedAt,
         createdAt: transportRequests.createdAt,
-        requesterFirstName: employees.firstName,
-        requesterLastName: employees.lastName,
+        responsibleFirstName: employees.firstName,
+        responsibleLastName: employees.lastName,
+        externalRequesterFirstName: externalParties.firstName,
+        externalRequesterLastName: externalParties.lastName,
+        externalRequesterOrganisation: externalParties.organisationName,
       })
       .from(transportRequests)
       .leftJoin(employees, eq(transportRequests.requesterEmployeeId, employees.id))
+      .leftJoin(externalParties, eq(transportRequests.externalRequesterId, externalParties.id))
       .where(where)
       .orderBy(desc(transportRequests.createdAt))
       .limit(limit)
@@ -227,14 +233,26 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       ) : (
         <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
           {result.rows.map((request) => {
-            const requesterName = request.requesterFirstName && request.requesterLastName
-              ? `${request.requesterFirstName} ${request.requesterLastName}`
-              : 'Unknown requester';
+            const isExternal = request.requesterType === 'external';
+            const requesterName = isExternal
+              ? request.externalRequesterFirstName && request.externalRequesterLastName
+                ? `${request.externalRequesterFirstName} ${request.externalRequesterLastName}`
+                : 'External requester'
+              : request.responsibleFirstName && request.responsibleLastName
+                ? `${request.responsibleFirstName} ${request.responsibleLastName}`
+                : 'Unknown requester';
+            const responsibleName =
+              request.responsibleFirstName && request.responsibleLastName
+                ? `${request.responsibleFirstName} ${request.responsibleLastName}`
+                : null;
             const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
+            const detailHref = isExternal
+              ? `/dashboard/requests/external/${request.id}`
+              : `/dashboard/requests/${request.id}`;
             return (
               <Link
                 key={request.id}
-                href={`/dashboard/requests/${request.id}`}
+                href={detailHref}
                 className="focus-ring group border-border hover:bg-muted/40 block border-b px-4 py-4 transition-colors motion-reduce:transition-none last:border-b-0 sm:px-5"
               >
                 <div className="flex items-start gap-3 sm:items-center">
@@ -245,11 +263,14 @@ export default async function RequestsPage({ searchParams }: PageProps) {
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-ink-950 text-sm font-semibold">{request.reference}</p>
                       <StatusBadge status={variant} label={STATUS_LABELS[request.status as keyof typeof STATUS_LABELS] ?? request.status} />
+                      {isExternal && <Badge variant="info" size="sm">External</Badge>}
                       <Badge variant={request.scope === 'national' ? 'emergency' : 'info'} size="sm">{request.scope === 'national' ? 'National' : 'Regional'}</Badge>
                     </div>
                     {request.purpose && <p className="text-ink-700 mt-1 line-clamp-2 text-sm">{request.purpose}</p>}
                     <div className="text-ink-500 mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                       <span>{requesterName}</span>
+                      {isExternal && request.externalRequesterOrganisation && <span>{request.externalRequesterOrganisation}</span>}
+                      {isExternal && responsibleName && <span>Routing: {responsibleName}</span>}
                       {request.department && <span>{request.department}</span>}
                       <span>{formatDate(request.createdAt)}</span>
                     </div>

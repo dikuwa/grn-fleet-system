@@ -164,7 +164,7 @@ const TRANSPORT_REQUEST_SCHEMA: Schema = {
 
 const TRIP_AUTHORITY_SCHEMA: Schema = {
   type: 'object',
-  required: ['allocationId', 'vehicle'],
+  required: ['allocationId', 'vehicle', 'driver'],
   properties: {
     allocationId: { type: 'string', required: true },
     requestReference: { type: 'string' },
@@ -177,6 +177,20 @@ const TRIP_AUTHORITY_SCHEMA: Schema = {
         vehicleRegisterNumber: { type: 'string', nullable: true },
         make: { type: 'string' },
         model: { type: 'string' },
+      },
+    },
+    driver: {
+      type: 'object',
+      required: true,
+      properties: {
+        kind: { type: 'string', required: true },
+        name: { type: 'string', required: true },
+        employeeNumber: { type: 'string', nullable: true },
+        organisation: { type: 'string', nullable: true },
+        licenceNumber: { type: 'string', nullable: true },
+        licenceClass: { type: 'string', nullable: true },
+        licenceExpiry: { type: 'string', nullable: true },
+        acceptanceStatus: { type: 'string', nullable: true },
       },
     },
     startAt: { type: 'string', required: true },

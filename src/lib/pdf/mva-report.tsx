@@ -367,6 +367,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
         />
       </DocumentPage>
     </Document>

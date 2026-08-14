@@ -9,32 +9,47 @@ import {
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
 
 /**
  * Generated documents (snapshots)
  */
-export const generatedDocuments = pgTable('generated_documents', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  documentType: text('document_type').notNull(),
-  documentVersion: integer('document_version').notNull().default(1),
-  templateVersion: text('template_version'),
-  entityType: text('entity_type').notNull(), // transport_request, trip, inspection, etc.
-  entityId: uuid('entity_id').notNull(),
-  snapshotData: jsonb('snapshot_data').$type<Record<string, unknown>>().notNull(),
-  fileKey: text('file_key'),
-  hash: text('hash'),
-  status: text('status').notNull().default('draft'), // draft, issued, superseded
-  redactionProfile: text('redaction_profile').default('internal'), // internal, external_standard, external_minimal
-  reason: text('reason'),
-  expiresAt: timestamp('expires_at', { withTimezone: true }),
-  generatedByUserId: text('generated_by_user_id').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const generatedDocuments = pgTable(
+  'generated_documents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    documentType: text('document_type').notNull(),
+    documentVersion: integer('document_version').notNull().default(1),
+    templateVersion: text('template_version'),
+    entityType: text('entity_type').notNull(), // transport_request, trip, inspection, etc.
+    entityId: uuid('entity_id').notNull(),
+    snapshotData: jsonb('snapshot_data').$type<Record<string, unknown>>().notNull(),
+    fileKey: text('file_key'),
+    hash: text('hash'),
+    /** Stable, non-expiring public verification identity for official records. */
+    verificationSlug: text('verification_slug')
+      .notNull()
+      .default(sql`'d-' || lower(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12))`),
+    verificationCode: text('verification_code')
+      .notNull()
+      .default(sql`upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))`),
+    status: text('status').notNull().default('draft'), // draft, issued, superseded
+    redactionProfile: text('redaction_profile').default('internal'), // internal, external_standard, external_minimal
+    reason: text('reason'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    generatedByUserId: text('generated_by_user_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_generated_documents_verification_slug').on(table.verificationSlug),
+    uniqueIndex('uq_generated_documents_verification_code').on(table.verificationCode),
+  ],
+);
 
 /**
  * Secure share links
