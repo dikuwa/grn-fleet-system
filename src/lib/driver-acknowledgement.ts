@@ -159,6 +159,14 @@ export async function processDriverAcknowledgement(input: {
           AND t.request_id = c.request_id
           AND t.tenant_id = ${session.tenantId}::uuid
           AND t.driver_acknowledged_at IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM vehicle_allocations va
+            WHERE va.id = ${context.allocationId}::uuid
+              AND va.request_id = c.request_id
+              AND va.state = 'confirmed'
+              AND va.driver_employee_id = ${context.driverEmployeeId}::uuid
+          )
         RETURNING t.id
       ),
       authority_updated AS (
