@@ -1,13 +1,10 @@
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { auditEvents } from '@/db/schema/audit';
 import { employees } from '@/db/schema/people';
-import { requestDrivers, transportRequests } from '@/db/schema/requests';
+import { transportRequests } from '@/db/schema/requests';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
-import { runAtomicMutations } from '@/lib/db-atomic';
 import { createScopedNotifications, resolveActionNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
@@ -101,54 +98,95 @@ export async function POST(
     if (context.requestStatus !== 'driver_acknowledgement_pending') {
       return NextResponse.json({ error: `Request is not awaiting driver acknowledgement (${context.requestStatus}).` }, { status: 409 });
     }
+    if (!context.workflowInstanceId) {
+      return NextResponse.json({ error: 'The authorised request has no active acknowledgement workflow.' }, { status: 409 });
+    }
 
     const now = new Date();
-    const auditId = randomUUID();
-    await runAtomicMutations((tx) => [
-      tx.update(vehicleAllocations)
-        .set({
-          driverEmployeeId: null,
-          overrideReason: `Driver unable to perform: ${reason}`,
-          version: sql`${vehicleAllocations.version} + 1`,
-          updatedAt: now,
-        })
-        .where(and(
-          eq(vehicleAllocations.id, context.allocationId),
-          eq(vehicleAllocations.state, 'confirmed'),
-          eq(vehicleAllocations.driverEmployeeId, employee.id),
-        )),
-      tx.update(transportRequests)
-        .set({ assignedDriverEmployeeId: null, updatedAt: now })
-        .where(and(
-          eq(transportRequests.id, context.requestId),
-          eq(transportRequests.tenantId, session.tenantId),
-          eq(transportRequests.status, 'driver_acknowledgement_pending'),
-        )),
-      tx.update(requestDrivers)
-        .set({ isConfirmed: false })
-        .where(and(eq(requestDrivers.requestId, context.requestId), eq(requestDrivers.employeeId, employee.id))),
-      tx.insert(auditEvents).values({
-        id: auditId,
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'driver_assignment_declined',
-        actorUserId: session.user.id,
-        actorEmployeeId: employee.id,
-        action: 'driver.decline_assignment',
-        entityType: 'trip',
-        entityId: id,
-        summary: `Assigned driver could not perform request ${context.requestReference}`,
-        reason,
-        before: { allocationId: context.allocationId, driverEmployeeId: employee.id },
-        after: { allocationId: context.allocationId, driverEmployeeId: null, reassignmentRequired: true },
-        sourceChannel: 'web',
-      }),
-    ]);
+    const auditSequence = Date.now();
+    await db.execute(sql`
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET driver_employee_id = NULL,
+            override_reason = ${`Driver unable to perform: ${reason}`},
+            version = va.version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${context.allocationId}::uuid
+          AND va.state = 'confirmed'
+          AND va.driver_employee_id = ${employee.id}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            INNER JOIN transport_requests tr ON tr.id = t.request_id
+            INNER JOIN trip_authorities ta ON ta.trip_id = t.id
+            WHERE t.id = ${id}::uuid
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.status = 'pending'
+              AND t.issued_at IS NULL
+              AND t.driver_acknowledged_at IS NULL
+              AND tr.tenant_id = ${session.tenantId}::uuid
+              AND tr.status = 'driver_acknowledgement_pending'
+              AND ta.tenant_id = ${session.tenantId}::uuid
+              AND ta.status = 'awaiting_driver_acceptance'
+          )
+        RETURNING va.id, va.request_id
+      ),
+      request_updated AS (
+        UPDATE transport_requests tr
+        SET assigned_driver_employee_id = NULL, updated_at = ${now}
+        FROM allocation_claim ac
+        WHERE tr.id = ac.request_id
+          AND tr.tenant_id = ${session.tenantId}::uuid
+          AND tr.status = 'driver_acknowledgement_pending'
+          AND tr.assigned_driver_employee_id = ${employee.id}::uuid
+        RETURNING tr.id
+      ),
+      request_driver_updated AS (
+        UPDATE request_drivers rd
+        SET is_confirmed = false
+        FROM request_updated ru
+        WHERE rd.request_id = ru.id
+          AND rd.employee_id = ${employee.id}::uuid
+        RETURNING rd.id
+      ),
+      audit_inserted AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id, actor_employee_id,
+          action, entity_type, entity_id, summary, reason, before, after, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${auditSequence},
+          'driver_assignment_declined',
+          ${session.user.id},
+          ${employee.id}::uuid,
+          'driver.decline_assignment',
+          'trip',
+          ${id}::uuid,
+          ${`Assigned driver could not perform request ${context.requestReference}`},
+          ${reason},
+          jsonb_build_object('allocationId', ${context.allocationId}::text, 'driverEmployeeId', ${employee.id}::text),
+          jsonb_build_object('allocationId', ${context.allocationId}::text, 'driverEmployeeId', NULL, 'reassignmentRequired', true),
+          'web'
+        FROM request_updated
+        RETURNING id
+      )
+      SELECT CAST(CASE
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM request_updated) = 1
+         AND (SELECT count(*) FROM audit_inserted) = 1
+        THEN '1'
+        ELSE 'atomic_driver_decline_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
+          || (SELECT count(*) FROM request_updated)::text
+          || (SELECT count(*) FROM audit_inserted)::text
+      END AS integer) AS committed
+    `);
 
     await resolveActionNotifications({
       tenantId: session.tenantId,
       entityType: 'workflow_instance',
-      entityId: context.workflowInstanceId || '',
+      entityId: context.workflowInstanceId,
       eventTypes: ['driver_acknowledgement_required', 'approval_assigned'],
     }).catch(() => undefined);
 
@@ -200,6 +238,12 @@ export async function POST(
     });
   } catch (error) {
     console.error('[trips/decline] POST failed:', error);
+    if (String(error).includes('atomic_driver_decline_failed')) {
+      return NextResponse.json(
+        { error: 'The trip assignment changed while your response was being saved. Refresh the Driver Console.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'The assignment could not be declined. Refresh and try again.' }, { status: 500 });
   }
 }
