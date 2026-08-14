@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicleAllocations } from '@/db/schema/trips';
+import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import {
   employees,
@@ -23,7 +23,6 @@ import { calculateDriverCompliance } from '@/lib/employee-lifecycle';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { requestDrivers, transportRequests } from '@/db/schema/requests';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
-import { runAtomicMutations } from '@/lib/db-atomic';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 
@@ -63,10 +62,14 @@ export async function PATCH(
         requestReference: transportRequests.reference,
         requiredLicenceClass: vehicles.requiredLicenceClass,
         professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
+        tripId: trips.id,
+        tripIssuedAt: trips.issuedAt,
+        tripDriverAcknowledgedAt: trips.driverAcknowledgedAt,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+      .leftJoin(trips, and(eq(trips.allocationId, vehicleAllocations.id), eq(trips.tenantId, session.tenantId)))
       .where(and(
         eq(vehicleAllocations.id, id),
         eq(vehicles.tenantId, session.tenantId),
@@ -77,6 +80,15 @@ export async function PATCH(
     if (!allocation) return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
     if (!LIVE_ALLOCATION_STATES.includes(allocation.state as typeof LIVE_ALLOCATION_STATES[number])) {
       return NextResponse.json({ error: 'Driver replacement is only allowed before physical issue/closure' }, { status: 409 });
+    }
+    if (allocation.tripIssuedAt || allocation.tripDriverAcknowledgedAt) {
+      return NextResponse.json(
+        {
+          error:
+            'The primary driver cannot be changed after driver acknowledgement or physical vehicle issue. Cancel the unissued trip and create a new authorised assignment, or use the formal in-trip handover process after departure.',
+        },
+        { status: 409 },
+      );
     }
     if (allocation.driverEmployeeId === driverEmployeeId) {
       return NextResponse.json({ error: 'Selected driver is already assigned to this allocation' }, { status: 409 });
@@ -166,37 +178,125 @@ export async function PATCH(
       .limit(1);
 
     const now = new Date();
-    await runAtomicMutations((tx) => {
-      const mutations = [
-        tx.update(vehicleAllocations)
-          .set({ driverEmployeeId, version: sql`${vehicleAllocations.version} + 1`, updatedAt: now })
-          .where(eq(vehicleAllocations.id, id)),
-        tx.update(transportRequests)
-          .set({ assignedDriverEmployeeId: driverEmployeeId, updatedAt: now })
-          .where(and(eq(transportRequests.id, allocation.requestId), eq(transportRequests.tenantId, session.tenantId))),
-        tx.update(requestDrivers)
-          .set({ isConfirmed: false })
-          .where(eq(requestDrivers.requestId, allocation.requestId)),
-      ];
+    try {
       if (existingRequestDriver) {
-        mutations.push(
-          tx.update(requestDrivers)
-            .set({ isConfirmed: true, licenceValidated: true, driverType: 'assigned' })
-            .where(eq(requestDrivers.id, existingRequestDriver.id)),
-        );
+        await db.execute(sql`
+          WITH allocation_claim AS (
+            UPDATE vehicle_allocations va
+            SET driver_employee_id = ${driverEmployeeId}::uuid,
+                version = va.version + 1,
+                updated_at = ${now}
+            WHERE va.id = ${id}::uuid
+              AND va.state IN ('provisional', 'confirmed')
+              AND va.driver_employee_id IS NOT DISTINCT FROM ${allocation.driverEmployeeId}::uuid
+              AND NOT EXISTS (
+                SELECT 1 FROM trips t
+                WHERE t.allocation_id = va.id
+                  AND t.tenant_id = ${session.tenantId}::uuid
+                  AND (t.issued_at IS NOT NULL OR t.driver_acknowledged_at IS NOT NULL)
+              )
+            RETURNING va.request_id
+          ),
+          request_updated AS (
+            UPDATE transport_requests tr
+            SET assigned_driver_employee_id = ${driverEmployeeId}::uuid, updated_at = ${now}
+            FROM allocation_claim ac
+            WHERE tr.id = ac.request_id
+              AND tr.tenant_id = ${session.tenantId}::uuid
+              AND tr.assigned_driver_employee_id IS NOT DISTINCT FROM ${allocation.driverEmployeeId}::uuid
+            RETURNING tr.id
+          ),
+          drivers_cleared AS (
+            UPDATE request_drivers rd
+            SET is_confirmed = false
+            FROM request_updated ru
+            WHERE rd.request_id = ru.id
+              AND rd.id <> ${existingRequestDriver.id}::uuid
+            RETURNING rd.id
+          ),
+          driver_confirmed AS (
+            UPDATE request_drivers rd
+            SET is_confirmed = true, licence_validated = true, driver_type = 'assigned'
+            FROM request_updated ru
+            WHERE rd.id = ${existingRequestDriver.id}::uuid
+              AND rd.request_id = ru.id
+              AND rd.employee_id = ${driverEmployeeId}::uuid
+            RETURNING rd.id
+          )
+          SELECT CAST(CASE
+            WHEN (SELECT count(*) FROM allocation_claim) = 1
+             AND (SELECT count(*) FROM request_updated) = 1
+             AND (SELECT count(*) FROM driver_confirmed) = 1
+            THEN '1'
+            ELSE 'atomic_driver_reassignment_failed_'
+              || (SELECT count(*) FROM allocation_claim)::text
+              || (SELECT count(*) FROM request_updated)::text
+              || (SELECT count(*) FROM driver_confirmed)::text
+          END AS integer) AS committed
+        `);
       } else {
-        mutations.push(
-          tx.insert(requestDrivers).values({
-            requestId: allocation.requestId,
-            employeeId: driverEmployeeId,
-            driverType: 'assigned',
-            isConfirmed: true,
-            licenceValidated: true,
-          }),
+        await db.execute(sql`
+          WITH allocation_claim AS (
+            UPDATE vehicle_allocations va
+            SET driver_employee_id = ${driverEmployeeId}::uuid,
+                version = va.version + 1,
+                updated_at = ${now}
+            WHERE va.id = ${id}::uuid
+              AND va.state IN ('provisional', 'confirmed')
+              AND va.driver_employee_id IS NOT DISTINCT FROM ${allocation.driverEmployeeId}::uuid
+              AND NOT EXISTS (
+                SELECT 1 FROM trips t
+                WHERE t.allocation_id = va.id
+                  AND t.tenant_id = ${session.tenantId}::uuid
+                  AND (t.issued_at IS NOT NULL OR t.driver_acknowledged_at IS NOT NULL)
+              )
+            RETURNING va.request_id
+          ),
+          request_updated AS (
+            UPDATE transport_requests tr
+            SET assigned_driver_employee_id = ${driverEmployeeId}::uuid, updated_at = ${now}
+            FROM allocation_claim ac
+            WHERE tr.id = ac.request_id
+              AND tr.tenant_id = ${session.tenantId}::uuid
+              AND tr.assigned_driver_employee_id IS NOT DISTINCT FROM ${allocation.driverEmployeeId}::uuid
+            RETURNING tr.id
+          ),
+          drivers_cleared AS (
+            UPDATE request_drivers rd
+            SET is_confirmed = false
+            FROM request_updated ru
+            WHERE rd.request_id = ru.id
+            RETURNING rd.id
+          ),
+          driver_inserted AS (
+            INSERT INTO request_drivers (
+              request_id, employee_id, driver_type, is_confirmed, licence_validated
+            )
+            SELECT ru.id, ${driverEmployeeId}::uuid, 'assigned', true, true
+            FROM request_updated ru
+            RETURNING id
+          )
+          SELECT CAST(CASE
+            WHEN (SELECT count(*) FROM allocation_claim) = 1
+             AND (SELECT count(*) FROM request_updated) = 1
+             AND (SELECT count(*) FROM driver_inserted) = 1
+            THEN '1'
+            ELSE 'atomic_driver_reassignment_failed_'
+              || (SELECT count(*) FROM allocation_claim)::text
+              || (SELECT count(*) FROM request_updated)::text
+              || (SELECT count(*) FROM driver_inserted)::text
+          END AS integer) AS committed
+        `);
+      }
+    } catch (mutationError) {
+      if (String(mutationError).includes('atomic_driver_reassignment_failed')) {
+        return NextResponse.json(
+          { error: 'The trip or driver assignment changed while reassignment was being saved. Refresh and review the current state.' },
+          { status: 409 },
         );
       }
-      return mutations;
-    });
+      throw mutationError;
+    }
 
     try {
       await recordAuditEvent({
@@ -328,10 +428,13 @@ export async function DELETE(
         requestId: vehicleAllocations.requestId,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         requestReference: transportRequests.reference,
+        tripIssuedAt: trips.issuedAt,
+        tripDriverAcknowledgedAt: trips.driverAcknowledgedAt,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+      .leftJoin(trips, and(eq(trips.allocationId, vehicleAllocations.id), eq(trips.tenantId, session.tenantId)))
       .where(and(
         eq(vehicleAllocations.id, id),
         eq(vehicles.tenantId, session.tenantId),
@@ -343,23 +446,73 @@ export async function DELETE(
     if (!LIVE_ALLOCATION_STATES.includes(allocation.state as typeof LIVE_ALLOCATION_STATES[number])) {
       return NextResponse.json({ error: 'Driver can only be unassigned before physical issue/closure' }, { status: 409 });
     }
+    if (allocation.tripIssuedAt || allocation.tripDriverAcknowledgedAt) {
+      return NextResponse.json(
+        {
+          error:
+            'The primary driver cannot be removed after driver acknowledgement or physical vehicle issue. Cancel the unissued trip or use the formal in-trip handover process after departure.',
+        },
+        { status: 409 },
+      );
+    }
     if (!allocation.driverEmployeeId) {
       return NextResponse.json({ error: 'This allocation has no assigned driver to remove' }, { status: 409 });
     }
 
     const removedDriverId = allocation.driverEmployeeId;
     const now = new Date();
-    await runAtomicMutations((tx) => [
-      tx.update(vehicleAllocations)
-        .set({ driverEmployeeId: null, version: sql`${vehicleAllocations.version} + 1`, updatedAt: now })
-        .where(eq(vehicleAllocations.id, id)),
-      tx.update(transportRequests)
-        .set({ assignedDriverEmployeeId: null, updatedAt: now })
-        .where(and(eq(transportRequests.id, allocation.requestId), eq(transportRequests.tenantId, session.tenantId))),
-      tx.update(requestDrivers)
-        .set({ isConfirmed: false })
-        .where(eq(requestDrivers.requestId, allocation.requestId)),
-    ]);
+    try {
+      await db.execute(sql`
+        WITH allocation_claim AS (
+          UPDATE vehicle_allocations va
+          SET driver_employee_id = NULL,
+              version = va.version + 1,
+              updated_at = ${now}
+          WHERE va.id = ${id}::uuid
+            AND va.state IN ('provisional', 'confirmed')
+            AND va.driver_employee_id = ${removedDriverId}::uuid
+            AND NOT EXISTS (
+              SELECT 1 FROM trips t
+              WHERE t.allocation_id = va.id
+                AND t.tenant_id = ${session.tenantId}::uuid
+                AND (t.issued_at IS NOT NULL OR t.driver_acknowledged_at IS NOT NULL)
+            )
+          RETURNING va.request_id
+        ),
+        request_updated AS (
+          UPDATE transport_requests tr
+          SET assigned_driver_employee_id = NULL, updated_at = ${now}
+          FROM allocation_claim ac
+          WHERE tr.id = ac.request_id
+            AND tr.tenant_id = ${session.tenantId}::uuid
+            AND tr.assigned_driver_employee_id = ${removedDriverId}::uuid
+          RETURNING tr.id
+        ),
+        drivers_cleared AS (
+          UPDATE request_drivers rd
+          SET is_confirmed = false
+          FROM request_updated ru
+          WHERE rd.request_id = ru.id
+          RETURNING rd.id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM allocation_claim) = 1
+           AND (SELECT count(*) FROM request_updated) = 1
+          THEN '1'
+          ELSE 'atomic_driver_unassignment_failed_'
+            || (SELECT count(*) FROM allocation_claim)::text
+            || (SELECT count(*) FROM request_updated)::text
+        END AS integer) AS committed
+      `);
+    } catch (mutationError) {
+      if (String(mutationError).includes('atomic_driver_unassignment_failed')) {
+        return NextResponse.json(
+          { error: 'The trip or driver assignment changed while removal was being saved. Refresh and review the current state.' },
+          { status: 409 },
+        );
+      }
+      throw mutationError;
+    }
 
     try {
       await recordAuditEvent({

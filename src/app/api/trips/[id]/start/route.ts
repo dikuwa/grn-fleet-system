@@ -126,6 +126,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!employee || employee.id !== trip.driverEmployeeId) {
       return NextResponse.json({ error: 'Only the primary assigned driver may start this trip' }, { status: 403 });
     }
+    if (
+      !tripRecord.driverAcknowledgedAt ||
+      tripRecord.driverAcknowledgedByEmployeeId !== employee.id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'The current assigned driver must acknowledge this trip before departure. Reassigned drivers cannot inherit another driver’s acknowledgement.',
+        },
+        { status: 409 },
+      );
+    }
 
     const [licence] = await db
       .select({
@@ -215,6 +227,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'pending'
           AND issued_at IS NOT NULL
+          AND driver_acknowledged_at IS NOT NULL
+          AND driver_acknowledged_by_employee_id = ${employee.id}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM vehicle_allocations va
+            WHERE va.id = trips.allocation_id
+              AND va.state = 'confirmed'
+              AND va.driver_employee_id = ${employee.id}::uuid
+          )
         RETURNING id, request_id, vehicle_id
       ),
       authority_claim AS (

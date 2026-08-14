@@ -6,8 +6,18 @@ import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label, Textarea } from '@/components/ui/input';
 import { statusConfig } from '@/lib/request-status';
 import { fetchWithRetry } from '@/lib/fetch-with-retry';
+import { useToast } from '@/lib/use-toast';
 import {
   AlertTriangle,
   ArrowRight,
@@ -22,6 +32,7 @@ import {
   UserRound,
   Wifi,
   WifiOff,
+  XCircle,
 } from 'lucide-react';
 
 interface AssignedTrip {
@@ -37,12 +48,17 @@ interface AssignedTrip {
   hasReturnInspection: boolean;
   routeSummary?: string;
   routeKm?: number;
+  canDeclineAssignment?: boolean;
 }
 
 export default function DriverMobileDashboardPage() {
+  const { toast } = useToast();
   const [trips, setTrips] = useState<AssignedTrip[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [declineTrip, setDeclineTrip] = useState<AssignedTrip | null>(null);
+  const [declineReason, setDeclineReason] = useState('');
+  const [declining, setDeclining] = useState(false);
   const [isOnline, setIsOnline] = useState(
     () => typeof navigator === 'undefined' || navigator.onLine,
   );
@@ -80,6 +96,45 @@ export default function DriverMobileDashboardPage() {
     fetchedRef.current = true;
     void fetchTrips();
   }, [fetchTrips]);
+
+  const submitDecline = useCallback(async () => {
+    if (!declineTrip) return;
+    const reason = declineReason.trim();
+    if (reason.length < 10) {
+      setError('Explain why you cannot perform the trip using at least 10 characters.');
+      return;
+    }
+    if (!isOnline) {
+      setError('Trip reassignment requires an online connection so Transport Administration is notified immediately.');
+      return;
+    }
+
+    setDeclining(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/trips/${declineTrip.id}/decline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(json.error || 'Could not notify Transport Administration');
+      toast({
+        title: 'Transport notified',
+        description: 'Your assignment was released and another compliant driver can now be assigned.',
+        variant: 'success',
+      });
+      setDeclineTrip(null);
+      setDeclineReason('');
+      await fetchTrips();
+    } catch (reasonError) {
+      const message = reasonError instanceof Error ? reasonError.message : 'Could not notify Transport Administration';
+      setError(message);
+      toast({ title: 'Reassignment request failed', description: message, variant: 'error' });
+    } finally {
+      setDeclining(false);
+    }
+  }, [declineReason, declineTrip, fetchTrips, isOnline, toast]);
 
   const activeTrips = trips.filter((trip) => ['pending', 'in_progress', 'issued'].includes(trip.status));
   const completedTrips = trips.filter((trip) => ['closed', 'completed', 'returned'].includes(trip.status));
@@ -173,6 +228,19 @@ export default function DriverMobileDashboardPage() {
                     <Button variant="secondary" size="sm" asChild>
                       <Link href={`/dashboard/trips/${trip.id}`}>Trip Details</Link>
                     </Button>
+                    {trip.canDeclineAssignment && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setError(null);
+                          setDeclineReason('');
+                          setDeclineTrip(trip);
+                        }}
+                      >
+                        <XCircle className="h-4 w-4" aria-hidden="true" /> Cannot perform
+                      </Button>
+                    )}
                     <Button variant="secondary" size="sm" asChild>
                       <Link href="/dashboard/fuel/new"><Fuel className="h-4 w-4" aria-hidden="true" />Fuel</Link>
                     </Button>
@@ -208,13 +276,49 @@ export default function DriverMobileDashboardPage() {
         </section>
       )}
 
-      {error && (
+      {error && !declineTrip && (
         <div className="bg-status-error-bg text-status-error-text flex items-start gap-2 rounded-[8px] px-4 py-3 text-sm" role="alert">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1">{error}</span>
           <Button variant="secondary" size="sm" onClick={() => void fetchTrips()}>Retry</Button>
         </div>
       )}
+
+      <Dialog open={!!declineTrip} onOpenChange={(open) => {
+        if (!open) {
+          setDeclineTrip(null);
+          setDeclineReason('');
+          setError(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cannot perform this trip?</DialogTitle>
+            <DialogDescription>
+              Use this when you cannot carry out the assigned trip. The trip itself will not be cancelled; Transport Administration will be asked to assign another compliant driver.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="driver-decline-reason">Reason</Label>
+            <Textarea
+              id="driver-decline-reason"
+              value={declineReason}
+              onChange={(event) => setDeclineReason(event.target.value)}
+              placeholder="For example: medical unavailability, licence restriction, duty conflict, or another operational reason"
+              rows={4}
+              maxLength={500}
+            />
+            <p className="text-xs text-ink-500">Required · 10–500 characters · Transport Administration will see this reason.</p>
+            {error && <p className="text-xs text-status-error-text" role="alert">{error}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" disabled={declining} onClick={() => setDeclineTrip(null)}>Keep assignment</Button>
+            <Button variant="destructive" loading={declining} onClick={() => void submitDecline()}>
+              <XCircle className="h-4 w-4" aria-hidden="true" /> Request reassignment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
