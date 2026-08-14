@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { generateDocumentPdf } from '@/lib/pdf/generate';
 import { generateVerifiedTripAuthorityPdf } from '@/lib/pdf/verified-trip-authority';
 import { generateVerifiedInspectionReportPdf } from '@/lib/pdf/verified-inspection-report';
+import { generateVerifiedTransportRequestPdf } from '@/lib/pdf/verified-transport-request';
 import { generateVerifiedSnapshotDocumentPdf } from '@/lib/pdf/verified-snapshot-documents';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
@@ -50,7 +50,7 @@ export async function GET(
       : doc.documentType === 'inspection_report'
         ? await generateVerifiedInspectionReportPdf(id)
         : doc.documentType === 'transport_request'
-          ? await generateDocumentPdf(id)
+          ? await generateVerifiedTransportRequestPdf(id)
           : await generateVerifiedSnapshotDocumentPdf(id);
     if (!result) {
       return NextResponse.json(
