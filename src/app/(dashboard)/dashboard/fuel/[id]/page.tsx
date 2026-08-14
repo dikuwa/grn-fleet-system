@@ -361,7 +361,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
                       extractionData: receipt.extractionData ?? null,
                     }}
                     canEdit={canCorrectReceipt}
-                    canVerify={canVerify && !t.isVerified}
+                    canVerify={canVerify}
                   />
                 ))}
               </div>
