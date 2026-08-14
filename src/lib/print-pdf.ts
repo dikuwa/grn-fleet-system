@@ -17,19 +17,38 @@ export async function printPdfFromUrl(url: string): Promise<void> {
   frame.style.bottom = '0';
   frame.style.border = '0';
   frame.src = objectUrl;
+
+  let cleanedUp = false;
+  let fallbackTimer: number | undefined;
   const cleanup = () => {
-    window.setTimeout(() => {
-      frame.remove();
-      URL.revokeObjectURL(objectUrl);
-    }, 1_000);
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
+    frame.contentWindow?.removeEventListener('afterprint', cleanup);
+    frame.remove();
+    URL.revokeObjectURL(objectUrl);
   };
+
   frame.onload = () => {
     try {
-      frame.contentWindow?.focus();
-      frame.contentWindow?.print();
-    } finally {
+      const printWindow = frame.contentWindow;
+      if (!printWindow) throw new Error('The browser could not open the PDF print frame.');
+      printWindow.addEventListener('afterprint', cleanup, { once: true });
+      printWindow.focus();
+      printWindow.print();
+      // Some embedded PDF viewers do not reliably dispatch `afterprint` back
+      // to the parent frame. Keep the object URL alive long enough for the
+      // browser print pipeline, then clean it up as a safety fallback.
+      fallbackTimer = window.setTimeout(cleanup, 60_000);
+    } catch (error) {
       cleanup();
+      throw error;
     }
   };
+
+  frame.onerror = () => {
+    cleanup();
+  };
+
   document.body.appendChild(frame);
 }
