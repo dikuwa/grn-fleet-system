@@ -127,8 +127,9 @@ async function readDocumentImage(source?: string): Promise<Buffer | null> {
 }
 
 /**
- * React-PDF is most reliable with PNG/JPEG. Tenant branding may be uploaded as
- * WebP, so convert every document image to a self-contained PNG before render.
+ * React-PDF is most reliable with embedded PNG/JPEG data. Never pass a failed
+ * remote image source back to React-PDF: that produces the broken-image box
+ * seen in browser previews. If an asset cannot be embedded, omit it cleanly.
  */
 async function embedDocumentImage(source?: string): Promise<string | undefined> {
   if (!source) return undefined;
@@ -136,7 +137,7 @@ async function embedDocumentImage(source?: string): Promise<string | undefined> 
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
   const input = await readDocumentImage(source);
-  if (!input) return source;
+  if (!input) return undefined;
 
   try {
     const png = await sharp(input).png().toBuffer();
@@ -144,7 +145,7 @@ async function embedDocumentImage(source?: string): Promise<string | undefined> 
     documentImageCache.set(source, { value, expiresAt: Date.now() + 5 * 60_000 });
     return value;
   } catch {
-    return source;
+    return undefined;
   }
 }
 
