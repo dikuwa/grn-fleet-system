@@ -1,0 +1,1 @@
+`externalDriverAssignments` is the final assignment/acceptance record for a verified external driver. It deliberately does not turn external parties into employee drivers and does not weaken internal driver compliance rules.
