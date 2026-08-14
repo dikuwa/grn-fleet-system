@@ -142,6 +142,7 @@ export const SnapshotDocument: React.FC<{ data: SnapshotDocumentData }> = ({ dat
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
           documentHash={data.documentHash}
+          generatedAt={data.generatedAt}
         />
       </DocumentPage>
     </Document>
