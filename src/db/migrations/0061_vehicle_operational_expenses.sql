@@ -25,6 +25,36 @@ BEGIN
   END IF;
 END $$;
 
+-- Keep the existing trip operations endpoint compatible. Legacy trip-expense
+-- inserts predate vehicle_id and still supply only trip_id; derive the vehicle
+-- from the authoritative trip before the NOT NULL constraint is checked.
+CREATE OR REPLACE FUNCTION "derive_trip_expense_vehicle_id"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW."vehicle_id" IS NULL AND NEW."trip_id" IS NOT NULL THEN
+    SELECT trip."vehicle_id"
+      INTO NEW."vehicle_id"
+    FROM "trips" AS trip
+    WHERE trip."id" = NEW."trip_id";
+  END IF;
+
+  IF NEW."vehicle_id" IS NULL THEN
+    RAISE EXCEPTION 'Operational expense requires a vehicle';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS "trg_trip_expenses_derive_vehicle" ON "trip_expenses";
+CREATE TRIGGER "trg_trip_expenses_derive_vehicle"
+BEFORE INSERT OR UPDATE OF "trip_id", "vehicle_id"
+ON "trip_expenses"
+FOR EACH ROW
+EXECUTE FUNCTION "derive_trip_expense_vehicle_id"();
+
 -- Every operational expense belongs to a vehicle. Existing rows are safe to
 -- backfill because trip_expenses.trip_id previously required a valid trip.
 ALTER TABLE "trip_expenses"
