@@ -7,6 +7,7 @@ import { vehicles } from '@/db/schema/fleet';
 import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { parseFuelReceiptText, receiptValidationFlags, type ReceiptFields } from '@/lib/receipt-ocr';
+import { enrichFuelReceiptFields } from '@/lib/receipt-ocr-enrichment';
 import { AI_OCR_CONFIDENCE, extractReceiptWithAi, isAiFeatureEnabled } from '@/lib/ai';
 import { ALLOWED_IMAGE_TYPES, UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
 
@@ -27,7 +28,10 @@ export async function POST(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-    const permission = await requireAnyPermission(session, [Permissions.DRIVER_FUEL_CREATE, Permissions.FUEL_MANAGE]);
+    const permission = await requireAnyPermission(session, [
+      Permissions.DRIVER_FUEL_CREATE,
+      Permissions.FUEL_MANAGE,
+    ]);
     if (permission instanceof NextResponse) return permission;
 
     const form = await request.formData();
@@ -50,17 +54,29 @@ export async function POST(request: NextRequest) {
     let extractionConfidence = 0;
     const flags: string[] = [];
 
-    let aiExtraction: { json: Record<string, unknown>; usage: { inputTokens: number; outputTokens: number } } | null = null;
+    let aiExtraction: {
+      json: Record<string, unknown>;
+      usage: { inputTokens: number; outputTokens: number };
+    } | null = null;
     if (isAiFeatureEnabled('receipt_ocr')) {
-      aiExtraction = await extractReceiptWithAi({ imageBuffer: original, mimeType: file.type, tenantId: session.tenantId });
+      aiExtraction = await extractReceiptWithAi({
+        imageBuffer: original,
+        mimeType: file.type,
+        tenantId: session.tenantId,
+      });
     }
+
     if (aiExtraction) {
       engine = 'openai';
       const aiFields = aiExtraction.json as Partial<ReceiptFields>;
       extractionData = { ...aiFields };
-      fieldConfidence = Object.fromEntries(Object.keys(aiFields).map((key) => [key, AI_OCR_CONFIDENCE]));
+      fieldConfidence = Object.fromEntries(
+        Object.keys(aiFields).map((key) => [key, AI_OCR_CONFIDENCE]),
+      );
       extractionConfidence = AI_OCR_CONFIDENCE;
-      if ((aiFields.amount === undefined && aiFields.litres === undefined)) ocrStatus = 'awaiting_verification';
+      if (aiFields.amount === undefined && aiFields.litres === undefined) {
+        ocrStatus = 'awaiting_verification';
+      }
     } else {
       engine = 'tesseract';
       try {
@@ -76,13 +92,16 @@ export async function POST(request: NextRequest) {
         try {
           const recognition = await worker.recognize(processed);
           const parsed = parseFuelReceiptText(recognition.data.text, recognition.data.confidence);
-          extractionData = { ...parsed.fields };
+          const enriched = enrichFuelReceiptFields(recognition.data.text, parsed.fields);
+          extractionData = { ...enriched };
           fieldConfidence = parsed.confidence;
           extractionConfidence = Math.max(0, Math.min(1, recognition.data.confidence / 100));
           if (
             extractionConfidence < 0.65 ||
             Object.values(parsed.confidence).some((confidence) => confidence < 0.6)
-          ) ocrStatus = 'awaiting_verification';
+          ) {
+            ocrStatus = 'awaiting_verification';
+          }
         } finally {
           await worker.terminate();
         }
@@ -95,30 +114,44 @@ export async function POST(request: NextRequest) {
     const fields = extractionData as Partial<ReceiptFields>;
     // Match the extracted registration against THIS TENANT's fleet only (never
     // another tenant's vehicle), then run cross-field validation against it.
-    let matchedVehicle: { id: string; licenceNumber: string; fuelType: string | null; currentOdometer: number | null } | null = null;
+    let matchedVehicle: {
+      id: string;
+      licenceNumber: string;
+      fuelType: string | null;
+      currentOdometer: number | null;
+    } | null = null;
     if (fields.registrationNumber) {
       const norm = fields.registrationNumber.replace(/[^A-Z0-9]/gi, '').toUpperCase();
       // Match against both the raw licence and a space-stripped form so a
       // receipt printed without spaces still matches a DB value like "N 12345".
       const [vehicle] = await db
-        .select({ id: vehicles.id, licenceNumber: vehicles.licenceNumber, fuelType: vehicles.fuelType, currentOdometer: vehicles.currentOdometer })
+        .select({
+          id: vehicles.id,
+          licenceNumber: vehicles.licenceNumber,
+          fuelType: vehicles.fuelType,
+          currentOdometer: vehicles.currentOdometer,
+        })
         .from(vehicles)
-        .where(and(
-          eq(vehicles.tenantId, session.tenantId),
-          or(
-            ilike(vehicles.licenceNumber, `%${norm}%`),
-            ilike(sql`replace(${vehicles.licenceNumber}, ' ', '')`, `%${norm}%`),
+        .where(
+          and(
+            eq(vehicles.tenantId, session.tenantId),
+            or(
+              ilike(vehicles.licenceNumber, `%${norm}%`),
+              ilike(sql`replace(${vehicles.licenceNumber}, ' ', '')`, `%${norm}%`),
+            ),
           ),
-        ))
+        )
         .limit(1);
       if (vehicle) {
         matchedVehicle = vehicle;
-        flags.push(...receiptValidationFlags({
-          fields,
-          vehicleRegistration: vehicle.licenceNumber,
-          vehicleFuelType: vehicle.fuelType ?? '',
-          currentOdometer: vehicle.currentOdometer ?? 0,
-        }));
+        flags.push(
+          ...receiptValidationFlags({
+            fields,
+            vehicleRegistration: vehicle.licenceNumber,
+            vehicleFuelType: vehicle.fuelType ?? '',
+            currentOdometer: vehicle.currentOdometer ?? 0,
+          }),
+        );
       } else {
         flags.push('unmatched_vehicle');
       }
@@ -129,11 +162,16 @@ export async function POST(request: NextRequest) {
       tenantSequence: Date.now(),
       eventType: 'fuel_receipt_scan_completed',
       actorUserId: session.user.id,
-      action: 'scan_and_extract',
+      action: 'scan_and_extract_normalized',
       entityType: 'fuel_receipt',
       entityId: null,
-      summary: `Receipt scanned; OCR status ${ocrStatus}`,
-      after: { fileName: file.name, flags, matchedVehicleId: matchedVehicle?.id ?? null },
+      summary: `Receipt scanned with normalized OCR; status ${ocrStatus}`,
+      after: {
+        fileName: file.name,
+        engine,
+        flags,
+        matchedVehicleId: matchedVehicle?.id ?? null,
+      },
       sourceChannel: 'web',
     });
 
@@ -146,7 +184,9 @@ export async function POST(request: NextRequest) {
       confidence: fieldConfidence,
       extractionConfidence: Number(extractionConfidence.toFixed(3)),
       flags,
-      matchedVehicle: matchedVehicle ? { id: matchedVehicle.id, licenceNumber: matchedVehicle.licenceNumber } : null,
+      matchedVehicle: matchedVehicle
+        ? { id: matchedVehicle.id, licenceNumber: matchedVehicle.licenceNumber }
+        : null,
     });
   } catch (error) {
     console.error('[fuel/receipts/scan] POST failed:', error);
