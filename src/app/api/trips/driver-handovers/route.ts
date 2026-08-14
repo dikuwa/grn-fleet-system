@@ -48,6 +48,10 @@ export async function GET(request: NextRequest) {
         reason: tripAuthorisedDrivers.reason,
         authorisedAt: tripAuthorisedDrivers.authorisedAt,
         validUntil: tripAuthorities.validUntil,
+        origin: tripAuthorities.origin,
+        destination: tripAuthorities.destination,
+        approvedRoute: tripAuthorities.approvedRoute,
+        specialConditions: tripAuthorities.specialConditions,
       })
       .from(tripAuthorisedDrivers)
       .innerJoin(tripAuthorities, eq(tripAuthorities.id, tripAuthorisedDrivers.authorityId))
