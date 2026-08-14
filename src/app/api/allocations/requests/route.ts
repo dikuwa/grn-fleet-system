@@ -16,7 +16,9 @@ import {
   requestActivities,
   requestPassengers,
   requestDrivers,
+  externalRequestDrivers,
 } from '@/db/schema/requests';
+import { externalParties } from '@/db/schema/external-parties';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
 import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
@@ -61,8 +63,6 @@ export async function GET(request: NextRequest) {
     const db = getDb();
     const tenantId = session.tenantId;
 
-    // Exclude already-consumed requests before counting and pagination. Filtering
-    // after LIMIT/OFFSET creates empty pages and incorrect totals on larger tenants.
     const conditions: SQL[] = [
       eq(transportRequests.tenantId, tenantId),
       inArray(transportRequests.status, ALLOCATABLE_STATUSES),
@@ -84,15 +84,16 @@ export async function GET(request: NextRequest) {
           ilike(employees.firstName, `%${q}%`),
           ilike(employees.lastName, `%${q}%`),
           ilike(employees.employeeNumber, `%${q}%`),
+          ilike(externalParties.firstName, `%${q}%`),
+          ilike(externalParties.lastName, `%${q}%`),
+          ilike(externalParties.organisationName, `%${q}%`),
         )!,
       );
     }
     const where = and(...conditions);
 
-    const [[countRow], rows] = await Promise.all([
-      db
-        .select({ count: sql<number>`count(*)` })
-        .from(transportRequests)
+    const requesterJoins = <T extends ReturnType<typeof db.select>>(query: T) =>
+      query
         .leftJoin(
           employees,
           and(
@@ -100,7 +101,18 @@ export async function GET(request: NextRequest) {
             eq(employees.tenantId, tenantId),
           ),
         )
-        .where(where),
+        .leftJoin(
+          externalParties,
+          and(
+            eq(transportRequests.externalRequesterId, externalParties.id),
+            eq(externalParties.tenantId, tenantId),
+          ),
+        );
+
+    const countQuery = requesterJoins(
+      db.select({ count: sql<number>`count(*)` }).from(transportRequests),
+    );
+    const rowsQuery = requesterJoins(
       db
         .select({
           id: transportRequests.id,
@@ -112,18 +124,22 @@ export async function GET(request: NextRequest) {
           overnight: transportRequests.overnight,
           specialRequirements: transportRequests.specialRequirements,
           vehicleRequirements: transportRequests.vehicleRequirements,
+          requesterType: transportRequests.requesterType,
           preferredDriverEmployeeId: transportRequests.preferredDriverEmployeeId,
-          requesterName: sql<string>`concat(${employees.firstName}, ' ', ${employees.lastName})`,
+          preferredDriverExternalPartyId: transportRequests.preferredDriverExternalPartyId,
+          internalRequesterFirstName: employees.firstName,
+          internalRequesterLastName: employees.lastName,
           requesterEmployeeNumber: employees.employeeNumber,
+          externalRequesterFirstName: externalParties.firstName,
+          externalRequesterLastName: externalParties.lastName,
+          externalRequesterOrganisation: externalParties.organisationName,
         })
-        .from(transportRequests)
-        .leftJoin(
-          employees,
-          and(
-            eq(transportRequests.requesterEmployeeId, employees.id),
-            eq(employees.tenantId, tenantId),
-          ),
-        )
+        .from(transportRequests),
+    );
+
+    const [[countRow], rows] = await Promise.all([
+      countQuery.where(where),
+      rowsQuery
         .where(where)
         .orderBy(desc(transportRequests.createdAt))
         .offset((page - 1) * limit)
@@ -146,7 +162,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const [routes, activities, passengerCounts, nominated] = await Promise.all([
+    const [routes, activities, passengerCounts, nominatedInternal, nominatedExternal] = await Promise.all([
       db
         .select({
           requestId: requestRoutes.requestId,
@@ -196,6 +212,29 @@ export async function GET(request: NextRequest) {
             eq(requestDrivers.driverType, 'nominated'),
           ),
         ),
+      db
+        .select({
+          requestId: externalRequestDrivers.requestId,
+          externalPartyId: externalRequestDrivers.externalPartyId,
+          driverType: externalRequestDrivers.driverType,
+          isConfirmed: externalRequestDrivers.isConfirmed,
+          driverName: sql<string>`concat(${externalParties.firstName}, ' ', ${externalParties.lastName})`,
+          organisation: externalParties.organisationName,
+        })
+        .from(externalRequestDrivers)
+        .innerJoin(
+          externalParties,
+          and(
+            eq(externalRequestDrivers.externalPartyId, externalParties.id),
+            eq(externalParties.tenantId, tenantId),
+          ),
+        )
+        .where(
+          and(
+            inArray(externalRequestDrivers.requestId, pageIds),
+            eq(externalRequestDrivers.driverType, 'nominated'),
+          ),
+        ),
     ]);
 
     const routeMap = new Map<string, (typeof routes)[number]>();
@@ -216,24 +255,40 @@ export async function GET(request: NextRequest) {
       }
     }
     const passengerMap = new Map(passengerCounts.map((row) => [row.requestId, row.count]));
-    const nominatedMap = new Map<string, string>();
-    for (const driver of nominated) {
+    const nominatedMap = new Map<string, { name: string; external: boolean; organisation?: string | null }>();
+    for (const driver of nominatedInternal) {
       if (!nominatedMap.has(driver.requestId)) {
-        nominatedMap.set(driver.requestId, driver.driverName);
+        nominatedMap.set(driver.requestId, { name: driver.driverName, external: false });
+      }
+    }
+    for (const driver of nominatedExternal) {
+      if (!nominatedMap.has(driver.requestId)) {
+        nominatedMap.set(driver.requestId, {
+          name: driver.driverName,
+          external: true,
+          organisation: driver.organisation,
+        });
       }
     }
 
     const data = rows.map((row) => {
       const route = routeMap.get(row.id);
       const dates = activityMap.get(row.id);
+      const external = row.requesterType === 'external';
+      const requesterName = external
+        ? `${row.externalRequesterFirstName || ''} ${row.externalRequesterLastName || ''}`.trim()
+        : `${row.internalRequesterFirstName || ''} ${row.internalRequesterLastName || ''}`.trim();
+      const nominatedDriver = nominatedMap.get(row.id);
       return {
         id: row.id,
         reference: row.reference,
         status: row.status,
         scope: row.scope,
         purpose: row.purpose ?? null,
-        requesterName: row.requesterName?.trim() || null,
-        requesterEmployeeNumber: row.requesterEmployeeNumber ?? null,
+        requesterType: external ? 'external' : 'internal',
+        requesterName: requesterName || null,
+        requesterEmployeeNumber: external ? null : row.requesterEmployeeNumber ?? null,
+        requesterOrganisation: external ? row.externalRequesterOrganisation ?? null : null,
         origin: route?.originName ?? null,
         destination: route?.destinationName ?? null,
         estimatedKm: route?.totalKilometres ?? route?.mappedDistanceKm ?? null,
@@ -241,7 +296,10 @@ export async function GET(request: NextRequest) {
         endDate: dates?.endDate.toISOString() ?? null,
         passengerCount: Number(passengerMap.get(row.id) ?? 0),
         preferredDriverEmployeeId: row.preferredDriverEmployeeId ?? null,
-        nominatedDriverName: nominatedMap.get(row.id) ?? null,
+        preferredDriverExternalPartyId: row.preferredDriverExternalPartyId ?? null,
+        nominatedDriverName: nominatedDriver?.name ?? null,
+        nominatedDriverExternal: nominatedDriver?.external ?? false,
+        nominatedDriverOrganisation: nominatedDriver?.organisation ?? null,
         urgency: row.urgency,
         overnight: row.overnight,
         specialRequirements: row.specialRequirements ?? null,
