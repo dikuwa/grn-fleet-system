@@ -19,6 +19,7 @@ import { ShareActions } from './share-actions';
 import { QRDisplay } from './qr-display';
 import { DocumentViewerActions } from './document-viewer-actions';
 import { resolveTenantBranding } from '@/lib/tenant-branding';
+import { abbreviatedDocumentHash } from '@/lib/document-verification';
 import { documentTypeLabel, formatDocumentStatus, formatHumanValue } from '@/lib/human-readable';
 
 interface PageProps {
@@ -121,7 +122,12 @@ export default async function DocumentDetailPage({ params }: PageProps) {
     (share) => Boolean(share.shortSlug) && !share.isRevoked && new Date(share.expiresAt) > new Date(),
   );
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const shareUrl = activeShares[0]?.shortSlug ? `${baseUrl}/v/${activeShares[0].shortSlug}` : null;
+  const verificationUrl = doc.verificationSlug
+    ? `${baseUrl}/v/${doc.verificationSlug}`
+    : activeShares[0]?.shortSlug
+      ? `${baseUrl}/v/${activeShares[0].shortSlug}`
+      : null;
+  const verificationCode = doc.verificationCode || activeShares[0]?.verificationCode || undefined;
   const pdfPreviewUrl = `/api/documents/${doc.id}/pdf?preview=1`;
 
   return (
@@ -144,7 +150,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         </Button>
         <DocumentLifecycleActions documentId={doc.id} currentStatus={doc.status} />
         <ShareActions
-          shareUrl={shareUrl || undefined}
+          shareUrl={verificationUrl || undefined}
           documentTitle={documentTypeLabel(doc.documentType)}
           documentId={doc.id}
           documentReference={String(
@@ -154,7 +160,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
           )}
           status={formatDocumentStatus(doc.status)}
           organisationName={branding?.organisationName}
-          verificationCode={activeShares[0]?.verificationCode || undefined}
+          verificationCode={verificationCode}
         />
         <CreateShareLinkButton documentId={doc.id} disabled={doc.status === 'draft'} />
       </PageHeader>
@@ -177,7 +183,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
                 <Badge variant="info" size="sm">v{doc.documentVersion}</Badge>
               </div>
               <div className="text-ink-500 mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                <span>Template: {doc.templateVersion || 'N/A'}</span>
+                <span>Template: {doc.templateVersion || 'Not recorded'}</span>
                 <span>Redaction: {doc.redactionProfile || 'internal'}</span>
                 <span>Created: {formatDateTime(doc.createdAt)}</span>
               </div>
@@ -190,7 +196,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         <CardHeader className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div>
             <CardTitle>Document Preview</CardTitle>
-            <p className="text-ink-500 mt-1 text-xs">This is the same document used for Preview, Print and Download PDF.</p>
+            <p className="text-ink-500 mt-1 text-xs">This is the same PDF used for Preview, Print and Download.</p>
           </div>
           <DocumentViewerActions documentId={doc.id} documentType={documentTypeLabel(doc.documentType)} />
         </CardHeader>
@@ -222,8 +228,8 @@ export default async function DocumentDetailPage({ params }: PageProps) {
               <dd className="text-ink-950 mt-0.5 text-xs font-medium">{doc.documentVersion}</dd>
             </div>
             <div>
-              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Template</dt>
-              <dd className="text-ink-950 mt-0.5 text-xs font-medium">{doc.templateVersion || 'N/A'}</dd>
+              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Verification</dt>
+              <dd className="text-ink-950 mt-0.5 font-mono text-xs font-medium">{verificationCode}</dd>
             </div>
             <div>
               <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Status</dt>
@@ -247,15 +253,16 @@ export default async function DocumentDetailPage({ params }: PageProps) {
             </div>
             {doc.hash && (
               <div className="col-span-2 md:col-span-4 xl:col-span-7">
-                <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Document hash (SHA256)</dt>
-                <dd className="text-ink-600 mt-0.5 break-all font-mono text-[10px]">{doc.hash}</dd>
+                <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Document fingerprint</dt>
+                <dd className="text-ink-600 mt-0.5 font-mono text-[10px]">{abbreviatedDocumentHash(doc.hash)}</dd>
+                <dd className="text-ink-400 mt-1 text-[10px]">The complete SHA-256 fingerprint is available on the public verification page.</dd>
               </div>
             )}
           </dl>
         </CardContent>
       </Card>
 
-      <QRDisplay shareUrl={shareUrl} documentTitle={doc.documentType} />
+      <QRDisplay shareUrl={verificationUrl} documentTitle={doc.documentType} />
 
       {doc.documentVersion > 1 && (
         <Card>
