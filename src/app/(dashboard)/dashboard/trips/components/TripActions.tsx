@@ -2,10 +2,20 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { CheckSquare, KeyRound, Repeat, Clock3 } from 'lucide-react';
 import Link from 'next/link';
+import { CheckSquare, Clock3, KeyRound, Repeat, XCircle } from 'lucide-react';
 import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label, Textarea } from '@/components/ui/input';
+import { useToast } from '@/lib/use-toast';
 
 interface TripActionsProps {
   tripId: string;
@@ -50,9 +60,12 @@ export function TripActions({
   currentOdometer,
 }: TripActionsProps) {
   const router = useRouter();
+  const { toast } = useToast();
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState('');
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
   const [departureInspectionStatus, setDepartureInspectionStatus] = useState<GateStatus | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(status === 'pending');
 
@@ -97,9 +110,6 @@ export function TripActions({
     setIsWorking(true);
     setError('');
     try {
-      // Recheck immediately before the mutation instead of trusting the page's
-      // server-rendered inspection summary. The issue API performs the same
-      // safety checks atomically as the final authority.
       const readinessResponse = await fetch(`/api/trips/${tripId}/readiness`, { cache: 'no-store' });
       const readiness = (await readinessResponse.json().catch(() => ({}))) as ReadinessResponse & { error?: string };
       if (!readinessResponse.ok) throw new Error(readiness.error || 'Unable to check release readiness');
@@ -130,6 +140,39 @@ export function TripActions({
     }
   }, [tripId, currentOdometer, router]);
 
+  const handleCancelTrip = useCallback(async () => {
+    const reason = cancelReason.trim();
+    if (reason.length < 10) {
+      setError('Enter a cancellation reason of at least 10 characters.');
+      return;
+    }
+    setIsWorking(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/trips/${tripId}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(json.error || 'Trip could not be cancelled');
+      toast({
+        title: 'Trip cancelled',
+        description: 'The trip, allocation and Trip Authority were cancelled and affected users were notified.',
+        variant: 'success',
+      });
+      setCancelDialogOpen(false);
+      setCancelReason('');
+      router.refresh();
+    } catch (reasonError) {
+      const message = reasonError instanceof Error ? reasonError.message : 'Trip could not be cancelled';
+      setError(message);
+      toast({ title: 'Cancellation failed', description: message, variant: 'error' });
+    } finally {
+      setIsWorking(false);
+    }
+  }, [cancelReason, router, toast, tripId]);
+
   const replacementDialog = canReplaceVehicle && allocationId && vehicle ? (
     <VehicleReplacementDialog
       open={replaceDialogOpen}
@@ -139,6 +182,44 @@ export function TripActions({
       midTrip={midTrip}
       onSuccess={handleReplaceSuccess}
     />
+  ) : null;
+
+  const cancellationDialog = canManage ? (
+    <Dialog open={cancelDialogOpen} onOpenChange={(open) => {
+      setCancelDialogOpen(open);
+      if (!open) {
+        setCancelReason('');
+        setError('');
+      }
+    }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cancel this trip?</DialogTitle>
+          <DialogDescription>
+            This stops the pre-departure trip, cancels its allocation and Trip Authority, and notifies the requester and assigned driver. This action does not delete the audit history.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor={`cancel-trip-${tripId}`}>Cancellation reason</Label>
+          <Textarea
+            id={`cancel-trip-${tripId}`}
+            value={cancelReason}
+            onChange={(event) => setCancelReason(event.target.value)}
+            placeholder="Explain why the authorised trip must be cancelled"
+            rows={4}
+            maxLength={500}
+          />
+          <p className="text-xs text-ink-500">Required · 10–500 characters</p>
+          {error && <p className="text-xs text-status-error-text" role="alert">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => setCancelDialogOpen(false)} disabled={isWorking}>Keep trip</Button>
+          <Button variant="destructive" onClick={() => void handleCancelTrip()} loading={isWorking}>
+            <XCircle className="h-4 w-4" /> Cancel trip
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   ) : null;
 
   if (status === 'pending') {
@@ -176,13 +257,19 @@ export function TripActions({
             <KeyRound className="h-4 w-4" /> Issue Vehicle
           </Button>
         )}
+        {canManage && !hasIssue && (
+          <Button variant="secondary" size="sm" onClick={() => setCancelDialogOpen(true)}>
+            <XCircle className="h-4 w-4" /> Cancel Trip
+          </Button>
+        )}
         {hasIssue && (
           <span className="inline-flex items-center gap-1.5 text-xs text-status-success-text">
             <CheckSquare className="h-3.5 w-3.5" /> Vehicle issued — waiting for the driver to start the trip
           </span>
         )}
-        {error && <p className="mt-1 w-full text-xs text-status-error-text">{error}</p>}
+        {error && !cancelDialogOpen && <p className="mt-1 w-full text-xs text-status-error-text">{error}</p>}
         {replacementDialog}
+        {cancellationDialog}
       </div>
     );
   }
