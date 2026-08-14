@@ -4,7 +4,7 @@ import { getDb } from '@/db';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { externalRequestDrivers, transportRequests } from '@/db/schema/requests';
-import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { runAtomicMutations } from '@/lib/db-atomic';
@@ -46,6 +46,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         allocationEndAt: vehicleAllocations.endAt,
         allocationState: vehicleAllocations.state,
         tripStatus: trips.status,
+        tripIssuedAt: trips.issuedAt,
         requestReference: transportRequests.reference,
         partyFirstName: externalParties.firstName,
         partyLastName: externalParties.lastName,
@@ -77,9 +78,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         { status: 409 },
       );
     }
-    if (record.tripStatus !== 'pending' || !['provisional', 'confirmed'].includes(record.allocationState)) {
+    if (
+      record.tripStatus !== 'pending' ||
+      record.tripIssuedAt ||
+      !['provisional', 'confirmed'].includes(record.allocationState)
+    ) {
       return NextResponse.json(
-        { error: 'External driver acceptance can only be recorded before trip departure' },
+        { error: 'External driver acceptance can only be decided before physical vehicle issue or trip departure' },
         { status: 409 },
       );
     }
@@ -110,22 +115,54 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             ),
           ),
         tx
-          .update(externalRequestDrivers)
-          .set({ isConfirmed: false, driverType: 'nominated' })
+          .update(vehicleAllocations)
+          .set({ state: 'cancelled', overrideReason: reason, updatedAt: now })
           .where(
             and(
-              eq(externalRequestDrivers.requestId, record.assignment.requestId),
-              eq(externalRequestDrivers.externalPartyId, record.assignment.externalPartyId),
+              eq(vehicleAllocations.id, record.assignment.allocationId),
+              eq(vehicleAllocations.state, record.allocationState),
             ),
           ),
         tx
+          .update(externalRequestDrivers)
+          .set({ isConfirmed: false, driverType: 'nominated' })
+          .where(eq(externalRequestDrivers.requestId, record.assignment.requestId)),
+        tx
           .update(transportRequests)
-          .set({ assignedDriverExternalPartyId: null, updatedAt: now })
+          .set({
+            status: 'transport_review',
+            assignedDriverExternalPartyId: null,
+            assignedDriverEmployeeId: null,
+            updatedAt: now,
+          })
           .where(
             and(
               eq(transportRequests.id, record.assignment.requestId),
               eq(transportRequests.tenantId, tenantId),
-              eq(transportRequests.assignedDriverExternalPartyId, record.assignment.externalPartyId),
+            ),
+          ),
+        tx
+          .update(trips)
+          .set({ status: 'cancelled', updatedAt: now })
+          .where(
+            and(
+              eq(trips.id, record.assignment.tripId),
+              eq(trips.tenantId, tenantId),
+              eq(trips.status, 'pending'),
+            ),
+          ),
+        tx
+          .update(tripAuthorities)
+          .set({
+            status: 'cancelled',
+            cancelledAt: now,
+            cancellationReason: reason,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(tripAuthorities.allocationId, record.assignment.allocationId),
+              eq(tripAuthorities.tenantId, tenantId),
             ),
           ),
       ]);
@@ -137,19 +174,35 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           action: 'allocation.external_driver_acceptance_cancelled',
           entityType: 'external_driver_assignment',
           entityId: id,
-          summary: `Pending external driver assignment for ${driverName} cancelled: ${reason}`,
-          before: { state: 'pending_acceptance' },
-          after: { state: 'cancelled', reason },
+          summary: `Pending external driver assignment for ${driverName} cancelled and resources released: ${reason}`,
+          before: {
+            state: 'pending_acceptance',
+            allocationState: record.allocationState,
+            tripStatus: record.tripStatus,
+          },
+          after: {
+            state: 'cancelled',
+            allocationState: 'cancelled',
+            tripStatus: 'cancelled',
+            requestStatus: 'transport_review',
+            reason,
+          },
         }),
         recordTenantRequestActivity({
           tenantId,
           requestId: record.assignment.requestId,
           reference: record.requestReference,
-          stage: 'driver_reallocation_required',
-          officeLabel: 'Transport office',
+          stage: 'transport_review',
+          officeLabel: 'Transport office · driver reallocation required',
         }),
       ]);
-      return NextResponse.json({ success: true, state: 'cancelled', reallocationRequired: true });
+      return NextResponse.json({
+        success: true,
+        state: 'cancelled',
+        allocationState: 'cancelled',
+        requestStatus: 'transport_review',
+        reallocationRequired: true,
+      });
     }
 
     const acceptanceMethod = String(body.acceptanceMethod || '').trim();
