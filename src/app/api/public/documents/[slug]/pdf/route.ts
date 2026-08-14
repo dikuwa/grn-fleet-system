@@ -3,6 +3,7 @@ import { resolveShortSharedDocument } from '@/lib/share-token';
 import { generateDocumentPdf } from '@/lib/pdf/generate';
 import { generateVerifiedTripAuthorityPdf } from '@/lib/pdf/verified-trip-authority';
 import { generateVerifiedInspectionReportPdf } from '@/lib/pdf/verified-inspection-report';
+import { generateVerifiedSnapshotDocumentPdf } from '@/lib/pdf/verified-snapshot-documents';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -29,7 +30,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
     ? await generateVerifiedTripAuthorityPdf(result.document.id)
     : result.document.documentType === 'inspection_report'
       ? await generateVerifiedInspectionReportPdf(result.document.id)
-      : await generateDocumentPdf(result.document.id);
+      : result.document.documentType === 'transport_request'
+        ? await generateDocumentPdf(result.document.id)
+        : await generateVerifiedSnapshotDocumentPdf(result.document.id);
   if (!pdf) return NextResponse.json({ error: 'PDF is unavailable.' }, { status: 404 });
   return new NextResponse(pdf.buffer as BodyInit, {
     headers: {
