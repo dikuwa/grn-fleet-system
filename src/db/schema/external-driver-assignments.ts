@@ -6,6 +6,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
@@ -58,6 +59,14 @@ export const externalDriverAssignments = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    check(
+      'chk_external_driver_assignment_state',
+      sql`${table.state} in ('pending_acceptance', 'accepted', 'cancelled')`,
+    ),
+    check(
+      'chk_external_driver_acceptance_method',
+      sql`${table.acceptanceMethod} is null or ${table.acceptanceMethod} in ('in_person', 'phone', 'signed_paper', 'secure_link')`,
+    ),
     index('idx_external_driver_assignments_tenant_state').on(table.tenantId, table.state),
     index('idx_external_driver_assignments_request').on(table.requestId),
     index('idx_external_driver_assignments_trip').on(table.tripId),
