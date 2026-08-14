@@ -25,10 +25,10 @@ import {
 
 export interface FuelSummaryData {
   tripId: string;
-  totalLitres: number;
-  totalCost: number;
-  transactionCount: number;
-  pendingReimbursements: number;
+  totalLitres?: number | null;
+  totalCost?: number | null;
+  transactionCount?: number | null;
+  pendingReimbursements?: number | null;
   actualKilometres?: number | null;
   kilometreVariance?: number | null;
 
@@ -81,6 +81,8 @@ export const FuelSummaryDocument: React.FC<{ data: FuelSummaryData }> = ({ data 
       : null);
 
   const status = data.status || 'issued';
+  const formatOptionalNumber = (value: number | null | undefined, suffix = '') =>
+    value == null ? 'Not recorded' : `${value.toLocaleString('en-NA')}${suffix}`;
 
   return (
     <Document title={`Fuel Summary — ${data.vehicleLicence || data.tripId.slice(0, 8)}`}>
@@ -91,10 +93,7 @@ export const FuelSummaryDocument: React.FC<{ data: FuelSummaryData }> = ({ data 
           reference={`FUEL-${data.tripId.slice(0, 8).toUpperCase()}`}
           version={data.documentVersion || 1}
           status={formatDocumentStatus(status)}
-          issueDate={formatHumanDate(
-            data.generatedAt || new Date().toISOString(),
-            branding?.locale,
-          )}
+          issueDate={data.generatedAt ? formatHumanDate(data.generatedAt, branding?.locale) : undefined}
           qrCode={data.qrCodeDataUrl}
         />
 
@@ -118,36 +117,39 @@ export const FuelSummaryDocument: React.FC<{ data: FuelSummaryData }> = ({ data 
               fields={[
                 {
                   label: 'Total litres',
-                  value: `${data.totalLitres.toLocaleString('en-NA', {
-                    minimumFractionDigits: 1,
-                    maximumFractionDigits: 1,
-                  })} L`,
+                  value:
+                    data.totalLitres == null
+                      ? 'Not recorded'
+                      : `${data.totalLitres.toLocaleString('en-NA', {
+                          minimumFractionDigits: 1,
+                          maximumFractionDigits: 1,
+                        })} L`,
                 },
                 {
                   label: 'Total cost',
-                  value: formatMoney(data.totalCost, branding?.locale),
+                  value:
+                    data.totalCost == null
+                      ? 'Not recorded'
+                      : formatMoney(data.totalCost, branding?.locale),
                 },
                 {
                   label: 'Transactions',
-                  value: String(data.transactionCount),
+                  value: formatOptionalNumber(data.transactionCount),
                 },
                 {
                   label: 'Pending reimbursements',
-                  value: String(data.pendingReimbursements),
+                  value: formatOptionalNumber(data.pendingReimbursements),
                 },
                 {
                   label: 'Actual kilometres',
-                  value:
-                    data.actualKilometres != null
-                      ? `${data.actualKilometres.toLocaleString('en-NA')} km`
-                      : 'Not recorded',
+                  value: formatOptionalNumber(data.actualKilometres, ' km'),
                 },
                 {
                   label: 'Kilometre variance',
                   value:
-                    data.kilometreVariance != null
-                      ? `${data.kilometreVariance >= 0 ? '+' : ''}${data.kilometreVariance.toLocaleString('en-NA')} km`
-                      : 'Not recorded',
+                    data.kilometreVariance == null
+                      ? 'Not recorded'
+                      : `${data.kilometreVariance >= 0 ? '+' : ''}${data.kilometreVariance.toLocaleString('en-NA')} km`,
                 },
               ]}
             />
