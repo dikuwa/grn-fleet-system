@@ -1,14 +1,10 @@
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { auditEvents } from '@/db/schema/audit';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
-import { workflowInstances } from '@/db/schema/workflows';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
-import { runAtomicMutations } from '@/lib/db-atomic';
 import { createScopedNotifications, resolveActionNotifications } from '@/lib/notification-service';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
@@ -82,59 +78,115 @@ export async function POST(
     }
 
     const now = new Date();
-    const auditId = randomUUID();
-    await runAtomicMutations((tx) => {
-      const mutations = [
-        tx.update(trips)
-          .set({ status: 'cancelled', updatedAt: now })
-          .where(and(eq(trips.id, id), eq(trips.tenantId, session.tenantId), eq(trips.status, 'pending'))),
-        tx.update(vehicleAllocations)
-          .set({ state: 'cancelled', overrideReason: reason, updatedAt: now })
-          .where(and(
-            eq(vehicleAllocations.id, context.allocationId),
-            inArray(vehicleAllocations.state, ['provisional', 'confirmed']),
-          )),
-        tx.update(tripAuthorities)
-          .set({ status: 'cancelled', cancelledAt: now, cancellationReason: reason, updatedAt: now })
-          .where(and(eq(tripAuthorities.id, context.authorityId), eq(tripAuthorities.tenantId, session.tenantId))),
-        tx.update(transportRequests)
-          .set({ status: 'cancelled', updatedAt: now })
-          .where(and(eq(transportRequests.id, context.requestId), eq(transportRequests.tenantId, session.tenantId))),
-        tx.insert(auditEvents).values({
-          id: auditId,
-          tenantId: session.tenantId,
-          tenantSequence: Date.now(),
-          eventType: 'trip_cancelled',
-          actorUserId: session.user.id,
-          action: 'trip.cancel',
-          entityType: 'trip',
-          entityId: id,
-          summary: `Trip cancelled for request ${context.requestReference}`,
-          reason,
-          before: {
-            tripStatus: context.tripStatus,
-            allocationState: context.allocationState,
-            requestStatus: context.requestStatus,
-            authorityStatus: context.authorityStatus,
-          },
-          after: {
-            tripStatus: 'cancelled',
-            allocationState: 'cancelled',
-            requestStatus: 'cancelled',
-            authorityStatus: 'cancelled',
-          },
-          sourceChannel: 'web',
-        }),
-      ];
-      if (context.workflowInstanceId) {
-        mutations.push(
-          tx.update(workflowInstances)
-            .set({ status: 'cancelled', updatedAt: now })
-            .where(and(eq(workflowInstances.id, context.workflowInstanceId), eq(workflowInstances.status, 'active'))),
-        );
-      }
-      return mutations;
+    const auditSequence = Date.now();
+    const beforeJson = JSON.stringify({
+      tripStatus: context.tripStatus,
+      allocationState: context.allocationState,
+      requestStatus: context.requestStatus,
+      authorityStatus: context.authorityStatus,
     });
+    const afterJson = JSON.stringify({
+      tripStatus: 'cancelled',
+      allocationState: 'cancelled',
+      requestStatus: 'cancelled',
+      authorityStatus: 'cancelled',
+    });
+
+    await db.execute(sql`
+      WITH trip_claim AS (
+        UPDATE trips t
+        SET status = 'cancelled', updated_at = ${now}
+        WHERE t.id = ${id}::uuid
+          AND t.tenant_id = ${session.tenantId}::uuid
+          AND t.status = 'pending'
+          AND t.issued_at IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM vehicle_allocations va
+            WHERE va.id = t.allocation_id
+              AND va.state IN ('provisional', 'confirmed')
+          )
+        RETURNING t.id, t.request_id, t.allocation_id
+      ),
+      allocation_updated AS (
+        UPDATE vehicle_allocations va
+        SET state = 'cancelled', override_reason = ${reason}, updated_at = ${now}
+        FROM trip_claim tc
+        WHERE va.id = tc.allocation_id
+          AND va.state IN ('provisional', 'confirmed')
+        RETURNING va.id
+      ),
+      authority_updated AS (
+        UPDATE trip_authorities ta
+        SET status = 'cancelled',
+            cancelled_at = ${now},
+            cancellation_reason = ${reason},
+            updated_at = ${now}
+        FROM trip_claim tc
+        WHERE ta.id = ${context.authorityId}::uuid
+          AND ta.trip_id = tc.id
+          AND ta.tenant_id = ${session.tenantId}::uuid
+          AND ta.status <> 'cancelled'
+        RETURNING ta.id
+      ),
+      request_updated AS (
+        UPDATE transport_requests tr
+        SET status = 'cancelled', updated_at = ${now}
+        FROM trip_claim tc
+        WHERE tr.id = tc.request_id
+          AND tr.tenant_id = ${session.tenantId}::uuid
+          AND tr.status <> 'cancelled'
+        RETURNING tr.id
+      ),
+      workflow_updated AS (
+        UPDATE workflow_instances wi
+        SET status = 'cancelled', updated_at = ${now}
+        FROM request_updated ru
+        WHERE ${context.workflowInstanceId}::uuid IS NOT NULL
+          AND wi.id = ${context.workflowInstanceId}::uuid
+          AND wi.request_id = ru.id
+          AND wi.status = 'active'
+        RETURNING wi.id
+      ),
+      audit_inserted AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id,
+          action, entity_type, entity_id, summary, reason, before, after, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${auditSequence},
+          'trip_cancelled',
+          ${session.user.id},
+          'trip.cancel',
+          'trip',
+          tc.id,
+          ${`Trip cancelled for request ${context.requestReference}`},
+          ${reason},
+          ${beforeJson}::jsonb,
+          ${afterJson}::jsonb,
+          'web'
+        FROM trip_claim tc
+        INNER JOIN allocation_updated au ON true
+        INNER JOIN authority_updated tu ON true
+        INNER JOIN request_updated ru ON ru.id = tc.request_id
+        RETURNING id
+      )
+      SELECT CAST(CASE
+        WHEN (SELECT count(*) FROM trip_claim) = 1
+         AND (SELECT count(*) FROM allocation_updated) = 1
+         AND (SELECT count(*) FROM authority_updated) = 1
+         AND (SELECT count(*) FROM request_updated) = 1
+         AND (SELECT count(*) FROM audit_inserted) = 1
+        THEN '1'
+        ELSE 'atomic_trip_cancel_failed_'
+          || (SELECT count(*) FROM trip_claim)::text
+          || (SELECT count(*) FROM allocation_updated)::text
+          || (SELECT count(*) FROM authority_updated)::text
+          || (SELECT count(*) FROM request_updated)::text
+          || (SELECT count(*) FROM audit_inserted)::text
+      END AS integer) AS committed
+    `);
 
     if (context.workflowInstanceId) {
       await resolveActionNotifications({
@@ -182,6 +234,12 @@ export async function POST(
     return NextResponse.json({ success: true, alreadyCancelled: false });
   } catch (error) {
     console.error('[trips/cancel] POST failed:', error);
+    if (String(error).includes('atomic_trip_cancel_failed')) {
+      return NextResponse.json(
+        { error: 'Trip state changed while cancellation was being recorded. Refresh and review the latest state.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Trip cancellation failed. Refresh and try again.' }, { status: 500 });
   }
 }
