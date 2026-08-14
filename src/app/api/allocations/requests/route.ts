@@ -29,7 +29,6 @@ import {
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
-/** Statuses where Transport Administration may still allocate a vehicle. */
 const ALLOCATABLE_STATUSES = [
   'approved',
   'under_review',
@@ -37,8 +36,6 @@ const ALLOCATABLE_STATUSES = [
   'release_pending',
   'vehicle_allocated',
 ];
-
-/** Canonical allocation states that still consume a request. */
 const ACTIVE_ALLOCATION_STATES = ['provisional', 'confirmed', 'released'] as const;
 
 export async function GET(request: NextRequest) {
@@ -62,7 +59,6 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
     const tenantId = session.tenantId;
-
     const conditions: SQL[] = [
       eq(transportRequests.tenantId, tenantId),
       inArray(transportRequests.status, ALLOCATABLE_STATUSES),
@@ -92,8 +88,10 @@ export async function GET(request: NextRequest) {
     }
     const where = and(...conditions);
 
-    const requesterJoins = <T extends ReturnType<typeof db.select>>(query: T) =>
-      query
+    const [[countRow], rows] = await Promise.all([
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(transportRequests)
         .leftJoin(
           employees,
           and(
@@ -107,12 +105,8 @@ export async function GET(request: NextRequest) {
             eq(transportRequests.externalRequesterId, externalParties.id),
             eq(externalParties.tenantId, tenantId),
           ),
-        );
-
-    const countQuery = requesterJoins(
-      db.select({ count: sql<number>`count(*)` }).from(transportRequests),
-    );
-    const rowsQuery = requesterJoins(
+        )
+        .where(where),
       db
         .select({
           id: transportRequests.id,
@@ -134,12 +128,21 @@ export async function GET(request: NextRequest) {
           externalRequesterLastName: externalParties.lastName,
           externalRequesterOrganisation: externalParties.organisationName,
         })
-        .from(transportRequests),
-    );
-
-    const [[countRow], rows] = await Promise.all([
-      countQuery.where(where),
-      rowsQuery
+        .from(transportRequests)
+        .leftJoin(
+          employees,
+          and(
+            eq(transportRequests.requesterEmployeeId, employees.id),
+            eq(employees.tenantId, tenantId),
+          ),
+        )
+        .leftJoin(
+          externalParties,
+          and(
+            eq(transportRequests.externalRequesterId, externalParties.id),
+            eq(externalParties.tenantId, tenantId),
+          ),
+        )
         .where(where)
         .orderBy(desc(transportRequests.createdAt))
         .offset((page - 1) * limit)
@@ -149,17 +152,8 @@ export async function GET(request: NextRequest) {
     const total = Number(countRow?.count ?? 0);
     const totalPages = Math.max(1, Math.ceil(total / limit));
     const pageIds = rows.map((row) => row.id);
-
     if (!pageIds.length) {
-      return NextResponse.json({
-        success: true,
-        data: [],
-        total,
-        page,
-        limit,
-        totalPages,
-        hasMore: page < totalPages,
-      });
+      return NextResponse.json({ success: true, data: [], total, page, limit, totalPages, hasMore: page < totalPages });
     }
 
     const [routes, activities, passengerCounts, nominatedInternal, nominatedExternal] = await Promise.all([
@@ -183,28 +177,19 @@ export async function GET(request: NextRequest) {
         .from(requestActivities)
         .where(inArray(requestActivities.requestId, pageIds)),
       db
-        .select({
-          requestId: requestPassengers.requestId,
-          count: sql<number>`count(*)`,
-        })
+        .select({ requestId: requestPassengers.requestId, count: sql<number>`count(*)` })
         .from(requestPassengers)
         .where(inArray(requestPassengers.requestId, pageIds))
         .groupBy(requestPassengers.requestId),
       db
         .select({
           requestId: requestDrivers.requestId,
-          employeeId: requestDrivers.employeeId,
-          driverType: requestDrivers.driverType,
-          isConfirmed: requestDrivers.isConfirmed,
           driverName: sql<string>`concat(${employees.firstName}, ' ', ${employees.lastName})`,
         })
         .from(requestDrivers)
         .innerJoin(
           employees,
-          and(
-            eq(requestDrivers.employeeId, employees.id),
-            eq(employees.tenantId, tenantId),
-          ),
+          and(eq(requestDrivers.employeeId, employees.id), eq(employees.tenantId, tenantId)),
         )
         .where(
           and(
@@ -215,9 +200,6 @@ export async function GET(request: NextRequest) {
       db
         .select({
           requestId: externalRequestDrivers.requestId,
-          externalPartyId: externalRequestDrivers.externalPartyId,
-          driverType: externalRequestDrivers.driverType,
-          isConfirmed: externalRequestDrivers.isConfirmed,
           driverName: sql<string>`concat(${externalParties.firstName}, ' ', ${externalParties.lastName})`,
           organisation: externalParties.organisationName,
         })
@@ -238,18 +220,13 @@ export async function GET(request: NextRequest) {
     ]);
 
     const routeMap = new Map<string, (typeof routes)[number]>();
-    for (const route of routes) {
-      if (!routeMap.has(route.requestId)) routeMap.set(route.requestId, route);
-    }
+    for (const route of routes) if (!routeMap.has(route.requestId)) routeMap.set(route.requestId, route);
+
     const activityMap = new Map<string, { startDate: Date; endDate: Date }>();
     for (const activity of activities) {
       const current = activityMap.get(activity.requestId);
-      if (!current) {
-        activityMap.set(activity.requestId, {
-          startDate: activity.startDate,
-          endDate: activity.endDate,
-        });
-      } else {
+      if (!current) activityMap.set(activity.requestId, { startDate: activity.startDate, endDate: activity.endDate });
+      else {
         if (activity.startDate < current.startDate) current.startDate = activity.startDate;
         if (activity.endDate > current.endDate) current.endDate = activity.endDate;
       }
@@ -257,17 +234,11 @@ export async function GET(request: NextRequest) {
     const passengerMap = new Map(passengerCounts.map((row) => [row.requestId, row.count]));
     const nominatedMap = new Map<string, { name: string; external: boolean; organisation?: string | null }>();
     for (const driver of nominatedInternal) {
-      if (!nominatedMap.has(driver.requestId)) {
-        nominatedMap.set(driver.requestId, { name: driver.driverName, external: false });
-      }
+      if (!nominatedMap.has(driver.requestId)) nominatedMap.set(driver.requestId, { name: driver.driverName, external: false });
     }
     for (const driver of nominatedExternal) {
       if (!nominatedMap.has(driver.requestId)) {
-        nominatedMap.set(driver.requestId, {
-          name: driver.driverName,
-          external: true,
-          organisation: driver.organisation,
-        });
+        nominatedMap.set(driver.requestId, { name: driver.driverName, external: true, organisation: driver.organisation });
       }
     }
 
@@ -307,15 +278,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({
-      success: true,
-      data,
-      total,
-      page,
-      limit,
-      totalPages,
-      hasMore: page < totalPages,
-    });
+    return NextResponse.json({ success: true, data, total, page, limit, totalPages, hasMore: page < totalPages });
   } catch (error) {
     console.error('[allocations/requests] GET failed:', error);
     return NextResponse.json({ error: 'Failed to load eligible requests' }, { status: 500 });
