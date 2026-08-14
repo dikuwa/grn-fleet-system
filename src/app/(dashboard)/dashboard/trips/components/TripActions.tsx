@@ -3,8 +3,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { CheckSquare, Clock3, KeyRound, Repeat, XCircle } from 'lucide-react';
+import { ArrowRightLeft, CheckSquare, Clock3, KeyRound, Repeat, XCircle } from 'lucide-react';
 import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
+import { DriverHandoverDialog } from './DriverHandoverDialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -64,6 +65,7 @@ export function TripActions({
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState('');
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+  const [handoverDialogOpen, setHandoverDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [departureInspectionStatus, setDepartureInspectionStatus] = useState<GateStatus | null>(null);
@@ -101,6 +103,10 @@ export function TripActions({
     void refreshReadiness();
     router.refresh();
   }, [refreshReadiness, router]);
+
+  const handleHandoverSuccess = useCallback(() => {
+    router.refresh();
+  }, [router]);
 
   const handleDepartureInspection = useCallback(() => {
     router.push(`/dashboard/inspections/new?type=departure&tripId=${tripId}&vehicleId=${vehicleId}`);
@@ -181,6 +187,16 @@ export function TripActions({
       currentVehicle={vehicle}
       midTrip={midTrip}
       onSuccess={handleReplaceSuccess}
+    />
+  ) : null;
+
+  const handoverDialog = canManage && midTrip ? (
+    <DriverHandoverDialog
+      open={handoverDialogOpen}
+      onOpenChange={setHandoverDialogOpen}
+      tripId={tripId}
+      currentOdometer={currentOdometer}
+      onSuccess={handleHandoverSuccess}
     />
   ) : null;
 
@@ -278,6 +294,11 @@ export function TripActions({
     return (
       <div>
         <div className="flex flex-wrap gap-2">
+          {canManage && (
+            <Button variant="secondary" size="sm" onClick={() => setHandoverDialogOpen(true)}>
+              <ArrowRightLeft className="h-4 w-4" /> Hand over Driver
+            </Button>
+          )}
           {canReplaceVehicle && allocationId && (
             <Button variant="secondary" size="sm" onClick={() => setReplaceDialogOpen(true)}>
               <Repeat className="h-4 w-4" /> Replace Vehicle
@@ -285,6 +306,7 @@ export function TripActions({
           )}
         </div>
         {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
+        {handoverDialog}
         {replacementDialog}
       </div>
     );
