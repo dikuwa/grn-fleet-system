@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { fuelTransactions, reimbursements, trips, vehicleAllocations } from '@/db/schema/trips';
+import {
+  fuelReceipts,
+  fuelTransactions,
+  reimbursements,
+  trips,
+  vehicleAllocations,
+} from '@/db/schema/trips';
 import { vehicles, vehicleOdometerEvents } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
@@ -481,7 +487,7 @@ export async function POST(req: NextRequest) {
         ? db
             .select()
             .from(reimbursements)
-            .where(eq(reimbursements.id, reimbursementId))
+            .where(eq(reimbursements.transactionId, transactionId))
             .limit(1)
         : Promise.resolve([]),
     ]);
@@ -598,6 +604,33 @@ export async function PATCH(req: NextRequest) {
     }
     if (transaction.anomalyState === 'rejected' && action === 'reject') {
       return NextResponse.json({ success: true, state: 'rejected', idempotentReplay: true });
+    }
+
+    if (action === 'verify') {
+      const [receiptState] = await db
+        .select({
+          total: sql<number>`count(*)`,
+          pending: sql<number>`count(*) filter (where ${fuelReceipts.isVerified} = false)`,
+        })
+        .from(fuelReceipts)
+        .where(
+          and(
+            eq(fuelReceipts.transactionId, transaction.id),
+            eq(fuelReceipts.tenantId, session.tenantId),
+          ),
+        );
+      const totalReceipts = Number(receiptState?.total ?? 0);
+      const pendingReceipts = Number(receiptState?.pending ?? 0);
+      if (totalReceipts > 0 && pendingReceipts > 0) {
+        return NextResponse.json(
+          {
+            error: 'Receipt evidence must be reviewed before this fuel transaction can be verified.',
+            code: 'FUEL_RECEIPT_REVIEW_REQUIRED',
+            pendingReceiptCount: pendingReceipts,
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const nextVerified = action === 'verify';
