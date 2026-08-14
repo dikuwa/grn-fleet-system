@@ -198,6 +198,7 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
         />
       </DocumentPage>
     </Document>
