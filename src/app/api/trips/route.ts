@@ -62,6 +62,7 @@ export async function GET(request: NextRequest) {
           id: trips.id,
           status: trips.status,
           issuedAt: trips.issuedAt,
+          driverAcknowledgedAt: trips.driverAcknowledgedAt,
           startedAt: trips.startedAt,
           returnedAt: trips.returnedAt,
           closedAt: trips.closedAt,
@@ -72,6 +73,7 @@ export async function GET(request: NextRequest) {
           licenceNumber: vehicles.licenceNumber,
           vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
           requestReference: transportRequests.reference,
+          requestStatus: transportRequests.status,
           hasDepartureInspection: sql<boolean>`EXISTS (
             SELECT 1 FROM vehicle_inspections vi
             WHERE vi.trip_id = ${trips.id}
@@ -120,6 +122,11 @@ export async function GET(request: NextRequest) {
       vehicleLicence: row.licenceNumber,
       startAt: row.startedAt || row.issuedAt,
       endAt: row.returnedAt || row.closedAt,
+      canDeclineAssignment:
+        row.status === 'pending' &&
+        !row.issuedAt &&
+        !row.driverAcknowledgedAt &&
+        row.requestStatus === 'driver_acknowledgement_pending',
     }));
 
     return NextResponse.json({
