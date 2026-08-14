@@ -30,6 +30,12 @@ async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Arra
   return result;
 }
 
+function optionalFiniteNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
 /** Render stored-snapshot document families with the permanent document verification identity. */
 export async function generateVerifiedSnapshotDocumentPdf(
   documentId: string,
@@ -66,12 +72,12 @@ export async function generateVerifiedSnapshotDocumentPdf(
     case 'fuel_summary': {
       const data: FuelSummaryData = {
         tripId: document.entityId || document.id,
-        totalLitres: Number(snapshot.totalLitres ?? 0),
-        totalCost: Number(snapshot.totalCost ?? 0),
-        transactionCount: Number(snapshot.transactionCount ?? 0),
-        pendingReimbursements: Number(snapshot.pendingReimbursements ?? 0),
-        actualKilometres: (snapshot.actualKilometres as number | null) ?? undefined,
-        kilometreVariance: (snapshot.kilometreVariance as number | null) ?? undefined,
+        totalLitres: optionalFiniteNumber(snapshot.totalLitres),
+        totalCost: optionalFiniteNumber(snapshot.totalCost),
+        transactionCount: optionalFiniteNumber(snapshot.transactionCount),
+        pendingReimbursements: optionalFiniteNumber(snapshot.pendingReimbursements),
+        actualKilometres: optionalFiniteNumber(snapshot.actualKilometres),
+        kilometreVariance: optionalFiniteNumber(snapshot.kilometreVariance),
         status: document.status,
         transactions: snapshot.transactions as FuelSummaryData['transactions'],
         vehicleLicence: snapshot.vehicleLicence as string | undefined,
