@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { generateDocumentPdf } from '@/lib/pdf/generate';
+import { generateVerifiedTripAuthorityPdf } from '@/lib/pdf/verified-trip-authority';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { and, eq } from 'drizzle-orm';
@@ -10,9 +11,9 @@ import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 /**
  * GET /api/documents/[id]/pdf
  *
- * Generate and download a PDF for a generated document. Tenant isolation is
- * necessary but not sufficient: Personal/Requester users must also be entitled
- * to the underlying request/trip/inspection record.
+ * Generate one canonical PDF for preview, print and download. Tenant isolation
+ * is necessary but not sufficient: Personal/Requester users must also be
+ * entitled to the underlying request/trip/inspection record.
  */
 export async function GET(
   request: NextRequest,
@@ -39,17 +40,15 @@ export async function GET(
 
     const canRead = await canSessionReadGeneratedDocument(session, doc);
     if (!canRead) {
-      // Hide document existence from users outside the underlying record scope.
       return NextResponse.json({ error: 'Document not found' }, { status: 404 });
     }
 
-    const result = await generateDocumentPdf(id);
+    const result = doc.documentType === 'trip_authority'
+      ? await generateVerifiedTripAuthorityPdf(id)
+      : await generateDocumentPdf(id);
     if (!result) {
       return NextResponse.json(
-        {
-          error:
-            'PDF generation not available for this document type. Only Trip Authority and Inspection Report documents support PDF export.',
-        },
+        { error: 'PDF generation is not available for this document.' },
         { status: 400 },
       );
     }
@@ -63,6 +62,7 @@ export async function GET(
         'Content-Type': 'application/pdf',
         'Content-Disposition': `${disposition}; filename="${result.filename}"`,
         'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch (error) {
