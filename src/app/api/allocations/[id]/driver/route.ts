@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicleAllocations } from '@/db/schema/trips';
+import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import {
   employees,
@@ -63,10 +63,14 @@ export async function PATCH(
         requestReference: transportRequests.reference,
         requiredLicenceClass: vehicles.requiredLicenceClass,
         professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
+        tripId: trips.id,
+        tripIssuedAt: trips.issuedAt,
+        tripDriverAcknowledgedAt: trips.driverAcknowledgedAt,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+      .leftJoin(trips, and(eq(trips.allocationId, vehicleAllocations.id), eq(trips.tenantId, session.tenantId)))
       .where(and(
         eq(vehicleAllocations.id, id),
         eq(vehicles.tenantId, session.tenantId),
@@ -77,6 +81,15 @@ export async function PATCH(
     if (!allocation) return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
     if (!LIVE_ALLOCATION_STATES.includes(allocation.state as typeof LIVE_ALLOCATION_STATES[number])) {
       return NextResponse.json({ error: 'Driver replacement is only allowed before physical issue/closure' }, { status: 409 });
+    }
+    if (allocation.tripIssuedAt || allocation.tripDriverAcknowledgedAt) {
+      return NextResponse.json(
+        {
+          error:
+            'The primary driver cannot be changed after driver acknowledgement or physical vehicle issue. Cancel the unissued trip and create a new authorised assignment, or use the formal in-trip handover process after departure.',
+        },
+        { status: 409 },
+      );
     }
     if (allocation.driverEmployeeId === driverEmployeeId) {
       return NextResponse.json({ error: 'Selected driver is already assigned to this allocation' }, { status: 409 });
@@ -328,10 +341,13 @@ export async function DELETE(
         requestId: vehicleAllocations.requestId,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         requestReference: transportRequests.reference,
+        tripIssuedAt: trips.issuedAt,
+        tripDriverAcknowledgedAt: trips.driverAcknowledgedAt,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
+      .leftJoin(trips, and(eq(trips.allocationId, vehicleAllocations.id), eq(trips.tenantId, session.tenantId)))
       .where(and(
         eq(vehicleAllocations.id, id),
         eq(vehicles.tenantId, session.tenantId),
@@ -342,6 +358,15 @@ export async function DELETE(
     if (!allocation) return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
     if (!LIVE_ALLOCATION_STATES.includes(allocation.state as typeof LIVE_ALLOCATION_STATES[number])) {
       return NextResponse.json({ error: 'Driver can only be unassigned before physical issue/closure' }, { status: 409 });
+    }
+    if (allocation.tripIssuedAt || allocation.tripDriverAcknowledgedAt) {
+      return NextResponse.json(
+        {
+          error:
+            'The primary driver cannot be removed after driver acknowledgement or physical vehicle issue. Cancel the unissued trip or use the formal in-trip handover process after departure.',
+        },
+        { status: 409 },
+      );
     }
     if (!allocation.driverEmployeeId) {
       return NextResponse.json({ error: 'This allocation has no assigned driver to remove' }, { status: 409 });
