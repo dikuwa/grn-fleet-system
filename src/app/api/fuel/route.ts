@@ -487,7 +487,7 @@ export async function POST(req: NextRequest) {
         ? db
             .select()
             .from(reimbursements)
-            .where(eq(reimbursements.transactionId, transactionId))
+            .where(eq(reimbursements.id, reimbursementId))
             .limit(1)
         : Promise.resolve([]),
     ]);
