@@ -181,7 +181,7 @@ export default function ExternalAssignmentDetailPage() {
               </div>
               <div className="border-border border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
                 <FieldWrapper label="Cancel / cannot perform reason" required><Textarea rows={3} value={cancellationReason} onChange={(event) => setCancellationReason(event.target.value)} placeholder="Why must this driver be reallocated?" /></FieldWrapper>
-                <Button variant="danger" loading={saving} className="mt-4" onClick={() => void decide('cancel')}>Cancel driver assignment</Button>
+                <Button variant="destructive" loading={saving} className="mt-4" onClick={() => void decide('cancel')}>Cancel driver assignment</Button>
               </div>
             </div>
           </CardContent>
