@@ -177,7 +177,8 @@ export async function buildIdentityAwareTransportRequestSnapshot(
       travellerType: passenger.employeeId ? 'Employee' : 'External traveller',
       reasonForTravel: passenger.reasonForTravel,
     })),
-    travellerCount: passengers.length,
+    travellerCount:
+      identity.requesterType === 'internal' ? passengers.length + 1 : passengers.length,
     drivers,
     routes: routes.map((route) => ({
       origin: route.originName,
