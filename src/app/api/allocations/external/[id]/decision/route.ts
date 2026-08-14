@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
-import { externalRequestDrivers, transportRequests } from '@/db/schema/requests';
-import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
+import { transportRequests } from '@/db/schema/requests';
+import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
-import { runAtomicMutations } from '@/lib/db-atomic';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
@@ -51,6 +50,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         partyFirstName: externalParties.firstName,
         partyLastName: externalParties.lastName,
         partyOrganisation: externalParties.organisationName,
+        partyStatus: externalParties.status,
         licenceStatus: externalDriverLicences.verificationStatus,
         licenceExpiry: externalDriverLicences.expiryDate,
       })
@@ -97,75 +97,89 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       if (reason.length < 3) {
         return NextResponse.json({ error: 'A cancellation reason is required' }, { status: 422 });
       }
-      await runAtomicMutations((tx) => [
-        tx
-          .update(externalDriverAssignments)
-          .set({
-            state: 'cancelled',
-            cancelledAt: now,
-            cancellationReason: reason,
-            cancelledByUserId: session.user.id,
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(externalDriverAssignments.id, id),
-              eq(externalDriverAssignments.tenantId, tenantId),
-              eq(externalDriverAssignments.state, 'pending_acceptance'),
-            ),
-          ),
-        tx
-          .update(vehicleAllocations)
-          .set({ state: 'cancelled', overrideReason: reason, updatedAt: now })
-          .where(
-            and(
-              eq(vehicleAllocations.id, record.assignment.allocationId),
-              eq(vehicleAllocations.state, record.allocationState),
-            ),
-          ),
-        tx
-          .update(externalRequestDrivers)
-          .set({ isConfirmed: false, driverType: 'nominated' })
-          .where(eq(externalRequestDrivers.requestId, record.assignment.requestId)),
-        tx
-          .update(transportRequests)
-          .set({
-            status: 'transport_review',
-            assignedDriverExternalPartyId: null,
-            assignedDriverEmployeeId: null,
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(transportRequests.id, record.assignment.requestId),
-              eq(transportRequests.tenantId, tenantId),
-            ),
-          ),
-        tx
-          .update(trips)
-          .set({ status: 'cancelled', updatedAt: now })
-          .where(
-            and(
-              eq(trips.id, record.assignment.tripId),
-              eq(trips.tenantId, tenantId),
-              eq(trips.status, 'pending'),
-            ),
-          ),
-        tx
-          .update(tripAuthorities)
-          .set({
-            status: 'cancelled',
-            cancelledAt: now,
-            cancellationReason: reason,
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(tripAuthorities.allocationId, record.assignment.allocationId),
-              eq(tripAuthorities.tenantId, tenantId),
-            ),
-          ),
-      ]);
+
+      await db.execute(sql`
+        WITH assignment_claim AS (
+          UPDATE external_driver_assignments
+          SET state = 'cancelled',
+              cancelled_at = ${now},
+              cancellation_reason = ${reason},
+              cancelled_by_user_id = ${session.user.id},
+              updated_at = ${now}
+          WHERE id = ${id}::uuid
+            AND tenant_id = ${tenantId}::uuid
+            AND state = 'pending_acceptance'
+            AND issue_id IS NULL
+            AND EXISTS (
+              SELECT 1 FROM trips t
+              WHERE t.id = external_driver_assignments.trip_id
+                AND t.tenant_id = ${tenantId}::uuid
+                AND t.status = 'pending'
+                AND t.issued_at IS NULL
+            )
+            AND EXISTS (
+              SELECT 1 FROM vehicle_allocations va
+              WHERE va.id = external_driver_assignments.allocation_id
+                AND va.state IN ('provisional', 'confirmed')
+            )
+          RETURNING request_id, allocation_id, trip_id
+        ),
+        allocation_cancel AS (
+          UPDATE vehicle_allocations
+          SET state = 'cancelled', override_reason = ${reason}, updated_at = ${now}
+          WHERE id = ${record.assignment.allocationId}::uuid
+            AND state IN ('provisional', 'confirmed')
+            AND EXISTS (SELECT 1 FROM assignment_claim)
+          RETURNING id
+        ),
+        request_driver_reset AS (
+          UPDATE external_request_drivers
+          SET is_confirmed = false, driver_type = 'nominated'
+          WHERE request_id = ${record.assignment.requestId}::uuid
+            AND EXISTS (SELECT 1 FROM allocation_cancel)
+          RETURNING id
+        ),
+        request_claim AS (
+          UPDATE transport_requests
+          SET status = 'transport_review',
+              assigned_driver_external_party_id = NULL,
+              assigned_driver_employee_id = NULL,
+              updated_at = ${now}
+          WHERE id = ${record.assignment.requestId}::uuid
+            AND tenant_id = ${tenantId}::uuid
+            AND EXISTS (SELECT 1 FROM allocation_cancel)
+          RETURNING id
+        ),
+        trip_cancel AS (
+          UPDATE trips
+          SET status = 'cancelled', updated_at = ${now}
+          WHERE id = ${record.assignment.tripId}::uuid
+            AND tenant_id = ${tenantId}::uuid
+            AND status = 'pending'
+            AND issued_at IS NULL
+            AND EXISTS (SELECT 1 FROM request_claim)
+          RETURNING id
+        ),
+        authority_cancel AS (
+          UPDATE trip_authorities
+          SET status = 'cancelled',
+              cancelled_at = ${now},
+              cancellation_reason = ${reason},
+              updated_at = ${now}
+          WHERE allocation_id = ${record.assignment.allocationId}::uuid
+            AND tenant_id = ${tenantId}::uuid
+            AND EXISTS (SELECT 1 FROM trip_cancel)
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM assignment_claim) = 1
+           AND (SELECT count(*) FROM allocation_cancel) = 1
+           AND (SELECT count(*) FROM request_claim) = 1
+           AND (SELECT count(*) FROM trip_cancel) = 1
+          THEN '1'
+          ELSE 'atomic_external_driver_cancel_failed_' || (SELECT count(*) FROM assignment_claim)::text
+        END AS integer) AS committed
+      `);
 
       await Promise.allSettled([
         recordAuditEvent({
@@ -212,9 +226,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         { status: 422 },
       );
     }
-    if (record.licenceStatus !== 'verified') {
+    if (record.partyStatus !== 'active' || record.licenceStatus !== 'verified') {
       return NextResponse.json(
-        { error: 'The external driver licence is no longer verified' },
+        { error: 'The external driver or licence is no longer eligible' },
         { status: 409 },
       );
     }
@@ -227,44 +241,74 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     const note = String(body.note || '').trim().slice(0, 1000) || null;
-    await runAtomicMutations((tx) => [
-      tx
-        .update(externalDriverAssignments)
-        .set({
-          state: 'accepted',
-          acceptanceMethod,
-          acceptanceNote: note,
-          acceptedAt: now,
-          acceptedRecordedByUserId: session.user.id,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(externalDriverAssignments.id, id),
-            eq(externalDriverAssignments.tenantId, tenantId),
-            eq(externalDriverAssignments.state, 'pending_acceptance'),
-          ),
-        ),
-      tx
-        .update(externalRequestDrivers)
-        .set({ isConfirmed: true, licenceValidated: true, driverType: 'assigned' })
-        .where(
-          and(
-            eq(externalRequestDrivers.requestId, record.assignment.requestId),
-            eq(externalRequestDrivers.externalPartyId, record.assignment.externalPartyId),
-          ),
-        ),
-      tx
-        .update(trips)
-        .set({ driverAcknowledgedAt: now, driverAcknowledgedByEmployeeId: null, updatedAt: now })
-        .where(
-          and(
-            eq(trips.id, record.assignment.tripId),
-            eq(trips.tenantId, tenantId),
-            eq(trips.status, 'pending'),
-          ),
-        ),
-    ]);
+    await db.execute(sql`
+      WITH assignment_claim AS (
+        UPDATE external_driver_assignments
+        SET state = 'accepted',
+            acceptance_method = ${acceptanceMethod},
+            acceptance_note = ${note},
+            accepted_at = ${now},
+            accepted_recorded_by_user_id = ${session.user.id},
+            updated_at = ${now}
+        WHERE id = ${id}::uuid
+          AND tenant_id = ${tenantId}::uuid
+          AND state = 'pending_acceptance'
+          AND issue_id IS NULL
+          AND EXISTS (
+            SELECT 1 FROM trips t
+            WHERE t.id = external_driver_assignments.trip_id
+              AND t.tenant_id = ${tenantId}::uuid
+              AND t.status = 'pending'
+              AND t.issued_at IS NULL
+          )
+          AND EXISTS (
+            SELECT 1 FROM vehicle_allocations va
+            WHERE va.id = external_driver_assignments.allocation_id
+              AND va.state IN ('provisional', 'confirmed')
+              AND va.end_at <= (${record.allocationEndAt})
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM external_parties ep
+            INNER JOIN external_driver_licences edl ON edl.external_party_id = ep.id
+            WHERE ep.id = external_driver_assignments.external_party_id
+              AND ep.tenant_id = ${tenantId}::uuid
+              AND ep.status = 'active'
+              AND edl.id = external_driver_assignments.licence_id
+              AND edl.tenant_id = ${tenantId}::uuid
+              AND edl.verification_status = 'verified'
+              AND edl.expiry_date >= ${record.allocationEndAt}::date
+          )
+        RETURNING request_id, trip_id, external_party_id
+      ),
+      request_driver_claim AS (
+        UPDATE external_request_drivers
+        SET is_confirmed = true, licence_validated = true, driver_type = 'assigned'
+        WHERE request_id = ${record.assignment.requestId}::uuid
+          AND external_party_id = ${record.assignment.externalPartyId}::uuid
+          AND EXISTS (SELECT 1 FROM assignment_claim)
+        RETURNING id
+      ),
+      trip_ack AS (
+        UPDATE trips
+        SET driver_acknowledged_at = ${now},
+            driver_acknowledged_by_employee_id = NULL,
+            updated_at = ${now}
+        WHERE id = ${record.assignment.tripId}::uuid
+          AND tenant_id = ${tenantId}::uuid
+          AND status = 'pending'
+          AND issued_at IS NULL
+          AND EXISTS (SELECT 1 FROM assignment_claim)
+        RETURNING id
+      )
+      SELECT CAST(CASE
+        WHEN (SELECT count(*) FROM assignment_claim) = 1
+         AND (SELECT count(*) FROM request_driver_claim) = 1
+         AND (SELECT count(*) FROM trip_ack) = 1
+        THEN '1'
+        ELSE 'atomic_external_driver_accept_failed_' || (SELECT count(*) FROM assignment_claim)::text
+      END AS integer) AS committed
+    `);
 
     await Promise.allSettled([
       recordAuditEvent({
@@ -301,6 +345,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     console.error('[allocations/external/decision] PATCH failed:', error);
-    return NextResponse.json({ error: 'External driver decision could not be recorded' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'External driver decision changed concurrently or could not be recorded. Refresh and try again.' },
+      { status: 409 },
+    );
   }
 }
