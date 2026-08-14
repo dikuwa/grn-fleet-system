@@ -64,6 +64,7 @@
     { "idx": 59, "version": "7", "when": 1786566000000, "tag": "0059_default_inspection_templates", "breakpoints": true },
     { "idx": 60, "version": "7", "when": 1786607700000, "tag": "0060_workflow_instance_assignment", "breakpoints": true },
     { "idx": 61, "version": "7", "when": 1786675500000, "tag": "0061_vehicle_operational_expenses", "breakpoints": true },
-    { "idx": 62, "version": "7", "when": 1786681800000, "tag": "0062_external_parties", "breakpoints": true }
+    { "idx": 62, "version": "7", "when": 1786681800000, "tag": "0062_external_parties", "breakpoints": true },
+    { "idx": 63, "version": "7", "when": 1786685400000, "tag": "0063_external_driver_assignments", "breakpoints": true }
   ]
 }
