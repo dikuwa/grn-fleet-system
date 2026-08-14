@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS "external_driver_assignments" (
   "trip_id" uuid NOT NULL REFERENCES "trips"("id") ON DELETE CASCADE,
   "external_party_id" uuid NOT NULL REFERENCES "external_parties"("id"),
   "licence_id" uuid NOT NULL REFERENCES "external_driver_licences"("id"),
+  "issue_id" uuid REFERENCES "trip_issues"("id"),
   "state" text DEFAULT 'pending_acceptance' NOT NULL,
   "driver_type" text DEFAULT 'assigned' NOT NULL,
   "licence_snapshot" jsonb NOT NULL,
@@ -32,6 +33,8 @@ CREATE INDEX IF NOT EXISTS "idx_external_driver_assignments_trip"
   ON "external_driver_assignments" ("trip_id");
 CREATE INDEX IF NOT EXISTS "idx_external_driver_assignments_party"
   ON "external_driver_assignments" ("external_party_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_external_driver_assignment_issue"
+  ON "external_driver_assignments" ("issue_id");
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_external_driver_assignment_live_allocation"
   ON "external_driver_assignments" ("allocation_id")
   WHERE "state" IN ('pending_acceptance', 'accepted');
