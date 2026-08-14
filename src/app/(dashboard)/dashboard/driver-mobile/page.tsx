@@ -50,18 +50,36 @@ interface AssignedTrip {
   routeSummary?: string;
   routeKm?: number;
   canDeclineAssignment?: boolean;
-  handoverRequired?: boolean;
+}
+
+interface PendingHandover {
+  tripId: string;
+  tripStatus: string;
+  requestReference: string;
+  purpose?: string | null;
+  vehicleLicence?: string | null;
+  vehicleMake?: string | null;
+  vehicleModel?: string | null;
+  takeoverOdometer?: number | null;
+  reason?: string | null;
+  authorisedAt?: string | null;
+  validUntil?: string | null;
+  origin?: string | null;
+  destination?: string | null;
+  approvedRoute?: string | null;
+  specialConditions?: string | null;
 }
 
 export default function DriverMobileDashboardPage() {
   const { toast } = useToast();
   const [trips, setTrips] = useState<AssignedTrip[]>([]);
+  const [pendingHandovers, setPendingHandovers] = useState<PendingHandover[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [declineTrip, setDeclineTrip] = useState<AssignedTrip | null>(null);
   const [declineReason, setDeclineReason] = useState('');
   const [declining, setDeclining] = useState(false);
-  const [handoverTrip, setHandoverTrip] = useState<AssignedTrip | null>(null);
+  const [handoverTrip, setHandoverTrip] = useState<PendingHandover | null>(null);
   const [handoverNote, setHandoverNote] = useState('');
   const [acknowledgingHandover, setAcknowledgingHandover] = useState(false);
   const [isOnline, setIsOnline] = useState(
@@ -84,11 +102,21 @@ export default function DriverMobileDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWithRetry('/api/trips?driver_assigned=true&limit=20');
+      const [res, handoverRes] = await Promise.all([
+        fetchWithRetry('/api/trips?driver_assigned=true&limit=20'),
+        fetch('/api/trips/driver-handovers', { cache: 'no-store' }),
+      ]);
       if (!res.ok) throw new Error('Failed to load trips');
       const json = await res.json();
       const tripsList = json.trips || json.data?.trips || json.rows || json.data || [];
       setTrips(Array.isArray(tripsList) ? tripsList : []);
+
+      if (handoverRes.ok) {
+        const handoverJson = await handoverRes.json().catch(() => ({}));
+        setPendingHandovers(Array.isArray(handoverJson.data) ? handoverJson.data : []);
+      } else {
+        setPendingHandovers([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trips');
     } finally {
@@ -150,7 +178,7 @@ export default function DriverMobileDashboardPage() {
     setAcknowledgingHandover(true);
     setError(null);
     try {
-      const response = await fetch(`/api/trips/${handoverTrip.id}/driver-handover`, {
+      const response = await fetch(`/api/trips/${handoverTrip.tripId}/driver-handover`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'acknowledge', note: handoverNote.trim() || undefined }),
@@ -159,7 +187,7 @@ export default function DriverMobileDashboardPage() {
       if (!response.ok) throw new Error(json.error || 'Handover acknowledgement could not be saved');
       toast({
         title: 'Handover accepted',
-        description: 'You are now the acknowledged driver for this active trip.',
+        description: 'The trip assignment has now transferred to you and the Transport Office was notified.',
         variant: 'success',
       });
       setHandoverTrip(null);
@@ -230,6 +258,54 @@ export default function DriverMobileDashboardPage() {
         </div>
       </section>
 
+      {pendingHandovers.length > 0 && (
+        <section aria-labelledby="pending-handovers-heading" className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <h2 id="pending-handovers-heading" className="text-ink-950 text-sm font-semibold">Driver Handover ({pendingHandovers.length})</h2>
+            <Badge variant="pending">Action required</Badge>
+          </div>
+          <div className="space-y-3">
+            {pendingHandovers.map((handover) => (
+              <article key={handover.tripId} className="rounded-[10px] border border-status-warning-text/25 bg-status-warning-bg/30 p-4 sm:p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-ink-950">{handover.requestReference}</p>
+                      <Badge variant="info" size="sm">{statusConfig(handover.tripStatus).label}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-ink-700">
+                      {[handover.vehicleLicence, handover.vehicleMake, handover.vehicleModel].filter(Boolean).join(' · ')}
+                    </p>
+                    {handover.purpose && <p className="mt-1 text-xs text-ink-600">{handover.purpose}</p>}
+                    <div className="mt-3 grid gap-2 text-xs text-ink-600 sm:grid-cols-2">
+                      <p><span className="font-medium text-ink-900">Route:</span> {handover.approvedRoute || [handover.origin, handover.destination].filter(Boolean).join(' → ') || 'Review with Transport Office'}</p>
+                      <p><span className="font-medium text-ink-900">Takeover odometer:</span> {handover.takeoverOdometer?.toLocaleString() ?? '—'} km</p>
+                      <p><span className="font-medium text-ink-900">Reason:</span> {handover.reason || 'Operational handover'}</p>
+                      <p><span className="font-medium text-ink-900">Authority valid until:</span> {handover.validUntil ? new Date(handover.validUntil).toLocaleString('en-NA') : '—'}</p>
+                    </div>
+                    {handover.specialConditions && (
+                      <p className="mt-3 rounded-[8px] border border-border bg-surface px-3 py-2 text-xs text-ink-700">
+                        <span className="font-medium text-ink-900">Special conditions:</span> {handover.specialConditions}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setError(null);
+                      setHandoverNote('');
+                      setHandoverTrip(handover);
+                    }}
+                  >
+                    <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Review & accept
+                  </Button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section aria-labelledby="active-trips-heading" className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h2 id="active-trips-heading" className="text-ink-950 text-sm font-semibold">Active Trips ({activeTrips.length})</h2>
@@ -253,7 +329,6 @@ export default function DriverMobileDashboardPage() {
                         {trip.reference || trip.id.slice(0, 8)}
                       </Link>
                       <Badge variant={variantFor(trip.status)} size="sm">{statusConfig(trip.status).label}</Badge>
-                      {trip.handoverRequired && <Badge variant="pending" size="sm">Handover acknowledgement required</Badge>}
                     </div>
                     <div className="text-ink-500 mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                       <span className="flex items-center gap-1"><Car className="h-3 w-3" aria-hidden="true" />{trip.vehicleLicence || 'Vehicle assigned'}</span>
@@ -261,29 +336,12 @@ export default function DriverMobileDashboardPage() {
                       {trip.routeKm != null && trip.routeKm > 0 && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" aria-hidden="true" />{Math.round(trip.routeKm).toLocaleString()} km</span>}
                     </div>
                     {trip.purpose && <p className="text-ink-400 mt-1 line-clamp-2 text-xs">{trip.purpose}</p>}
-                    {trip.handoverRequired && (
-                      <p className="text-status-warning-text mt-2 text-xs">
-                        Review the trip details and accept the handover before continuing normal journey records.
-                      </p>
-                    )}
                   </div>
 
                   <div className="flex flex-wrap gap-2 sm:justify-end">
                     <Button variant="secondary" size="sm" asChild>
                       <Link href={`/dashboard/trips/${trip.id}`}>Trip Details</Link>
                     </Button>
-                    {trip.handoverRequired && (
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setError(null);
-                          setHandoverNote('');
-                          setHandoverTrip(trip);
-                        }}
-                      >
-                        <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Accept handover
-                      </Button>
-                    )}
                     {trip.canDeclineAssignment && (
                       <Button
                         variant="secondary"
@@ -297,11 +355,9 @@ export default function DriverMobileDashboardPage() {
                         <XCircle className="h-4 w-4" aria-hidden="true" /> Cannot perform
                       </Button>
                     )}
-                    {!trip.handoverRequired && (
-                      <Button variant="secondary" size="sm" asChild>
-                        <Link href="/dashboard/fuel/new"><Fuel className="h-4 w-4" aria-hidden="true" />Fuel</Link>
-                      </Button>
-                    )}
+                    <Button variant="secondary" size="sm" asChild>
+                      <Link href="/dashboard/fuel/new"><Fuel className="h-4 w-4" aria-hidden="true" />Fuel</Link>
+                    </Button>
                   </div>
                 </div>
               </article>
@@ -353,9 +409,17 @@ export default function DriverMobileDashboardPage() {
           <DialogHeader>
             <DialogTitle>Accept driver handover?</DialogTitle>
             <DialogDescription>
-              Confirm only after reviewing the active trip, vehicle, route, passengers, current odometer handover and any special conditions. Your verified licence is checked again when you accept.
+              Accept only after reviewing the active trip, vehicle, route, takeover odometer and special conditions. The assignment transfers to you only after this acknowledgement succeeds.
             </DialogDescription>
           </DialogHeader>
+          {handoverTrip && (
+            <div className="rounded-[8px] border border-border bg-muted/40 p-3 text-xs text-ink-700">
+              <p className="font-medium text-ink-950">{handoverTrip.requestReference}</p>
+              <p className="mt-1">{[handoverTrip.vehicleLicence, handoverTrip.vehicleMake, handoverTrip.vehicleModel].filter(Boolean).join(' · ')}</p>
+              <p className="mt-1">Route: {handoverTrip.approvedRoute || [handoverTrip.origin, handoverTrip.destination].filter(Boolean).join(' → ') || 'Not recorded'}</p>
+              <p className="mt-1">Takeover odometer: {handoverTrip.takeoverOdometer?.toLocaleString() ?? '—'} km</p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="handover-note">Handover note (optional)</Label>
             <Textarea
@@ -366,7 +430,7 @@ export default function DriverMobileDashboardPage() {
               rows={3}
               maxLength={500}
             />
-            <p className="text-xs text-ink-500">The Transport Office is notified when the handover is accepted.</p>
+            <p className="text-xs text-ink-500">Your active verified licence is checked again before the assignment transfers.</p>
             {error && <p className="text-xs text-status-error-text" role="alert">{error}</p>}
           </div>
           <DialogFooter>
