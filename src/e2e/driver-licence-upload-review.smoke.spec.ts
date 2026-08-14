@@ -14,7 +14,7 @@ async function signIn(page: import('@playwright/test').Page, username: string) {
   await page.waitForURL(/\/dashboard/);
 }
 
-test('driver licence files upload to storage and Transport Admin can update/approve the submission', async ({ page, context }) => {
+test('driver licence upload stays provisional until Transport Admin review, then persists as verified', async ({ page, context }) => {
   test.setTimeout(120_000);
 
   await signIn(page, 'driver');
@@ -58,6 +58,16 @@ test('driver licence files upload to storage and Transport Admin can update/appr
   expect(backImageKey).toContain(`tenant/00000000-0000-0000-0000-000000000001/driver-licences/${employeeId}/`);
   expect(upload.data?.isActive).toBe(false);
   expect(upload.data?.isVerified).toBe(false);
+  expect(['awaiting_review', 'needs_correction']).toContain(upload.data?.verificationStatus);
+
+  // A new upload must remain provisional for the driver until an authorised reviewer acts.
+  const provisionalResponse = await page.request.get('/api/drivers/me');
+  expect(provisionalResponse.ok()).toBeTruthy();
+  const provisional = await provisionalResponse.json();
+  const provisionalLicence = provisional.driver?.licences?.find((licence: { id: string }) => licence.id === licenceId);
+  expect(provisionalLicence).toBeTruthy();
+  expect(provisionalLicence.isActive).toBe(false);
+  expect(provisionalLicence.verificationStatus).not.toBe('verified');
 
   const storage = new S3Client({
     region: 'auto',
@@ -77,6 +87,23 @@ test('driver licence files upload to storage and Transport Admin can update/appr
 
   await context.clearCookies();
   await signIn(page, 'transport-admin');
+
+  // The provisional submission must be visible in the tenant-scoped review queue.
+  const queueResponse = await page.request.get(`/api/drivers/licences/queue?status=all&q=${encodeURIComponent(uploadedNumber)}`);
+  expect(queueResponse.ok()).toBeTruthy();
+  const queue = await queueResponse.json();
+  const queued = queue.data?.find((row: { licenceId: string }) => row.licenceId === licenceId);
+  expect(queued).toBeTruthy();
+  expect(queued.isActive).toBe(false);
+  expect(['pending', 'changes_requested']).toContain(queued.reviewStatus);
+
+  const reviewResponse = await page.request.get(`/api/drivers/licences/${licenceId}/review`);
+  expect(reviewResponse.ok()).toBeTruthy();
+  const review = await reviewResponse.json();
+  expect(review.data?.canReview).toBe(true);
+  expect(review.data?.reviewable).toBe(true);
+  expect(review.data?.files?.frontUrl).toBeTruthy();
+  expect(review.data?.files?.backUrl).toBeTruthy();
 
   const approveResponse = await page.request.patch(`/api/drivers/${employeeId}/licences`, {
     data: {
@@ -105,4 +132,16 @@ test('driver licence files upload to storage and Transport Admin can update/appr
   expect(updated.issueDate).toBe('2026-02-01');
   expect(updated.expiryDate).toBe('2031-12-31');
   expect(updated.verificationStatus).toBe('verified');
+  expect(updated.isActive).toBe(true);
+  expect(refreshed.driver?.driverStatus).toBe('authorised');
+
+  // Persistence check after a second fresh session: verification must not be UI-only state.
+  await context.clearCookies();
+  await signIn(page, 'driver');
+  const persistedResponse = await page.request.get('/api/drivers/me');
+  expect(persistedResponse.ok()).toBeTruthy();
+  const persisted = await persistedResponse.json();
+  const persistedLicence = persisted.driver?.licences?.find((licence: { id: string }) => licence.id === licenceId);
+  expect(persistedLicence?.verificationStatus).toBe('verified');
+  expect(persistedLicence?.isActive).toBe(true);
 });
