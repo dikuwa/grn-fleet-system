@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, desc, eq, gt, inArray, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   tripAuthorities,
@@ -9,12 +9,12 @@ import {
 } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
-import { auditEvents } from '@/db/schema/audit';
 import {
   hasPermission,
   requireAnyPermission,
   requireDashboardAction,
   requireRequestAuth,
+  type AuthSession,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
@@ -92,19 +92,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const db = getDb();
     const [context] = await db
       .select({
-        tripId: trips.id,
         tripStatus: trips.status,
-        requestId: trips.requestId,
         allocationId: vehicleAllocations.id,
         allocationState: vehicleAllocations.state,
-        allocationVersion: vehicleAllocations.version,
         currentDriverEmployeeId: vehicleAllocations.driverEmployeeId,
         startAt: vehicleAllocations.startAt,
         endAt: vehicleAllocations.endAt,
         authorityId: tripAuthorities.id,
         authorityVersion: tripAuthorities.version,
         authorityValidUntil: tripAuthorities.validUntil,
-        authorityStatus: tripAuthorities.status,
         requestReference: transportRequests.reference,
       })
       .from(trips)
@@ -125,14 +121,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!ACTIVE_HANDOVER_STATUSES.includes(context.tripStatus as (typeof ACTIVE_HANDOVER_STATUSES)[number])) {
       return NextResponse.json({ error: 'Driver handover is only available while a trip is active' }, { status: 409 });
     }
-    if (context.allocationState !== 'confirmed') {
-      return NextResponse.json({ error: 'The trip allocation is not currently confirmed' }, { status: 409 });
-    }
-    if (!context.currentDriverEmployeeId) {
-      return NextResponse.json({ error: 'The active trip has no current driver to hand over from' }, { status: 409 });
+    if (context.allocationState !== 'confirmed' || !context.currentDriverEmployeeId) {
+      return NextResponse.json({ error: 'The active trip does not have a confirmed current driver' }, { status: 409 });
     }
     if (context.currentDriverEmployeeId === newDriverEmployeeId) {
       return NextResponse.json({ error: 'Select a different relief driver' }, { status: 422 });
+    }
+
+    const [pendingHandover] = await db
+      .select({ id: tripAuthorisedDrivers.id, employeeId: tripAuthorisedDrivers.employeeId })
+      .from(tripAuthorisedDrivers)
+      .where(
+        and(
+          eq(tripAuthorisedDrivers.authorityId, context.authorityId),
+          eq(tripAuthorisedDrivers.driverType, 'relief'),
+          isNull(tripAuthorisedDrivers.acknowledgedAt),
+        ),
+      )
+      .limit(1);
+    if (pendingHandover) {
+      return NextResponse.json(
+        { error: 'This trip already has a relief-driver handover awaiting acknowledgement' },
+        { status: 409 },
+      );
     }
 
     const [newDriver] = await db
@@ -142,9 +153,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         employeeNumber: employees.employeeNumber,
         firstName: employees.firstName,
         lastName: employees.lastName,
-        employmentStatus: employees.employmentStatus,
-        isDriver: employees.isDriver,
-        driverStatus: driverProfiles.driverStatus,
         licenceNumber: driverLicences.licenceNumber,
         licenceClass: driverLicences.licenceClass,
         licenceExpiry: driverLicences.expiryDate,
@@ -216,43 +224,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       newDriverEmployeeId,
       handoverOdometer,
       reason,
+      state: 'awaiting_relief_driver_acknowledgement',
     });
 
     await db.execute(sql`
-      WITH allocation_claim AS (
-        UPDATE vehicle_allocations
-        SET driver_employee_id = ${newDriverEmployeeId}::uuid,
-            version = version + 1,
+      WITH authority_claim AS (
+        UPDATE trip_authorities
+        SET version = version + 1,
+            document_version = document_version + 1,
             updated_at = ${now}
-        WHERE id = ${context.allocationId}::uuid
-          AND state = 'confirmed'
-          AND version = ${context.allocationVersion}
-          AND driver_employee_id = ${context.currentDriverEmployeeId}::uuid
-          AND NOT EXISTS (
-            SELECT 1
-            FROM vehicle_allocations other
-            INNER JOIN transport_requests req ON req.id = other.request_id
-            WHERE req.tenant_id = ${session.tenantId}::uuid
-              AND other.id <> ${context.allocationId}::uuid
-              AND other.driver_employee_id = ${newDriverEmployeeId}::uuid
-              AND other.state IN ('provisional', 'confirmed')
-              AND other.start_at < ${context.endAt}
-              AND other.end_at > ${context.startAt}
-          )
-        RETURNING id
-      ),
-      trip_claim AS (
-        UPDATE trips
-        SET driver_acknowledged_at = NULL,
-            driver_acknowledged_by_employee_id = NULL,
-            version = version + 1,
-            updated_at = ${now}
-        WHERE id = ${tripId}::uuid
+        WHERE id = ${context.authorityId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
-          AND status IN ('in_progress', 'return_due')
-          AND allocation_id = ${context.allocationId}::uuid
-          AND EXISTS (SELECT 1 FROM allocation_claim)
-        RETURNING id
+          AND version = ${context.authorityVersion}
+          AND NOT EXISTS (
+            SELECT 1 FROM trip_authorised_drivers pending
+            WHERE pending.authority_id = ${context.authorityId}::uuid
+              AND pending.driver_type = 'relief'
+              AND pending.acknowledged_at IS NULL
+          )
+        RETURNING *
       ),
       previous_driver AS (
         INSERT INTO trip_authorised_drivers (
@@ -260,7 +250,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           authorised_by_user_id, authorised_at, handover_odometer, acknowledged_at
         )
         SELECT
-          ${context.authorityId}::uuid,
+          id,
           ${context.currentDriverEmployeeId}::uuid,
           'primary',
           ${currentDriver?.employeeNumber ?? null},
@@ -269,7 +259,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           ${now},
           ${handoverOdometer},
           ${now}
-        FROM trip_claim
+        FROM authority_claim
         ON CONFLICT (authority_id, employee_id) DO UPDATE SET
           handover_odometer = EXCLUDED.handover_odometer,
           reason = EXCLUDED.reason
@@ -308,17 +298,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           acknowledged_at = NULL
         RETURNING id
       ),
-      authority_update AS (
-        UPDATE trip_authorities
-        SET version = version + 1,
-            document_version = document_version + 1,
-            updated_at = ${now}
-        WHERE id = ${context.authorityId}::uuid
-          AND tenant_id = ${session.tenantId}::uuid
-          AND version = ${context.authorityVersion}
-          AND EXISTS (SELECT 1 FROM next_driver)
-        RETURNING *
-      ),
       amendment_insert AS (
         INSERT INTO trip_amendments (
           authority_id, amendment_type, original_value, new_value, reason,
@@ -335,15 +314,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           ${session.user.id},
           ${now},
           version
-        FROM authority_update
+        FROM authority_claim
+        WHERE EXISTS (SELECT 1 FROM next_driver)
         RETURNING id
       ),
       version_insert AS (
         INSERT INTO trip_authority_versions (
           authority_id, version, status, snapshot, reason, created_by_user_id
         )
-        SELECT id, version, status, to_jsonb(authority_update), ${reason}, ${session.user.id}
-        FROM authority_update
+        SELECT id, version, status, to_jsonb(authority_claim), ${reason}, ${session.user.id}
+        FROM authority_claim
+        WHERE EXISTS (SELECT 1 FROM amendment_insert)
         RETURNING id
       ),
       audit_insert AS (
@@ -359,7 +340,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           'handover_driver',
           'trip',
           ${tripId}::uuid,
-          ${`Driver handover initiated: ${previousDriverName} → ${nextDriverName}`},
+          ${`Driver handover prepared: ${previousDriverName} → ${nextDriverName}`},
           jsonb_build_object('driverEmployeeId', ${context.currentDriverEmployeeId}::text),
           ${amendmentPayload}::jsonb,
           ${reason},
@@ -370,14 +351,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       SELECT (SELECT count(*) FROM audit_insert) AS committed
     `);
 
-    const [updatedAllocation] = await db
-      .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
-      .from(vehicleAllocations)
-      .where(eq(vehicleAllocations.id, context.allocationId))
+    const [pending] = await db
+      .select({ id: tripAuthorisedDrivers.id })
+      .from(tripAuthorisedDrivers)
+      .where(
+        and(
+          eq(tripAuthorisedDrivers.authorityId, context.authorityId),
+          eq(tripAuthorisedDrivers.employeeId, newDriverEmployeeId),
+          eq(tripAuthorisedDrivers.driverType, 'relief'),
+          isNull(tripAuthorisedDrivers.acknowledgedAt),
+        ),
+      )
       .limit(1);
-    if (updatedAllocation?.driverEmployeeId !== newDriverEmployeeId) {
+    if (!pending) {
       return NextResponse.json(
-        { error: 'The trip assignment changed while the handover was being saved. Refresh and try again.' },
+        { error: 'The trip changed while the handover was being prepared. Refresh and try again.' },
         { status: 409 },
       );
     }
@@ -389,10 +377,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         category: 'action_required',
         eventType: 'driver_handover_assigned',
         title: 'Driver handover requires acknowledgement',
-        body: `${context.requestReference}: take over at odometer ${handoverOdometer.toLocaleString()} km. Review the trip and acknowledge before continuing journey records.`,
+        body: `${context.requestReference}: proposed takeover at odometer ${handoverOdometer.toLocaleString()} km. Review and acknowledge before the assignment transfers to you.`,
         entityType: 'trip',
         entityId: tripId,
-        actionUrl: `/dashboard/trips/${tripId}`,
+        actionUrl: '/dashboard/driver-mobile',
         workspace: WorkspaceIds.DRIVER,
         priority: 'high',
       }).catch(() => {});
@@ -414,66 +402,121 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 }
 
-async function acknowledgeHandover(
-  session: Awaited<ReturnType<typeof requireRequestAuth>> extends { session: infer T } ? T : never,
-  tripId: string,
-  note?: string,
-) {
+async function acknowledgeHandover(session: AuthSession, tripId: string, note?: string) {
   const routeCheck = await requireDashboardAction(session, '/dashboard/driver-mobile', 'update');
   if (routeCheck instanceof NextResponse) return routeCheck;
   const canDrive = await hasPermission(session, Permissions.DRIVER_LOG_CREATE);
   if (!canDrive) return NextResponse.json({ error: 'Driver permission is required' }, { status: 403 });
 
   const db = getDb();
-  const [[employee], [context]] = await Promise.all([
-    db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(and(eq(employees.userId, session.user.id), eq(employees.tenantId, session.tenantId), eq(employees.employmentStatus, 'active')))
-      .limit(1),
-    db
-      .select({
-        status: trips.status,
-        requestReference: transportRequests.reference,
-        authorityId: tripAuthorities.id,
-        validUntil: tripAuthorities.validUntil,
-        driverEmployeeId: vehicleAllocations.driverEmployeeId,
-        driverAcknowledgedAt: trips.driverAcknowledgedAt,
-        driverAcknowledgedByEmployeeId: trips.driverAcknowledgedByEmployeeId,
-      })
-      .from(trips)
-      .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
-      .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
-      .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
-      .where(and(eq(trips.id, tripId), eq(trips.tenantId, session.tenantId), eq(transportRequests.tenantId, session.tenantId), eq(tripAuthorities.tenantId, session.tenantId), eq(vehicleAllocations.state, 'confirmed')))
-      .limit(1),
-  ]);
+  const [employee] = await db
+    .select({ id: employees.id })
+    .from(employees)
+    .where(
+      and(
+        eq(employees.userId, session.user.id),
+        eq(employees.tenantId, session.tenantId),
+        eq(employees.employmentStatus, 'active'),
+      ),
+    )
+    .limit(1);
+  if (!employee) return NextResponse.json({ error: 'Active driver record not found' }, { status: 404 });
 
-  if (!employee || !context) return NextResponse.json({ error: 'Active handover assignment not found' }, { status: 404 });
-  if (employee.id !== context.driverEmployeeId) {
-    return NextResponse.json({ error: 'Only the current assigned relief driver may acknowledge this handover' }, { status: 403 });
-  }
+  const [context] = await db
+    .select({
+      status: trips.status,
+      requestReference: transportRequests.reference,
+      allocationId: vehicleAllocations.id,
+      allocationVersion: vehicleAllocations.version,
+      currentDriverEmployeeId: vehicleAllocations.driverEmployeeId,
+      authorityId: tripAuthorities.id,
+      validUntil: tripAuthorities.validUntil,
+      takeoverOdometer: tripAuthorisedDrivers.takeoverOdometer,
+      reliefDriverId: tripAuthorisedDrivers.id,
+    })
+    .from(tripAuthorisedDrivers)
+    .innerJoin(tripAuthorities, eq(tripAuthorities.id, tripAuthorisedDrivers.authorityId))
+    .innerJoin(trips, eq(trips.id, tripAuthorities.tripId))
+    .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
+    .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
+    .where(
+      and(
+        eq(trips.id, tripId),
+        eq(trips.tenantId, session.tenantId),
+        eq(transportRequests.tenantId, session.tenantId),
+        eq(tripAuthorities.tenantId, session.tenantId),
+        eq(tripAuthorisedDrivers.employeeId, employee.id),
+        eq(tripAuthorisedDrivers.driverType, 'relief'),
+        isNull(tripAuthorisedDrivers.acknowledgedAt),
+        eq(vehicleAllocations.state, 'confirmed'),
+      ),
+    )
+    .limit(1);
+
+  if (!context) return NextResponse.json({ error: 'Pending handover assignment not found' }, { status: 404 });
   if (!ACTIVE_HANDOVER_STATUSES.includes(context.status as (typeof ACTIVE_HANDOVER_STATUSES)[number])) {
     return NextResponse.json({ error: 'This trip is no longer active for a driver handover' }, { status: 409 });
   }
-  if (context.driverAcknowledgedAt && context.driverAcknowledgedByEmployeeId === employee.id) {
-    return NextResponse.json({ success: true, alreadyAcknowledged: true });
+  if (!context.currentDriverEmployeeId || context.currentDriverEmployeeId === employee.id) {
+    return NextResponse.json({ error: 'This handover is no longer awaiting transfer' }, { status: 409 });
   }
 
   const [licence] = await db
     .select({ expiryDate: driverLicences.expiryDate, driverStatus: driverProfiles.driverStatus })
     .from(driverProfiles)
     .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
-    .where(and(eq(driverProfiles.employeeId, employee.id), eq(driverProfiles.driverStatus, 'authorised'), eq(driverLicences.verificationStatus, 'verified'), eq(driverLicences.isActive, true)))
+    .where(
+      and(
+        eq(driverProfiles.employeeId, employee.id),
+        eq(driverProfiles.driverStatus, 'authorised'),
+        eq(driverLicences.verificationStatus, 'verified'),
+        eq(driverLicences.isActive, true),
+      ),
+    )
     .orderBy(desc(driverLicences.expiryDate))
     .limit(1);
   if (!licence || new Date(`${licence.expiryDate}T23:59:59Z`) < (context.validUntil ?? new Date())) {
     return NextResponse.json({ error: 'A verified licence valid through the authorised trip period is required' }, { status: 409 });
   }
 
+  const [driverConflict] = await db
+    .select({ id: vehicleAllocations.id })
+    .from(vehicleAllocations)
+    .innerJoin(transportRequests, eq(transportRequests.id, vehicleAllocations.requestId))
+    .where(
+      and(
+        eq(transportRequests.tenantId, session.tenantId),
+        eq(vehicleAllocations.driverEmployeeId, employee.id),
+        ne(vehicleAllocations.id, context.allocationId),
+        inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
+      ),
+    )
+    .limit(1);
+  if (driverConflict) {
+    return NextResponse.json({ error: 'You now have another live allocation. Transport Administration must review the handover.' }, { status: 409 });
+  }
+
   const now = new Date();
   await db.execute(sql`
-    WITH acknowledgement_claim AS (
+    WITH allocation_claim AS (
+      UPDATE vehicle_allocations
+      SET driver_employee_id = ${employee.id}::uuid,
+          version = version + 1,
+          updated_at = ${now}
+      WHERE id = ${context.allocationId}::uuid
+        AND state = 'confirmed'
+        AND version = ${context.allocationVersion}
+        AND driver_employee_id = ${context.currentDriverEmployeeId}::uuid
+        AND EXISTS (
+          SELECT 1 FROM trip_authorised_drivers pending
+          WHERE pending.id = ${context.reliefDriverId}::uuid
+            AND pending.employee_id = ${employee.id}::uuid
+            AND pending.driver_type = 'relief'
+            AND pending.acknowledged_at IS NULL
+        )
+      RETURNING id
+    ),
+    trip_claim AS (
       UPDATE trips
       SET driver_acknowledged_at = ${now},
           driver_acknowledged_by_employee_id = ${employee.id}::uuid,
@@ -482,28 +525,24 @@ async function acknowledgeHandover(
       WHERE id = ${tripId}::uuid
         AND tenant_id = ${session.tenantId}::uuid
         AND status IN ('in_progress', 'return_due')
-        AND driver_acknowledged_at IS NULL
-        AND EXISTS (
-          SELECT 1 FROM vehicle_allocations a
-          WHERE a.id = trips.allocation_id
-            AND a.state = 'confirmed'
-            AND a.driver_employee_id = ${employee.id}::uuid
-        )
+        AND allocation_id = ${context.allocationId}::uuid
+        AND EXISTS (SELECT 1 FROM allocation_claim)
       RETURNING id
     ),
-    authorised_driver_update AS (
+    relief_ack AS (
       UPDATE trip_authorised_drivers
       SET acknowledged_at = ${now}
-      WHERE authority_id = ${context.authorityId}::uuid
+      WHERE id = ${context.reliefDriverId}::uuid
+        AND authority_id = ${context.authorityId}::uuid
         AND employee_id = ${employee.id}::uuid
         AND acknowledged_at IS NULL
-        AND EXISTS (SELECT 1 FROM acknowledgement_claim)
+        AND EXISTS (SELECT 1 FROM trip_claim)
       RETURNING id
     ),
     audit_insert AS (
       INSERT INTO audit_events (
         tenant_id, tenant_sequence, event_type, actor_user_id, actor_employee_id,
-        action, entity_type, entity_id, summary, reason, source_channel
+        action, entity_type, entity_id, summary, reason, after, source_channel
       )
       SELECT
         ${session.tenantId}::uuid,
@@ -516,28 +555,42 @@ async function acknowledgeHandover(
         ${tripId}::uuid,
         ${`Driver handover acknowledged for ${context.requestReference}`},
         ${note?.trim() || null},
+        jsonb_build_object(
+          'previousDriverEmployeeId', ${context.currentDriverEmployeeId}::text,
+          'newDriverEmployeeId', ${employee.id}::text,
+          'takeoverOdometer', ${context.takeoverOdometer}
+        ),
         'web'
-      FROM authorised_driver_update
+      FROM relief_ack
       RETURNING id
     )
     SELECT (SELECT count(*) FROM audit_insert) AS committed
   `);
 
   const [updated] = await db
-    .select({ acknowledgedAt: trips.driverAcknowledgedAt, acknowledgedBy: trips.driverAcknowledgedByEmployeeId })
+    .select({
+      driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      acknowledgedAt: trips.driverAcknowledgedAt,
+      acknowledgedBy: trips.driverAcknowledgedByEmployeeId,
+    })
     .from(trips)
+    .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
     .where(and(eq(trips.id, tripId), eq(trips.tenantId, session.tenantId)))
     .limit(1);
-  if (!updated?.acknowledgedAt || updated.acknowledgedBy !== employee.id) {
-    return NextResponse.json({ error: 'The handover assignment changed before acknowledgement. Refresh the trip.' }, { status: 409 });
+  if (
+    updated?.driverEmployeeId !== employee.id ||
+    !updated.acknowledgedAt ||
+    updated.acknowledgedBy !== employee.id
+  ) {
+    return NextResponse.json({ error: 'The handover changed before acknowledgement. Refresh the trip.' }, { status: 409 });
   }
 
   await notifyTransport(
     session.tenantId,
     tripId,
     'Relief driver acknowledged handover',
-    `${context.requestReference}: the current driver has acknowledged the mid-trip handover and may continue the journey.`,
+    `${context.requestReference}: the relief driver accepted the handover at ${context.takeoverOdometer?.toLocaleString() ?? 'the recorded'} km and is now the active assigned driver.`,
   ).catch(() => {});
 
-  return NextResponse.json({ success: true, alreadyAcknowledged: false, acknowledgedAt: updated.acknowledgedAt });
+  return NextResponse.json({ success: true, acknowledgedAt: updated.acknowledgedAt });
 }
