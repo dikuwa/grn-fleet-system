@@ -46,6 +46,10 @@ const CORRECTABLE_FIELDS = new Set<keyof ReceiptFields>([
   'vehicleColour',
 ]);
 
+const TERMINAL_RECEIPT_REVIEW_STATUSES = new Set(['verified', 'rejected']);
+
+type ReceiptCorrectionValue = string | number | null;
+
 async function fuelAccess(session: Parameters<typeof requirePermission>[0]) {
   const [driverResult, managerResult] = await Promise.all([
     requirePermission(session, Permissions.DRIVER_FUEL_CREATE),
@@ -128,7 +132,9 @@ export async function POST(request: NextRequest) {
       tenantPrefix: `tenant/${session.tenantId}`,
     });
 
-    let ocrStatus = 'ocr_confirmed';
+    // OCR extraction is evidence, not user confirmation. A receipt remains in
+    // verification until the user explicitly confirms the extracted/manual values.
+    let ocrStatus = 'awaiting_verification';
     let rawOcrResponse: Record<string, unknown> = {};
     let extractionData: Record<string, unknown> = {};
     let fieldConfidence: Record<string, number> = {};
@@ -163,13 +169,6 @@ export async function POST(request: NextRequest) {
         tripStart: context.tripStart,
         tripEnd: context.tripEnd,
       });
-      if (
-        extractionConfidence < 0.65 ||
-        flags.length > 0 ||
-        (aiFields.amount === undefined && aiFields.litres === undefined)
-      ) {
-        ocrStatus = 'awaiting_verification';
-      }
     } else {
       try {
         const processed = await sharp(original)
@@ -201,13 +200,6 @@ export async function POST(request: NextRequest) {
             tripStart: context.tripStart,
             tripEnd: context.tripEnd,
           });
-          if (
-            extractionConfidence < 0.65 ||
-            Object.values(parsed.confidence).some((confidence) => confidence < 0.6) ||
-            flags.length > 0
-          ) {
-            ocrStatus = 'awaiting_verification';
-          }
         } finally {
           await worker.terminate();
         }
@@ -301,7 +293,7 @@ export async function PATCH(request: NextRequest) {
     const body = (await request.json()) as {
       receiptId?: string;
       action?: 'correct' | 'confirm' | 'verify' | 'reject';
-      corrections?: Record<string, string | number>;
+      corrections?: Record<string, ReceiptCorrectionValue>;
       reason?: string;
     };
     if (!body.receiptId || !body.action) {
@@ -347,25 +339,44 @@ export async function PATCH(request: NextRequest) {
       .limit(1);
     if (!record) return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
 
+    if (TERMINAL_RECEIPT_REVIEW_STATUSES.has(record.receipt.ocrStatus)) {
+      return NextResponse.json(
+        { error: `This receipt has already been ${record.receipt.ocrStatus} and cannot be changed without a formal review workflow` },
+        { status: 409 },
+      );
+    }
+
     const extraction = (record.receipt.extractionData ?? {}) as Record<string, unknown>;
     if (action === 'correct') {
       if (!body.corrections || Object.keys(body.corrections).length === 0) {
         return NextResponse.json({ error: 'At least one correction is required' }, { status: 422 });
       }
-      const entries = Object.entries(body.corrections).filter(([field]) =>
-        CORRECTABLE_FIELDS.has(field as keyof ReceiptFields),
+      const rawEntries = Object.entries(body.corrections);
+      const entries = rawEntries.filter(([field, value]) =>
+        CORRECTABLE_FIELDS.has(field as keyof ReceiptFields) &&
+        (value === null || typeof value === 'string' || typeof value === 'number'),
       );
-      if (entries.length !== Object.keys(body.corrections).length) {
+      if (entries.length !== rawEntries.length) {
         return NextResponse.json({ error: 'One or more receipt fields cannot be corrected' }, { status: 422 });
       }
-      const nextExtraction = { ...extraction, ...Object.fromEntries(entries) };
+
+      // Blank strings and explicit null both mean the reviewer intentionally
+      // cleared a bad OCR value. Preserve that decision instead of silently
+      // leaving the old extracted text in the official receipt record.
+      const normalisedEntries = entries.map(([fieldName, value]) => [
+        fieldName,
+        typeof value === 'string' && value.trim() === '' ? null : value,
+      ] as const);
+      const corrections = Object.fromEntries(normalisedEntries);
+      const nextExtraction = { ...extraction, ...corrections };
+
       await runAtomicMutations((executor) => [
         executor.insert(receiptFieldCorrections).values(
-          entries.map(([fieldName, correctedValue]) => ({
+          normalisedEntries.map(([fieldName, correctedValue]) => ({
             receiptId,
             fieldName,
             extractedValue: extraction[fieldName] === undefined ? null : String(extraction[fieldName]),
-            correctedValue: String(correctedValue),
+            correctedValue: correctedValue === null ? '' : String(correctedValue),
             correctedByUserId: session.user.id,
           })),
         ),
@@ -382,11 +393,14 @@ export async function PATCH(request: NextRequest) {
           entityType: 'fuel_receipt',
           entityId: receiptId,
           before: extraction,
-          after: Object.fromEntries(entries),
+          after: corrections,
           sourceChannel: 'web',
         }),
       ]);
     } else if (action === 'confirm') {
+      if (record.receipt.ocrStatus === 'ocr_confirmed') {
+        return NextResponse.json({ success: true, idempotent: true });
+      }
       await runAtomicMutations((executor) => [
         executor
           .update(fuelReceipts)
