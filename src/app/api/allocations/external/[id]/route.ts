@@ -5,7 +5,7 @@ import { externalDriverAssignments } from '@/db/schema/external-driver-assignmen
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
-import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { tripAuthorities, tripIssues, trips, vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
@@ -34,10 +34,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
         vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
         vehicleMake: vehicles.make,
         vehicleModel: vehicles.model,
+        vehicleCurrentOdometer: vehicles.currentOdometer,
         allocationStartAt: vehicleAllocations.startAt,
         allocationEndAt: vehicleAllocations.endAt,
         allocationState: vehicleAllocations.state,
         tripStatus: trips.status,
+        tripIssuedAt: trips.issuedAt,
+        authorityStatus: tripAuthorities.status,
+        issueOdometer: tripIssues.issueOdometer,
         driverFirstName: externalParties.firstName,
         driverLastName: externalParties.lastName,
         driverOrganisation: externalParties.organisationName,
@@ -53,6 +57,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
       .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, externalDriverAssignments.allocationId))
       .innerJoin(trips, eq(trips.id, externalDriverAssignments.tripId))
       .innerJoin(vehicles, eq(vehicles.id, vehicleAllocations.vehicleId))
+      .leftJoin(
+        tripAuthorities,
+        and(eq(tripAuthorities.tripId, trips.id), eq(tripAuthorities.tenantId, tenantId)),
+      )
+      .leftJoin(tripIssues, eq(tripIssues.id, externalDriverAssignments.issueId))
       .innerJoin(externalParties, eq(externalParties.id, externalDriverAssignments.externalPartyId))
       .innerJoin(externalDriverLicences, eq(externalDriverLicences.id, externalDriverAssignments.licenceId))
       .where(
@@ -83,6 +92,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
         cancellationReason: record.assignment.cancellationReason,
         allocationId: record.assignment.allocationId,
         tripId: record.assignment.tripId,
+        issueId: record.assignment.issueId,
+        issueOdometer: record.issueOdometer,
+        tripIssuedAt: record.tripIssuedAt,
+        authorityStatus: record.authorityStatus,
         request: {
           id: record.assignment.requestId,
           reference: record.requestReference,
@@ -94,6 +107,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
           registerNumber: record.vehicleRegisterNumber,
           make: record.vehicleMake,
           model: record.vehicleModel,
+          currentOdometer: record.vehicleCurrentOdometer,
         },
         period: { startAt: record.allocationStartAt, endAt: record.allocationEndAt },
         allocationState: record.allocationState,
