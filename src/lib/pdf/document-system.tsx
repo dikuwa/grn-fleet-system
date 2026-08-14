@@ -119,6 +119,30 @@ export function safePdfValue(value: unknown, fallback = EMPTY_VALUE): string {
   return text;
 }
 
+function formatGeneratedTimestamp(
+  value: unknown,
+  locale = 'en-NA',
+  timezone = 'Africa/Windhoek',
+): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return safePdfValue(value, '') || null;
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: timezone,
+      timeZoneName: 'short',
+    }).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
 export function SafePdfText({
   value,
   fallback,
@@ -596,14 +620,21 @@ export function DocumentVerificationFooter({
   verificationCode,
   verificationUrl,
   documentHash,
+  generatedAt,
   theme = tenantPdfTheme(branding),
 }: {
   branding?: ResolvedTenantBranding | null;
   verificationCode?: unknown;
   verificationUrl?: unknown;
   documentHash?: unknown;
+  generatedAt?: unknown;
   theme?: PdfTheme;
 }) {
+  const generatedTimestamp = formatGeneratedTimestamp(
+    generatedAt,
+    branding?.locale || 'en-NA',
+    branding?.timezone || 'Africa/Windhoek',
+  );
   const verificationParts = verificationCode
     ? [
         `Verify: ${safePdfValue(verificationCode)}`,
@@ -611,13 +642,14 @@ export function DocumentVerificationFooter({
         documentHash ? `FP: ${safePdfValue(documentHash)}` : null,
       ].filter(Boolean)
     : ['Internal record'];
+  const footerParts = [
+    branding?.documentFooter || `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`,
+    generatedTimestamp ? `Generated ${generatedTimestamp}` : null,
+  ].filter(Boolean);
 
   return (
     <View style={[documentStyles.footer, { borderTopColor: theme.primary }]} fixed>
-      <SafePdfText
-        value={branding?.documentFooter || `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`}
-        style={documentStyles.footerLeft}
-      />
+      <SafePdfText value={footerParts.join(' · ')} style={documentStyles.footerLeft} />
       <SafePdfText value={verificationParts.join(' · ')} style={documentStyles.footerCentre} />
       <Text style={documentStyles.footerRight} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
     </View>
