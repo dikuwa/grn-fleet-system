@@ -232,11 +232,7 @@ export async function generateVerifiedSnapshotDocumentPdf(
     default: {
       const data: SnapshotDocumentData = {
         documentType: document.documentType,
-        documentVersion: document.documentVersion,
-        tenantName: tenant?.name,
-        branding,
         snapshotData: snapshot,
-        generatedAt,
         status: document.status,
         ...common,
       };
