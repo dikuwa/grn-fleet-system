@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { tripAuthorities, tripAuthorisedDrivers, trips } from '@/db/schema/trips';
+import {
+  tripAuthorities,
+  tripAuthorisedDrivers,
+  trips,
+  vehicleAllocations,
+} from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import {
@@ -39,6 +44,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         handoverId: tripAuthorisedDrivers.id,
         authorityId: tripAuthorities.id,
         authorityVersion: tripAuthorities.version,
+        currentDriverEmployeeId: vehicleAllocations.driverEmployeeId,
         reliefEmployeeId: employees.id,
         reliefUserId: employees.userId,
         reliefFirstName: employees.firstName,
@@ -48,6 +54,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       .from(tripAuthorisedDrivers)
       .innerJoin(tripAuthorities, eq(tripAuthorities.id, tripAuthorisedDrivers.authorityId))
       .innerJoin(trips, eq(trips.id, tripAuthorities.tripId))
+      .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
       .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
       .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
       .where(
@@ -57,13 +64,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           eq(transportRequests.tenantId, session.tenantId),
           eq(tripAuthorities.tenantId, session.tenantId),
           eq(employees.tenantId, session.tenantId),
+          eq(vehicleAllocations.state, 'confirmed'),
           eq(tripAuthorisedDrivers.driverType, 'relief'),
           isNull(tripAuthorisedDrivers.acknowledgedAt),
         ),
       )
       .limit(1);
 
-    if (!pending) {
+    if (!pending || !pending.currentDriverEmployeeId) {
       return NextResponse.json({ error: 'There is no pending relief-driver handover to cancel' }, { status: 404 });
     }
 
@@ -76,6 +84,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           AND authority_id = ${pending.authorityId}::uuid
           AND driver_type = 'relief'
           AND acknowledged_at IS NULL
+        RETURNING id
+      ),
+      outgoing_segment_reset AS (
+        UPDATE trip_authorised_drivers
+        SET handover_odometer = NULL
+        WHERE authority_id = ${pending.authorityId}::uuid
+          AND employee_id = ${pending.currentDriverEmployeeId}::uuid
+          AND EXISTS (SELECT 1 FROM handover_claim)
         RETURNING id
       ),
       authority_update AS (
