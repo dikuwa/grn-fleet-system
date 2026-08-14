@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Car,
+  CheckCircle2,
   Clock,
   Fuel,
   Gauge,
@@ -49,6 +50,7 @@ interface AssignedTrip {
   routeSummary?: string;
   routeKm?: number;
   canDeclineAssignment?: boolean;
+  handoverRequired?: boolean;
 }
 
 export default function DriverMobileDashboardPage() {
@@ -59,6 +61,9 @@ export default function DriverMobileDashboardPage() {
   const [declineTrip, setDeclineTrip] = useState<AssignedTrip | null>(null);
   const [declineReason, setDeclineReason] = useState('');
   const [declining, setDeclining] = useState(false);
+  const [handoverTrip, setHandoverTrip] = useState<AssignedTrip | null>(null);
+  const [handoverNote, setHandoverNote] = useState('');
+  const [acknowledgingHandover, setAcknowledgingHandover] = useState(false);
   const [isOnline, setIsOnline] = useState(
     () => typeof navigator === 'undefined' || navigator.onLine,
   );
@@ -136,7 +141,40 @@ export default function DriverMobileDashboardPage() {
     }
   }, [declineReason, declineTrip, fetchTrips, isOnline, toast]);
 
-  const activeTrips = trips.filter((trip) => ['pending', 'in_progress', 'issued'].includes(trip.status));
+  const acknowledgeHandover = useCallback(async () => {
+    if (!handoverTrip) return;
+    if (!isOnline) {
+      setError('Driver handover acknowledgement requires an online connection.');
+      return;
+    }
+    setAcknowledgingHandover(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/trips/${handoverTrip.id}/driver-handover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'acknowledge', note: handoverNote.trim() || undefined }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(json.error || 'Handover acknowledgement could not be saved');
+      toast({
+        title: 'Handover accepted',
+        description: 'You are now the acknowledged driver for this active trip.',
+        variant: 'success',
+      });
+      setHandoverTrip(null);
+      setHandoverNote('');
+      await fetchTrips();
+    } catch (handoverError) {
+      const message = handoverError instanceof Error ? handoverError.message : 'Handover acknowledgement could not be saved';
+      setError(message);
+      toast({ title: 'Handover failed', description: message, variant: 'error' });
+    } finally {
+      setAcknowledgingHandover(false);
+    }
+  }, [fetchTrips, handoverNote, handoverTrip, isOnline, toast]);
+
+  const activeTrips = trips.filter((trip) => ['pending', 'in_progress', 'issued', 'return_due'].includes(trip.status));
   const completedTrips = trips.filter((trip) => ['closed', 'completed', 'returned'].includes(trip.status));
   const variantFor = (status: string) => statusConfig(status).variant as 'success' | 'pending' | 'info' | 'error' | 'cancelled' | 'emergency';
 
@@ -215,6 +253,7 @@ export default function DriverMobileDashboardPage() {
                         {trip.reference || trip.id.slice(0, 8)}
                       </Link>
                       <Badge variant={variantFor(trip.status)} size="sm">{statusConfig(trip.status).label}</Badge>
+                      {trip.handoverRequired && <Badge variant="pending" size="sm">Handover acknowledgement required</Badge>}
                     </div>
                     <div className="text-ink-500 mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                       <span className="flex items-center gap-1"><Car className="h-3 w-3" aria-hidden="true" />{trip.vehicleLicence || 'Vehicle assigned'}</span>
@@ -222,12 +261,29 @@ export default function DriverMobileDashboardPage() {
                       {trip.routeKm != null && trip.routeKm > 0 && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" aria-hidden="true" />{Math.round(trip.routeKm).toLocaleString()} km</span>}
                     </div>
                     {trip.purpose && <p className="text-ink-400 mt-1 line-clamp-2 text-xs">{trip.purpose}</p>}
+                    {trip.handoverRequired && (
+                      <p className="text-status-warning-text mt-2 text-xs">
+                        Review the trip details and accept the handover before continuing normal journey records.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap gap-2 sm:justify-end">
                     <Button variant="secondary" size="sm" asChild>
                       <Link href={`/dashboard/trips/${trip.id}`}>Trip Details</Link>
                     </Button>
+                    {trip.handoverRequired && (
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setError(null);
+                          setHandoverNote('');
+                          setHandoverTrip(trip);
+                        }}
+                      >
+                        <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Accept handover
+                      </Button>
+                    )}
                     {trip.canDeclineAssignment && (
                       <Button
                         variant="secondary"
@@ -241,9 +297,11 @@ export default function DriverMobileDashboardPage() {
                         <XCircle className="h-4 w-4" aria-hidden="true" /> Cannot perform
                       </Button>
                     )}
-                    <Button variant="secondary" size="sm" asChild>
-                      <Link href="/dashboard/fuel/new"><Fuel className="h-4 w-4" aria-hidden="true" />Fuel</Link>
-                    </Button>
+                    {!trip.handoverRequired && (
+                      <Button variant="secondary" size="sm" asChild>
+                        <Link href="/dashboard/fuel/new"><Fuel className="h-4 w-4" aria-hidden="true" />Fuel</Link>
+                      </Button>
+                    )}
                   </div>
                 </div>
               </article>
@@ -276,13 +334,49 @@ export default function DriverMobileDashboardPage() {
         </section>
       )}
 
-      {error && !declineTrip && (
+      {error && !declineTrip && !handoverTrip && (
         <div className="bg-status-error-bg text-status-error-text flex items-start gap-2 rounded-[8px] px-4 py-3 text-sm" role="alert">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1">{error}</span>
           <Button variant="secondary" size="sm" onClick={() => void fetchTrips()}>Retry</Button>
         </div>
       )}
+
+      <Dialog open={!!handoverTrip} onOpenChange={(open) => {
+        if (!open) {
+          setHandoverTrip(null);
+          setHandoverNote('');
+          setError(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Accept driver handover?</DialogTitle>
+            <DialogDescription>
+              Confirm only after reviewing the active trip, vehicle, route, passengers, current odometer handover and any special conditions. Your verified licence is checked again when you accept.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="handover-note">Handover note (optional)</Label>
+            <Textarea
+              id="handover-note"
+              value={handoverNote}
+              onChange={(event) => setHandoverNote(event.target.value)}
+              placeholder="Record any useful handover observation or condition"
+              rows={3}
+              maxLength={500}
+            />
+            <p className="text-xs text-ink-500">The Transport Office is notified when the handover is accepted.</p>
+            {error && <p className="text-xs text-status-error-text" role="alert">{error}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" disabled={acknowledgingHandover} onClick={() => setHandoverTrip(null)}>Review later</Button>
+            <Button loading={acknowledgingHandover} onClick={() => void acknowledgeHandover()}>
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Accept handover
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!declineTrip} onOpenChange={(open) => {
         if (!open) {
