@@ -141,6 +141,7 @@ export const SnapshotDocument: React.FC<{ data: SnapshotDocumentData }> = ({ dat
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
         />
       </DocumentPage>
     </Document>

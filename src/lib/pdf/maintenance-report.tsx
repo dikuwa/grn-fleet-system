@@ -182,6 +182,7 @@ export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
         />
       </DocumentPage>
     </Document>
