@@ -16,12 +16,12 @@ export function formatNumber(value: number): string {
 }
 
 /**
- * Format currency in NAD
+ * Format currency. NAD remains the default so existing callers are unchanged.
  */
-export function formatCurrency(value: number): string {
+export function formatCurrency(value: number, currency = 'NAD'): string {
   return new Intl.NumberFormat('en-NA', {
     style: 'currency',
-    currency: 'NAD',
+    currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
