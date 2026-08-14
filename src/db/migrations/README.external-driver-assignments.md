@@ -1,0 +1,1 @@
+Migration 0063 adds a separate external-driver assignment lifecycle so external people never occupy employee driver foreign keys. It stores verified licence snapshots and staff-recorded acceptance/cancellation evidence while preserving existing internal driver workflows.
