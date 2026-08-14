@@ -48,6 +48,7 @@ interface AssignedTrip {
   hasReturnInspection: boolean;
   routeSummary?: string;
   routeKm?: number;
+  canDeclineAssignment?: boolean;
 }
 
 export default function DriverMobileDashboardPage() {
@@ -227,7 +228,7 @@ export default function DriverMobileDashboardPage() {
                     <Button variant="secondary" size="sm" asChild>
                       <Link href={`/dashboard/trips/${trip.id}`}>Trip Details</Link>
                     </Button>
-                    {trip.status === 'pending' && (
+                    {trip.canDeclineAssignment && (
                       <Button
                         variant="secondary"
                         size="sm"
