@@ -23,27 +23,38 @@ if (SIGNATURE_FONT === 'Allura') {
 /**
  * Official document family typography.
  *
- * Space Mono is the primary document face. Share Tech Mono remains the bundled
- * fallback. Space Mono is loaded from the canonical Google Fonts repository
- * until the TTF is bundled locally; the fallback ensures PDF generation remains
- * usable if the remote font cannot be fetched.
+ * Fake Receipt is the primary thermal-receipt face and Share Tech Mono is the
+ * bundled fallback. Both fonts are resolved from local application assets so
+ * official PDF generation remains deterministic and does not require network
+ * access at render time.
  */
-export const SPACE_MONO_FONT_URL =
-  'https://raw.githubusercontent.com/google/fonts/main/ofl/spacemono/SpaceMono-Regular.ttf';
+export const FAKE_RECEIPT_FONT_PATH = path.join(
+  process.cwd(),
+  'public',
+  'official',
+  'FakeReceipt-Regular.otf',
+);
 export const SHARE_TECH_MONO_FONT_PATH = path.join(
   process.cwd(),
   'public',
   'official',
   'ShareTechMono-Regular.ttf',
 );
-export const DOCUMENT_FONT = 'Space Mono';
+export const DOCUMENT_FONT = 'Fake Receipt';
 export const DOCUMENT_FONT_FALLBACK = 'Share Tech Mono';
+const fakeReceiptPresent = existsSync(FAKE_RECEIPT_FONT_PATH);
 const shareTechMonoPresent = existsSync(SHARE_TECH_MONO_FONT_PATH);
-export const DOCUMENT_FONT_STACK: string[] = shareTechMonoPresent
-  ? [DOCUMENT_FONT, DOCUMENT_FONT_FALLBACK]
-  : [DOCUMENT_FONT, 'Helvetica'];
+export const DOCUMENT_FONT_STACK: string[] = fakeReceiptPresent
+  ? shareTechMonoPresent
+    ? [DOCUMENT_FONT, DOCUMENT_FONT_FALLBACK]
+    : [DOCUMENT_FONT, 'Helvetica']
+  : shareTechMonoPresent
+    ? [DOCUMENT_FONT_FALLBACK, 'Helvetica']
+    : ['Helvetica'];
 
-Font.register({ family: DOCUMENT_FONT, src: SPACE_MONO_FONT_URL });
+if (fakeReceiptPresent) {
+  Font.register({ family: DOCUMENT_FONT, src: FAKE_RECEIPT_FONT_PATH });
+}
 if (shareTechMonoPresent) {
   Font.register({ family: DOCUMENT_FONT_FALLBACK, src: SHARE_TECH_MONO_FONT_PATH });
 }
