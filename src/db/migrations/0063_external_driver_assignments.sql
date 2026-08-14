@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS "external_driver_assignments" (
   "cancellation_reason" text,
   "cancelled_by_user_id" text,
   "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-  "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "chk_external_driver_assignment_state" CHECK ("state" IN ('pending_acceptance', 'accepted', 'cancelled')),
+  CONSTRAINT "chk_external_driver_acceptance_method" CHECK ("acceptance_method" IS NULL OR "acceptance_method" IN ('in_person', 'phone', 'signed_paper', 'secure_link'))
 );
 
 CREATE INDEX IF NOT EXISTS "idx_external_driver_assignments_tenant_state"
