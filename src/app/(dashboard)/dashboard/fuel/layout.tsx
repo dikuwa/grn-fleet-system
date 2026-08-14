@@ -15,9 +15,7 @@ export default async function FuelLayout({ children }: { children: React.ReactNo
   const canOpenReceiptRegister =
     permissions.includes(Permissions.FUEL_MANAGE) || permissions.includes(Permissions.FUEL_VERIFY);
   const canOpenExpenses =
-    permissions.includes(Permissions.FUEL_MANAGE) ||
-    permissions.includes(Permissions.TRIP_MANAGE) ||
-    permissions.includes(Permissions.DRIVER_LOG_CREATE);
+    permissions.includes(Permissions.FUEL_MANAGE) || permissions.includes(Permissions.TRIP_MANAGE);
 
   return (
     <div className="space-y-4">
