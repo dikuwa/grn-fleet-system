@@ -10,6 +10,7 @@ export * from './auth';
 export * from './better-auth';
 export * from './people';
 export * from './employee-lifecycle';
+export * from './external-parties';
 export * from './fleet';
 export * from './requests';
 export * from './request-sequences';
