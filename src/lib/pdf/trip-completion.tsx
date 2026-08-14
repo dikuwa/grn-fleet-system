@@ -110,10 +110,7 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
           reference={`TC-${data.tripId.slice(0, 8).toUpperCase()}`}
           version={data.documentVersion || 1}
           status={formatDocumentStatus(status)}
-          issueDate={formatHumanDate(
-            data.generatedAt || new Date().toISOString(),
-            branding?.locale,
-          )}
+          issueDate={data.generatedAt ? formatHumanDate(data.generatedAt, branding?.locale) : undefined}
           qrCode={data.qrCodeDataUrl}
         />
 
@@ -280,6 +277,7 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
           documentHash={data.documentHash}
+          generatedAt={data.generatedAt}
         />
       </DocumentPage>
     </Document>
