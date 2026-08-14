@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { resolveShortSharedDocument } from '@/lib/share-token';
-import { generateDocumentPdf } from '@/lib/pdf/generate';
 import { generateVerifiedTripAuthorityPdf } from '@/lib/pdf/verified-trip-authority';
 import { generateVerifiedInspectionReportPdf } from '@/lib/pdf/verified-inspection-report';
+import { generateVerifiedTransportRequestPdf } from '@/lib/pdf/verified-transport-request';
 import { generateVerifiedSnapshotDocumentPdf } from '@/lib/pdf/verified-snapshot-documents';
 
 export const runtime = 'nodejs';
@@ -31,7 +31,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
     : result.document.documentType === 'inspection_report'
       ? await generateVerifiedInspectionReportPdf(result.document.id)
       : result.document.documentType === 'transport_request'
-        ? await generateDocumentPdf(result.document.id)
+        ? await generateVerifiedTransportRequestPdf(result.document.id)
         : await generateVerifiedSnapshotDocumentPdf(result.document.id);
   if (!pdf) return NextResponse.json({ error: 'PDF is unavailable.' }, { status: 404 });
   return new NextResponse(pdf.buffer as BodyInit, {
