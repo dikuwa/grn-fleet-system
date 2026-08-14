@@ -26,6 +26,7 @@ import { getServerSession } from '@/lib/session';
 import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { FuelReviewActions } from './FuelReviewActions';
+import { ReceiptCorrectionEditor } from './ReceiptCorrectionEditor';
 import { resolveDashboardAccess, type DashboardRecordScope } from '@/lib/dashboard-access';
 import { fuelScopeCondition } from '@/lib/record-scope';
 
@@ -150,6 +151,9 @@ export default async function FuelDetailPage({ params }: PageProps) {
   const anomalyState = t.anomalyState ?? 'none';
   const permissions = await getSessionPermissions(session);
   const canVerify = access.actions.includes('update') && permissions.includes(Permissions.FUEL_VERIFY);
+  const canCorrectReceipt =
+    access.actions.includes('update') &&
+    (permissions.includes(Permissions.FUEL_MANAGE) || permissions.includes(Permissions.DRIVER_FUEL_CREATE));
 
   return (
     <div className="space-y-6">
@@ -348,15 +352,18 @@ export default async function FuelDetailPage({ params }: PageProps) {
             ) : (
               <div className="space-y-3">
                 {receipts.map((receipt) => (
-                  <div key={receipt.id} className="rounded-[8px] border border-border bg-muted/30 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-medium text-ink-900">{receipt.originalFileName}</p>
-                      <Badge variant={receipt.isVerified ? 'success' : 'pending'} size="sm">
-                        {receipt.isVerified ? 'Verified' : receipt.ocrStatus.replace(/_/g, ' ')}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-xs text-ink-500">Uploaded {formatDateTime(receipt.createdAt)}</p>
-                  </div>
+                  <ReceiptCorrectionEditor
+                    key={receipt.id}
+                    receipt={{
+                      id: receipt.id,
+                      originalFileName: receipt.originalFileName ?? null,
+                      createdAtLabel: formatDateTime(receipt.createdAt),
+                      isVerified: receipt.isVerified,
+                      ocrStatus: receipt.ocrStatus,
+                      extractionData: receipt.extractionData ?? null,
+                    }}
+                    canEdit={canCorrectReceipt}
+                  />
                 ))}
               </div>
             )}
