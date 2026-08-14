@@ -149,7 +149,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       await createScopedNotifications({
         tenantId: session.tenantId,
         recipientUserIds: [pending.reliefUserId],
-        category: 'information',
+        category: 'awareness',
         eventType: 'driver_handover_cancelled',
         title: 'Driver handover cancelled',
         body: `${pending.requestReference}: the proposed driver handover was cancelled by Transport Administration.`,
