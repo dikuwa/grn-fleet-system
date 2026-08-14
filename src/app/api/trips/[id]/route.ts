@@ -66,6 +66,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         returnedAt: trips.returnedAt,
         closedAt: trips.closedAt,
         createdAt: trips.createdAt,
+        driverAcknowledgedAt: trips.driverAcknowledgedAt,
+        driverAcknowledgedByEmployeeId: trips.driverAcknowledgedByEmployeeId,
         make: vehicles.make,
         model: vehicles.model,
         licenceNumber: vehicles.licenceNumber,
@@ -132,6 +134,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
                 licenceNumberMasked: tripAuthorisedDrivers.licenceNumberMasked,
                 licenceClass: tripAuthorisedDrivers.licenceClass,
                 licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
+                reason: tripAuthorisedDrivers.reason,
+                takeoverOdometer: tripAuthorisedDrivers.takeoverOdometer,
+                handoverOdometer: tripAuthorisedDrivers.handoverOdometer,
+                acknowledgedAt: tripAuthorisedDrivers.acknowledgedAt,
+                authorisedAt: tripAuthorisedDrivers.authorisedAt,
                 firstName: employees.firstName,
                 lastName: employees.lastName,
               })
@@ -188,9 +195,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           ])
         : [[], [], [], [], [], [], []];
 
+    const handoverRequired =
+      ['in_progress', 'return_due'].includes(trip.status) &&
+      !!trip.driverEmployeeId &&
+      (!trip.driverAcknowledgedAt || trip.driverAcknowledgedByEmployeeId !== trip.driverEmployeeId);
+
     return NextResponse.json({
       success: true,
-      trip,
+      trip: { ...trip, handoverRequired },
       authority,
       passengers,
       authorisedDrivers,

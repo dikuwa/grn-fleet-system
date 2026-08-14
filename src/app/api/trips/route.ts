@@ -63,11 +63,13 @@ export async function GET(request: NextRequest) {
           status: trips.status,
           issuedAt: trips.issuedAt,
           driverAcknowledgedAt: trips.driverAcknowledgedAt,
+          driverAcknowledgedByEmployeeId: trips.driverAcknowledgedByEmployeeId,
           startedAt: trips.startedAt,
           returnedAt: trips.returnedAt,
           closedAt: trips.closedAt,
           createdAt: trips.createdAt,
           vehicleId: trips.vehicleId,
+          driverEmployeeId: vehicleAllocations.driverEmployeeId,
           make: vehicles.make,
           model: vehicles.model,
           licenceNumber: vehicles.licenceNumber,
@@ -127,6 +129,10 @@ export async function GET(request: NextRequest) {
         !row.issuedAt &&
         !row.driverAcknowledgedAt &&
         row.requestStatus === 'driver_acknowledgement_pending',
+      handoverRequired:
+        ['in_progress', 'return_due'].includes(row.status) &&
+        !!row.driverEmployeeId &&
+        (!row.driverAcknowledgedAt || row.driverAcknowledgedByEmployeeId !== row.driverEmployeeId),
     }));
 
     return NextResponse.json({
