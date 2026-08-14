@@ -45,6 +45,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         requestStatus: transportRequests.status,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         allocationState: vehicleAllocations.state,
+        allocationVersion: vehicleAllocations.version,
         authorityStatus: tripAuthorities.status,
         authorityBeginningOdometer: tripAuthorities.beginningOdometer,
         vehicleOdometer: vehicles.currentOdometer,
@@ -159,12 +160,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const issueId = randomUUID();
     const auditSequence = Date.now();
 
-    // Claim the still-unissued trip first. Re-evaluate every safety/lifecycle
-    // prerequisite inside the same SQL statement so a defect, re-inspection,
-    // vehicle status change, de-authorisation or driver reassignment occurring
-    // after the initial page read cannot race physical issue.
+    // Claim the exact allocation version first. Driver reassignment, vehicle
+    // replacement, confirmation and cancellation all mutate this same version,
+    // so competing lifecycle actions serialize on the allocation row and a
+    // stale issue attempt fails closed instead of committing mixed state.
     await db.execute(sql`
-      WITH trip_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations
+        SET version = version + 1, updated_at = ${now}
+        WHERE id = ${trip.allocationId}::uuid
+          AND state = 'confirmed'
+          AND version = ${trip.allocationVersion}
+          AND driver_employee_id = ${trip.driverEmployeeId}::uuid
+        RETURNING id
+      ),
+      trip_claim AS (
         UPDATE trips
         SET issued_at = ${now}, updated_at = ${now}
         WHERE id = ${id}::uuid
@@ -173,19 +183,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           AND issued_at IS NULL
           AND vehicle_id = ${trip.vehicleId}::uuid
           AND allocation_id = ${trip.allocationId}::uuid
+          AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
             SELECT 1
             FROM transport_requests tr
             WHERE tr.id = trips.request_id
               AND tr.tenant_id = ${session.tenantId}::uuid
               AND tr.status = 'authorised'
-          )
-          AND EXISTS (
-            SELECT 1
-            FROM vehicle_allocations va
-            WHERE va.id = trips.allocation_id
-              AND va.state = 'confirmed'
-              AND va.driver_employee_id = ${trip.driverEmployeeId}::uuid
           )
           AND EXISTS (
             SELECT 1
@@ -280,12 +284,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       -- A constant invalid cast in the ELSE branch may be folded by PostgreSQL
       -- while planning, which aborts even a fully successful issue operation.
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM trip_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM issue_insert) = 1
          AND (SELECT count(*) FROM request_claim) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
         THEN '1'
         ELSE 'atomic_trip_issue_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
           || (SELECT count(*) FROM trip_claim)::text
           || (SELECT count(*) FROM issue_insert)::text
           || (SELECT count(*) FROM request_claim)::text
@@ -303,7 +309,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     console.error('[trips/issue] POST failed:', error);
     if (String(error).includes('atomic_trip_issue_failed')) {
       return NextResponse.json(
-        { error: 'Trip state changed while the vehicle was being issued. Refresh and review the latest trip state.' },
+        { error: 'Trip or allocation state changed while the vehicle was being issued. Refresh and review the latest trip state.' },
         { status: 409 },
       );
     }

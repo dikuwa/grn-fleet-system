@@ -13,15 +13,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
-import { requestDrivers, transportRequests } from '@/db/schema/requests';
+import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { auditEvents } from '@/db/schema/audit';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { runAtomicMutations } from '@/lib/db-atomic';
 import { replaceVehicle, VehicleReplaceError } from '@/lib/allocations/vehicle-replacement';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
@@ -61,6 +59,7 @@ export async function POST(
       .select({
         id: vehicleAllocations.id,
         state: vehicleAllocations.state,
+        version: vehicleAllocations.version,
         vehicleId: vehicleAllocations.vehicleId,
         requestId: vehicleAllocations.requestId,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
@@ -91,24 +90,63 @@ export async function POST(
       if (allocation.state !== 'provisional') {
         return NextResponse.json({ error: `Cannot confirm an allocation in '${allocation.state}' state` }, { status: 409 });
       }
+
       const now = new Date();
-      await runAtomicMutations((tx) => [
-        tx.update(vehicleAllocations)
-          .set({ state: 'confirmed', updatedAt: now })
-          .where(and(eq(vehicleAllocations.id, id), eq(vehicleAllocations.state, 'provisional'))),
-        tx.insert(auditEvents).values({
-          tenantId: session.tenantId,
-          tenantSequence: Date.now(),
-          eventType: 'allocation_confirmed',
-          actorUserId: session.user.id,
-          action: 'confirm',
-          entityType: 'allocation',
-          entityId: id,
-          summary: `Allocation confirmed for request ${allocation.requestReference}`,
-          before: { state: allocation.state },
-          after: { state: 'confirmed' },
-        }),
-      ]);
+      try {
+        await db.execute(sql`
+          WITH allocation_claim AS (
+            UPDATE vehicle_allocations
+            SET state = 'confirmed', version = version + 1, updated_at = ${now}
+            WHERE id = ${id}::uuid
+              AND state = 'provisional'
+              AND version = ${allocation.version}
+              AND EXISTS (
+                SELECT 1
+                FROM transport_requests tr
+                WHERE tr.id = vehicle_allocations.request_id
+                  AND tr.tenant_id = ${session.tenantId}::uuid
+              )
+            RETURNING id
+          ),
+          audit_insert AS (
+            INSERT INTO audit_events (
+              tenant_id, tenant_sequence, event_type, actor_user_id, action,
+              entity_type, entity_id, summary, before, after, source_channel
+            )
+            SELECT
+              ${session.tenantId}::uuid,
+              ${Date.now()},
+              'allocation_confirmed',
+              ${session.user.id},
+              'confirm',
+              'allocation',
+              ${id}::uuid,
+              ${`Allocation confirmed for request ${allocation.requestReference}`},
+              jsonb_build_object('state', 'provisional'),
+              jsonb_build_object('state', 'confirmed'),
+              'web'
+            FROM allocation_claim
+            RETURNING id
+          )
+          SELECT CAST(CASE
+            WHEN (SELECT count(*) FROM allocation_claim) = 1
+             AND (SELECT count(*) FROM audit_insert) = 1
+            THEN '1'
+            ELSE 'atomic_allocation_confirm_failed_'
+              || (SELECT count(*) FROM allocation_claim)::text
+              || (SELECT count(*) FROM audit_insert)::text
+          END AS integer) AS committed
+        `);
+      } catch (mutationError) {
+        if (String(mutationError).includes('atomic_allocation_confirm_failed')) {
+          return NextResponse.json(
+            { error: 'The allocation changed while it was being confirmed. Refresh and review the latest state.' },
+            { status: 409 },
+          );
+        }
+        throw mutationError;
+      }
+
       return NextResponse.json({ success: true, state: 'confirmed', alreadyConfirmed: false });
     }
 
@@ -133,45 +171,126 @@ export async function POST(
     }
 
     const now = new Date();
-    await runAtomicMutations((tx) => [
-      tx.update(vehicleAllocations)
-        .set({ state: 'cancelled', overrideReason: cancellationReason, updatedAt: now })
-        .where(eq(vehicleAllocations.id, id)),
-      tx.update(transportRequests)
-        .set({
-          status: 'transport_review',
-          assignedDriverEmployeeId: null,
-          updatedAt: now,
-        })
-        .where(and(eq(transportRequests.id, allocation.requestId), eq(transportRequests.tenantId, session.tenantId))),
-      tx.update(requestDrivers)
-        .set({ isConfirmed: false })
-        .where(eq(requestDrivers.requestId, allocation.requestId)),
-      tx.update(trips)
-        .set({ status: 'cancelled', updatedAt: now })
-        .where(and(eq(trips.allocationId, id), eq(trips.tenantId, session.tenantId), eq(trips.status, 'pending'))),
-      tx.update(tripAuthorities)
-        .set({
-          status: 'cancelled',
-          cancelledAt: now,
-          cancellationReason,
-          updatedAt: now,
-        })
-        .where(and(eq(tripAuthorities.allocationId, id), eq(tripAuthorities.tenantId, session.tenantId))),
-      tx.insert(auditEvents).values({
-        tenantId: session.tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'allocation_cancelled',
-        actorUserId: session.user.id,
-        action: 'cancel',
-        entityType: 'allocation',
-        entityId: id,
-        summary: `Allocation cancelled; request ${allocation.requestReference} returned to Transport Review`,
-        reason: cancellationReason,
-        before: { state: allocation.state, driverEmployeeId: allocation.driverEmployeeId },
-        after: { state: 'cancelled', requestStatus: 'transport_review', driverEmployeeId: null },
-      }),
-    ]);
+    try {
+      await db.execute(sql`
+        WITH allocation_claim AS (
+          UPDATE vehicle_allocations
+          SET state = 'cancelled',
+              override_reason = ${cancellationReason},
+              version = version + 1,
+              updated_at = ${now}
+          WHERE id = ${id}::uuid
+            AND state IN ('provisional', 'confirmed')
+            AND version = ${allocation.version}
+            AND EXISTS (
+              SELECT 1
+              FROM transport_requests tr
+              WHERE tr.id = vehicle_allocations.request_id
+                AND tr.tenant_id = ${session.tenantId}::uuid
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM trips t
+              WHERE t.allocation_id = vehicle_allocations.id
+                AND t.tenant_id = ${session.tenantId}::uuid
+                AND (t.issued_at IS NOT NULL OR t.status <> 'pending')
+            )
+          RETURNING request_id
+        ),
+        request_reset AS (
+          UPDATE transport_requests tr
+          SET status = 'transport_review',
+              assigned_driver_employee_id = NULL,
+              assigned_driver_external_party_id = NULL,
+              updated_at = ${now}
+          FROM allocation_claim ac
+          WHERE tr.id = ac.request_id
+            AND tr.tenant_id = ${session.tenantId}::uuid
+            AND tr.status IN (
+              'approved', 'under_review', 'transport_review', 'release_pending',
+              'vehicle_allocated', 'authorised'
+            )
+          RETURNING tr.id
+        ),
+        drivers_reset AS (
+          UPDATE request_drivers rd
+          SET is_confirmed = false
+          FROM request_reset rr
+          WHERE rd.request_id = rr.id
+          RETURNING rd.id
+        ),
+        trip_cancel AS (
+          UPDATE trips t
+          SET status = 'cancelled', updated_at = ${now}
+          FROM request_reset rr
+          WHERE t.allocation_id = ${id}::uuid
+            AND t.tenant_id = ${session.tenantId}::uuid
+            AND t.request_id = rr.id
+            AND t.status = 'pending'
+            AND t.issued_at IS NULL
+          RETURNING t.id
+        ),
+        authority_cancel AS (
+          UPDATE trip_authorities ta
+          SET status = 'cancelled',
+              cancelled_at = ${now},
+              cancellation_reason = ${cancellationReason},
+              updated_at = ${now}
+          FROM request_reset rr
+          WHERE ta.allocation_id = ${id}::uuid
+            AND ta.tenant_id = ${session.tenantId}::uuid
+            AND ta.request_id = rr.id
+            AND ta.status NOT IN ('in_progress', 'awaiting_reconciliation', 'completed', 'closed')
+          RETURNING ta.id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id, action,
+            entity_type, entity_id, summary, reason, before, after, source_channel
+          )
+          SELECT
+            ${session.tenantId}::uuid,
+            ${Date.now()},
+            'allocation_cancelled',
+            ${session.user.id},
+            'cancel',
+            'allocation',
+            ${id}::uuid,
+            ${`Allocation cancelled; request ${allocation.requestReference} returned to Transport Review`},
+            ${cancellationReason},
+            jsonb_build_object(
+              'state', ${allocation.state},
+              'driverEmployeeId', ${allocation.driverEmployeeId}
+            ),
+            jsonb_build_object(
+              'state', 'cancelled',
+              'requestStatus', 'transport_review',
+              'driverEmployeeId', NULL
+            ),
+            'web'
+          FROM request_reset
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM allocation_claim) = 1
+           AND (SELECT count(*) FROM request_reset) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN '1'
+          ELSE 'atomic_allocation_cancel_failed_'
+            || (SELECT count(*) FROM allocation_claim)::text
+            || (SELECT count(*) FROM request_reset)::text
+            || (SELECT count(*) FROM audit_insert)::text
+        END AS integer) AS committed
+      `);
+    } catch (mutationError) {
+      if (String(mutationError).includes('atomic_allocation_cancel_failed')) {
+        return NextResponse.json(
+          { error: 'The allocation or trip changed while cancellation was being saved. Refresh and review the latest state.' },
+          { status: 409 },
+        );
+      }
+      throw mutationError;
+    }
 
     try {
       if (allocation.requesterUserId) {
