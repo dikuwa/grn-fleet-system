@@ -72,6 +72,12 @@ export function TripActions({
   const [readinessLoading, setReadinessLoading] = useState(status === 'pending');
 
   const midTrip = status === 'in_progress';
+  // An internal trip cannot reach in_progress without the current employee driver
+  // acknowledging the authority. External-driver trips deliberately do not write
+  // the employee acknowledgement fields, so this also keeps the internal-only
+  // relief-driver handover control aligned with the API without weakening external
+  // driver separation. Vehicle replacement remains available for either driver type.
+  const canHandOverInternalDriver = canManage && midTrip && hasAcknowledge === true;
 
   const refreshReadiness = useCallback(async () => {
     if (status !== 'pending') {
@@ -190,7 +196,7 @@ export function TripActions({
     />
   ) : null;
 
-  const handoverDialog = canManage && midTrip ? (
+  const handoverDialog = canHandOverInternalDriver ? (
     <DriverHandoverDialog
       open={handoverDialogOpen}
       onOpenChange={setHandoverDialogOpen}
@@ -294,7 +300,7 @@ export function TripActions({
     return (
       <div>
         <div className="flex flex-wrap gap-2">
-          {canManage && (
+          {canHandOverInternalDriver && (
             <Button variant="secondary" size="sm" onClick={() => setHandoverDialogOpen(true)}>
               <ArrowRightLeft className="h-4 w-4" /> Hand over Driver
             </Button>
