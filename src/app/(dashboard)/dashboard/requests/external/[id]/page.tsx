@@ -35,12 +35,20 @@ import { formatDate, formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import type { PermissionCode } from '@/lib/permissions';
-import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
 import { CancelRequestButton } from '../../[id]/CancelRequestButton';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
+
+const ALLOCATABLE_STATUSES = [
+  'approved',
+  'under_review',
+  'transport_review',
+  'release_pending',
+  'vehicle_allocated',
+];
 
 async function fetchExternalRequest(id: string, tenantId: string) {
   const db = getDb();
@@ -216,6 +224,9 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
       : 'Responsible internal employee';
   const canModify =
     access.actions.includes('update') && (access.recordScope === 'tenant' || isEnteredBy);
+  const canAllocate =
+    canPerformDashboardAction('/dashboard/allocations', roleNames, 'create') &&
+    ALLOCATABLE_STATUSES.includes(request.status);
   const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
 
   return (
@@ -231,6 +242,13 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
         title={request.reference}
         description={request.purpose || 'External transport request'}
       >
+        {canAllocate && (
+          <Button size="sm" asChild>
+            <Link href={`/dashboard/allocations/external/new?requestId=${request.id}`}>
+              Assign vehicle & external driver
+            </Link>
+          </Button>
+        )}
         {canModify && request.status !== 'draft' && (
           <CancelRequestButton requestId={id} currentStatus={request.status} />
         )}
