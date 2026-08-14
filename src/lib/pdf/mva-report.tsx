@@ -146,10 +146,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
           reference={data.accidentReportNumber || data.reference}
           version={data.documentVersion || 1}
           status={formatDocumentStatus(data.status)}
-          issueDate={formatHumanDate(
-            data.generatedAt || new Date().toISOString(),
-            branding?.locale,
-          )}
+          issueDate={data.generatedAt ? formatHumanDate(data.generatedAt, branding?.locale) : undefined}
           qrCode={data.qrCodeDataUrl}
         />
 
@@ -368,6 +365,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
           documentHash={data.documentHash}
+          generatedAt={data.generatedAt}
         />
       </DocumentPage>
     </Document>
