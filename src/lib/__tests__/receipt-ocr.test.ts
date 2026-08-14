@@ -4,7 +4,7 @@ import { parseFuelReceiptText, receiptValidationFlags } from '../receipt-ocr';
 describe('parseFuelReceiptText', () => {
   it('extracts common Namibian fuel receipt fields without manufacturing zeroes', () => {
     const parsed = parseFuelReceiptText(
-      `PUMA ENERGY RUNDU\nVAT NO: 12345678\nReceipt No: 004921\nDate 14/08/2026 18:42\nPump No: 06\nDiesel 50\nLitres: 42.73 L\nPrice/L: N$ 21.889\nTOTAL: N$ 935.32\nRegistration No: N 12345 W\nOdometer: 128450\nAttendant: KAMATI`,
+      `PUMA ENERGY RUNDU\nVAT NO: 12345678\nReceipt No: 004921\nDate 14/08/2026 18:42\nPump No: 06\nDiesel 50\nLitres: 42.73 L\nPrice/L: N$ 21.889\nTOTAL: N$ 935.32\nRegistration No: N12345W\nOdometer: 128450\nAttendant: KAMATI`,
       91,
     );
 
