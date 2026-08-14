@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from '@/lib/auth-client';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
@@ -40,6 +40,25 @@ type ReceiptScanResult = {
   matchedVehicle?: { id: string; licenceNumber: string } | null;
 };
 
+type AssignedTrip = {
+  id: string;
+  status: string;
+  reference?: string | null;
+  requestReference?: string | null;
+  vehicleId?: string | null;
+  licenceNumber?: string | null;
+  vehicleLicence?: string | null;
+  make?: string | null;
+  model?: string | null;
+  purpose?: string | null;
+};
+
+type StationSuggestion = {
+  name: string;
+  uses: number;
+  source: 'tenant_history';
+};
+
 function toLocalDateTime(dateValue?: string, timeValue?: string) {
   if (!dateValue) return '';
   const raw = dateValue.trim();
@@ -65,6 +84,18 @@ function differs(extracted: unknown, confirmed: string | number) {
   if (extracted === undefined || extracted === null) return true;
   if (typeof confirmed === 'number') return Number(extracted) !== confirmed;
   return String(extracted).trim().toLowerCase() !== confirmed.trim().toLowerCase();
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      const timer = window.setTimeout(() => {
+        window.clearTimeout(timer);
+        reject(new Error(message));
+      }, timeoutMs);
+    }),
+  ]);
 }
 
 export default function NewFuelEntryPage() {
@@ -93,6 +124,7 @@ export default function NewFuelEntryPage() {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
+  const [isDraftSaving, setIsDraftSaving] = useState(false);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -106,7 +138,22 @@ export default function NewFuelEntryPage() {
   const [driverOption, setDriverOption] = useState<EmployeeSearchOption | null>(null);
   const [claimantId, setClaimantId] = useState('');
   const [claimantOption, setClaimantOption] = useState<EmployeeSearchOption | null>(null);
-  const tripId = searchParams.get('tripId') || '';
+  const [selectedTripId, setSelectedTripId] = useState(searchParams.get('tripId') || '');
+  const [activeTrips, setActiveTrips] = useState<AssignedTrip[]>([]);
+  const [tripLoading, setTripLoading] = useState(false);
+  const [stationSuggestions, setStationSuggestions] = useState<StationSuggestion[]>([]);
+  const [stationRouteHints, setStationRouteHints] = useState<string[]>([]);
+  const [stationDropdown, setStationDropdown] = useState(false);
+  const [stationLoading, setStationLoading] = useState(false);
+
+  const roleNames = useMemo(
+    () => (profile?.roles || []).map((role) => role.roleName.trim().toLowerCase()),
+    [profile?.roles],
+  );
+  const canRecordOnBehalf = roleNames.some(
+    (role) => role.includes('transport administrator') || role.includes('transport officer'),
+  );
+  const isDriverSelfEntry = roleNames.some((role) => role === 'driver' || role.endsWith(' driver')) && !canRecordOnBehalf;
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -123,6 +170,55 @@ export default function NewFuelEntryPage() {
     setFormData((prev) => ({ ...prev, ...patch }));
     setDraftSaved(false);
   }, []);
+
+  const applyAssignedTrip = useCallback((trip: AssignedTrip) => {
+    const licenceNumber = trip.licenceNumber || trip.vehicleLicence || '';
+    const reference = trip.reference || trip.requestReference || '';
+    setSelectedTripId(trip.id);
+    setFormData((prev) => ({
+      ...prev,
+      vehicleId: trip.vehicleId || prev.vehicleId,
+      vehicleGrn: licenceNumber || prev.vehicleGrn,
+      tripRef: reference || prev.tripRef,
+    }));
+    if (licenceNumber) {
+      setVehicleSearch(`${licenceNumber}${trip.make || trip.model ? ` — ${trip.make || ''} ${trip.model || ''}`.trimEnd() : ''}`);
+    }
+    setDraftSaved(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isDriverSelfEntry || !profile) return;
+    let cancelled = false;
+    setTripLoading(true);
+    void (async () => {
+      try {
+        const response = await fetch('/api/trips?driver_assigned=true&limit=20', { cache: 'no-store' });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error || 'Could not load assigned trips');
+        const rows = (json.data || json.rows || []) as AssignedTrip[];
+        const active = rows.filter((trip) => trip.status === 'in_progress' || trip.status === 'return_due');
+        if (cancelled) return;
+        setActiveTrips(active);
+        const requestedTrip = active.find((trip) => trip.id === selectedTripId);
+        if (requestedTrip) applyAssignedTrip(requestedTrip);
+        else if (active.length === 1) applyAssignedTrip(active[0]);
+      } catch (error) {
+        if (!cancelled) {
+          toast({
+            title: 'Could not load your active trip',
+            description: error instanceof Error ? error.message : 'Select the trip from Assigned Trips and try again.',
+            variant: 'error',
+          });
+        }
+      } finally {
+        if (!cancelled) setTripLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDriverSelfEntry, profile, selectedTripId, applyAssignedTrip, toast]);
 
   const scanReceipt = useCallback(async (file: File) => {
     if (!isOnline) return;
@@ -172,6 +268,11 @@ export default function NewFuelEntryPage() {
   }, [isOnline, toast, vehicleSearch]);
 
   useEffect(() => {
+    if (isDriverSelfEntry) {
+      setVehicles([]);
+      setVehicleDropdown(false);
+      return;
+    }
     const timer = setTimeout(async () => {
       if (vehicleSearch.length < 2) {
         setVehicles([]);
@@ -191,31 +292,77 @@ export default function NewFuelEntryPage() {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [vehicleSearch]);
+  }, [vehicleSearch, isDriverSelfEntry]);
+
+  useEffect(() => {
+    if (!isOnline) return;
+    const timer = window.setTimeout(async () => {
+      setStationLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (formData.stationName.trim()) params.set('search', formData.stationName.trim());
+        if (selectedTripId) params.set('tripId', selectedTripId);
+        const response = await fetch(`/api/fuel/stations?${params.toString()}`, { cache: 'no-store' });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error || 'Could not load station suggestions');
+        setStationSuggestions(Array.isArray(json.suggestions) ? json.suggestions : []);
+        setStationRouteHints(Array.isArray(json.routeHints) ? json.routeHints : []);
+      } catch {
+        setStationSuggestions([]);
+        setStationRouteHints([]);
+      } finally {
+        setStationLoading(false);
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [formData.stationName, selectedTripId, isOnline]);
+
+  const buildDraftFormData = useCallback(
+    () => ({
+      ...formData,
+      tripId: selectedTripId,
+      claimantEmployeeId: claimantId || null,
+      driverEmployeeId: canRecordOnBehalf ? driverId || null : null,
+      receiptFile,
+    }) as unknown as Record<string, unknown>,
+    [formData, selectedTripId, claimantId, canRecordOnBehalf, driverId, receiptFile],
+  );
 
   const saveDraftLocally = useCallback(async () => {
+    if (isDraftSaving) return;
+    setIsDraftSaving(true);
     try {
-      const draft = await saveDraft({
-        id: draftId || undefined,
-        draftType: 'fuel',
-        formData: {
-          ...formData,
-          tripId,
-          claimantEmployeeId: claimantId || null,
-          driverEmployeeId: driverId || null,
-          receiptFile,
-        } as unknown as Record<string, unknown>,
-        userId: session?.user?.id || null,
-        tenantId: profile?.tenantId || null,
-        syncStatus: 'pending',
-      });
+      const draft = await withTimeout(
+        saveDraft({
+          id: draftId || undefined,
+          draftType: 'fuel',
+          formData: buildDraftFormData(),
+          userId: session?.user?.id || null,
+          tenantId: profile?.tenantId || null,
+          syncStatus: 'pending',
+        }),
+        8000,
+        'Local draft storage did not respond. Please try again.',
+      );
       setDraftId(draft.id);
       setDraftSaved(true);
-      setTimeout(() => setDraftSaved(false), 2000);
+      toast({
+        title: isOnline ? 'Draft saved locally' : 'Draft saved offline',
+        description: isOnline ? 'You can continue editing or return to it from Offline Drafts.' : 'It will be available for sync when the device reconnects.',
+        variant: 'success',
+      });
+      window.setTimeout(() => setDraftSaved(false), 2500);
     } catch (err) {
       console.error('Failed to save draft:', err);
+      toast({
+        title: 'Draft was not saved',
+        description: err instanceof Error ? err.message : 'Local draft storage is unavailable.',
+        variant: 'error',
+      });
+    } finally {
+      setIsDraftSaving(false);
     }
-  }, [formData, session, profile, draftId, receiptFile, tripId, claimantId, driverId]);
+  }, [buildDraftFormData, draftId, isDraftSaving, isOnline, profile?.tenantId, session?.user?.id, toast]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,23 +370,23 @@ export default function NewFuelEntryPage() {
 
     if (!isOnline) {
       try {
-        await saveDraft({
-          id: draftId || undefined,
-          draftType: 'fuel',
-          formData: {
-            ...formData,
-            tripId,
-            claimantEmployeeId: claimantId || null,
-            driverEmployeeId: driverId || null,
-            receiptFile,
-          } as unknown as Record<string, unknown>,
-          userId: session?.user?.id || null,
-          tenantId: profile?.tenantId || null,
-          syncStatus: 'pending',
-        });
+        await withTimeout(
+          saveDraft({
+            id: draftId || undefined,
+            draftType: 'fuel',
+            formData: buildDraftFormData(),
+            userId: session?.user?.id || null,
+            tenantId: profile?.tenantId || null,
+            syncStatus: 'pending',
+          }),
+          8000,
+          'Local draft storage did not respond. Please try again.',
+        );
+        toast({ title: 'Fuel entry queued offline', description: 'The draft will remain on this device until it syncs.', variant: 'success' });
         router.push('/dashboard/fuel');
       } catch (err) {
         console.error('Draft save failed:', err);
+        toast({ title: 'Could not queue offline entry', description: err instanceof Error ? err.message : 'Draft storage failed.', variant: 'error' });
         setIsSubmitting(false);
       }
       return;
@@ -252,9 +399,9 @@ export default function NewFuelEntryPage() {
         body: JSON.stringify({
           vehicleGrn: formData.vehicleGrn,
           vehicleId: formData.vehicleId || undefined,
-          tripId: tripId || undefined,
+          tripId: selectedTripId || undefined,
           tripRef: formData.tripRef || null,
-          driverEmployeeId: driverId || undefined,
+          driverEmployeeId: canRecordOnBehalf ? driverId || undefined : undefined,
           claimantEmployeeId:
             formData.paymentMethod === 'personal_reimbursement' ? claimantId || undefined : undefined,
           clientSyncId: crypto.randomUUID(),
@@ -345,7 +492,7 @@ export default function NewFuelEntryPage() {
       toast({ title: 'Failed to record', description: err instanceof Error ? err.message : 'Transaction could not be saved', variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [router, formData, session, profile, draftId, isOnline, receiptFile, toast, tripId, driverId, claimantId]);
+  }, [router, formData, session, profile, draftId, isOnline, receiptFile, toast, selectedTripId, driverId, claimantId, canRecordOnBehalf, buildDraftFormData]);
 
   return (
     <div className="space-y-6">
@@ -371,62 +518,142 @@ export default function NewFuelEntryPage() {
         <Card>
           <CardHeader><CardTitle>Transaction Details</CardTitle></CardHeader>
           <CardContent className="space-y-4">
+            {isDriverSelfEntry ? (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label required>Active Trip</Label>
+                    <StyledSelect
+                      value={selectedTripId}
+                      onChange={(event) => {
+                        const trip = activeTrips.find((item) => item.id === event.target.value);
+                        if (trip) applyAssignedTrip(trip);
+                      }}
+                      required
+                      disabled={tripLoading || activeTrips.length === 0}
+                    >
+                      <option value="">{tripLoading ? 'Loading assigned trip…' : activeTrips.length ? 'Select active trip' : 'No active assigned trip'}</option>
+                      {activeTrips.map((trip) => (
+                        <option key={trip.id} value={trip.id}>
+                          {(trip.reference || trip.requestReference || 'Trip')} · {(trip.licenceNumber || trip.vehicleLicence || 'Vehicle')} {trip.purpose ? `· ${trip.purpose}` : ''}
+                        </option>
+                      ))}
+                    </StyledSelect>
+                    <p className="text-ink-500 text-xs">Drivers record fuel only for their own active assigned trip.</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label required>Vehicle</Label>
+                    <Input value={vehicleSearch} readOnly placeholder="Vehicle is linked from the selected trip" required />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Trip Reference</Label>
+                  <Input value={formData.tripRef} readOnly placeholder="Linked from the selected trip" />
+                </div>
+                {activeTrips.length === 0 && !tripLoading && (
+                  <div className="rounded-[8px] border border-status-pending-border bg-status-pending-bg/20 px-3 py-2 text-xs text-status-pending-text">
+                    No active assigned trip is available for fuel recording. Open Assigned Trips and start the correct trip first.
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5 relative">
+                    <Label required>Vehicle</Label>
+                    <Input
+                      placeholder="Search vehicle GRN, make or model..."
+                      value={vehicleSearch}
+                      onChange={(e) => {
+                        setVehicleSearch(e.target.value);
+                        updateForm({ vehicleGrn: e.target.value, vehicleId: '' });
+                      }}
+                      onFocus={() => vehicles.length > 0 && setVehicleDropdown(true)}
+                      onBlur={() => setTimeout(() => setVehicleDropdown(false), 200)}
+                      required
+                    />
+                    {vehicleLoading && <p className="text-xs text-ink-400 mt-1">Searching...</p>}
+                    {vehicleDropdown && vehicles.length > 0 && (
+                      <div className="absolute z-10 mt-1 w-full rounded-[8px] border border-border bg-surface shadow-lg max-h-48 overflow-y-auto">
+                        {vehicles.map((v) => (
+                          <button
+                            key={v.id}
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors"
+                            onMouseDown={() => {
+                              updateForm({ vehicleGrn: v.licenceNumber, vehicleId: v.id });
+                              setVehicleSearch(`${v.licenceNumber} — ${v.make} ${v.model}`);
+                              setVehicleDropdown(false);
+                            }}
+                          >
+                            <span className="font-medium">{v.licenceNumber}</span>
+                            <span className="text-ink-500 ml-2">{v.make} {v.model}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1.5"><Label>Trip Reference</Label><Input placeholder="Optional trip ref" value={formData.tripRef} onChange={(e) => updateForm({ tripRef: e.target.value })} /></div>
+                </div>
+
+                {canRecordOnBehalf && (
+                  <div className="space-y-1.5">
+                    <Label>Record fuel for driver</Label>
+                    <EmployeeCombobox
+                      kind="driver"
+                      value={driverId}
+                      selectedOption={driverOption}
+                      onSelect={(option) => {
+                        setDriverId(option?.id || '');
+                        setDriverOption(option);
+                      }}
+                      placeholder="Optional — select the driver this fuel belongs to"
+                    />
+                    <p className="text-ink-500 text-xs">Use this when Transport Office is capturing a receipt or fuel record for a driver. If a trip is linked, the server keeps attribution aligned to the trip&apos;s allocated driver.</p>
+                  </div>
+                )}
+              </>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5"><Label required>Transaction Date</Label><StyledDateInput type="datetime-local" value={formData.transactionDate} onChange={(e) => updateForm({ transactionDate: e.target.value })} required /></div>
               <div className="space-y-1.5 relative">
-                <Label required>Vehicle</Label>
+                <Label>Station Name</Label>
                 <Input
-                  placeholder="Search vehicle GRN, make or model..."
-                  value={vehicleSearch}
+                  placeholder="Start typing a fuel station name…"
+                  value={formData.stationName}
                   onChange={(e) => {
-                    setVehicleSearch(e.target.value);
-                    updateForm({ vehicleGrn: e.target.value, vehicleId: '' });
+                    updateForm({ stationName: e.target.value });
+                    setStationDropdown(true);
                   }}
-                  onFocus={() => vehicles.length > 0 && setVehicleDropdown(true)}
-                  onBlur={() => setTimeout(() => setVehicleDropdown(false), 200)}
-                  required
+                  onFocus={() => setStationDropdown(true)}
+                  onBlur={() => window.setTimeout(() => setStationDropdown(false), 200)}
+                  autoComplete="off"
                 />
-                {vehicleLoading && <p className="text-xs text-ink-400 mt-1">Searching...</p>}
-                {vehicleDropdown && vehicles.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full rounded-[8px] border border-border bg-surface shadow-lg max-h-48 overflow-y-auto">
-                    {vehicles.map((v) => (
+                {stationLoading && <p className="text-xs text-ink-400 mt-1">Finding recent stations…</p>}
+                {stationDropdown && stationSuggestions.length > 0 && (
+                  <div className="absolute z-20 mt-1 w-full max-h-52 overflow-y-auto rounded-[8px] border border-border bg-surface shadow-lg">
+                    {stationSuggestions.map((station) => (
                       <button
-                        key={v.id}
+                        key={station.name}
                         type="button"
                         className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors"
                         onMouseDown={() => {
-                          updateForm({ vehicleGrn: v.licenceNumber, vehicleId: v.id });
-                          setVehicleSearch(`${v.licenceNumber} — ${v.make} ${v.model}`);
-                          setVehicleDropdown(false);
+                          updateForm({ stationName: station.name });
+                          setStationDropdown(false);
                         }}
                       >
-                        <span className="font-medium">{v.licenceNumber}</span>
-                        <span className="text-ink-500 ml-2">{v.make} {v.model}</span>
+                        <span className="font-medium text-ink-900">{station.name}</span>
+                        <span className="ml-2 text-xs text-ink-500">Previously used</span>
                       </button>
                     ))}
                   </div>
                 )}
+                <p className="text-xs text-ink-500">
+                  {stationRouteHints.length > 0 ? `Trip corridor: ${stationRouteHints.join(' → ')}. ` : ''}
+                  Choose a previous station or keep typing a manual name.
+                </p>
               </div>
-              <div className="space-y-1.5"><Label>Trip Reference</Label><Input placeholder="Optional trip ref" value={formData.tripRef} onChange={(e) => updateForm({ tripRef: e.target.value })} /></div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Driver (on behalf of)</Label>
-              <EmployeeCombobox
-                kind="driver"
-                value={driverId}
-                selectedOption={driverOption}
-                onSelect={(option) => {
-                  setDriverId(option?.id || '');
-                  setDriverOption(option);
-                }}
-                placeholder="Optional — attribute this entry to a driver"
-              />
-              <p className="text-ink-500 text-xs">Leave blank to attribute the entry to the trip&apos;s allocated driver.</p>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5"><Label required>Transaction Date</Label><StyledDateInput type="datetime-local" value={formData.transactionDate} onChange={(e) => updateForm({ transactionDate: e.target.value })} required /></div>
-              <div className="space-y-1.5"><Label>Station Name</Label><Input placeholder="e.g. Total Energies, Rundu" value={formData.stationName} onChange={(e) => updateForm({ stationName: e.target.value })} /></div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">
@@ -450,7 +677,7 @@ export default function NewFuelEntryPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5"><Label required>Fill Type</Label><StyledSelect value={formData.fillType} onChange={(e) => updateForm({ fillType: e.target.value })}><option value="full">Full Tank</option><option value="partial">Partial Fill</option></StyledSelect></div>
-              {formData.paymentMethod === 'personal_reimbursement' && (
+              {formData.paymentMethod === 'personal_reimbursement' && canRecordOnBehalf && (
                 <div className="space-y-1.5">
                   <Label>Employee who paid personally</Label>
                   <EmployeeCombobox
@@ -463,7 +690,7 @@ export default function NewFuelEntryPage() {
                     }}
                     placeholder="Search employee by name or number…"
                   />
-                  <p className="text-xs text-ink-500">Transport staff must select the claimant. Drivers recording their own active-trip fuel may leave this blank; the server links the claim to their employee record.</p>
+                  <p className="text-xs text-ink-500">Transport staff must select the employee who paid personally.</p>
                 </div>
               )}
             </div>
@@ -523,12 +750,12 @@ export default function NewFuelEntryPage() {
         </Card>
 
         <div className="mt-6 flex items-center justify-end gap-3">
-          <Button type="button" variant="secondary" size="sm" onClick={saveDraftLocally}>
+          <Button type="button" variant="secondary" size="sm" onClick={saveDraftLocally} loading={isDraftSaving} disabled={isDraftSaving}>
             <Save className="h-4 w-4" />
             {draftSaved ? 'Saved!' : 'Save Draft'}
           </Button>
           <Button variant="secondary" size="sm" asChild><Link href="/dashboard/fuel">Cancel</Link></Button>
-          <Button variant="primary" size="sm" type="submit" loading={isSubmitting} disabled={isScanningReceipt}>
+          <Button variant="primary" size="sm" type="submit" loading={isSubmitting} disabled={isScanningReceipt || (isDriverSelfEntry && !selectedTripId)}>
             {isOnline ? <><CheckCircle2 className="h-4 w-4" /> Record Transaction</> : <><Save className="h-4 w-4" /> Queue Offline</>}
           </Button>
         </div>
