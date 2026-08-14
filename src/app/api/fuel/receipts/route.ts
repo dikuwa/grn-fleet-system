@@ -408,6 +408,30 @@ export async function PATCH(request: NextRequest) {
     } else {
       const verified = action === 'verify';
       const now = new Date();
+      const linkedReceipts = await db
+        .select({ id: fuelReceipts.id, isVerified: fuelReceipts.isVerified })
+        .from(fuelReceipts)
+        .where(
+          and(
+            eq(fuelReceipts.transactionId, record.transactionId),
+            eq(fuelReceipts.tenantId, session.tenantId),
+          ),
+        );
+      const pendingOtherReceipts = linkedReceipts.filter(
+        (linked) => linked.id !== receiptId && !linked.isVerified,
+      );
+      const transactionVerified = verified && pendingOtherReceipts.length === 0;
+      const transactionState = verified
+        ? transactionVerified
+          ? 'verified'
+          : 'flagged'
+        : 'rejected';
+      const transactionNote = verified
+        ? transactionVerified
+          ? null
+          : `Awaiting verification of ${pendingOtherReceipts.length} additional receipt${pendingOtherReceipts.length === 1 ? '' : 's'}`
+        : reason;
+
       await runAtomicMutations((executor) => [
         executor
           .update(fuelReceipts)
@@ -421,10 +445,10 @@ export async function PATCH(request: NextRequest) {
         executor
           .update(fuelTransactions)
           .set({
-            isVerified: verified,
+            isVerified: transactionVerified,
             verifiedByUserId: session.user.id,
-            anomalyState: verified ? 'verified' : 'rejected',
-            anomalyNotes: reason,
+            anomalyState: transactionState,
+            anomalyNotes: transactionNote,
             updatedAt: now,
           })
           .where(eq(fuelTransactions.id, record.transactionId)),
@@ -440,7 +464,12 @@ export async function PATCH(request: NextRequest) {
             receiptVerified: record.receipt.isVerified,
             receiptStatus: record.receipt.ocrStatus,
           },
-          after: { verified, status: verified ? 'verified' : 'rejected' },
+          after: {
+            verified,
+            status: verified ? 'verified' : 'rejected',
+            transactionVerified,
+            pendingLinkedReceipts: pendingOtherReceipts.length,
+          },
           reason,
           sourceChannel: 'web',
         }),
