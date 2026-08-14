@@ -12,7 +12,7 @@ import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
 import { externalParties, externalDriverLicences } from './external-parties';
 import { transportRequests } from './requests';
-import { vehicleAllocations, trips } from './trips';
+import { vehicleAllocations, trips, tripIssues } from './trips';
 
 /**
  * Final external-driver assignment lifecycle.
@@ -43,6 +43,7 @@ export const externalDriverAssignments = pgTable(
     licenceId: uuid('licence_id')
       .notNull()
       .references(() => externalDriverLicences.id),
+    issueId: uuid('issue_id').references(() => tripIssues.id),
     state: text('state').notNull().default('pending_acceptance'),
     driverType: text('driver_type').notNull().default('assigned'),
     licenceSnapshot: jsonb('licence_snapshot').$type<Record<string, unknown>>().notNull(),
@@ -71,6 +72,7 @@ export const externalDriverAssignments = pgTable(
     index('idx_external_driver_assignments_request').on(table.requestId),
     index('idx_external_driver_assignments_trip').on(table.tripId),
     index('idx_external_driver_assignments_party').on(table.externalPartyId),
+    uniqueIndex('uq_external_driver_assignment_issue').on(table.issueId),
     uniqueIndex('uq_external_driver_assignment_live_allocation')
       .on(table.allocationId)
       .where(sql`${table.state} in ('pending_acceptance', 'accepted')`),
