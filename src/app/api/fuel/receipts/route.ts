@@ -15,6 +15,7 @@ import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { parseFuelReceiptText, receiptValidationFlags, type ReceiptFields } from '@/lib/receipt-ocr';
+import { enrichFuelReceiptFields } from '@/lib/receipt-ocr-enrichment';
 import { AI_OCR_CONFIDENCE, extractReceiptWithAi, isAiFeatureEnabled } from '@/lib/ai';
 import { ALLOWED_IMAGE_TYPES, UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
 import { fuelScopeCondition } from '@/lib/record-scope';
@@ -184,7 +185,8 @@ export async function POST(request: NextRequest) {
         try {
           const recognition = await worker.recognize(processed);
           const parsed = parseFuelReceiptText(recognition.data.text, recognition.data.confidence);
-          extractionData = { ...parsed.fields };
+          const enriched = enrichFuelReceiptFields(recognition.data.text, parsed.fields);
+          extractionData = { ...enriched };
           fieldConfidence = parsed.confidence;
           extractionConfidence = Math.max(0, Math.min(1, recognition.data.confidence / 100));
           rawOcrResponse = {
@@ -194,7 +196,7 @@ export async function POST(request: NextRequest) {
             engineVersion: recognition.data.version,
           };
           flags = receiptValidationFlags({
-            fields: parsed.fields,
+            fields: enriched,
             vehicleRegistration: context.registration,
             vehicleFuelType: context.fuelType,
             currentOdometer: context.currentOdometer,
