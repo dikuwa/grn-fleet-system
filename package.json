@@ -33,9 +33,9 @@
     "data-reset:verify-catalog": "node --env-file=.env.local --import tsx src/scripts/verify-selective-reset.ts",
     "data-reset:demo-accounts:dry-run": "tsx src/scripts/data-reset-cli.ts --mode=demo-accounts --dry-run",
     "data-reset:demo-accounts:execute": "tsx src/scripts/data-reset-cli.ts --mode=demo-accounts --execute",
-    "data-reset:demo-vehicles:dry-run": "tsx src/scripts/data-reset-cli.ts --mode=demo-vehicles --dry-run",
-    "data-reset:demo-vehicles:execute": "tsx src/scripts/data-reset-cli.ts --mode=demo-vehicles --execute",
-    "qa:official-documents": "tsx scripts/render-official-document-qa.tsx"
+    "data-reset:demo-vehicles:dry-run": "tsx src/scripts/data-reset-cli.ts --mode=demo-accounts --dry-run",
+    "data-reset:demo-vehicles:execute": "tsx src/scripts/data-reset-cli.ts --mode=demo-accounts --execute",
+    "qa:official-documents": "tsx scripts/render-official-document-qa.tsx && tsx scripts/render-snapshot-document-qa.tsx"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.750.0",
@@ -89,8 +89,8 @@
     "react-hot-toast": "^2.6.0",
     "resend": "^4.1.0",
     "sharp": "^0.34.0",
-    "tailwind-merge": "^3.2.0",
-    "tailwindcss-animate": "^1.0.7",
+    "tailwind-merge": "^3.0.0",
+    "tailwindcss-animate": "^1.0.0",
     "tesseract.js": "^7.0.0",
     "twilio": "^6.0.2",
     "uuid": "^11.0.0",
