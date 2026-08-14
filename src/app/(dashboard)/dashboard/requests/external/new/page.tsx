@@ -154,7 +154,7 @@ export default function ExternalTransportRequestPage() {
         description: `${json.request.reference} entered the normal approval workflow.`,
         variant: 'success',
       });
-      router.push(`/dashboard/requests/${json.request.id}`);
+      router.push(`/dashboard/requests/external/${json.request.id}`);
       router.refresh();
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : 'External request could not be submitted';
