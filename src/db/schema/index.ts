@@ -18,6 +18,7 @@ export * from './request-sequences';
 export * from './programmes';
 export * from './workflows';
 export * from './trips';
+export * from './operational-expenses';
 export * from './documents';
 export * from './notifications';
 export * from './audit';
