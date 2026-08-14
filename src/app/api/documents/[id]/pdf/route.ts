@@ -3,6 +3,7 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { generateDocumentPdf } from '@/lib/pdf/generate';
 import { generateVerifiedTripAuthorityPdf } from '@/lib/pdf/verified-trip-authority';
+import { generateVerifiedInspectionReportPdf } from '@/lib/pdf/verified-inspection-report';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { and, eq } from 'drizzle-orm';
@@ -45,7 +46,9 @@ export async function GET(
 
     const result = doc.documentType === 'trip_authority'
       ? await generateVerifiedTripAuthorityPdf(id)
-      : await generateDocumentPdf(id);
+      : doc.documentType === 'inspection_report'
+        ? await generateVerifiedInspectionReportPdf(id)
+        : await generateDocumentPdf(id);
     if (!result) {
       return NextResponse.json(
         { error: 'PDF generation is not available for this document.' },
