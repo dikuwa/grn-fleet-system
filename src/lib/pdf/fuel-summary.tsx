@@ -200,6 +200,7 @@ export const FuelSummaryDocument: React.FC<{ data: FuelSummaryData }> = ({ data 
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
           documentHash={data.documentHash}
+          generatedAt={data.generatedAt}
         />
       </DocumentPage>
     </Document>
