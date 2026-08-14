@@ -16,7 +16,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-    const actionCheck = await requireDashboardAction(session, '/dashboard/allocations', 'read');
+    const actionCheck = await requireDashboardAction(session, '/dashboard/allocations', 'view');
     if (actionCheck instanceof NextResponse) return actionCheck;
     const permissionCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
     if (permissionCheck instanceof NextResponse) return permissionCheck;
