@@ -186,8 +186,11 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
         <DocumentHeader
           branding={branding}
           title={'Official Vehicle Trip Authority\nAnd Log Statement'}
+          reference={data.reference}
+          version={data.documentVersion || 1}
+          status={formatDocumentStatus(data.authorityStatus || 'issued')}
+          issueDate={data.issuedAt ? formatHumanDate(data.issuedAt, locale) : undefined}
           official
-          showIdentity={false}
         />
 
         <DocumentRow>
@@ -217,10 +220,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
                 { label: 'Make', value: data.vehicle.make },
                 {
                   label: 'Odometer (at start)',
-                  value: formatHumanValue(
-                    data.beginningOdometer ?? data.vehicle.currentOdometer,
-                    'odometer',
-                  ),
+                  value: formatHumanValue(data.beginningOdometer ?? data.vehicle.currentOdometer, 'odometer'),
                 },
                 {
                   label: 'Model year/type',
@@ -230,12 +230,8 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
                   label: 'Inspection status',
                   value: [
                     formatDocumentStatus(data.vehicle.inspectionStatus || 'pending'),
-                    data.vehicle.inspectionDate
-                      ? `(${formatHumanDate(data.vehicle.inspectionDate, locale)})`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' '),
+                    data.vehicle.inspectionDate ? `(${formatHumanDate(data.vehicle.inspectionDate, locale)})` : null,
+                  ].filter(Boolean).join(' '),
                 },
                 { label: 'Colour', value: data.vehicle.colour },
                 { label: 'Register no.', value: data.vehicle.vehicleRegisterNumber },
@@ -255,34 +251,19 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
               { key: 'contact', label: 'Contact no.', width: '15%' },
               { key: 'id', label: 'ID number', width: '17%' },
             ]}
-            rows={
-              data.driver
-                ? [
-                    {
-                      name: data.driver.name,
-                      employee: data.driver.employeeNumber,
-                      licence: [data.driver.licenceNumber, data.driver.licenceClass]
-                        .filter(Boolean)
-                        .join(' · '),
-                      department: data.driver.department,
-                      contact: data.driver.contactNumber,
-                      id: data.driver.idNumber,
-                    },
-                  ]
-                : []
-            }
+            rows={data.driver ? [{
+              name: data.driver.name,
+              employee: data.driver.employeeNumber,
+              licence: [data.driver.licenceNumber, data.driver.licenceClass].filter(Boolean).join(' · '),
+              department: data.driver.department,
+              contact: data.driver.contactNumber,
+              id: data.driver.idNumber,
+            }] : []}
             emptyLabel="No main driver assigned"
           />
           {(data.additionalDrivers?.length || 0) > 0 ? (
             <View style={{ marginTop: 5 }}>
-              <Text
-                style={{
-                  color: officialRedTheme.primary,
-                  fontFamily: DOCUMENT_FONT_STACK,
-                  fontSize: 6.7,
-                  marginBottom: 2,
-                }}
-              >
+              <Text style={{ color: officialRedTheme.primary, fontFamily: DOCUMENT_FONT_STACK, fontSize: 6.7, marginBottom: 2 }}>
                 ADDITIONAL DRIVERS
               </Text>
               <DocumentTable
@@ -319,45 +300,31 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
               { key: 'return', label: 'Return', width: '23%' },
               { key: 'km', label: 'Km', width: '12%', align: 'right' },
             ]}
-            rows={
-              legs.length
-                ? legs.map((leg, index) => ({
-                    number: index + 1,
-                    from: leg.origin,
-                    to: leg.destination,
-                    departure: dateTime(leg.departureDate, leg.departureTime, locale),
-                    return: dateTime(leg.returnDate, leg.returnTime, locale),
-                    km:
-                      leg.estimatedKm === undefined
-                        ? undefined
-                        : `${leg.estimatedKm.toLocaleString(locale)} km`,
-                  }))
-                : [
-                    {
-                      number: 1,
-                      from: data.routeSummary,
-                      to: undefined,
-                      departure: formatHumanDate(data.startAt, locale),
-                      return: formatHumanDate(data.endAt, locale),
-                      km: data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : undefined,
-                    },
-                  ]
-            }
+            rows={legs.length ? legs.map((leg, index) => ({
+              number: index + 1,
+              from: leg.origin,
+              to: leg.destination,
+              departure: dateTime(leg.departureDate, leg.departureTime, locale),
+              return: dateTime(leg.returnDate, leg.returnTime, locale),
+              km: leg.estimatedKm === undefined ? undefined : `${leg.estimatedKm.toLocaleString(locale)} km`,
+            })) : [{
+              number: 1,
+              from: data.routeSummary,
+              to: undefined,
+              departure: formatHumanDate(data.startAt, locale),
+              return: formatHumanDate(data.endAt, locale),
+              km: data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : undefined,
+            }]}
           />
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 3 }}>
-            <Text style={{ width: '28%', fontFamily: DOCUMENT_FONT_STACK }}>
-              Total estimated distance
-            </Text>
+            <Text style={{ width: '28%', fontFamily: DOCUMENT_FONT_STACK }}>Total estimated distance</Text>
             <Text style={{ width: '15%', textAlign: 'right', fontFamily: DOCUMENT_FONT_STACK }}>
               {data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : '—'}
             </Text>
           </View>
         </DocumentSection>
 
-        <DocumentSection
-          title={`E. Authorised Passengers${passengers.length ? ` (${passengers.length})` : ''}`}
-          theme={officialRedTheme}
-        >
+        <DocumentSection title={`E. Authorised Passengers${passengers.length ? ` (${passengers.length})` : ''}`} theme={officialRedTheme}>
           <DocumentTable
             theme={officialRedTheme}
             columns={[
@@ -380,12 +347,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
           />
         </DocumentSection>
 
-        <DocumentSection
-          title="F. Goods / Equipments"
-          theme={officialRedTheme}
-          minPresenceAhead={100}
-          breakBefore={(data.goodsAndEquipment?.length || 0) > 10}
-        >
+        <DocumentSection title="F. Goods / Equipments" theme={officialRedTheme} minPresenceAhead={100} breakBefore={(data.goodsAndEquipment?.length || 0) > 10}>
           <DocumentTable
             theme={officialRedTheme}
             columns={[
@@ -405,28 +367,19 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
         <DocumentRow>
           <DocumentSection title="G. Special Conditions" theme={officialRedTheme} wrap={false}>
             {STANDARD_CONDITIONS.map((condition, index) => (
-              <Text key={condition} style={{ marginBottom: 1.8, fontSize: 6.1 }}>
-                {index + 1}. {condition}
-              </Text>
+              <Text key={condition} style={{ marginBottom: 1.8, fontSize: 6.1 }}>{index + 1}. {condition}</Text>
             ))}
           </DocumentSection>
           <DocumentSection title="Special Authority" theme={officialRedTheme} wrap={false}>
-            {specialAuthority.length ? (
-              specialAuthority.map((condition, index) => (
-                <Text key={`${condition}-${index}`} style={{ marginBottom: 1.8, fontSize: 6.1 }}>
-                  {condition}
-                </Text>
-              ))
-            ) : (
-              <SafePdfText
-                value="No additional special authority conditions recorded."
-                style={documentStyles.muted}
-              />
+            {specialAuthority.length ? specialAuthority.map((condition, index) => (
+              <Text key={`${condition}-${index}`} style={{ marginBottom: 1.8, fontSize: 6.1 }}>{condition}</Text>
+            )) : (
+              <SafePdfText value="No additional special authority conditions recorded." style={documentStyles.muted} />
             )}
           </DocumentSection>
         </DocumentRow>
 
-        <View style={documentStyles.finalBlock} wrap={false}>
+        <View style={{ ...documentStyles.finalBlock, marginTop: 11 }} wrap={false}>
           <DocumentSection title="H. Approvals" theme={officialRedTheme} wrap={false}>
             <View style={documentStyles.signatureRow}>
               <DocumentSignature
@@ -469,6 +422,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
           verificationCode={data.verificationCode || data.reference}
           verificationUrl={data.verificationUrl}
           documentHash={data.documentHash}
+          generatedAt={data.issuedAt}
           theme={officialRedTheme}
         />
       </DocumentPage>
