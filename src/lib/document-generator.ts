@@ -7,13 +7,13 @@ import { externalParties } from '@/db/schema/external-parties';
 import { departments, employees } from '@/db/schema/people';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { validateDocumentSnapshot } from '@/lib/document-validation';
+import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
 import * as core from '@/lib/document-generator-core';
 
 export type { DocumentType } from '@/lib/document-generator-core';
 export const generateDocument = core.generateDocument;
 export const onRequestSubmitted = core.onRequestSubmitted;
 export const onTripClosed = core.onTripClosed;
-export const onInspectionCompleted = core.onInspectionCompleted;
 
 interface AuthorityDriverSnapshot {
   kind: 'internal' | 'external' | 'unassigned';
@@ -136,6 +136,30 @@ async function resolveAuthorityDriver(
   };
 }
 
+async function persistSnapshotEnrichment(
+  document: typeof generatedDocuments.$inferSelect,
+  tenantId: string,
+  enrichment: Record<string, unknown>,
+) {
+  const db = getDb();
+  const snapshotData = {
+    ...((document.snapshotData || {}) as Record<string, unknown>),
+    ...enrichment,
+  };
+  const hash = createHash('sha256').update(JSON.stringify(snapshotData)).digest('hex');
+  const [updated] = await db
+    .update(generatedDocuments)
+    .set({ snapshotData, hash, updatedAt: new Date() })
+    .where(
+      and(
+        eq(generatedDocuments.id, document.id),
+        eq(generatedDocuments.tenantId, tenantId),
+      ),
+    )
+    .returning();
+  return updated || document;
+}
+
 /**
  * Issue/regenerate a Trip Authority and enrich its immutable snapshot with the
  * operational driver identity. External drivers remain external identities;
@@ -145,7 +169,6 @@ export async function onTripIssued(allocationId: string, tenantId: string, userI
   const document = await core.onTripIssued(allocationId, tenantId, userId);
   if (!document) return document;
 
-  const db = getDb();
   const driver = await resolveAuthorityDriver(allocationId, tenantId);
   const snapshotData = {
     ...((document.snapshotData || {}) as Record<string, unknown>),
@@ -160,17 +183,27 @@ export async function onTripIssued(allocationId: string, tenantId: string, userI
     );
   }
 
-  const hash = createHash('sha256').update(JSON.stringify(snapshotData)).digest('hex');
-  const [updated] = await db
-    .update(generatedDocuments)
-    .set({ snapshotData, hash, updatedAt: new Date() })
-    .where(
-      and(
-        eq(generatedDocuments.id, document.id),
-        eq(generatedDocuments.tenantId, tenantId),
-      ),
-    )
-    .returning();
+  return persistSnapshotEnrichment(document, tenantId, { driver });
+}
 
-  return updated || document;
+/**
+ * Complete an inspection document version and freeze the complete visual
+ * payload used by the verified PDF. Historical documents without renderData
+ * continue to use the renderer's legacy live-data fallback.
+ */
+export async function onInspectionCompleted(
+  inspectionId: string,
+  tenantId: string,
+  userId: string,
+) {
+  const document = await core.onInspectionCompleted(inspectionId, tenantId, userId);
+  if (!document) return document;
+
+  const renderData = await buildInspectionReportRenderSnapshot(document.id);
+  if (!renderData) {
+    console.warn(`[DocGen] Could not build immutable inspection render snapshot ${inspectionId}`);
+    return document;
+  }
+
+  return persistSnapshotEnrichment(document, tenantId, { renderData });
 }
