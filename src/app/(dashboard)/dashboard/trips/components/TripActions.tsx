@@ -53,7 +53,7 @@ interface ReadinessResponse {
     accepted: boolean;
     assignmentState?: string | null;
   };
-  gates?: Array<{ key: string; status: GateStatus }>;
+  gates?: Array<{ key: string; status: GateStatus; label?: string; detail?: string }>;
 }
 
 export function TripActions({
@@ -86,6 +86,7 @@ export function TripActions({
   const [driverKind, setDriverKind] = useState<DriverKind>('unassigned');
   const [driverAccepted, setDriverAccepted] = useState(Boolean(hasAcknowledge));
   const [vehicleIssued, setVehicleIssued] = useState(Boolean(hasIssue));
+  const [authorityAmendmentPending, setAuthorityAmendmentPending] = useState(false);
 
   const midTrip = status === 'in_progress';
   // Relief-driver handover is an internal-employee workflow. Require the
@@ -107,16 +108,19 @@ export function TripActions({
       if (!response.ok) throw new Error(json.error || 'Unable to check release readiness');
       const departureGate = json.gates?.find((gate) => gate.key === 'departure_inspection');
       const acknowledgementGate = json.gates?.find((gate) => gate.key === 'driver_acknowledged');
+      const amendmentGate = json.gates?.find((gate) => gate.key === 'authority_amendment_acknowledged');
       const vehicleIssuedGate = json.gates?.find((gate) => gate.key === 'vehicle_issued');
       const fallbackAccepted = acknowledgementGate
         ? acknowledgementGate.status === 'pass'
         : Boolean(hasAcknowledge);
       setDepartureInspectionStatus(departureGate?.status ?? null);
+      setAuthorityAmendmentPending(Boolean(amendmentGate && amendmentGate.status !== 'pass'));
       setDriverKind(json.driver?.kind ?? 'unassigned');
       setDriverAccepted(json.driver?.accepted ?? fallbackAccepted);
       setVehicleIssued(vehicleIssuedGate ? vehicleIssuedGate.status === 'pass' : Boolean(hasIssue));
     } catch (reason) {
       setDepartureInspectionStatus(null);
+      setAuthorityAmendmentPending(false);
       setDriverKind('unassigned');
       setDriverAccepted(Boolean(hasAcknowledge));
       setVehicleIssued(Boolean(hasIssue));
@@ -166,13 +170,22 @@ export function TripActions({
 
       const departureGate = readiness.gates?.find((gate) => gate.key === 'departure_inspection');
       const acknowledgementGate = readiness.gates?.find((gate) => gate.key === 'driver_acknowledged');
+      const amendmentGate = readiness.gates?.find((gate) => gate.key === 'authority_amendment_acknowledged');
       const authorityGate = readiness.gates?.find((gate) => gate.key === 'trip_authority');
       const resolvedDriverKind = readiness.driver?.kind ?? 'unassigned';
       const resolvedAccepted = readiness.driver?.accepted ?? acknowledgementGate?.status === 'pass';
       setDepartureInspectionStatus(departureGate?.status ?? null);
+      setAuthorityAmendmentPending(Boolean(amendmentGate && amendmentGate.status !== 'pass'));
       setDriverKind(resolvedDriverKind);
       setDriverAccepted(Boolean(resolvedAccepted));
 
+      if (amendmentGate && amendmentGate.status !== 'pass') {
+        throw new Error(
+          resolvedDriverKind === 'external'
+            ? 'The replacement vehicle changed the Trip Authority. Record the external driver acceptance of the revised authority before vehicle issue.'
+            : 'The replacement vehicle changed the Trip Authority. The assigned driver must accept the revised authority before vehicle issue.',
+        );
+      }
       if (authorityGate?.status !== 'pass') {
         throw new Error('The current Trip Authority must be formally issued before physical vehicle issue.');
       }
@@ -362,7 +375,17 @@ export function TripActions({
             <Clock3 className="h-3.5 w-3.5" /> Checking release readiness…
           </span>
         )}
-        {!readinessLoading && canInspect && !driverAccepted && !inspectionPassed && (
+        {!readinessLoading && authorityAmendmentPending && !inspectionPassed && (
+          <Button variant="secondary" size="sm" asChild>
+            <Link href={`/dashboard/trips/${tripId}/authority`}>
+              <Clock3 className="h-4 w-4" />
+              {driverKind === 'external'
+                ? 'Record Revised Driver Acceptance'
+                : 'Review Revised Authority'}
+            </Link>
+          </Button>
+        )}
+        {!readinessLoading && canInspect && !authorityAmendmentPending && !driverAccepted && !inspectionPassed && (
           <span
             className="border-status-pending-bg/40 bg-status-pending-bg/10 text-status-pending-text inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs"
             title={
@@ -377,7 +400,7 @@ export function TripActions({
               : 'Waiting for driver acknowledgement'}
           </span>
         )}
-        {!readinessLoading && canInspect && driverAccepted && inspectionNeedsWork && (
+        {!readinessLoading && canInspect && !authorityAmendmentPending && driverAccepted && inspectionNeedsWork && (
           <Button variant="secondary" size="sm" onClick={handleDepartureInspection}>
             <CheckSquare className="h-4 w-4" />
             {departureInspectionStatus === 'blocking' || departureInspectionStatus === 'fail'
@@ -390,7 +413,7 @@ export function TripActions({
             <Repeat className="h-4 w-4" /> Replace Vehicle
           </Button>
         )}
-        {!readinessLoading && canManage && driverAccepted && inspectionPassed && !vehicleIssued && (
+        {!readinessLoading && canManage && !authorityAmendmentPending && driverAccepted && inspectionPassed && !vehicleIssued && (
           <Button variant="secondary" size="sm" loading={isWorking} onClick={handleIssueVehicle}>
             <KeyRound className="h-4 w-4" /> Issue Vehicle
           </Button>
