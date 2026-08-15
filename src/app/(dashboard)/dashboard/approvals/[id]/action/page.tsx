@@ -1,15 +1,17 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { CheckCircle2, ChevronLeft, Truck } from 'lucide-react';
+import { CalendarClock, CheckCircle2, ChevronLeft, MapPin, ShieldCheck, Truck, UserRound } from 'lucide-react';
 import { ApprovalActionPanel } from '@/components/approvals/approval-action-panel';
 import { TransportDecisionPanel } from '@/components/approvals/transport-decision-panel';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { buildApprovalRequestTitle } from '@/lib/approval-decision';
 import { getApprovalDetail } from '@/lib/approval-detail';
 import { getSessionPermissions } from '@/lib/auth-helpers';
 import { getServerSession } from '@/lib/session';
+import { formatDate } from '@/lib/utils';
 
 export default async function ApprovalActionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -50,6 +52,14 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
       detail.allocation.vehicleId &&
       detail.allocation.driverEmployeeId,
   );
+  const primaryDriver = detail.drivers.find(
+    (driver) => driver.driverType === 'assigned' || driver.isConfirmed,
+  ) ?? detail.drivers[0];
+  const origin = detail.routes[0]?.originName || 'Not recorded';
+  const destination = detail.routes.at(-1)?.destinationName || 'Not recorded';
+  const startAt = detail.activities[0]?.startDate ?? null;
+  const endAt = detail.activities.at(-1)?.endDate ?? null;
+  const showDecisionContext = !isTransportReview;
 
   return (
     <div className="space-y-6">
@@ -71,6 +81,72 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
           </Link>
         </Button>
       </PageHeader>
+
+      {showDecisionContext && (
+        <section aria-labelledby="decision-context-heading" className="border-border bg-surface rounded-[10px] border px-4 py-4 sm:px-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 id="decision-context-heading" className="text-ink-950 text-sm font-semibold">Decision context</h2>
+            <Badge variant={detail.instance.requestScope === 'national' ? 'emergency' : 'info'} size="sm">
+              {detail.instance.requestScope === 'national' ? 'National trip' : 'Regional trip'}
+            </Badge>
+            {detail.instance.specialAuthorityRequired && (
+              <Badge variant={detail.instance.specialAuthorityApproved ? 'success' : 'warning'} size="sm">
+                Special authority {detail.instance.specialAuthorityApproved ? 'approved' : 'required'}
+              </Badge>
+            )}
+          </div>
+          <p className="text-ink-500 mt-1 text-xs">Essential operational facts remain visible while you make this decision. Return to the full review for the complete history and supporting evidence.</p>
+
+          <div className="border-border mt-4 grid gap-px overflow-hidden rounded-[8px] border bg-border sm:grid-cols-2 lg:grid-cols-4">
+            <div className="bg-surface flex min-w-0 gap-2.5 p-3">
+              <MapPin className="text-ink-400 mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="text-ink-500 text-[11px] font-medium uppercase tracking-wide">Route</p>
+                <p className="text-ink-950 mt-0.5 truncate text-sm font-medium" title={`${origin} → ${destination}`}>{origin} → {destination}</p>
+              </div>
+            </div>
+            <div className="bg-surface flex min-w-0 gap-2.5 p-3">
+              <CalendarClock className="text-ink-400 mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="text-ink-500 text-[11px] font-medium uppercase tracking-wide">Travel</p>
+                <p className="text-ink-950 mt-0.5 text-sm font-medium">
+                  {startAt ? formatDate(startAt) : 'Not scheduled'}{endAt ? ` – ${formatDate(endAt)}` : ''}
+                </p>
+              </div>
+            </div>
+            <div className="bg-surface flex min-w-0 gap-2.5 p-3">
+              <Truck className="text-ink-400 mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="text-ink-500 text-[11px] font-medium uppercase tracking-wide">Vehicle</p>
+                <p className="text-ink-950 mt-0.5 truncate text-sm font-medium">
+                  {detail.allocation ? `${detail.allocation.make} ${detail.allocation.model} · ${detail.allocation.licenceNumber}` : 'Not assigned'}
+                </p>
+              </div>
+            </div>
+            <div className="bg-surface flex min-w-0 gap-2.5 p-3">
+              <UserRound className="text-ink-400 mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="text-ink-500 text-[11px] font-medium uppercase tracking-wide">Driver</p>
+                <p className="text-ink-950 mt-0.5 truncate text-sm font-medium">
+                  {primaryDriver?.employeeName || 'Not assigned'}
+                </p>
+                {primaryDriver && (
+                  <p className="text-ink-500 mt-0.5 text-[11px]">
+                    Licence {primaryDriver.licenceValidated ? 'validated' : 'requires review'}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {detail.currentStep.actionType === 'authorise' && (
+            <div className="text-ink-600 mt-3 flex items-start gap-2 text-xs leading-5">
+              <ShieldCheck className="text-status-success-text mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>Final authorisation will provision the canonical Trip Authority for the current confirmed vehicle and driver assignment, then hand the trip to the assigned driver for acknowledgement.</span>
+            </div>
+          )}
+        </section>
+      )}
 
       {isTransportReview && operationalAssignmentReady && detail.allocation ? (
         <Card>
