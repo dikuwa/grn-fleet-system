@@ -11,6 +11,7 @@ import { tripIncidents, trips, vehicleAllocations, vehicleInspections } from '@/
 import { validateDocumentSnapshot } from '@/lib/document-validation';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
 import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
+import { enrichClosedTripFuelSummary } from '@/lib/trip-closure-document-enrichment';
 import * as core from '@/lib/document-generator-core';
 
 export type { DocumentType } from '@/lib/document-generator-core';
@@ -126,8 +127,6 @@ async function sourceEntityBelongsToTenant(
         .limit(1);
       return Boolean(row);
     }
-    // Maintenance and vehicle-history builders both use a vehicle ID as their
-    // source entity, so tenant ownership is established on the vehicle record.
     case 'maintenance':
     case 'vehicle': {
       const [row] = await db
@@ -159,7 +158,6 @@ async function assertDocumentSourceTenant(
   return allowed;
 }
 
-/** Public generation boundary with source-record tenant validation and race recovery. */
 export async function generateDocument(payload: GenerateDocumentPayload) {
   if (!(await assertDocumentSourceTenant(payload.entityType, payload.entityId, payload.tenantId))) {
     return null;
@@ -322,9 +320,6 @@ async function persistSnapshotEnrichment(
     .returning();
   if (updated) return updated;
 
-  // Issuance may win the race between generation and preliminary enrichment.
-  // Never mutate that issued row; return the authoritative current record so
-  // callers do not continue with a stale draft object.
   const [current] = await db
     .select()
     .from(generatedDocuments)
@@ -338,12 +333,6 @@ async function persistSnapshotEnrichment(
   return current || document;
 }
 
-/**
- * If departure has already started, Trip Authority generation is closed. The
- * authority is a pre-departure official record; operational status transitions
- * such as in_progress/return/closed must not manufacture a new draft version.
- * Return the latest existing document so legacy callers can remain idempotent.
- */
 async function existingAuthorityDocumentAfterDeparture(
   allocationId: string,
   tenantId: string,
@@ -372,11 +361,6 @@ async function existingAuthorityDocumentAfterDeparture(
   return document ?? null;
 }
 
-/**
- * Generate or refresh the pending Transport Request document snapshot.
- * Final visual render data and branding are rebuilt and frozen only by the
- * formal Issue action, so submission retries cannot mutate an official copy.
- */
 export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('transport_request', requestId, tenantId))) return null;
   return generateWithVersionRaceRecovery({
@@ -388,7 +372,12 @@ export async function onRequestSubmitted(requestId: string, tenantId: string, us
   });
 }
 
-/** Generate trip-closure documents only from a trip owned by the supplied tenant. */
+/**
+ * Generate trip-closure documents from the immutable reconciled trip boundary.
+ * Fuel Summary receives a second draft-only enrichment pass because its PDF
+ * intentionally carries the verified transaction table and operational identity
+ * in addition to aggregate totals.
+ */
 export async function onTripClosed(tripId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('trip', tripId, tenantId))) return [];
   const results = await Promise.all([
@@ -407,15 +396,17 @@ export async function onTripClosed(tripId: string, tenantId: string, userId: str
       generatedByUserId: userId,
     }),
   ]);
-  return results.filter(Boolean);
+
+  const completion = results[0] ?? null;
+  let fuelSummary = results[1] ?? null;
+  if (fuelSummary) {
+    fuelSummary =
+      (await enrichClosedTripFuelSummary(tripId, tenantId, fuelSummary.id)) ?? fuelSummary;
+  }
+
+  return [completion, fuelSummary].filter(Boolean);
 }
 
-/**
- * Generate/refresh a Trip Authority draft only before departure. The allocation
- * lifecycle can precede provisioning of the canonical authority row, so
- * renderData here is only a preliminary preview. Formal issuance always rebuilds
- * the final render snapshot and branding before it becomes official.
- */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('vehicle_allocation', allocationId, tenantId))) return null;
 
@@ -453,11 +444,6 @@ export async function onTripIssued(allocationId: string, tenantId: string, userI
   });
 }
 
-/**
- * Refresh the pending inspection document preview after completion. This helper
- * only enriches rows that are still draft; formal issuance rebuilds and freezes
- * the complete official render payload.
- */
 export async function onInspectionCompleted(
   inspectionId: string,
   tenantId: string,
