@@ -11,7 +11,6 @@ import { tripIncidents, trips, vehicleAllocations, vehicleInspections } from '@/
 import { validateDocumentSnapshot } from '@/lib/document-validation';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
 import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
-import { buildTransportRequestRenderSnapshot } from '@/lib/pdf/verified-transport-request';
 import * as core from '@/lib/document-generator-core';
 
 export type { DocumentType } from '@/lib/document-generator-core';
@@ -286,30 +285,36 @@ async function persistSnapshotEnrichment(
       and(
         eq(generatedDocuments.id, document.id),
         eq(generatedDocuments.tenantId, tenantId),
+        eq(generatedDocuments.status, 'draft'),
       ),
     )
     .returning();
-  return updated || document;
+  if (updated) return updated;
+
+  // Issuance may win the race between generation and preliminary enrichment.
+  // Never mutate that issued row; return the authoritative current record so
+  // callers do not continue with a stale draft object.
+  const [current] = await db
+    .select()
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.id, document.id),
+        eq(generatedDocuments.tenantId, tenantId),
+      ),
+    )
+    .limit(1);
+  return current || document;
 }
 
 /**
- * Generate a submitted Transport Request snapshot. If regeneration preserves
- * the established auto-issued behaviour, immediately freeze the full visual
- * payload so the new issued version cannot fall back to mutable allocation or
- * approval tables later.
+ * Generate or refresh the pending Transport Request document snapshot.
+ * Final visual render data and branding are rebuilt and frozen only by the
+ * formal Issue action, so submission retries cannot mutate an official copy.
  */
 export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('transport_request', requestId, tenantId))) return null;
-  const document = await core.onRequestSubmitted(requestId, tenantId, userId);
-  if (!document || document.status !== 'issued') return document;
-
-  const renderData = await buildTransportRequestRenderSnapshot(document.id, { issuing: true });
-  if (!renderData) {
-    console.warn(`[DocGen] Could not build immutable Transport Request render snapshot ${requestId}`);
-    return document;
-  }
-
-  return persistSnapshotEnrichment(document, tenantId, { renderData });
+  return core.onRequestSubmitted(requestId, tenantId, userId);
 }
 
 /** Generate trip-closure documents only from a trip owned by the supplied tenant. */
@@ -319,11 +324,10 @@ export async function onTripClosed(tripId: string, tenantId: string, userId: str
 }
 
 /**
- * Generate/regenerate a Trip Authority document shell when an allocation is
- * created. The allocation lifecycle can precede provisioning of the canonical
- * trip_authorities row, so the full visual payload is frozen here only when the
- * authority already exists (for example a later regeneration). Otherwise the
- * Issue lifecycle action freezes it after authority provisioning.
+ * Generate/refresh a Trip Authority draft when an allocation is created. The
+ * allocation lifecycle can precede provisioning of the canonical authority row,
+ * so renderData here is only a preliminary preview. Formal issuance always
+ * rebuilds the final render snapshot and branding before it becomes official.
  */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('vehicle_allocation', allocationId, tenantId))) return null;
@@ -353,9 +357,9 @@ export async function onTripIssued(allocationId: string, tenantId: string, userI
 }
 
 /**
- * Complete an inspection document version and freeze the complete visual
- * payload used by the verified PDF. Historical documents without renderData
- * continue to use the renderer's legacy live-data fallback.
+ * Refresh the pending inspection document preview after completion. This helper
+ * only enriches rows that are still draft; formal issuance rebuilds and freezes
+ * the complete official render payload.
  */
 export async function onInspectionCompleted(
   inspectionId: string,
@@ -368,7 +372,7 @@ export async function onInspectionCompleted(
 
   const renderData = await buildInspectionReportRenderSnapshot(document.id);
   if (!renderData) {
-    console.warn(`[DocGen] Could not build immutable inspection render snapshot ${inspectionId}`);
+    console.warn(`[DocGen] Could not build inspection render preview ${inspectionId}`);
     return document;
   }
 
