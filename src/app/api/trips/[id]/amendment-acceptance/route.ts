@@ -3,7 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { employees } from '@/db/schema/people';
-import { tripAmendments, tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
+import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import {
   requireDashboardAction,
   requirePermission,
@@ -196,7 +196,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     await db.execute(sql`
       WITH amendment_claim AS (
         UPDATE trip_amendments am
-        SET status = 'driver_acknowledged'
+        SET status = status
         WHERE am.id = ${pending.amendmentId}::uuid
           AND am.authority_id = ${record.authorityId}::uuid
           AND am.amendment_type = 'vehicle_replacement'
@@ -206,7 +206,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
             FROM trip_authorities ta
             WHERE ta.id = am.authority_id
               AND ta.tenant_id = ${tenantId}::uuid
-              AND (ta.accepted_at IS NULL OR am.created_at > ta.accepted_at)
+              AND ta.accepted_at IS NOT NULL
+              AND am.created_at > ta.accepted_at
           )
         RETURNING id
       ),
