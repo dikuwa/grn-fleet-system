@@ -2,7 +2,10 @@ import { AlertTriangle, CheckCircle2, CircleSlash2, ShieldCheck } from 'lucide-r
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { TenantLogo } from '@/components/documents/tenant-logo';
 import { resolvePublicVerification } from '@/lib/document-verification';
-import { resolveTenantBranding } from '@/lib/tenant-branding';
+import {
+  resolveTenantBranding,
+  type ResolvedTenantBranding,
+} from '@/lib/tenant-branding';
 import {
   documentTypeLabel,
   formatDocumentStatus,
@@ -58,6 +61,49 @@ function getVerificationState(status: string) {
   };
 }
 
+function frozenVerificationBranding(
+  snapshot: Record<string, unknown>,
+  liveBranding: ResolvedTenantBranding | null,
+): ResolvedTenantBranding | null {
+  const brandingMeta = snapshot.brandingMeta as Partial<ResolvedTenantBranding> | undefined;
+  const identity = snapshot.documentIdentity as
+    | {
+        organisationName?: string;
+        logoUrl?: string;
+        primaryColor?: string;
+        accentColor?: string;
+        executiveSignatoryName?: string;
+        executiveSignatoryTitle?: string;
+        executiveSignatureUrl?: string;
+      }
+    | undefined;
+
+  if (!brandingMeta && !identity) return liveBranding;
+
+  const base = liveBranding || ({} as ResolvedTenantBranding);
+  return {
+    ...base,
+    ...brandingMeta,
+    organisationName:
+      brandingMeta?.organisationName || identity?.organisationName || liveBranding?.organisationName || 'Government Fleet',
+    logoUrl: identity?.logoUrl || liveBranding?.logoUrl,
+    primaryColor:
+      brandingMeta?.primaryColor || identity?.primaryColor || liveBranding?.primaryColor || '#1F2A44',
+    accentColor:
+      brandingMeta?.accentColor || identity?.accentColor || liveBranding?.accentColor || '#0F766E',
+    executiveSignatoryName:
+      brandingMeta?.executiveSignatoryName ||
+      identity?.executiveSignatoryName ||
+      liveBranding?.executiveSignatoryName,
+    executiveSignatoryTitle:
+      brandingMeta?.executiveSignatoryTitle ||
+      identity?.executiveSignatoryTitle ||
+      liveBranding?.executiveSignatoryTitle,
+    executiveSignatureUrl:
+      identity?.executiveSignatureUrl || liveBranding?.executiveSignatureUrl,
+  } as ResolvedTenantBranding;
+}
+
 export default async function ShortVerificationPage({
   params,
 }: {
@@ -79,8 +125,9 @@ export default async function ShortVerificationPage({
   }
 
   const document = result.document;
-  const branding = await resolveTenantBranding(document.tenantId);
   const snapshot = document.snapshotData as Record<string, unknown>;
+  const liveBranding = await resolveTenantBranding(document.tenantId);
+  const branding = frozenVerificationBranding(snapshot, liveBranding);
   const status = getVerificationState(document.status);
   const reference = String(
     snapshot.authorityNumber || snapshot.reference || `Version ${document.documentVersion}`,
@@ -110,8 +157,6 @@ export default async function ShortVerificationPage({
     !permanent &&
     result.shareLink.accessPolicy?.allowDownload === true &&
     document.status !== 'draft';
-  // The verification-page request has already claimed one view. A PDF download
-  // is still valid when it would consume exactly the final permitted view.
   const downloadViewAvailable =
     !permanent &&
     (!result.shareLink.maxViews || result.shareLink.currentViews + 1 <= result.shareLink.maxViews);
