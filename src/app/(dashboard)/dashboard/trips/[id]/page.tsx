@@ -1,6 +1,7 @@
 import { getDb, isDbConnected } from '@/db';
 import { trips, tripIncidents, tripLogEntries, fuelTransactions, vehicleInspections, tripIssues, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests, requestRoutes } from '@/db/schema/requests';
+import { externalParties } from '@/db/schema/external-parties';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { eq, and, desc } from 'drizzle-orm';
@@ -76,6 +77,9 @@ async function fetchTripDetail(
       requesterFirstName: employees.firstName,
       requesterLastName: employees.lastName,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      externalDriverFirstName: externalParties.firstName,
+      externalDriverLastName: externalParties.lastName,
+      externalDriverOrganisation: externalParties.organisationName,
     })
     .from(trips)
     .leftJoin(vehicles, and(eq(trips.vehicleId, vehicles.id), eq(vehicles.tenantId, tenantId)))
@@ -86,6 +90,13 @@ async function fetchTripDetail(
     .leftJoin(
       employees,
       and(eq(transportRequests.requesterEmployeeId, employees.id), eq(employees.tenantId, tenantId)),
+    )
+    .leftJoin(
+      externalParties,
+      and(
+        eq(transportRequests.assignedDriverExternalPartyId, externalParties.id),
+        eq(externalParties.tenantId, tenantId),
+      ),
     )
     .leftJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
     .where(and(
@@ -110,6 +121,7 @@ async function fetchTripDetail(
       })
       .from(tripIssues)
       .where(eq(tripIssues.allocationId, trip.allocationId))
+      .orderBy(desc(tripIssues.issuedAt))
       .limit(1)
       .then((r) => r[0] ?? null),
     db
@@ -212,6 +224,10 @@ export default async function TripDetailPage({ params }: PageProps) {
   const isDriver = roleNames.includes(SystemRoles.DRIVER);
   const canOperate = access.actions.includes('update');
   const variant = TRIP_STATUS_VARIANTS[trip.status] ?? 'info';
+  const externalDriverName = [trip.externalDriverFirstName, trip.externalDriverLastName]
+    .filter(Boolean)
+    .join(' ');
+  const currentIssueRecord = trip.issuedAt ? issueRecord : null;
 
   return (
     <div className="space-y-6">
@@ -237,7 +253,7 @@ export default async function TripDetailPage({ params }: PageProps) {
                 licenceNumber: trip.licenceNumber || '',
                 currentOdometer: trip.currentOdometer,
               } : undefined}
-              hasIssue={!!issueRecord}
+              hasIssue={!!trip.issuedAt}
               hasAcknowledge={!!trip.driverAcknowledgedAt}
               hasDepartureInspection={inspections.some((inspection) => inspection.type === 'departure' && inspection.overallPass)}
               canManage={permissionCodes.includes(Permissions.TRIP_MANAGE)}
@@ -271,10 +287,17 @@ export default async function TripDetailPage({ params }: PageProps) {
                 <h2 className="text-lg font-semibold text-ink-950">{trip.make} {trip.model}</h2>
                 <StatusBadge status={variant} label={TRIP_STATUS_LABELS[trip.status] ?? trip.status} />
                 <Badge variant="info" size="sm">{trip.licenceNumber}</Badge>
+                {externalDriverName && <Badge variant="info" size="sm">External driver</Badge>}
               </div>
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
                 <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5" />{trip.requestReference || 'No request reference'}</span>
                 {trip.requesterFirstName && <span className="flex items-center gap-1"><User className="h-3.5 w-3.5" />{trip.requesterFirstName} {trip.requesterLastName}</span>}
+                {externalDriverName && (
+                  <span className="flex items-center gap-1">
+                    <UserCheckIcon className="h-3.5 w-3.5" />
+                    {externalDriverName}{trip.externalDriverOrganisation ? ` · ${trip.externalDriverOrganisation}` : ''}
+                  </span>
+                )}
                 <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />Created {formatDate(trip.createdAt)}</span>
                 {trip.issuedAt && <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" />Issued {formatDateTime(trip.issuedAt)}</span>}
               </div>
@@ -297,8 +320,14 @@ export default async function TripDetailPage({ params }: PageProps) {
         <CardContent>
           <div className="space-y-4">
             <TimelineItem icon={<FileText />} title="Request" subtitle={trip.requestReference ?? '—'} time={formatDate(trip.createdAt)} status="complete" />
-            <TimelineItem icon={<Truck />} title="Vehicle Issued" subtitle={issueRecord ? `${issueRecord.keysIssued ? 'Keys ✓' : ''}${issueRecord.fuelCardIssued ? ' Fuel Card ✓' : ''}` : undefined} time={issueRecord?.issuedAt ? formatDateTime(issueRecord.issuedAt) : trip.issuedAt ? formatDateTime(trip.issuedAt) : 'Pending'} status={issueRecord ? 'complete' : 'pending'} />
-            <TimelineItem icon={<UserCheckIcon />} title="Driver Acknowledged" time={issueRecord?.acknowledgedAt ? formatDateTime(issueRecord.acknowledgedAt) : 'Pending'} status={issueRecord?.acknowledgedAt ? 'complete' : 'pending'} />
+            <TimelineItem
+              icon={<Truck />}
+              title="Vehicle Issued"
+              subtitle={currentIssueRecord ? `${currentIssueRecord.keysIssued ? 'Keys ✓' : ''}${currentIssueRecord.fuelCardIssued ? ' Fuel Card ✓' : ''}` : issueRecord ? 'Previous physical issue retained in audit history; replacement vehicle requires a new issue.' : undefined}
+              time={trip.issuedAt ? formatDateTime(trip.issuedAt) : 'Pending'}
+              status={trip.issuedAt ? 'complete' : 'pending'}
+            />
+            <TimelineItem icon={<UserCheckIcon />} title="Driver Acknowledged" time={trip.driverAcknowledgedAt ? formatDateTime(trip.driverAcknowledgedAt) : 'Pending'} status={trip.driverAcknowledgedAt ? 'complete' : 'pending'} />
             <TimelineItem icon={<Gauge />} title="Trip Started" time={trip.startedAt ? formatDateTime(trip.startedAt) : 'Pending'} status={trip.startedAt ? 'complete' : 'pending'} />
             <TimelineItem icon={<CheckCircle2 />} title="Returned" time={trip.returnedAt ? formatDateTime(trip.returnedAt) : 'Pending'} status={trip.returnedAt ? 'complete' : 'pending'} />
             <TimelineItem icon={<Clock />} title="Closed" time={trip.closedAt ? formatDateTime(trip.closedAt) : 'Pending'} status={trip.closedAt ? 'complete' : 'pending'} />
@@ -338,7 +367,7 @@ export default async function TripDetailPage({ params }: PageProps) {
 
       {inspections.length > 0 && (
         <Card>
-          <CardHeader><CardTitle>Inspections ({inspections.length})</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Inspections ({inspections.length})</CardHeader>
           <CardContent className="p-0">
             <div className="divide-y divide-border">
               {inspections.map((insp) => (
