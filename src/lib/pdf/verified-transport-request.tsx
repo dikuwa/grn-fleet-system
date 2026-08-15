@@ -15,6 +15,11 @@ import { abbreviatedDocumentHash } from '@/lib/document-verification';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { TransportRequestDocument, type TransportRequestData } from './transport-request';
 
+export type TransportRequestRenderSnapshot = Omit<
+  TransportRequestData,
+  'verificationCode' | 'verificationUrl' | 'documentHash' | 'qrCodeDataUrl'
+>;
+
 async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Array> {
   const stream = await renderToStream(
     element as unknown as React.ReactElement<Record<string, unknown>>,
@@ -31,9 +36,30 @@ async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Arra
   return result;
 }
 
-export async function generateVerifiedTransportRequestPdf(
+function isStoredTransportRequestRenderSnapshot(value: unknown): value is TransportRequestRenderSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const data = value as Record<string, unknown>;
+  return (
+    typeof data.reference === 'string' &&
+    typeof data.scope === 'string' &&
+    typeof data.status === 'string' &&
+    !!data.requester &&
+    typeof data.requester === 'object'
+  );
+}
+
+/**
+ * Build the exact visual payload for a Transport Request.
+ *
+ * The submission snapshot already contains the requester, routes, passengers,
+ * goods and approval history captured at generation time. The remaining live
+ * allocation/driver/outcome and tenant branding are resolved here and frozen
+ * into renderData when the generated document is formally issued.
+ */
+export async function buildTransportRequestRenderSnapshot(
   documentId: string,
-): Promise<{ buffer: Uint8Array; filename: string } | null> {
+  options: { issuing?: boolean } = {},
+): Promise<TransportRequestRenderSnapshot | null> {
   const db = getDb();
   const [document] = await db
     .select()
@@ -62,14 +88,21 @@ export async function generateVerifiedTransportRequestPdf(
         internalDriverName: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
       })
       .from(vehicleAllocations)
-      .leftJoin(vehicles, eq(vehicles.id, vehicleAllocations.vehicleId))
-      .leftJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
-      .where(
+      .leftJoin(
+        vehicles,
         and(
-          eq(vehicleAllocations.requestId, document.entityId),
+          eq(vehicles.id, vehicleAllocations.vehicleId),
           eq(vehicles.tenantId, document.tenantId),
         ),
       )
+      .leftJoin(
+        employees,
+        and(
+          eq(employees.id, vehicleAllocations.driverEmployeeId),
+          eq(employees.tenantId, document.tenantId),
+        ),
+      )
+      .where(eq(vehicleAllocations.requestId, document.entityId))
       .orderBy(desc(vehicleAllocations.createdAt))
       .limit(1);
 
@@ -79,12 +112,17 @@ export async function generateVerifiedTransportRequestPdf(
         const [external] = await db
           .select({ firstName: externalParties.firstName, lastName: externalParties.lastName })
           .from(externalDriverAssignments)
-          .innerJoin(externalParties, eq(externalParties.id, externalDriverAssignments.externalPartyId))
+          .innerJoin(
+            externalParties,
+            and(
+              eq(externalParties.id, externalDriverAssignments.externalPartyId),
+              eq(externalParties.tenantId, document.tenantId),
+            ),
+          )
           .where(
             and(
               eq(externalDriverAssignments.tenantId, document.tenantId),
               eq(externalDriverAssignments.allocationId, allocation.id),
-              eq(externalParties.tenantId, document.tenantId),
             ),
           )
           .orderBy(desc(externalDriverAssignments.assignedAt))
@@ -93,7 +131,7 @@ export async function generateVerifiedTransportRequestPdf(
       }
 
       outcome = {
-        finalStatus: document.status === 'issued' ? 'Approved' : document.status,
+        finalStatus: options.issuing || document.status === 'issued' ? 'Approved' : document.status,
         linkedAuthorityReference: `TA-${allocation.id.slice(0, 8).toUpperCase()}`,
         allocatedVehicle: allocation.licenceNumber || 'Not recorded',
         allocatedDriver: allocatedDriver || 'Not recorded',
@@ -117,14 +155,11 @@ export async function generateVerifiedTransportRequestPdf(
     }
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
-  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
-  const data: TransportRequestData = {
+  return {
     reference: String(snapshot.reference || document.id.slice(0, 8).toUpperCase()),
     revision: snapshot.revision as number | undefined,
     scope: String(snapshot.scope || 'regional'),
-    status: document.status || (snapshot.status as string) || 'draft',
+    status: options.issuing ? 'issued' : document.status || (snapshot.status as string) || 'draft',
     department: snapshot.department as string | undefined,
     purpose: snapshot.purpose as string | undefined,
     submittedAt: snapshot.submittedAt as string | undefined,
@@ -135,10 +170,6 @@ export async function generateVerifiedTransportRequestPdf(
     branding: resolvedBranding,
     documentVersion: document.documentVersion,
     issuedAt: document.createdAt.toISOString(),
-    verificationCode: document.verificationCode,
-    verificationUrl,
-    qrCodeDataUrl,
-    documentHash: abbreviatedDocumentHash(document.hash) || undefined,
     requester: (snapshot.requester as TransportRequestData['requester']) || { name: 'Unknown' },
     activities: snapshot.activities as TransportRequestData['activities'],
     passengers: snapshot.passengers as TransportRequestData['passengers'],
@@ -149,6 +180,37 @@ export async function generateVerifiedTransportRequestPdf(
     approvalWorkflow: snapshot.approvalWorkflow as TransportRequestData['approvalWorkflow'],
     goodsAndEquipment: snapshot.goodsAndEquipment as TransportRequestData['goodsAndEquipment'],
     outcome,
+  };
+}
+
+export async function generateVerifiedTransportRequestPdf(
+  documentId: string,
+): Promise<{ buffer: Uint8Array; filename: string } | null> {
+  const db = getDb();
+  const [document] = await db
+    .select()
+    .from(generatedDocuments)
+    .where(eq(generatedDocuments.id, documentId))
+    .limit(1);
+  if (!document || document.documentType !== 'transport_request' || !document.snapshotData) {
+    return null;
+  }
+
+  const snapshot = document.snapshotData as Record<string, unknown>;
+  const renderSnapshot = isStoredTransportRequestRenderSnapshot(snapshot.renderData)
+    ? snapshot.renderData
+    : await buildTransportRequestRenderSnapshot(documentId);
+  if (!renderSnapshot) return null;
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
+  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
+  const data: TransportRequestData = {
+    ...renderSnapshot,
+    verificationCode: document.verificationCode,
+    verificationUrl,
+    qrCodeDataUrl,
+    documentHash: abbreviatedDocumentHash(document.hash) || undefined,
   };
 
   const element = React.createElement(
