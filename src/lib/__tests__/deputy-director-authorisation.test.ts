@@ -7,7 +7,7 @@ describe('Deputy Director regional authorisation contract', () => {
   it('grants regional final authorisation without national authorisation or release permissions', () => {
     const permissions = new Set(RoleDefinitions.DEPUTY_DIRECTOR.permissions);
 
-    expect(RoleDefinitions.DEPUTY_DIRECTOR.name).toBe(SystemRoles.REGIONAL_AUTHORISER);
+    expect(RoleDefinitions.DEPUTY_DIRECTOR.name).toBe(SystemRoles.DEPUTY_DIRECTOR);
     expect(permissions.has(Permissions.TRIP_AUTHORIZE_REGIONAL)).toBe(true);
     expect(permissions.has(Permissions.TRIP_AUTHORIZE_NATIONAL)).toBe(false);
     expect(permissions.has(Permissions.VEHICLE_RELEASE_REGIONAL)).toBe(false);
@@ -15,7 +15,7 @@ describe('Deputy Director regional authorisation contract', () => {
   });
 
   it('surfaces the Deputy Director in the Approvals workspace', () => {
-    const workspaceIds = getEligibleWorkspaces([SystemRoles.REGIONAL_AUTHORISER]).map(
+    const workspaceIds = getEligibleWorkspaces([SystemRoles.DEPUTY_DIRECTOR]).map(
       (workspace) => workspace.id,
     );
 
