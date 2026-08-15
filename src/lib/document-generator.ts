@@ -34,6 +34,37 @@ function textOrNull(value: unknown): string | null {
   return text || null;
 }
 
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
+
+/**
+ * The unique entity/version index is the final concurrency boundary. When two
+ * lifecycle requests both observe the same latest issued version, one may win
+ * creation of the next draft and the other receives PostgreSQL 23505. Retrying
+ * against the new latest state makes the loser refresh/reuse the winner's draft
+ * instead of leaking an avoidable 500 to the workflow.
+ */
+async function generateWithVersionRaceRecovery(payload: GenerateDocumentPayload) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await core.generateDocument(payload);
+    } catch (error) {
+      lastError = error;
+      if (postgresErrorCode(error) !== '23505' || attempt === 2) throw error;
+    }
+  }
+  throw lastError;
+}
+
 /**
  * Fail closed before the core snapshot builder runs. Some child tables inherit
  * tenancy from their parent rather than carrying tenant_id themselves, so the
@@ -128,12 +159,12 @@ async function assertDocumentSourceTenant(
   return allowed;
 }
 
-/** Public generation boundary with source-record tenant validation. */
+/** Public generation boundary with source-record tenant validation and race recovery. */
 export async function generateDocument(payload: GenerateDocumentPayload) {
   if (!(await assertDocumentSourceTenant(payload.entityType, payload.entityId, payload.tenantId))) {
     return null;
   }
-  return core.generateDocument(payload);
+  return generateWithVersionRaceRecovery(payload);
 }
 
 async function resolveAuthorityDriver(
@@ -314,13 +345,35 @@ async function persistSnapshotEnrichment(
  */
 export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('transport_request', requestId, tenantId))) return null;
-  return core.onRequestSubmitted(requestId, tenantId, userId);
+  return generateWithVersionRaceRecovery({
+    documentType: 'transport_request',
+    entityType: 'transport_request',
+    entityId: requestId,
+    tenantId,
+    generatedByUserId: userId,
+  });
 }
 
 /** Generate trip-closure documents only from a trip owned by the supplied tenant. */
 export async function onTripClosed(tripId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('trip', tripId, tenantId))) return [];
-  return core.onTripClosed(tripId, tenantId, userId);
+  const results = await Promise.all([
+    generateWithVersionRaceRecovery({
+      documentType: 'trip_completion',
+      entityType: 'trip',
+      entityId: tripId,
+      tenantId,
+      generatedByUserId: userId,
+    }),
+    generateWithVersionRaceRecovery({
+      documentType: 'fuel_summary',
+      entityType: 'trip',
+      entityId: tripId,
+      tenantId,
+      generatedByUserId: userId,
+    }),
+  ]);
+  return results.filter(Boolean);
 }
 
 /**
@@ -331,7 +384,13 @@ export async function onTripClosed(tripId: string, tenantId: string, userId: str
  */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('vehicle_allocation', allocationId, tenantId))) return null;
-  const document = await core.onTripIssued(allocationId, tenantId, userId);
+  const document = await generateWithVersionRaceRecovery({
+    documentType: 'trip_authority',
+    entityType: 'vehicle_allocation',
+    entityId: allocationId,
+    tenantId,
+    generatedByUserId: userId,
+  });
   if (!document) return document;
 
   const driver = await resolveAuthorityDriver(allocationId, tenantId);
@@ -367,7 +426,13 @@ export async function onInspectionCompleted(
   userId: string,
 ) {
   if (!(await assertDocumentSourceTenant('inspection', inspectionId, tenantId))) return null;
-  const document = await core.onInspectionCompleted(inspectionId, tenantId, userId);
+  const document = await generateWithVersionRaceRecovery({
+    documentType: 'inspection_report',
+    entityType: 'inspection',
+    entityId: inspectionId,
+    tenantId,
+    generatedByUserId: userId,
+  });
   if (!document) return document;
 
   const renderData = await buildInspectionReportRenderSnapshot(document.id);
