@@ -1,36 +1,38 @@
 -- A closed trip is a reconciled financial boundary. Fuel/expense rows linked to
--- that trip must not be inserted, edited or deleted afterwards, otherwise the
--- closure totals and generated completion documents become stale.
+-- that trip must not be inserted, edited, deleted or reassigned afterwards,
+-- otherwise the closure totals and generated completion documents become stale.
 
 CREATE OR REPLACE FUNCTION prevent_closed_trip_financial_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  target_trip_id uuid;
-  target_status text;
+  old_trip_status text;
+  new_trip_status text;
 BEGIN
-  IF TG_OP = 'DELETE' THEN
-    target_trip_id := OLD.trip_id;
-  ELSE
-    target_trip_id := NEW.trip_id;
-  END IF;
+  -- UPDATE must protect both sides of the association. Checking only NEW.trip_id
+  -- would allow a reconciled row to escape immutability by being reassigned from
+  -- a closed trip to an open trip (or to NULL).
+  IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.trip_id IS NOT NULL THEN
+    SELECT status INTO old_trip_status
+    FROM trips
+    WHERE id = OLD.trip_id;
 
-  -- Vehicle-only fuel transactions are outside a trip reconciliation boundary.
-  IF target_trip_id IS NULL THEN
-    IF TG_OP = 'DELETE' THEN
-      RETURN OLD;
+    IF old_trip_status = 'closed' THEN
+      RAISE EXCEPTION 'closed_trip_financial_immutable:%', OLD.trip_id
+        USING ERRCODE = 'check_violation';
     END IF;
-    RETURN NEW;
   END IF;
 
-  SELECT status INTO target_status
-  FROM trips
-  WHERE id = target_trip_id;
+  IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.trip_id IS NOT NULL THEN
+    SELECT status INTO new_trip_status
+    FROM trips
+    WHERE id = NEW.trip_id;
 
-  IF target_status = 'closed' THEN
-    RAISE EXCEPTION 'closed_trip_financial_immutable:%', target_trip_id
-      USING ERRCODE = 'check_violation';
+    IF new_trip_status = 'closed' THEN
+      RAISE EXCEPTION 'closed_trip_financial_immutable:%', NEW.trip_id
+        USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
 
   IF TG_OP = 'DELETE' THEN
