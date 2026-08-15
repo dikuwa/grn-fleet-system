@@ -11,9 +11,13 @@ import { forbiddenResponse, requirePermission } from '@/lib/auth-helpers';
 import type { PermissionCode } from '@/lib/permissions';
 import { workflowCompletedStatus } from '@/lib/request-status';
 import { WorkflowEngine, type EngineResult, type WorkflowActionResult } from '@/lib/workflow-engine';
-import { createScopedNotifications, resolveActionNotifications } from '@/lib/notification-service';
+import {
+  createScopedNotifications,
+  resolveActionNotifications,
+  resolveActiveRoleRecipients,
+} from '@/lib/notification-service';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
-import { WorkspaceIds } from '@/lib/workspaces';
+import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 /**
  * Driver acknowledgement is acceptance of an already authorised assignment,
@@ -69,6 +73,7 @@ export async function processDriverAcknowledgement(input: {
       requestStatus: transportRequests.status,
       requesterUserId: transportRequests.requesterUserId,
       allocationId: vehicleAllocations.id,
+      vehicleId: vehicleAllocations.vehicleId,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
       driverUserId: employees.userId,
       tripId: trips.id,
@@ -300,6 +305,35 @@ export async function processDriverAcknowledgement(input: {
       workflowStage: String(currentStep.stepOrder),
       priority: 'normal',
     }).catch(() => undefined);
+  }
+
+  // Driver acceptance is the handoff into the official pre-trip inspection
+  // lifecycle. Keep this action-required event visible across the recipient's
+  // eligible workspaces so a Control Administrative Officer sees the pending
+  // inspection while still in their default Approvals workspace. The
+  // notification feed will expose its action URL only after the user switches
+  // to a workspace that can access the inspection route.
+  const inspectionRecipients = await resolveActiveRoleRecipients(session.tenantId, [
+    SystemRoles.INSPECTOR,
+    SystemRoles.RELEASE_OFFICER,
+  ]).catch(() => []);
+  const uniqueInspectionRecipients = inspectionRecipients.filter(
+    (userId, index, values) => userId !== session.user.id && values.indexOf(userId) === index,
+  );
+  if (uniqueInspectionRecipients.length) {
+    await createScopedNotifications({
+      tenantId: session.tenantId,
+      recipientUserIds: uniqueInspectionRecipients,
+      category: 'action_required',
+      eventType: 'departure_inspection_required',
+      title: 'Departure inspection required',
+      body: `The driver has accepted ${context.requestReference}. Switch to the Inspections workspace and complete the official departure inspection before the vehicle can depart.`,
+      entityType: 'trip',
+      entityId: context.tripId,
+      actionUrl: `/dashboard/inspections/new?type=departure&tripId=${context.tripId}&vehicleId=${context.vehicleId}`,
+      workspace: null,
+      priority: 'high',
+    }).catch((error) => console.warn('[driver-acknowledgement] Inspection notification failed:', error));
   }
 
   const [updated] = await db
