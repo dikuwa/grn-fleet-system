@@ -47,18 +47,18 @@ export function VehicleCombobox({
     return () => window.clearTimeout(timer);
   }, [search]);
 
+  const canSearch = debouncedSearch.length >= 2;
   const query = useQuery<VehicleSearchOption[]>({
     queryKey: ['vehicle-search', debouncedSearch, status || 'all'],
-    enabled: open,
+    enabled: open && canSearch,
     staleTime: 30_000,
     queryFn: async ({ signal }) => {
-      const params = new URLSearchParams();
-      if (debouncedSearch) params.set('search', debouncedSearch);
+      const params = new URLSearchParams({ search: debouncedSearch, limit: '20' });
       if (status) params.set('status', status);
       const response = await fetch(`/api/fleet?${params}`, { signal, cache: 'no-store' });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'Unable to search vehicles');
-      return (Array.isArray(json) ? json : json.rows || []) as VehicleSearchOption[];
+      return ((Array.isArray(json) ? json : json.rows || []) as VehicleSearchOption[]).slice(0, 20);
     },
   });
 
@@ -135,7 +135,9 @@ export function VehicleCombobox({
             />
           </div>
           <div id={listboxId} role="listbox" className="max-h-72 scrollbar-thin overflow-y-auto p-1">
-            {query.isLoading || query.isFetching ? (
+            {!canSearch ? (
+              <p className="text-ink-500 px-3 py-6 text-center text-sm">Type at least 2 characters to search the fleet.</p>
+            ) : query.isLoading || query.isFetching ? (
               <div className="text-ink-500 flex items-center justify-center gap-2 px-3 py-6 text-sm">
                 <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> Searching…
               </div>
