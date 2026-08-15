@@ -127,8 +127,8 @@ export async function generateVerifiedSnapshotDocumentPdf(
       const data: MaintenanceReportData = {
         vehicleId: document.entityId || document.id,
         vehicle: snapshot.vehicle as string | undefined,
-        totalEvents: Number(snapshot.totalEvents ?? 0),
-        totalCost: Number(snapshot.totalCost ?? 0),
+        totalEvents: optionalFiniteNumber(snapshot.totalEvents),
+        totalCost: optionalFiniteNumber(snapshot.totalCost),
         nextServiceDate: snapshot.nextServiceDate as string | null | undefined,
         nextServiceOdometer: snapshot.nextServiceOdometer as number | null | undefined,
         status: document.status,
