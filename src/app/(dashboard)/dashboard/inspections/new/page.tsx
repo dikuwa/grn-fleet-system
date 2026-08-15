@@ -26,6 +26,7 @@ type ContextTrip = {
   model: string;
   licenceNumber: string;
   currentOdometer: number;
+  driverKind: 'internal' | 'external';
 };
 
 type ContextVehicle = {
@@ -168,6 +169,7 @@ export default function NewInspectionPage() {
   const unassessedCount = checklist.filter((item) => !item.result).length;
   const assessedCount = checklist.length - unassessedCount;
   const requiredPhotoCount = context?.requiredPhotoCount ?? 0;
+  const selectedTrip = context?.trips.find((trip) => trip.id === tripId) ?? null;
 
   function updateResult(id: string, result: Result) {
     setChecklist((items) => items.map((item) => (
@@ -314,8 +316,13 @@ export default function NewInspectionPage() {
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-ink-500">Eligible Trip <span className="text-status-error-text">*</span></label>
                 <StyledSelect value={tripId} onChange={(event) => setTripId(event.target.value)} required placeholder="Select an eligible trip…">
-                  {context.trips.map((trip) => <option key={trip.id} value={trip.id}>{trip.requestReference} — {trip.licenceNumber} — {trip.make} {trip.model}</option>)}
+                  {context.trips.map((trip) => <option key={trip.id} value={trip.id}>{trip.requestReference} — {trip.licenceNumber} — {trip.make} {trip.model} — {trip.driverKind === 'external' ? 'External driver' : 'Internal driver'}</option>)}
                 </StyledSelect>
+                {selectedTrip && (
+                  <p className="mt-1.5 text-xs text-ink-500">
+                    Driver type: <span className="font-medium text-ink-700">{selectedTrip.driverKind === 'external' ? 'External driver' : 'Internal driver'}</span>
+                  </p>
+                )}
                 {context.trips.length === 0 && <p className="mt-1.5 text-xs text-ink-500">No trips currently satisfy the {type} inspection lifecycle.</p>}
               </div>
               <div>
