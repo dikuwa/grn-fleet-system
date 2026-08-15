@@ -43,6 +43,7 @@ export async function POST(
       .select({
         id: vehicleDefects.id,
         vehicleId: vehicleDefects.vehicleId,
+        vehicleStatus: vehicles.status,
         description: vehicleDefects.description,
         isBlocking: vehicleDefects.isBlocking,
         reportedByUserId: vehicleDefects.reportedByUserId,
@@ -173,6 +174,56 @@ export async function POST(
       return NextResponse.json({ error: 'The defect changed while it was being resolved. Refresh and try again.' }, { status: 409 });
     }
 
+    const releaseBlockers: string[] = [];
+    if (defect.isBlocking && releasedCount !== 1) {
+      if (defect.vehicleStatus !== 'maintenance') {
+        releaseBlockers.push(`Vehicle is currently ${defect.vehicleStatus.replaceAll('_', ' ')}; automatic return to service only occurs from maintenance status.`);
+      }
+
+      const blockerResult = await db.execute(sql`
+        SELECT
+          (SELECT count(*)::int
+             FROM vehicle_defects d
+            WHERE d.vehicle_id = ${defect.vehicleId}::uuid
+              AND d.id <> ${id}::uuid
+              AND d.is_blocking = true
+              AND d.resolved_at IS NULL) AS blocking_defects,
+          (SELECT count(*)::int
+             FROM trips t
+            WHERE t.vehicle_id = ${defect.vehicleId}::uuid
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.status IN ('pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review')) AS active_trips,
+          (SELECT count(*)::int
+             FROM trip_incidents ti
+             INNER JOIN trips incident_trip ON incident_trip.id = ti.trip_id
+            WHERE incident_trip.vehicle_id = ${defect.vehicleId}::uuid
+              AND ti.tenant_id = ${session.tenantId}::uuid
+              AND ti.vehicle_damage = true
+              AND ti.status <> 'resolved'
+              AND ti.technical_clearance_status <> 'cleared') AS pending_mva_clearance
+      `);
+      const blockers = blockerResult.rows?.[0] as {
+        blocking_defects?: number | string;
+        active_trips?: number | string;
+        pending_mva_clearance?: number | string;
+      } | undefined;
+      const blockingDefects = Number(blockers?.blocking_defects ?? 0);
+      const activeTrips = Number(blockers?.active_trips ?? 0);
+      const pendingMva = Number(blockers?.pending_mva_clearance ?? 0);
+      if (blockingDefects > 0) {
+        releaseBlockers.push(`${blockingDefects} other unresolved blocking defect${blockingDefects === 1 ? '' : 's'} remain.`);
+      }
+      if (activeTrips > 0) {
+        releaseBlockers.push('The vehicle is still linked to an active trip lifecycle.');
+      }
+      if (pendingMva > 0) {
+        releaseBlockers.push(`${pendingMva} incident/MVA record${pendingMva === 1 ? '' : 's'} still require technical clearance.`);
+      }
+      if (releaseBlockers.length === 0) {
+        releaseBlockers.push('The vehicle did not meet the automatic return-to-service conditions. Refresh the vehicle record before changing its operational status.');
+      }
+    }
+
     if (defect.reportedByUserId && defect.reportedByUserId !== session.user.id) {
       try {
         await createScopedNotifications({
@@ -183,7 +234,9 @@ export async function POST(
           title: 'Reported Defect Resolved',
           body: releasedCount === 1
             ? `${defect.description} Vehicle returned to available status.`
-            : `${defect.description} The defect is resolved; the vehicle remains restricted until all trip/safety clearance gates are complete.`,
+            : releaseBlockers.length > 0
+              ? `${defect.description} The defect is resolved, but the vehicle remains restricted: ${releaseBlockers.join(' ')}`
+              : defect.description,
           entityType: 'vehicle_defect',
           entityId: id,
           actionUrl: null,
@@ -201,6 +254,7 @@ export async function POST(
       claimed: defect.assignedToUserId === null,
       vehicleReleased: releasedCount === 1,
       releasePending: defect.isBlocking && releasedCount !== 1,
+      releaseBlockers,
     });
   } catch (error) {
     console.error('[defects/resolve] POST failed:', error);
