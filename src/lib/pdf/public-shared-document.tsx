@@ -82,7 +82,7 @@ async function streamToBuffer(element: React.ReactElement): Promise<Uint8Array> 
 }
 
 function PublicSharedDocument({
-  documentTypeLabel,
+  documentType,
   documentVersion,
   documentStatus,
   createdAt,
@@ -94,7 +94,7 @@ function PublicSharedDocument({
   documentHash,
   qrCodeDataUrl,
 }: {
-  documentTypeLabel: string;
+  documentType: string;
   documentVersion: number;
   documentStatus: string;
   createdAt: string;
@@ -107,7 +107,7 @@ function PublicSharedDocument({
   qrCodeDataUrl: string;
 }) {
   const summary = buildPublicDocumentSummary({
-    documentType: documentTypeLabel,
+    documentType,
     documentVersion,
     documentStatus,
     snapshotData,
@@ -118,13 +118,13 @@ function PublicSharedDocument({
 
   return (
     <Document
-      title={`${documentTypeLabel.replace(/_/g, ' ')} ${summary.reference}`}
+      title={`${documentType.replace(/_/g, ' ')} ${summary.reference}`}
       author={branding?.organisationName || 'Government Fleet'}
     >
       <DocumentPage continuationLabel={`${branding?.organisationName || 'Government Fleet'} · Verified shared document`}>
         <DocumentHeader
           branding={branding}
-          title={documentTypeLabel.replace(/_/g, ' ')}
+          title={documentType.replace(/_/g, ' ')}
           reference={summary.reference}
           version={documentVersion}
           status={documentStatus}
@@ -158,14 +158,12 @@ function PublicSharedDocument({
                     ? 'External Minimal'
                     : profile === 'external_standard'
                       ? 'External Standard'
-                      : 'Internal',
+                      : 'Legacy Internal Label',
               },
               {
                 label: 'Privacy notice',
                 value:
-                  profile === 'internal'
-                    ? 'This link was explicitly created with the internal disclosure profile.'
-                    : 'Personal identifiers, licence details, passenger lists, signatures, internal comments, fuel-card data and attachment references are omitted from this shared copy.',
+                  'This public copy is allow-list redacted. Personal identifiers, licence details, passenger lists, signatures, internal comments, fuel-card data and attachment references are omitted.',
               },
             ]}
           />
@@ -198,7 +196,7 @@ export async function generatePublicSharedDocumentPdf(input: {
     documentType: string;
     documentVersion: number;
     status: string;
-    snapshotData: Record<string, unknown>;
+    snapshotData: Record<string, unknown> | null | undefined;
     hash: string | null;
     createdAt: Date;
   };
@@ -215,7 +213,7 @@ export async function generatePublicSharedDocumentPdf(input: {
   const verificationUrl = `${input.baseUrl.replace(/\/$/, '')}/v/${encodeURIComponent(slug)}`;
   const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
   const element = React.createElement(PublicSharedDocument, {
-    documentTypeLabel: input.document.documentType,
+    documentType: input.document.documentType,
     documentVersion: input.document.documentVersion,
     documentStatus: input.document.status,
     createdAt: input.document.createdAt.toISOString(),
