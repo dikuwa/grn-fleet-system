@@ -11,7 +11,7 @@ type ExternalRedactionProfile = (typeof EXTERNAL_REDACTION_PROFILES)[number];
 
 /**
  * GET /api/share-links
- * List all active share links with document info and analytics.
+ * List all share links with document info and analytics.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -30,7 +30,13 @@ export async function GET(request: NextRequest) {
       '/dashboard/share-links',
       'delete',
     );
+    const createCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'create',
+    );
     const canRevoke = !(revokeCheck instanceof NextResponse);
+    const canDistribute = !(createCheck instanceof NextResponse);
 
     const { searchParams } = new URL(request.url);
     const requestedPage = Number.parseInt(searchParams.get('page') || '1', 10);
@@ -52,9 +58,18 @@ export async function GET(request: NextRequest) {
     if (status === 'active') {
       conditions.push(eq(shareLinks.isRevoked, false));
       conditions.push(gte(shareLinks.expiresAt, new Date()));
+      conditions.push(
+        sql<boolean>`(${shareLinks.maxViews} is null or ${shareLinks.currentViews} < ${shareLinks.maxViews})`,
+      );
     } else if (status === 'expired') {
       conditions.push(eq(shareLinks.isRevoked, false));
       conditions.push(lt(shareLinks.expiresAt, new Date()));
+    } else if (status === 'exhausted') {
+      conditions.push(eq(shareLinks.isRevoked, false));
+      conditions.push(gte(shareLinks.expiresAt, new Date()));
+      conditions.push(
+        sql<boolean>`${shareLinks.maxViews} is not null and ${shareLinks.currentViews} >= ${shareLinks.maxViews}`,
+      );
     } else if (status === 'revoked') conditions.push(eq(shareLinks.isRevoked, true));
     if (search) conditions.push(ilike(generatedDocuments.documentType, `%${search}%`));
 
@@ -79,6 +94,7 @@ export async function GET(request: NextRequest) {
           verificationCode: shareLinks.verificationCode,
           expiresAt: shareLinks.expiresAt,
           isExpired: sql<boolean>`${shareLinks.expiresAt} < now()`,
+          isExhausted: sql<boolean>`${shareLinks.maxViews} is not null and ${shareLinks.currentViews} >= ${shareLinks.maxViews}`,
           isRevoked: shareLinks.isRevoked,
           maxViews: shareLinks.maxViews,
           currentViews: shareLinks.currentViews,
@@ -99,7 +115,8 @@ export async function GET(request: NextRequest) {
         .offset(offset),
       db
         .select({
-          active: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} >= now())`,
+          active: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} >= now() and (${shareLinks.maxViews} is null or ${shareLinks.currentViews} < ${shareLinks.maxViews}))`,
+          exhausted: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} >= now() and ${shareLinks.maxViews} is not null and ${shareLinks.currentViews} >= ${shareLinks.maxViews})`,
           expired: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} < now())`,
           revoked: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = true)`,
           views: sql<number>`coalesce(sum(${shareLinks.currentViews}), 0)`,
@@ -115,9 +132,10 @@ export async function GET(request: NextRequest) {
         total,
         page,
         totalPages: Math.ceil(total / limit),
-        capabilities: { canRevoke },
+        capabilities: { canRevoke, canDistribute },
         summary: {
           active: Number(summary?.active ?? 0),
+          exhausted: Number(summary?.exhausted ?? 0),
           expired: Number(summary?.expired ?? 0),
           revoked: Number(summary?.revoked ?? 0),
           views: Number(summary?.views ?? 0),
