@@ -23,7 +23,7 @@ import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
 import { TripAuthorityDocument, type TripAuthorityData } from './trip-authority';
 
-type TripAuthorityRenderSnapshot = Omit<
+export type TripAuthorityRenderSnapshot = Omit<
   TripAuthorityData,
   'verificationCode' | 'verificationUrl' | 'documentHash' | 'qrCodeDataUrl'
 >;
@@ -67,13 +67,19 @@ async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Arra
 /**
  * Build the complete visual payload for a Trip Authority.
  *
- * New generated-document versions persist this payload as snapshotData.renderData
- * so the official PDF is immutable after generation. Child tables without a
+ * New issued document versions persist this payload as snapshotData.renderData
+ * so the official PDF is immutable after issuance. Child tables without a
  * tenant_id inherit their scope from the already tenant-validated request or
  * authority parent.
+ *
+ * `requireAuthority` is used by the issuance path: the generated document is
+ * created when an allocation is made, which can precede provisioning of the
+ * canonical trip_authorities row. A draft preview may still use the provisional
+ * allocation view, but an official issued snapshot must include that authority.
  */
 export async function buildTripAuthorityRenderSnapshot(
   documentId: string,
+  options: { requireAuthority?: boolean } = {},
 ): Promise<TripAuthorityRenderSnapshot | null> {
   const db = getDb();
   const [document] = await db
@@ -106,7 +112,7 @@ export async function buildTripAuthorityRenderSnapshot(
       .orderBy(desc(tripAuthorities.createdAt))
       .limit(1),
   ]);
-  if (!req) return null;
+  if (!req || (options.requireAuthority && !authority)) return null;
 
   const resolvedBranding = await resolveTenantDocumentBranding(tenantId);
   const routes = await db.select().from(requestRoutes).where(eq(requestRoutes.requestId, req.id));
@@ -263,9 +269,6 @@ export async function buildTripAuthorityRenderSnapshot(
       }
     }
 
-    // Scope the departure inspection to this exact trip as well as tenant and
-    // vehicle. Without tripId, a later inspection for the same vehicle could be
-    // rendered into an older verified authority.
     const [departureInspection] = authority.tripId
       ? await db
           .select()
