@@ -90,6 +90,7 @@ export async function POST(
     // preview snapshot. This prevents changes made between draft generation and
     // issue from leaving the official version with stale data.
     const preparedAt = new Date();
+    const draftUpdatedAt = doc.updatedAt;
     let snapshotData = (doc.snapshotData || {}) as Record<string, unknown>;
     const branding = await resolveTenantDocumentBranding(doc.tenantId);
     if (branding) {
@@ -169,16 +170,17 @@ export async function POST(
       )
       .digest('hex');
 
-    // The first mutation is conditional on the target still being a draft.
-    // Combined with the atomic batch, this means a concurrent second issuer
-    // cannot supersede the current official version after another request has
-    // already promoted this target.
+    // The target must still be the exact draft revision read above. Generation
+    // can refresh a pending draft in place; updated_at is therefore the
+    // optimistic concurrency token that prevents issuance from overwriting a
+    // newer source snapshot prepared while this request was rendering.
     const targetStillDraft = sql`exists (
       select 1
       from generated_documents target
       where target.id = ${id}::uuid
         and target.tenant_id = ${session.tenantId}::uuid
         and target.status = 'draft'
+        and target.updated_at = ${draftUpdatedAt}
     )`;
 
     await runAtomicMutations((tx) => [
@@ -207,6 +209,7 @@ export async function POST(
             eq(generatedDocuments.id, id),
             eq(generatedDocuments.tenantId, session.tenantId),
             eq(generatedDocuments.status, 'draft'),
+            eq(generatedDocuments.updatedAt, draftUpdatedAt),
           ),
         ),
     ]);
@@ -222,7 +225,7 @@ export async function POST(
       updated.updatedAt.getTime() !== preparedAt.getTime()
     ) {
       return NextResponse.json(
-        { error: 'This document changed while the action was being processed. Refresh and try again.' },
+        { error: 'This draft changed while the issue action was being prepared. Refresh and review the latest version before issuing.' },
         { status: 409 },
       );
     }
