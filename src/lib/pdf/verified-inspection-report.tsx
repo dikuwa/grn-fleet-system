@@ -1,7 +1,7 @@
 import React from 'react';
 import QRCode from 'qrcode';
 import { renderToStream } from '@react-pdf/renderer';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
@@ -128,7 +128,7 @@ export async function buildInspectionReportRenderSnapshot(
         and(
           eq(externalDriverAssignments.tenantId, tenantId),
           eq(externalDriverAssignments.tripId, inspection.tripId),
-          eq(externalDriverAssignments.state, 'accepted'),
+          inArray(externalDriverAssignments.state, ['accepted', 'completed']),
           eq(externalParties.tenantId, tenantId),
         ),
       )
