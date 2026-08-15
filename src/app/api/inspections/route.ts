@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { and, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { tripAuthorities } from '@/db/schema/trips';
 import {
   requireDashboardAction,
   requirePermission,
@@ -9,6 +12,7 @@ import {
   completeOfficialInspection,
   InspectionServiceError,
 } from '@/lib/inspection-service';
+import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
 import {
   createScopedNotifications,
   resolveActionNotifications,
@@ -45,6 +49,41 @@ export async function POST(request: NextRequest) {
         },
         { status: 422 },
       );
+    }
+
+    // A vehicle replacement is a material change to the authority the driver
+    // accepted. Preserve the original acknowledgement, but do not allow the
+    // replacement vehicle's official departure inspection until the revised
+    // authority has been acknowledged again.
+    if (body.type === 'departure' && typeof body.tripId === 'string') {
+      const db = getDb();
+      const [authority] = await db
+        .select({ id: tripAuthorities.id, acceptedAt: tripAuthorities.acceptedAt })
+        .from(tripAuthorities)
+        .where(
+          and(
+            eq(tripAuthorities.tripId, body.tripId),
+            eq(tripAuthorities.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      if (authority) {
+        const pendingAmendment = await findPendingVehicleReplacementAcceptance({
+          authorityId: authority.id,
+          acceptedAt: authority.acceptedAt,
+        });
+        if (pendingAmendment) {
+          return NextResponse.json(
+            {
+              error:
+                'The vehicle changed after the driver accepted the Trip Authority. The revised authority must be acknowledged before the replacement vehicle can be inspected for departure.',
+              amendmentId: pendingAmendment.amendmentId,
+              requiresAmendmentAcceptance: true,
+            },
+            { status: 409 },
+          );
+        }
+      }
     }
 
     const result = await completeOfficialInspection({
