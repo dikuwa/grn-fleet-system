@@ -110,9 +110,11 @@ export default async function ShortVerificationPage({
     !permanent &&
     result.shareLink.accessPolicy?.allowDownload === true &&
     document.status !== 'draft';
+  // The verification-page request has already claimed one view. A PDF download
+  // is still valid when it would consume exactly the final permitted view.
   const downloadViewAvailable =
     !permanent &&
-    (!result.shareLink.maxViews || result.shareLink.currentViews + 1 < result.shareLink.maxViews);
+    (!result.shareLink.maxViews || result.shareLink.currentViews + 1 <= result.shareLink.maxViews);
   const canDownload = downloadAllowedByPolicy && downloadViewAvailable;
 
   return (
