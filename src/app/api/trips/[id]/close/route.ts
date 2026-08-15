@@ -18,7 +18,7 @@ import { externalDriverAssignments } from '@/db/schema/external-driver-assignmen
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
-import { eq, and, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
@@ -156,19 +156,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
     }
 
-    const [arrivalInspection] = await db.select({ id: vehicleInspections.id })
+    // Closure must be based on the latest return inspection for the currently
+    // allocated vehicle. An older completed/failed inspection cannot authorise
+    // closure while a newer reinspection is still in progress.
+    const [arrivalInspection] = await db.select({
+      id: vehicleInspections.id,
+      status: vehicleInspections.status,
+    })
       .from(vehicleInspections)
       .where(and(
         eq(vehicleInspections.tripId, id),
         eq(vehicleInspections.tenantId, tenantId),
         eq(vehicleInspections.vehicleId, trip.vehicleId),
         eq(vehicleInspections.type, 'return'),
-        inArray(vehicleInspections.status, ['completed', 'failed']),
       ))
+      .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
       .limit(1);
-    if (!arrivalInspection) {
+    if (!arrivalInspection || !['completed', 'failed'].includes(arrivalInspection.status)) {
       return NextResponse.json(
-        { error: 'A submitted arrival inspection for the currently allocated vehicle is required before reconciliation can close' },
+        {
+          error: arrivalInspection
+            ? `The latest arrival inspection is still ${arrivalInspection.status.replaceAll('_', ' ')}. Submit it before reconciliation can close.`
+            : 'A submitted arrival inspection for the currently allocated vehicle is required before reconciliation can close',
+        },
         { status: 409 },
       );
     }
