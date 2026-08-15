@@ -12,6 +12,8 @@ import { formatDate, formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { createElement } from 'react';
 import { DocumentLifecycleActions } from './lifecycle-actions';
 import { CreateShareLinkButton } from './create-share-link';
@@ -91,7 +93,15 @@ export default async function DocumentDetailPage({ params }: PageProps) {
   }
 
   const { doc, shares, creatorName } = data;
-  const branding = await resolveTenantBranding(session.tenantId);
+  const [branding, roleNames] = await Promise.all([
+    resolveTenantBranding(session.tenantId),
+    getSessionRoleNames(session),
+  ]);
+  const documentAccess = resolveDashboardAccess('/dashboard/documents', roleNames);
+  const shareLinkAccess = resolveDashboardAccess('/dashboard/share-links', roleNames);
+  const canManageLifecycle = documentAccess.allowed && documentAccess.actions.includes('update');
+  const canCreateShareLink = shareLinkAccess.allowed && shareLinkAccess.actions.includes('create');
+
   const statusIcon = doc.status === 'issued' ? CheckCircle2 : doc.status === 'draft' ? Clock : XCircle;
   const statusColor = doc.status === 'issued'
     ? 'text-status-success-text bg-status-success-bg'
@@ -118,7 +128,9 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/documents"><ChevronLeft className="h-4 w-4" /> Back</Link>
         </Button>
-        <DocumentLifecycleActions documentId={doc.id} currentStatus={doc.status} />
+        {canManageLifecycle && (
+          <DocumentLifecycleActions documentId={doc.id} currentStatus={doc.status} />
+        )}
         <ShareActions
           shareUrl={verificationUrl || undefined}
           documentTitle={documentTypeLabel(doc.documentType)}
@@ -128,7 +140,9 @@ export default async function DocumentDetailPage({ params }: PageProps) {
           organisationName={branding?.organisationName}
           verificationCode={verificationCode}
         />
-        <CreateShareLinkButton documentId={doc.id} disabled={doc.status === 'draft'} />
+        {canCreateShareLink && (
+          <CreateShareLinkButton documentId={doc.id} disabled={doc.status === 'draft'} />
+        )}
       </PageHeader>
 
       <Card>
