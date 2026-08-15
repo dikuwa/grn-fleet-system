@@ -7,6 +7,8 @@ import {
   requestDrivers,
   requestPassengers,
   transportRequests,
+  tripAuthorities,
+  tripIncidents,
   trips,
   vehicleAllocations,
   vehicleDefects,
@@ -203,33 +205,94 @@ export function vehicleScopeCondition(context: RecordScopeContext): SQL {
 export function documentScopeCondition(context: RecordScopeContext): SQL {
   const tenant = eq(generatedDocuments.tenantId, context.tenantId);
   if (context.recordScope === 'tenant') return tenant;
-  return and(
-    tenant,
-    or(
-      eq(generatedDocuments.generatedByUserId, context.userId),
-      sql`(
-        ${generatedDocuments.entityType} = 'transport_request'
-        and exists (
-          select 1 from ${transportRequests} tr
-          where tr.id = ${generatedDocuments.entityId}
-            and tr.tenant_id = ${context.tenantId}
-            and (tr.requester_user_id = ${context.userId} or tr.entered_by_user_id = ${context.userId})
+
+  // Resolve every user-facing generated-document family back to one tenant
+  // transport request. This keeps the document list consistent with direct
+  // detail/PDF authorization instead of relying on who happened to generate
+  // the snapshot or on a document-type-specific entity-id assumption.
+  const linkedRequestId = sql`case
+    when ${generatedDocuments.entityType} = 'transport_request' then ${generatedDocuments.entityId}
+    when ${generatedDocuments.entityType} = 'trip' then (
+      select t.request_id from ${trips} t
+      where t.id = ${generatedDocuments.entityId}
+        and t.tenant_id = ${context.tenantId}
+      limit 1
+    )
+    when ${generatedDocuments.entityType} = 'vehicle_allocation' then (
+      select va.request_id from ${vehicleAllocations} va
+      inner join ${transportRequests} tr on tr.id = va.request_id
+      where va.id = ${generatedDocuments.entityId}
+        and tr.tenant_id = ${context.tenantId}
+      limit 1
+    )
+    when ${generatedDocuments.entityType} = 'inspection' then (
+      select t.request_id from ${vehicleInspections} vi
+      inner join ${trips} t on t.id = vi.trip_id
+      where vi.id = ${generatedDocuments.entityId}
+        and vi.tenant_id = ${context.tenantId}
+        and t.tenant_id = ${context.tenantId}
+      limit 1
+    )
+    when ${generatedDocuments.entityType} = 'trip_incident' then (
+      select t.request_id from ${tripIncidents} ti
+      inner join ${trips} t on t.id = ti.trip_id
+      where ti.id = ${generatedDocuments.entityId}
+        and ti.tenant_id = ${context.tenantId}
+        and t.tenant_id = ${context.tenantId}
+      limit 1
+    )
+    when ${generatedDocuments.entityType} = 'trip_authority' then (
+      select ta.request_id from ${tripAuthorities} ta
+      where ta.id = ${generatedDocuments.entityId}
+        and ta.tenant_id = ${context.tenantId}
+      limit 1
+    )
+    else null
+  end`;
+
+  const personalRelationship = sql`exists (
+    select 1 from ${transportRequests} tr
+    where tr.id = ${linkedRequestId}
+      and tr.tenant_id = ${context.tenantId}
+      and (
+        tr.requester_user_id = ${context.userId}
+        or tr.entered_by_user_id = ${context.userId}
+        or exists (
+          select 1 from ${requestPassengers} rp
+          inner join ${employees} passenger on passenger.id = rp.employee_id
+          where rp.request_id = tr.id
+            and rp.status <> 'removed'
+            and passenger.tenant_id = ${context.tenantId}
+            and passenger.user_id = ${context.userId}
         )
-      )`,
-      sql`(
-        ${generatedDocuments.entityType} in ('trip', 'trip_authority')
-        and exists (
-          select 1 from ${trips} t
-          inner join ${vehicleAllocations} va on va.id = t.allocation_id
-          inner join ${employees} e on e.id = va.driver_employee_id
-          where t.id = ${generatedDocuments.entityId}
-            and t.tenant_id = ${context.tenantId}
-            and e.tenant_id = ${context.tenantId}
-            and e.user_id = ${context.userId}
+      )
+  )`;
+
+  const driverRelationship = sql`exists (
+    select 1 from ${transportRequests} tr
+    where tr.id = ${linkedRequestId}
+      and tr.tenant_id = ${context.tenantId}
+      and (
+        exists (
+          select 1 from ${employees} assigned_driver
+          where assigned_driver.id = tr.assigned_driver_employee_id
+            and assigned_driver.tenant_id = ${context.tenantId}
+            and assigned_driver.user_id = ${context.userId}
         )
-      )`,
-    )!,
-  )!;
+        or exists (
+          select 1 from ${requestDrivers} rd
+          inner join ${employees} driver on driver.id = rd.employee_id
+          where rd.request_id = tr.id
+            and rd.driver_type in ('assigned', 'additional')
+            and driver.tenant_id = ${context.tenantId}
+            and driver.user_id = ${context.userId}
+        )
+      )
+  )`;
+
+  if (context.recordScope === 'self') return and(tenant, personalRelationship)!;
+  if (context.recordScope === 'assigned') return and(tenant, driverRelationship)!;
+  return and(tenant, or(personalRelationship, driverRelationship)!)!;
 }
 
 export function defectScopeCondition(context: RecordScopeContext): SQL {
