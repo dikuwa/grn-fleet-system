@@ -10,11 +10,12 @@ import { createScopedNotifications } from '@/lib/notification-service';
 /**
  * POST /api/defects/[id]/resolve
  * Resolve a tenant-scoped defect assigned to the current Maintenance Officer.
- * Unassigned defects may be claimed by the first authorised Maintenance Officer
- * who resolves them, so safety work cannot become permanently orphaned.
- * A vehicle blocked by inspection/incident defects is returned to service only
- * when no other unresolved blocking defect remains. Explicit out_of_service
- * and written_off states are never changed here.
+ * Unassigned defects may be claimed by the first authorised Maintenance Officer.
+ *
+ * Resolving the last blocking defect only returns a vehicle to `available` when
+ * the vehicle is no longer owned by an active trip and no MVA/incident record
+ * still requires technical clearance. This prevents a repaired vehicle from
+ * becoming allocatable before operational and safety review is complete.
  */
 export async function POST(
   request: NextRequest,
@@ -53,10 +54,7 @@ export async function POST(
       .where(and(
         eq(vehicleDefects.id, id),
         eq(vehicles.tenantId, session.tenantId),
-        or(
-          eq(vehicleDefects.assignedToUserId, session.user.id),
-          isNull(vehicleDefects.assignedToUserId),
-        )!,
+        or(eq(vehicleDefects.assignedToUserId, session.user.id), isNull(vehicleDefects.assignedToUserId))!,
       ))
       .limit(1);
 
@@ -106,6 +104,23 @@ export async function POST(
               AND other.is_blocking = true
               AND other.resolved_at IS NULL
           )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.vehicle_id = v.id
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.status IN ('pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review')
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM trip_incidents ti
+            INNER JOIN trips incident_trip ON incident_trip.id = ti.trip_id
+            WHERE incident_trip.vehicle_id = v.id
+              AND ti.tenant_id = ${session.tenantId}::uuid
+              AND ti.vehicle_damage = true
+              AND ti.status <> 'resolved'
+              AND ti.technical_clearance_status <> 'cleared'
+          )
         RETURNING v.id
       ),
       status_logged AS (
@@ -150,10 +165,7 @@ export async function POST(
         resolvedAt: vehicleDefects.resolvedAt,
       }).from(vehicleDefects).where(and(
         eq(vehicleDefects.id, id),
-        or(
-          eq(vehicleDefects.assignedToUserId, session.user.id),
-          isNull(vehicleDefects.assignedToUserId),
-        )!,
+        or(eq(vehicleDefects.assignedToUserId, session.user.id), isNull(vehicleDefects.assignedToUserId))!,
       )).limit(1);
       if (latest?.resolvedAt && latest.assignedToUserId === session.user.id) {
         return NextResponse.json({ success: true, alreadyResolved: true });
@@ -171,7 +183,7 @@ export async function POST(
           title: 'Reported Defect Resolved',
           body: releasedCount === 1
             ? `${defect.description} Vehicle returned to available status.`
-            : defect.description,
+            : `${defect.description} The defect is resolved; the vehicle remains restricted until all trip/safety clearance gates are complete.`,
           entityType: 'vehicle_defect',
           entityId: id,
           actionUrl: null,
@@ -188,6 +200,7 @@ export async function POST(
       alreadyResolved: false,
       claimed: defect.assignedToUserId === null,
       vehicleReleased: releasedCount === 1,
+      releasePending: defect.isBlocking && releasedCount !== 1,
     });
   } catch (error) {
     console.error('[defects/resolve] POST failed:', error);
