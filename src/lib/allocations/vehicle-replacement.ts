@@ -5,6 +5,7 @@ import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { and, eq, gt, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { AuthSession } from '@/lib/auth-helpers';
+import { onTripIssued } from '@/lib/document-generator';
 
 export interface ReplaceVehicleInput {
   allocationId: string;
@@ -21,6 +22,8 @@ export interface ReplaceVehicleResult {
   handoverOdometer?: number | null;
   outgoingVehicleDisposition?: 'available' | 'maintenance' | null;
   issueReset?: boolean;
+  authorityDocumentId?: string | null;
+  authorityRegenerationRequired?: boolean;
 }
 
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
@@ -107,7 +110,8 @@ export async function replaceVehicle(
       context.tripStatus as (typeof ACTIVE_TRIP_STATUSES)[number],
     ),
   );
-  const issuedPreStart = Boolean(context.issuedAt && context.tripStatus === 'pending');
+  const preDeparture = context.tripStatus === 'pending';
+  const issuedPreStart = Boolean(context.issuedAt && preDeparture);
 
   if (activeMidTrip && handoverOdometer == null) {
     throw new VehicleReplaceError('Odometer reading at handover is required during an active trip', 409);
@@ -269,6 +273,16 @@ export async function replaceVehicle(
           AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING id
       ),
+      external_issue_reset AS (
+        UPDATE external_driver_assignments
+        SET issue_id = NULL, updated_at = ${now}
+        WHERE allocation_id = ${allocationId}::uuid
+          AND tenant_id = ${tenantId}::uuid
+          AND issue_id IS NOT NULL
+          AND ${issuedPreStart}
+          AND EXISTS (SELECT 1 FROM allocation_claim)
+        RETURNING id
+      ),
       issue_reset AS (
         DELETE FROM trip_issues
         WHERE allocation_id = ${allocationId}::uuid
@@ -289,7 +303,11 @@ export async function replaceVehicle(
       authority_update AS (
         UPDATE trip_authorities
         SET data = ${authorityDataJson}::jsonb,
-            status = CASE WHEN ${issuedPreStart} THEN 'awaiting_pre_trip_inspection' ELSE status END,
+            status = CASE
+              WHEN ${preDeparture} AND status IN ('awaiting_pre_trip_inspection', 'ready_for_departure')
+                THEN 'awaiting_pre_trip_inspection'
+              ELSE status
+            END,
             version = version + 1,
             document_version = document_version + 1,
             updated_at = ${now}
@@ -331,16 +349,6 @@ export async function replaceVehicle(
           ${cleanReason},
           ${session.user.id}
         FROM authority_update
-        RETURNING id
-      ),
-      documents_update AS (
-        UPDATE generated_documents
-        SET status = 'superseded', updated_at = ${now}
-        WHERE tenant_id = ${tenantId}::uuid
-          AND entity_type = 'trip'
-          AND entity_id = ${context.tripId}::uuid
-          AND status = 'issued'
-          AND EXISTS (SELECT 1 FROM version_insert)
         RETURNING id
       ),
       outgoing_vehicle_update AS (
@@ -452,6 +460,19 @@ export async function replaceVehicle(
     throw error;
   }
 
+  let authorityDocumentId: string | null = null;
+  let authorityRegenerationRequired = false;
+  if (preDeparture && context.authorityId) {
+    try {
+      const document = await onTripIssued(allocationId, tenantId, session.user.id);
+      authorityDocumentId = document?.id ?? null;
+      authorityRegenerationRequired = !document;
+    } catch (error) {
+      authorityRegenerationRequired = true;
+      console.warn('[vehicle-replacement] Trip Authority draft refresh failed after replacement:', error);
+    }
+  }
+
   return {
     success: true,
     replacementVehicleId,
@@ -459,6 +480,8 @@ export async function replaceVehicle(
     handoverOdometer: handoverOdometer ?? null,
     outgoingVehicleDisposition: disposition,
     issueReset: issuedPreStart,
+    authorityDocumentId,
+    authorityRegenerationRequired,
   };
 }
 
