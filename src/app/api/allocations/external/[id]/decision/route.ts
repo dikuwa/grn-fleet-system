@@ -4,7 +4,7 @@ import { getDb } from '@/db';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { transportRequests } from '@/db/schema/requests';
-import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { Permissions } from '@/lib/permissions';
@@ -47,6 +47,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         tripStatus: trips.status,
         tripIssuedAt: trips.issuedAt,
         requestReference: transportRequests.reference,
+        authorityId: tripAuthorities.id,
+        authorityStatus: tripAuthorities.status,
         partyFirstName: externalParties.firstName,
         partyLastName: externalParties.lastName,
         partyOrganisation: externalParties.organisationName,
@@ -58,6 +60,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, externalDriverAssignments.allocationId))
       .innerJoin(trips, eq(trips.id, externalDriverAssignments.tripId))
       .innerJoin(transportRequests, eq(transportRequests.id, externalDriverAssignments.requestId))
+      .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
       .innerJoin(externalParties, eq(externalParties.id, externalDriverAssignments.externalPartyId))
       .innerJoin(externalDriverLicences, eq(externalDriverLicences.id, externalDriverAssignments.licenceId))
       .where(
@@ -66,6 +69,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           eq(externalDriverAssignments.tenantId, tenantId),
           eq(trips.tenantId, tenantId),
           eq(transportRequests.tenantId, tenantId),
+          eq(tripAuthorities.tenantId, tenantId),
           eq(externalParties.tenantId, tenantId),
           eq(externalDriverLicences.tenantId, tenantId),
         ),
@@ -240,6 +244,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         { status: 422 },
       );
     }
+    if (record.authorityStatus !== 'awaiting_driver_acceptance') {
+      return NextResponse.json(
+        { error: `Trip Authority cannot be accepted from "${record.authorityStatus}"` },
+        { status: 409 },
+      );
+    }
     if (record.partyStatus !== 'active' || record.licenceStatus !== 'verified') {
       return NextResponse.json(
         { error: 'The external driver or licence is no longer eligible' },
@@ -303,6 +313,28 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           AND EXISTS (SELECT 1 FROM assignment_claim)
         RETURNING id
       ),
+      authority_claim AS (
+        UPDATE trip_authorities
+        SET status = 'driver_accepted',
+            accepted_at = ${now},
+            accepted_by_employee_id = NULL,
+            acceptance_data = jsonb_build_object(
+              'source', 'transport_office_external',
+              'externalDriverAssignmentId', ${id}::text,
+              'externalPartyId', ${record.assignment.externalPartyId}::text,
+              'acceptanceMethod', ${acceptanceMethod},
+              'acceptanceNote', ${note},
+              'acceptedAt', ${now}::text,
+              'recordedByUserId', ${session.user.id}
+            ),
+            updated_at = ${now}
+        WHERE id = ${record.authorityId}::uuid
+          AND tenant_id = ${tenantId}::uuid
+          AND trip_id = ${record.assignment.tripId}::uuid
+          AND status = 'awaiting_driver_acceptance'
+          AND EXISTS (SELECT 1 FROM assignment_claim)
+        RETURNING id
+      ),
       trip_ack AS (
         UPDATE trips
         SET driver_acknowledged_at = ${now},
@@ -312,12 +344,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           AND tenant_id = ${tenantId}::uuid
           AND status = 'pending'
           AND issued_at IS NULL
-          AND EXISTS (SELECT 1 FROM assignment_claim)
+          AND EXISTS (SELECT 1 FROM authority_claim)
         RETURNING id
       )
       SELECT CAST(CASE
         WHEN (SELECT count(*) FROM assignment_claim) = 1
          AND (SELECT count(*) FROM request_driver_claim) = 1
+         AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM trip_ack) = 1
         THEN '1'
         ELSE 'atomic_external_driver_accept_failed_' || (SELECT count(*) FROM assignment_claim)::text
@@ -332,9 +365,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         entityType: 'external_driver_assignment',
         entityId: id,
         summary: `Transport Office recorded ${driverName}'s trip acceptance via ${acceptanceMethod.replace(/_/g, ' ')}`,
-        before: { state: 'pending_acceptance' },
+        before: { state: 'pending_acceptance', authorityStatus: record.authorityStatus },
         after: {
           state: 'accepted',
+          authorityStatus: 'driver_accepted',
           acceptanceMethod,
           acceptanceNote: note,
           acceptedAt: now.toISOString(),
@@ -353,6 +387,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({
       success: true,
       state: 'accepted',
+      authorityStatus: 'driver_accepted',
       acceptedAt: now.toISOString(),
       acceptanceMethod,
       driver: { name: driverName, organisation: record.partyOrganisation },
