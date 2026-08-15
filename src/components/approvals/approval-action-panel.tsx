@@ -59,12 +59,11 @@ export function ApprovalActionPanel({
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Action failed');
-      const label =
-        selected === 'approved'
-          ? primary.past
-          : selected === 'returned'
-            ? 'returned for correction'
-            : 'rejected';
+      const label = selected === 'approved'
+        ? primary.past
+        : selected === 'returned'
+          ? 'returned for correction'
+          : 'rejected';
       toast({
         title: isAcknowledgement ? 'Trip acknowledged' : `Request ${label}`,
         description: result.data?.message || (isAcknowledgement ? 'Your assigned trip was acknowledged.' : `The request was ${label}.`),
@@ -121,19 +120,12 @@ export function ApprovalActionPanel({
         <CardTitle>{isAcknowledgement ? 'Trip Acknowledgement' : 'Your Decision'}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        <section
-          className="border-border bg-muted/40 rounded-[10px] border p-4"
-          aria-labelledby="decision-context-title"
-        >
+        <section className="border-border bg-muted/40 rounded-[10px] border p-4" aria-labelledby="decision-context-title">
           <h2 id="decision-context-title" className="text-ink-950 text-sm font-semibold">
             {isAcknowledgement ? 'What you are acknowledging' : 'What you are deciding'}
           </h2>
-          <p className="overflow-wrap-anywhere text-ink-950 mt-2 text-sm font-medium">
-            {requestTitle}
-          </p>
-          <p className="overflow-wrap-anywhere text-ink-500 mt-1 text-xs">
-            {requestReference} · {stageLabel}
-          </p>
+          <p className="overflow-wrap-anywhere text-ink-950 mt-2 text-sm font-medium">{requestTitle}</p>
+          <p className="overflow-wrap-anywhere text-ink-500 mt-1 text-xs">{requestReference} · {stageLabel}</p>
           <p className="text-ink-700 mt-3 text-sm">
             {isAcknowledgement
               ? 'Acknowledging confirms that you have reviewed and accept the authorised trip and assigned vehicle. If the assignment is incorrect or unsafe, do not acknowledge it; contact Transport Administration or report the relevant issue through Driver Self-Service.'
@@ -159,39 +151,27 @@ export function ApprovalActionPanel({
               }}
               disabled={isSubmitting}
               className={cn(
-                'focus-ring flex min-h-14 w-full min-w-0 items-start gap-3 rounded-[10px] border p-4 text-left transition-all disabled:opacity-50',
+                'focus-ring flex min-h-14 w-full min-w-0 cursor-pointer items-start gap-3 rounded-[10px] border p-4 text-left transition-[opacity,box-shadow,transform] hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transform-none motion-reduce:transition-none',
                 option.tone,
                 selected === option.value
                   ? 'ring-brand-600 ring-2 ring-offset-2'
                   : 'opacity-80 hover:opacity-100',
               )}
             >
-              <span className="mt-0.5 shrink-0" aria-hidden="true">
-                {option.icon}
-              </span>
+              <span className="mt-0.5 shrink-0" aria-hidden="true">{option.icon}</span>
               <span className="min-w-0">
                 <span className="block text-sm font-semibold">{option.label}</span>
-                <span className="text-ink-600 mt-1 block text-xs leading-5">
-                  {option.description}
-                </span>
+                <span className="text-ink-600 mt-1 block text-xs leading-5">{option.description}</span>
               </span>
             </button>
           ))}
         </fieldset>
 
         <div className="space-y-1.5">
-          <Label htmlFor="approval-comment" required={commentRequired}>
-            {isAcknowledgement ? 'Acknowledgement note' : 'Decision comment'}
-          </Label>
+          <Label htmlFor="approval-comment" required={commentRequired}>{isAcknowledgement ? 'Acknowledgement note' : 'Decision comment'}</Label>
           <Textarea
             id="approval-comment"
-            placeholder={
-              commentRequired
-                ? 'Explain the reason for this decision…'
-                : isAcknowledgement
-                  ? 'Add an optional acknowledgement note…'
-                  : 'Add an optional decision note…'
-            }
+            placeholder={commentRequired ? 'Explain the reason for this decision…' : isAcknowledgement ? 'Add an optional acknowledgement note…' : 'Add an optional decision note…'}
             value={comment}
             onChange={(event) => setComment(event.target.value)}
             rows={5}
@@ -209,19 +189,14 @@ export function ApprovalActionPanel({
         </div>
 
         {selected && (
-          <section
-            className="border-brand-200 bg-brand-50/60 dark:border-brand-900 dark:bg-brand-950/25 rounded-[8px] border p-3"
-            aria-live="polite"
-          >
+          <section className="border-brand-200 bg-brand-50/60 dark:border-brand-900 dark:bg-brand-950/25 rounded-[8px] border p-3" aria-live="polite">
             <p className="text-ink-950 text-sm font-semibold">Confirmation</p>
             <p className="text-ink-700 mt-1 text-xs leading-5">
               {isAcknowledgement ? (
                 <>You are confirming acceptance of this authorised trip and vehicle assignment.</>
               ) : (
                 <>
-                  You selected{' '}
-                  <strong>{options.find((option) => option.value === selected)?.label}</strong> for{' '}
-                  {stageLabel}.
+                  You selected <strong>{options.find((option) => option.value === selected)?.label}</strong> for {stageLabel}.
                   {selected === 'approved'
                     ? isFinalStage
                       ? ' This will complete the workflow.'
@@ -236,10 +211,7 @@ export function ApprovalActionPanel({
         )}
 
         {error && (
-          <div
-            role="alert"
-            className="border-status-error-bg bg-status-error-bg/20 rounded-[8px] border px-4 py-3"
-          >
+          <div role="alert" className="border-status-error-bg bg-status-error-bg/20 rounded-[8px] border px-4 py-3">
             <p className="text-status-error-text text-sm font-medium">{error}</p>
           </div>
         )}
@@ -251,21 +223,9 @@ export function ApprovalActionPanel({
             disabled={!selected || isSubmitting || (commentRequired && !comment.trim())}
           >
             {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            {isSubmitting
-              ? isAcknowledgement
-                ? 'Recording acknowledgement…'
-                : 'Processing decision…'
-              : isAcknowledgement
-                ? 'Confirm Acknowledgement'
-                : 'Confirm Decision'}
+            {isSubmitting ? (isAcknowledgement ? 'Recording acknowledgement…' : 'Processing decision…') : isAcknowledgement ? 'Confirm Acknowledgement' : 'Confirm Decision'}
           </Button>
-          <Button
-            variant="secondary"
-            onClick={() => router.push(`/dashboard/approvals/${instanceId}`)}
-            disabled={isSubmitting}
-          >
-            Cancel
-          </Button>
+          <Button variant="secondary" onClick={() => router.push(`/dashboard/approvals/${instanceId}`)} disabled={isSubmitting}>Cancel</Button>
         </div>
       </CardContent>
     </Card>

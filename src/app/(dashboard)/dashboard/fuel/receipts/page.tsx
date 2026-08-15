@@ -5,6 +5,7 @@ import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToast } from '@/lib/use-toast';
@@ -93,10 +94,7 @@ export default function ReceiptRegisterPage() {
         { label: 'Fuel Records', href: '/dashboard/fuel' },
         { label: 'Receipt Register' },
       ]} />
-      <PageHeader
-        title="Receipt Register"
-        description="Search original fuel receipt evidence and its OCR/verification state."
-      >
+      <PageHeader title="Receipt Register" description="Search original fuel receipt evidence and its OCR/verification state.">
         <Button variant="secondary" size="sm" onClick={() => void load()} loading={loading}>
           <RefreshCw className="h-4 w-4" /> Refresh
         </Button>
@@ -116,14 +114,20 @@ export default function ReceiptRegisterPage() {
               />
             </div>
           </div>
-          <div className="space-y-1.5">
-            <Label>From</Label>
-            <Input type="date" value={filters.from} onChange={(event) => setFilters((value) => ({ ...value, from: event.target.value }))} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>To</Label>
-            <Input type="date" value={filters.to} onChange={(event) => setFilters((value) => ({ ...value, to: event.target.value }))} />
-          </div>
+          <DatePicker
+            label="From"
+            value={filters.from}
+            max={filters.to || undefined}
+            placeholder="dd/mm/yyyy"
+            onChange={(from) => setFilters((value) => ({ ...value, from }))}
+          />
+          <DatePicker
+            label="To"
+            value={filters.to}
+            min={filters.from || undefined}
+            placeholder="dd/mm/yyyy"
+            onChange={(to) => setFilters((value) => ({ ...value, to }))}
+          />
           <div className="space-y-1.5">
             <Label>Receipt status</Label>
             <StyledSelect value={filters.verification} onChange={(event) => setFilters((value) => ({ ...value, verification: event.target.value }))}>
@@ -134,11 +138,7 @@ export default function ReceiptRegisterPage() {
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <StyledSelect
-            className="max-w-xs"
-            value={filters.ocrStatus}
-            onChange={(event) => setFilters((value) => ({ ...value, ocrStatus: event.target.value }))}
-          >
+          <StyledSelect className="max-w-xs" value={filters.ocrStatus} onChange={(event) => setFilters((value) => ({ ...value, ocrStatus: event.target.value }))}>
             <option value="">All OCR states</option>
             <option value="ocr_confirmed">OCR confirmed</option>
             <option value="manually_corrected">Manually corrected</option>
@@ -168,12 +168,8 @@ export default function ReceiptRegisterPage() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate text-sm font-semibold text-ink-950">{row.originalFileName || 'Fuel receipt'}</p>
-                    <Badge variant={row.isVerified ? 'success' : 'pending'} size="sm">
-                      {row.isVerified ? 'Evidence verified' : row.ocrStatus.replaceAll('_', ' ')}
-                    </Badge>
-                    <Badge variant={row.transactionVerified ? 'success' : 'info'} size="sm">
-                      {row.transactionVerified ? 'Transaction verified' : 'Transaction unverified'}
-                    </Badge>
+                    <Badge variant={row.isVerified ? 'success' : 'pending'} size="sm">{row.isVerified ? 'Evidence verified' : row.ocrStatus.replaceAll('_', ' ')}</Badge>
+                    <Badge variant={row.transactionVerified ? 'success' : 'info'} size="sm">{row.transactionVerified ? 'Transaction verified' : 'Transaction unverified'}</Badge>
                     {row.anomalyState !== 'none' && <Badge variant="warning" size="sm">{row.anomalyState}</Badge>}
                   </div>
                   <div className="mt-2 grid gap-x-6 gap-y-1 text-xs text-ink-500 sm:grid-cols-2 xl:grid-cols-4">
@@ -191,9 +187,7 @@ export default function ReceiptRegisterPage() {
                   <Button variant="secondary" size="sm" onClick={() => void openEvidence(row.id)} loading={openingId === row.id}>
                     <FileImage className="h-4 w-4" /> Open receipt
                   </Button>
-                  <Button variant="ghost" size="sm" asChild>
-                    <a href={`/dashboard/fuel/${row.transactionId}`}>Fuel record</a>
-                  </Button>
+                  <Button variant="ghost" size="sm" asChild><a href={`/dashboard/fuel/${row.transactionId}`}>Fuel record</a></Button>
                 </div>
               </div>
             </article>

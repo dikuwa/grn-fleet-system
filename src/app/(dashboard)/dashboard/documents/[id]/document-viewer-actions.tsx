@@ -12,14 +12,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { printPdfFromUrl } from '@/lib/print-pdf';
+import { DocumentPdfPreview } from './document-pdf-preview';
 
-/**
- * Canonical document controls for preview, download and print.
- *
- * All three actions use the same authenticated PDF endpoint. Preview is kept
- * inside a full-screen modal so dashboard chrome never becomes part of the
- * printable surface and users can close the preview without losing context.
- */
+/** Canonical document controls for preview, download and print. */
 export function DocumentViewerActions({
   documentId,
   documentType,
@@ -29,16 +24,20 @@ export function DocumentViewerActions({
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
   const pdfUrl = `/api/documents/${documentId}/pdf`;
   const previewUrl = `${pdfUrl}?preview=1`;
   const downloadName = `${documentType}-${documentId}.pdf`;
 
   const printDocument = async () => {
     setPrintError(null);
+    setPrinting(true);
     try {
       await printPdfFromUrl(previewUrl);
     } catch (error) {
-      setPrintError(error instanceof Error ? error.message : 'Could not open the PDF for printing.');
+      setPrintError(error instanceof Error ? error.message : 'Could not prepare the PDF for printing.');
+    } finally {
+      setPrinting(false);
     }
   };
 
@@ -54,22 +53,22 @@ export function DocumentViewerActions({
           <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
             <Eye className="h-4 w-4" /> Preview
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => void printDocument()}>
+          <Button variant="secondary" size="sm" loading={printing} onClick={() => void printDocument()}>
             <Printer className="h-4 w-4" /> Print
           </Button>
         </div>
         {printError ? (
-          <p className="text-status-error-text max-w-sm text-right text-xs">{printError}</p>
+          <p className="text-status-error-text max-w-md text-right text-xs" role="alert">{printError}</p>
         ) : null}
       </div>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="bg-surface !inset-0 !top-0 !left-0 !h-dvh !max-h-dvh !w-screen !max-w-none !translate-x-0 !translate-y-0 !rounded-none !border-0 !p-0 [&>button.absolute]:hidden sm:!inset-0 sm:!top-0 sm:!left-0 sm:!h-dvh sm:!max-h-dvh sm:!w-screen sm:!max-w-none sm:!translate-x-0 sm:!translate-y-0 sm:!rounded-none sm:!p-0">
+        <DialogContent className="bg-surface flex h-[88dvh] w-[calc(100vw-2rem)] max-w-6xl flex-col overflow-hidden p-0 shadow-2xl sm:w-[calc(100vw-4rem)] [&>button.absolute]:hidden">
           <DialogHeader className="border-border bg-surface mb-0 flex min-h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-3 py-2 sm:px-5">
             <div className="min-w-0">
               <DialogTitle className="truncate text-sm sm:text-base">Document preview</DialogTitle>
               <DialogDescription className="truncate text-xs">
-                Previewing the same official PDF used for download and print.
+                Official PDF preview. Close this window to return to the document record.
               </DialogDescription>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -78,7 +77,7 @@ export function DocumentViewerActions({
                   <Download className="h-4 w-4" /> Download
                 </a>
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => void printDocument()}>
+              <Button variant="secondary" size="sm" loading={printing} onClick={() => void printDocument()}>
                 <Printer className="h-4 w-4" /> Print
               </Button>
               <DialogClose asChild>
@@ -89,12 +88,10 @@ export function DocumentViewerActions({
             </div>
           </DialogHeader>
 
-          <div className="bg-muted/30 min-h-0 flex-1 overflow-hidden">
-            <iframe
-              src={previewUrl}
-              title="Official document PDF preview"
-              className="h-full w-full border-0 bg-white"
-            />
+          <div className="bg-muted/40 min-h-0 flex-1 overflow-auto p-3 sm:p-5">
+            <div className="border-border bg-white mx-auto h-full min-h-[560px] w-full max-w-[980px] overflow-hidden rounded-[10px] border shadow-sm">
+              <DocumentPdfPreview url={previewUrl} title="Official document PDF preview" />
+            </div>
           </div>
         </DialogContent>
       </Dialog>
