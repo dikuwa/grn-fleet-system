@@ -9,7 +9,7 @@ import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
 import { buildTransportRequestRenderSnapshot } from '@/lib/pdf/verified-transport-request';
-import { resolveTenantBranding } from '@/lib/tenant-branding';
+import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
 export async function POST(
@@ -85,72 +85,80 @@ export async function POST(
       );
     }
 
-    // Freeze the exact visual payload at the one official issuance boundary.
-    // Draft previews may reflect operational progress; issued versions never do.
+    // Issuance is the immutable boundary. Always refresh branding and the
+    // document-type visual payload here, even if the draft already contains a
+    // preview snapshot. This prevents changes made between draft generation and
+    // issue from leaving the official version with stale data.
+    const preparedAt = new Date();
     let snapshotData = (doc.snapshotData || {}) as Record<string, unknown>;
-    if (!snapshotData.brandingMeta) {
-      const branding = await resolveTenantBranding(doc.tenantId);
-      if (branding) {
-        snapshotData = {
-          ...snapshotData,
-          brandingMeta: {
-            tenantId: branding.tenantId,
-            organisationName: branding.organisationName,
-            code: branding.code,
-            locale: branding.locale,
-            timezone: branding.timezone,
-            division: branding.division,
-            address: branding.address,
-            phone: branding.phone,
-            email: branding.email,
-            website: branding.website,
-            registrationNumber: branding.registrationNumber,
-            motto: branding.motto,
-            primaryColor: branding.primaryColor,
-            accentColor: branding.accentColor,
-            documentFooter: branding.documentFooter,
-            executiveSignatoryName: branding.executiveSignatoryName,
-            executiveSignatoryTitle: branding.executiveSignatoryTitle,
+    const branding = await resolveTenantDocumentBranding(doc.tenantId);
+    if (branding) {
+      snapshotData = {
+        ...snapshotData,
+        documentIdentity: {
+          organisationName: branding.organisationName,
+          logoUrl: branding.logoUrl,
+          primaryColor: branding.primaryColor,
+          accentColor: branding.accentColor,
+          executiveSignatoryName: branding.executiveSignatoryName,
+          executiveSignatoryTitle: branding.executiveSignatoryTitle || 'Chief Executive Officer',
+          executiveSignatureUrl: branding.executiveSignatureUrl,
+          snapshottedAt: preparedAt.toISOString(),
+        },
+        brandingMeta: {
+          tenantId: branding.tenantId,
+          organisationName: branding.organisationName,
+          code: branding.code,
+          locale: branding.locale,
+          timezone: branding.timezone,
+          division: branding.division,
+          address: branding.address,
+          phone: branding.phone,
+          email: branding.email,
+          website: branding.website,
+          registrationNumber: branding.registrationNumber,
+          motto: branding.motto,
+          primaryColor: branding.primaryColor,
+          accentColor: branding.accentColor,
+          documentFooter: branding.documentFooter,
+          executiveSignatoryName: branding.executiveSignatoryName,
+          executiveSignatoryTitle: branding.executiveSignatoryTitle,
+        },
+      };
+    }
+
+    if (doc.documentType === 'trip_authority') {
+      const renderData = await buildTripAuthorityRenderSnapshot(doc.id, { requireAuthority: true });
+      if (!renderData) {
+        return NextResponse.json(
+          {
+            error:
+              'Trip Authority cannot be issued until the canonical authority has been provisioned with its approved driver, passenger and authorisation data.',
           },
-        };
+          { status: 409 },
+        );
       }
+      snapshotData = { ...snapshotData, renderData };
+    } else if (doc.documentType === 'inspection_report') {
+      const renderData = await buildInspectionReportRenderSnapshot(doc.id);
+      if (!renderData) {
+        return NextResponse.json(
+          { error: 'Inspection Report cannot be issued until its completed inspection data is available.' },
+          { status: 409 },
+        );
+      }
+      snapshotData = { ...snapshotData, renderData };
+    } else if (doc.documentType === 'transport_request') {
+      const renderData = await buildTransportRequestRenderSnapshot(doc.id, { issuing: true });
+      if (!renderData) {
+        return NextResponse.json(
+          { error: 'Transport Request could not be prepared for official issuance.' },
+          { status: 409 },
+        );
+      }
+      snapshotData = { ...snapshotData, renderData };
     }
 
-    if (!snapshotData.renderData) {
-      if (doc.documentType === 'trip_authority') {
-        const renderData = await buildTripAuthorityRenderSnapshot(doc.id, { requireAuthority: true });
-        if (!renderData) {
-          return NextResponse.json(
-            {
-              error:
-                'Trip Authority cannot be issued until the canonical authority has been provisioned with its approved driver, passenger and authorisation data.',
-            },
-            { status: 409 },
-          );
-        }
-        snapshotData = { ...snapshotData, renderData };
-      } else if (doc.documentType === 'inspection_report') {
-        const renderData = await buildInspectionReportRenderSnapshot(doc.id);
-        if (!renderData) {
-          return NextResponse.json(
-            { error: 'Inspection Report cannot be issued until its completed inspection data is available.' },
-            { status: 409 },
-          );
-        }
-        snapshotData = { ...snapshotData, renderData };
-      } else if (doc.documentType === 'transport_request') {
-        const renderData = await buildTransportRequestRenderSnapshot(doc.id, { issuing: true });
-        if (!renderData) {
-          return NextResponse.json(
-            { error: 'Transport Request could not be prepared for official issuance.' },
-            { status: 409 },
-          );
-        }
-        snapshotData = { ...snapshotData, renderData };
-      }
-    }
-
-    const now = new Date();
     const documentHash = createHash('sha256')
       .update(
         JSON.stringify({
@@ -175,7 +183,7 @@ export async function POST(
 
     await runAtomicMutations((tx) => [
       tx.update(generatedDocuments)
-        .set({ status: 'superseded', updatedAt: now })
+        .set({ status: 'superseded', updatedAt: preparedAt })
         .where(
           and(
             eq(generatedDocuments.tenantId, session.tenantId),
@@ -192,7 +200,7 @@ export async function POST(
           status: 'issued',
           hash: documentHash,
           snapshotData,
-          updatedAt: now,
+          updatedAt: preparedAt,
         })
         .where(
           and(
@@ -211,7 +219,7 @@ export async function POST(
     if (
       !updated ||
       updated.status !== 'issued' ||
-      updated.updatedAt.getTime() !== now.getTime()
+      updated.updatedAt.getTime() !== preparedAt.getTime()
     ) {
       return NextResponse.json(
         { error: 'This document changed while the action was being processed. Refresh and try again.' },
@@ -219,9 +227,6 @@ export async function POST(
       );
     }
 
-    // Keep the document-state transition atomic even if audit storage has a
-    // transient problem. A failed audit write is logged explicitly rather than
-    // misleading the user into retrying an issuance that already succeeded.
     try {
       await db.insert(auditEvents).values({
         tenantId: doc.tenantId,
