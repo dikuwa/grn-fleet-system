@@ -339,6 +339,40 @@ async function persistSnapshotEnrichment(
 }
 
 /**
+ * If departure has already started, Trip Authority generation is closed. The
+ * authority is a pre-departure official record; operational status transitions
+ * such as in_progress/return/closed must not manufacture a new draft version.
+ * Return the latest existing document so legacy callers can remain idempotent.
+ */
+async function existingAuthorityDocumentAfterDeparture(
+  allocationId: string,
+  tenantId: string,
+) {
+  const db = getDb();
+  const [trip] = await db
+    .select({ status: trips.status })
+    .from(trips)
+    .where(and(eq(trips.allocationId, allocationId), eq(trips.tenantId, tenantId)))
+    .limit(1);
+  if (!trip || trip.status === 'pending') return null;
+
+  const [document] = await db
+    .select()
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.tenantId, tenantId),
+        eq(generatedDocuments.entityType, 'vehicle_allocation'),
+        eq(generatedDocuments.entityId, allocationId),
+        eq(generatedDocuments.documentType, 'trip_authority'),
+      ),
+    )
+    .orderBy(desc(generatedDocuments.documentVersion))
+    .limit(1);
+  return document ?? null;
+}
+
+/**
  * Generate or refresh the pending Transport Request document snapshot.
  * Final visual render data and branding are rebuilt and frozen only by the
  * formal Issue action, so submission retries cannot mutate an official copy.
@@ -377,13 +411,17 @@ export async function onTripClosed(tripId: string, tenantId: string, userId: str
 }
 
 /**
- * Generate/refresh a Trip Authority draft when an allocation is created. The
- * allocation lifecycle can precede provisioning of the canonical authority row,
- * so renderData here is only a preliminary preview. Formal issuance always
- * rebuilds the final render snapshot and branding before it becomes official.
+ * Generate/refresh a Trip Authority draft only before departure. The allocation
+ * lifecycle can precede provisioning of the canonical authority row, so
+ * renderData here is only a preliminary preview. Formal issuance always rebuilds
+ * the final render snapshot and branding before it becomes official.
  */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   if (!(await assertDocumentSourceTenant('vehicle_allocation', allocationId, tenantId))) return null;
+
+  const postDepartureDocument = await existingAuthorityDocumentAfterDeparture(allocationId, tenantId);
+  if (postDepartureDocument) return postDepartureDocument;
+
   const document = await generateWithVersionRaceRecovery({
     documentType: 'trip_authority',
     entityType: 'vehicle_allocation',
