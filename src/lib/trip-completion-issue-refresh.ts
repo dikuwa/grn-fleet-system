@@ -67,13 +67,15 @@ export async function refreshTripCompletionDraftForIssue(
 
   if (!closure || !vehicle) return null;
 
-  let pendingReimbursements = 0;
+  let outstandingReimbursements = 0;
   if (fuel.length) {
     const reimbursementsForTrip = await db
       .select({ state: reimbursements.state })
       .from(reimbursements)
       .where(inArray(reimbursements.transactionId, fuel.map((transaction) => transaction.id)));
-    pendingReimbursements = reimbursementsForTrip.filter((item) => item.state === 'pending').length;
+    outstandingReimbursements = reimbursementsForTrip.filter((item) =>
+      item.state === 'pending' || item.state === 'approved'
+    ).length;
   }
 
   const totalLitres = fuel.reduce((sum, transaction) => sum + Number(transaction.litres), 0);
@@ -132,7 +134,7 @@ export async function refreshTripCompletionDraftForIssue(
       totalLitres: Number(totalLitres.toFixed(2)),
       totalCost: Number(totalCost.toFixed(2)),
       transactionCount: fuel.length,
-      pendingReimbursements,
+      pendingReimbursements: outstandingReimbursements,
       actualKilometres: closure.actualKilometres || null,
       kilometreVariance: closure.kilometreVariance || null,
     },
