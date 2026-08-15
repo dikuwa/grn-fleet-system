@@ -324,7 +324,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     icon: 'Clock',
     section: 'Allocations & Trips',
     workspaces: [W.TRANSPORT_ADMIN],
-    access: { [W.TRANSPORT_ADMIN]: assignedManage(APPROVE) },
+    access: { [W.TRANSPORT_ADMIN]: tenantManage(APPROVE) },
     tenantScoped: true,
     order: 250,
     navigationVisible: true,
