@@ -24,6 +24,7 @@ import { Permissions } from '@/lib/permissions';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
+import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -387,6 +388,7 @@ export async function GET(
         .select({
           id: tripAuthorities.id,
           status: tripAuthorities.status,
+          acceptedAt: tripAuthorities.acceptedAt,
           validFrom: tripAuthorities.validFrom,
           validUntil: tripAuthorities.validUntil,
         })
@@ -441,17 +443,37 @@ export async function GET(
         driverAccepted = acceptedStatuses.has(authority.status);
       }
 
+      const pendingReplacementAcceptance = await findPendingVehicleReplacementAcceptance({
+        authorityId: authority.id,
+        acceptedAt: authority.acceptedAt,
+      });
+      if (pendingReplacementAcceptance) {
+        driverAccepted = false;
+        gates.push({
+          key: 'authority_amendment_acknowledged',
+          label: 'Revised Trip Authority acknowledged',
+          status: 'pending',
+          detail:
+            driverKind === 'external'
+              ? 'The vehicle changed after the external driver accepted the authority. Transport Administration must record acceptance of the revised authority before inspection or issue.'
+              : 'The vehicle changed after the driver accepted the authority. The assigned driver must review and accept the revised authority before inspection or issue.',
+          required: true,
+        });
+      }
+
       gates.push({
         key: 'driver_acknowledged',
-        label: driverKind === 'external' ? 'External driver acceptance recorded' : 'Driver has accepted trip',
+        label: driverKind === 'external' ? 'External driver acceptance current' : 'Driver acceptance current',
         status: driverAccepted ? 'pass' : 'pending',
         detail: driverAccepted
           ? driverKind === 'external'
-            ? 'Transport Administration has recorded the external driver acceptance.'
-            : 'Driver has accepted the Trip Authority.'
-          : driverKind === 'external'
-            ? `External driver assignment is ${externalDriver?.assignmentState || 'not available'}.`
-            : `Trip Authority status: ${authority.status.replace(/_/g, ' ')}.`,
+            ? 'Transport Administration has recorded current external-driver acceptance.'
+            : 'Driver acceptance covers the current Trip Authority.'
+          : pendingReplacementAcceptance
+            ? 'The previous acceptance predates a material vehicle replacement.'
+            : driverKind === 'external'
+              ? `External driver assignment is ${externalDriver?.assignmentState || 'not available'}.`
+              : `Trip Authority status: ${authority.status.replace(/_/g, ' ')}.`,
         required: true,
       });
 
