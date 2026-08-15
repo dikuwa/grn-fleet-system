@@ -170,6 +170,19 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             AND tenant_id = ${tenantId}::uuid
             AND EXISTS (SELECT 1 FROM trip_cancel)
           RETURNING id
+        ),
+        generated_authority_cancel AS (
+          UPDATE generated_documents
+          SET status = 'cancelled',
+              reason = ${reason},
+              updated_at = ${now}
+          WHERE tenant_id = ${tenantId}::uuid
+            AND entity_type = 'vehicle_allocation'
+            AND entity_id = ${record.assignment.allocationId}::uuid
+            AND document_type = 'trip_authority'
+            AND status IN ('draft', 'issued')
+            AND EXISTS (SELECT 1 FROM trip_cancel)
+          RETURNING id
         )
         SELECT CAST(CASE
           WHEN (SELECT count(*) FROM assignment_claim) = 1
@@ -199,6 +212,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             allocationState: 'cancelled',
             tripStatus: 'cancelled',
             requestStatus: 'transport_review',
+            tripAuthorityDocumentStatus: 'cancelled',
             reason,
           },
         }),
