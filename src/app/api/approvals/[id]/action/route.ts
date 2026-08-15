@@ -13,6 +13,7 @@ import {
 import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 import { processAuthorisationDecision } from '@/lib/authorisation-decision';
+import { ensureAuthorisationHandoff } from '@/lib/authorisation-handoff';
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
@@ -183,6 +184,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     if (!result.ok) return result.error;
+
+    // The final-authorisation state machine is recoverable: a retry may return
+    // success after detecting that the workflow already advanced, before its
+    // original post-commit notification phase was completed. Re-run the
+    // handoff idempotently so stale authoriser alerts are resolved and the
+    // driver/requester notifications exist exactly once.
+    if (stepActionType === 'authorise' && semanticResult === 'authorised') {
+      await ensureAuthorisationHandoff({
+        tenantId: session.tenantId,
+        instanceId: id,
+        requestId: instance.requestId,
+        workflowStage: status.currentStep.stepOrder,
+      });
+    }
 
     // Outbound email is deliberately post-commit and best-effort. Await it so
     // serverless runtimes cannot terminate delivery after the response, while
