@@ -99,9 +99,12 @@ export function TripActions({
       if (!response.ok) throw new Error(json.error || 'Unable to check release readiness');
       const departureGate = json.gates?.find((gate) => gate.key === 'departure_inspection');
       const acknowledgementGate = json.gates?.find((gate) => gate.key === 'driver_acknowledged');
+      const fallbackAccepted = acknowledgementGate
+        ? acknowledgementGate.status === 'pass'
+        : Boolean(hasAcknowledge);
       setDepartureInspectionStatus(departureGate?.status ?? null);
       setDriverKind(json.driver?.kind ?? 'unassigned');
-      setDriverAccepted(json.driver?.accepted ?? acknowledgementGate?.status === 'pass' ?? Boolean(hasAcknowledge));
+      setDriverAccepted(json.driver?.accepted ?? fallbackAccepted);
     } catch (reason) {
       setDepartureInspectionStatus(null);
       setDriverAccepted(Boolean(hasAcknowledge));
