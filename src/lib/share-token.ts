@@ -15,7 +15,7 @@ import { env } from '@/env';
 import { randomBytes } from 'node:crypto';
 import { getDb } from '@/db';
 import { shareLinks, shareAccessEvents, generatedDocuments } from '@/db/schema/documents';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gte, isNull, lt, or, sql } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -25,6 +25,13 @@ const TOKEN_BYTES = 32;
 const NONCE_BYTES = 16;
 const HASH_ALGORITHM = 'SHA-256';
 const SHORT_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+type ShareAccessResult =
+  | 'granted'
+  | 'expired'
+  | 'revoked'
+  | 'not_found'
+  | 'max_views_exceeded';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -64,6 +71,70 @@ async function hmacSha256(key: Uint8Array, message: Uint8Array): Promise<Uint8Ar
   return new Uint8Array(signature);
 }
 
+async function logShareAccess(
+  shareLinkId: string,
+  result: ShareAccessResult,
+  metadata?: { ipAddress?: string; userAgent?: string },
+): Promise<void> {
+  const db = getDb();
+  await db.insert(shareAccessEvents).values({
+    shareLinkId,
+    ipAddress: metadata?.ipAddress || null,
+    userAgent: metadata?.userAgent || null,
+    result,
+  });
+}
+
+function accessFailureReason(link: typeof shareLinks.$inferSelect): ShareAccessResult | null {
+  if (link.isRevoked) return 'revoked';
+  if (link.expiresAt < new Date()) return 'expired';
+  if (link.maxViews && link.currentViews >= link.maxViews) return 'max_views_exceeded';
+  return null;
+}
+
+/**
+ * Atomically claim one successful view.
+ *
+ * The view-limit predicate and increment happen in the same UPDATE so two
+ * concurrent requests cannot both consume the final permitted view.
+ */
+async function claimShareAccess(
+  shareLinkId: string,
+  metadata?: { ipAddress?: string; userAgent?: string },
+): Promise<{ granted: true; link: typeof shareLinks.$inferSelect } | { granted: false; reason: ShareAccessResult }> {
+  const db = getDb();
+  const now = new Date();
+  const [claimed] = await db
+    .update(shareLinks)
+    .set({
+      currentViews: sql`${shareLinks.currentViews} + 1`,
+      lastAccessedAt: now,
+    })
+    .where(
+      and(
+        eq(shareLinks.id, shareLinkId),
+        eq(shareLinks.isRevoked, false),
+        gte(shareLinks.expiresAt, now),
+        or(isNull(shareLinks.maxViews), lt(shareLinks.currentViews, shareLinks.maxViews)),
+      ),
+    )
+    .returning();
+
+  if (claimed) {
+    await logShareAccess(shareLinkId, 'granted', metadata);
+    return { granted: true, link: claimed };
+  }
+
+  const [latest] = await db
+    .select()
+    .from(shareLinks)
+    .where(eq(shareLinks.id, shareLinkId))
+    .limit(1);
+  const reason = latest ? accessFailureReason(latest) || 'not_found' : 'not_found';
+  if (latest) await logShareAccess(shareLinkId, reason, metadata);
+  return { granted: false, reason };
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -85,20 +156,17 @@ export async function generateShareToken(
   const message = new TextEncoder().encode(
     `${documentId}|${expiresAt.toISOString()}|${bytesToBase64(nonce)}`,
   );
-
   const hmac = await hmacSha256(pepper, message);
 
   // Token = base64(nonce + hmac) — contains everything needed to verify
   const combined = new Uint8Array(NONCE_BYTES + TOKEN_BYTES);
   combined.set(nonce);
   combined.set(hmac, NONCE_BYTES);
-
   const token = bytesToBase64(combined);
 
   // Hash the full token for DB storage
   const hashBytes = await crypto.subtle.digest(HASH_ALGORITHM, new TextEncoder().encode(token));
   const tokenHash = bytesToBase64(new Uint8Array(hashBytes));
-
   return { token, tokenHash };
 }
 
@@ -130,20 +198,15 @@ export async function generateShortShareIdentity(prefix: string): Promise<{
   throw new Error('Unable to allocate a unique secure link');
 }
 
-/**
- * Verify a share token against its stored hash.
- */
+/** Verify a legacy share token against its stored hash. */
 export async function verifyShareToken(token: string): Promise<{
   valid: boolean;
   shareLink?: typeof shareLinks.$inferSelect;
   reason?: string;
 }> {
   try {
-    // Hash the provided token
     const hashBytes = await crypto.subtle.digest(HASH_ALGORITHM, new TextEncoder().encode(token));
     const tokenHash = bytesToBase64(new Uint8Array(hashBytes));
-
-    // Look up by hash
     const db = getDb();
     const [link] = await db
       .select()
@@ -151,22 +214,9 @@ export async function verifyShareToken(token: string): Promise<{
       .where(eq(shareLinks.tokenHash, tokenHash))
       .limit(1);
 
-    if (!link) {
-      return { valid: false, reason: 'not_found' };
-    }
-
-    if (link.isRevoked) {
-      return { valid: false, reason: 'revoked', shareLink: link };
-    }
-
-    if (new Date(link.expiresAt) < new Date()) {
-      return { valid: false, reason: 'expired', shareLink: link };
-    }
-
-    if (link.maxViews && link.currentViews >= link.maxViews) {
-      return { valid: false, reason: 'max_views_exceeded', shareLink: link };
-    }
-
+    if (!link) return { valid: false, reason: 'not_found' };
+    const reason = accessFailureReason(link);
+    if (reason) return { valid: false, reason, shareLink: link };
     return { valid: true, shareLink: link };
   } catch {
     return { valid: false, reason: 'verification_error' };
@@ -174,63 +224,49 @@ export async function verifyShareToken(token: string): Promise<{
 }
 
 /**
- * Record a share access event and increment view count.
+ * Record a non-granted share access event. Successful views must go through
+ * claimShareAccess so max-view enforcement remains atomic.
  */
 export async function recordShareAccess(
   shareLinkId: string,
-  result: 'granted' | 'expired' | 'revoked' | 'not_found',
+  result: Exclude<ShareAccessResult, 'granted'>,
   metadata?: { ipAddress?: string; userAgent?: string },
 ): Promise<void> {
-  const db = getDb();
-
-  // Update view count
-  if (result === 'granted') {
-    await db
-      .update(shareLinks)
-      .set({
-        currentViews: sql`${shareLinks.currentViews} + 1`,
-        lastAccessedAt: new Date(),
-      })
-      .where(eq(shareLinks.id, shareLinkId));
-  }
-
-  // Insert audit event
-  await db.insert(shareAccessEvents).values({
-    shareLinkId,
-    ipAddress: metadata?.ipAddress || null,
-    userAgent: metadata?.userAgent || null,
-    result,
-  });
+  await logShareAccess(shareLinkId, result, metadata);
 }
 
-/**
- * Resolve the document behind a share token.
- */
+/** Resolve the document behind a legacy share token. */
 export async function resolveSharedDocument(token: string): Promise<{
   document?: typeof generatedDocuments.$inferSelect;
   error?: string;
 }> {
   const verification = await verifyShareToken(token);
   if (!verification.valid) {
+    if (verification.shareLink && verification.reason && verification.reason !== 'not_found') {
+      await logShareAccess(
+        verification.shareLink.id,
+        verification.reason as ShareAccessResult,
+      );
+    }
     return { error: verification.reason };
   }
 
   const db = getDb();
   const shareLink = verification.shareLink!;
-
   const [doc] = await db
     .select()
     .from(generatedDocuments)
-    .where(eq(generatedDocuments.id, shareLink.documentId))
+    .where(
+      and(
+        eq(generatedDocuments.id, shareLink.documentId),
+        eq(generatedDocuments.tenantId, shareLink.tenantId),
+      ),
+    )
     .limit(1);
 
-  if (!doc) {
-    return { error: 'document_not_found' };
-  }
-
-  // Record access
-  await recordShareAccess(shareLink.id, 'granted');
-
+  if (!doc) return { error: 'document_not_found' };
+  const access = await claimShareAccess(shareLink.id);
+  if (!access.granted) return { error: access.reason };
   return { document: doc };
 }
 
@@ -246,17 +282,13 @@ export async function resolveShortSharedDocument(shortSlug: string): Promise<{
     .where(eq(shareLinks.shortSlug, shortSlug.toUpperCase()))
     .limit(1);
   if (!shareLink) return { error: 'not_found' };
-  if (shareLink.isRevoked) {
-    await recordShareAccess(shareLink.id, 'revoked');
-    return { error: 'revoked', shareLink };
+
+  const preflightFailure = accessFailureReason(shareLink);
+  if (preflightFailure) {
+    await logShareAccess(shareLink.id, preflightFailure);
+    return { error: preflightFailure, shareLink };
   }
-  if (shareLink.expiresAt < new Date()) {
-    await recordShareAccess(shareLink.id, 'expired');
-    return { error: 'expired', shareLink };
-  }
-  if (shareLink.maxViews && shareLink.currentViews >= shareLink.maxViews) {
-    return { error: 'max_views_exceeded', shareLink };
-  }
+
   const [document] = await db
     .select()
     .from(generatedDocuments)
@@ -268,6 +300,8 @@ export async function resolveShortSharedDocument(shortSlug: string): Promise<{
     )
     .limit(1);
   if (!document) return { error: 'document_not_found', shareLink };
-  await recordShareAccess(shareLink.id, 'granted');
-  return { document, shareLink };
+
+  const access = await claimShareAccess(shareLink.id);
+  if (!access.granted) return { error: access.reason, shareLink };
+  return { document, shareLink: access.link };
 }

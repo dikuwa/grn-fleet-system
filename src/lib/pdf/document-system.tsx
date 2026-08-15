@@ -74,10 +74,20 @@ export type PdfTheme = {
   rule: string;
 };
 
+function tintHex(value: string | undefined, strength = 0.955): string {
+  const hex = (value || '').replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return '#F8FAFC';
+
+  const channels = [0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16));
+  const mixed = channels.map((channel) => Math.round(channel + (255 - channel) * strength));
+
+  return `#${mixed.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
 export const officialRedTheme: PdfTheme = {
   primary: OFFICIAL_RED,
   accent: OFFICIAL_RED,
-  tint: '#FFF7F7',
+  tint: '#FFF5F5',
   ink: INK,
   muted: MUTED,
   rule: '#F0C9CB',
@@ -86,17 +96,18 @@ export const officialRedTheme: PdfTheme = {
 const defaultTenantTheme: PdfTheme = {
   primary: '#245B9E',
   accent: '#0F766E',
-  tint: '#F4F7FB',
+  tint: '#F7F9FC',
   ink: INK,
   muted: MUTED,
   rule: RULE,
 };
 
 export function tenantPdfTheme(branding?: ResolvedTenantBranding | null): PdfTheme {
+  const primary = branding?.primaryColor || '#245B9E';
   return {
-    primary: branding?.primaryColor || '#245B9E',
+    primary,
     accent: branding?.accentColor || '#0F766E',
-    tint: '#F4F7FB',
+    tint: tintHex(primary),
     ink: INK,
     muted: MUTED,
     rule: RULE,
@@ -117,6 +128,58 @@ export function safePdfValue(value: unknown, fallback = EMPTY_VALUE): string {
   const text = String(value).replace(/\s+/g, ' ').trim();
   if (!text || /^(undefined|null|nan)$/i.test(text)) return fallback;
   return text;
+}
+
+function formatGeneratedTimestamp(
+  value: unknown,
+  locale = 'en-NA',
+  timezone = 'Africa/Windhoek',
+): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return safePdfValue(value, '') || null;
+
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: timezone,
+      timeZoneName: 'short',
+    }).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function compactVerificationUrl(value: unknown): string {
+  const text = safePdfValue(value, '');
+  if (!text) return 'Not available';
+
+  try {
+    const url = new URL(text);
+    const parts = url.pathname.split('/').filter(Boolean);
+    const tail = parts.at(-1) || '';
+
+    if (url.pathname.startsWith('/v/') && tail) {
+      return `${url.host}/v/${tail}`;
+    }
+    if (tail.length > 18) {
+      return `${url.host}/…/${tail.slice(0, 8)}…${tail.slice(-6)}`;
+    }
+    return `${url.host}${url.pathname}`;
+  } catch {
+    return text.length > 42 ? `${text.slice(0, 24)}…${text.slice(-10)}` : text;
+  }
+}
+
+function compactFingerprint(value: unknown): string {
+  const text = safePdfValue(value, '');
+  if (!text) return 'Not available';
+  return text.length > 24 ? `${text.slice(0, 12)}…${text.slice(-8)}` : text;
 }
 
 export function SafePdfText({
@@ -144,35 +207,59 @@ export const documentStyles = StyleSheet.create({
     fontSize: 7.4,
     lineHeight: 1.28,
     color: INK,
+    backgroundColor: '#FBFCFE',
   },
   officialPage: {
     borderWidth: 0,
+    backgroundColor: '#FFFAFA',
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     borderBottomWidth: 0.55,
     paddingBottom: 8,
     marginBottom: 8,
-    minHeight: 96,
+    minHeight: 102,
   },
-  headerLogoZone: { width: '20%', justifyContent: 'center', alignItems: 'flex-start' },
-  logo: { width: 76, height: 82, objectFit: 'contain' },
+  headerLogoZone: {
+    width: '18%',
+    minHeight: 94,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingTop: 2,
+  },
+  coatOfArmsLogo: { width: 68, height: 68, objectFit: 'contain' },
+  tenantLogo: { width: 76, height: 76, objectFit: 'contain' },
   headerOrgZone: {
     width: '64%',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 5,
+    paddingTop: 5,
+  },
+  republic: { fontSize: 7, fontFamily: DOCUMENT_FONT_STACK, textAlign: 'center' },
+  tenantContext: {
+    fontSize: 5.1,
+    marginTop: 5,
+    marginBottom: 0.3,
+    textAlign: 'center',
+    color: MUTED,
   },
   organisation: {
     fontSize: 10.2,
     fontFamily: DOCUMENT_FONT_STACK,
     color: INK,
     textAlign: 'center',
-    marginTop: 2,
+    marginTop: 0.4,
   },
   orgDetail: { color: MUTED, fontSize: 6.4, marginTop: 1, textAlign: 'center' },
-  headerTitleZone: { width: '18%', alignItems: 'flex-end', justifyContent: 'center' },
+  headerTitleZone: {
+    width: '18%',
+    minHeight: 94,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 2,
+  },
   continuationHeader: {
     position: 'absolute',
     top: 10,
@@ -183,27 +270,36 @@ export const documentStyles = StyleSheet.create({
     fontSize: 5.5,
     textAlign: 'center',
   },
-  title: { fontSize: 11.4, fontFamily: DOCUMENT_FONT_STACK, textAlign: 'center', lineHeight: 1.16 },
-  reference: { fontSize: 7.2, fontFamily: DOCUMENT_FONT_STACK, marginTop: 2, textAlign: 'center' },
-  meta: { color: MUTED, fontSize: 5.8, marginTop: 1, textAlign: 'center' },
+  title: {
+    fontSize: 11.4,
+    fontFamily: DOCUMENT_FONT_STACK,
+    textAlign: 'center',
+    lineHeight: 1.16,
+  },
+  reference: {
+    fontSize: 5.4,
+    fontFamily: DOCUMENT_FONT_STACK,
+    marginTop: 1.5,
+    textAlign: 'center',
+    color: MUTED,
+  },
+  meta: { color: MUTED, fontSize: 4.6, marginTop: 0.5, textAlign: 'center', lineHeight: 1.15 },
   muted: { color: MUTED, fontSize: 6.3 },
   statusBadge: {
-    alignSelf: 'flex-end',
-    borderWidth: 0.35,
-    borderColor: RULE,
-    paddingVertical: 1.5,
-    paddingHorizontal: 4,
-    fontSize: 5.8,
+    alignSelf: 'center',
+    paddingVertical: 0.6,
+    paddingHorizontal: 2,
+    fontSize: 4.7,
     fontFamily: DOCUMENT_FONT_STACK,
     textTransform: 'uppercase',
-    marginTop: 2,
+    marginTop: 0.7,
+    color: MUTED,
   },
   section: { marginBottom: 4 },
   sectionTitle: {
     fontSize: 7.7,
     fontFamily: DOCUMENT_FONT_STACK,
     textTransform: 'uppercase',
-    borderBottomWidth: 0.3,
     paddingHorizontal: 4,
     paddingVertical: 2.2,
     marginBottom: 0,
@@ -220,7 +316,7 @@ export const documentStyles = StyleSheet.create({
   fieldLabel: { width: '40%', color: MUTED, fontSize: 6.2, fontFamily: DOCUMENT_FONT_STACK },
   fieldValue: { width: '60%', color: INK, fontSize: 6.7 },
   table: { width: '100%' },
-  tableHeader: { flexDirection: 'row', borderBottomWidth: 0.3, paddingVertical: 2.2 },
+  tableHeader: { flexDirection: 'row', paddingVertical: 2.2 },
   tableRow: { flexDirection: 'row', borderBottomWidth: 0.18, paddingVertical: 2.1, minHeight: 11 },
   tableCell: { paddingHorizontal: 2.5, fontSize: 6.25 },
   tableHeading: {
@@ -231,18 +327,19 @@ export const documentStyles = StyleSheet.create({
   },
   empty: { paddingVertical: 4, color: MUTED, fontSize: 6.5 },
   verificationBlock: {
-    marginTop: 3,
-    borderWidth: 0.3,
-    padding: 3.5,
+    marginTop: 5,
+    padding: 4,
     flexDirection: 'row',
-    gap: 6,
+    gap: 7,
+    backgroundColor: '#FFFFFF',
   },
-  verifyQrCol: { width: 37, justifyContent: 'center' },
-  qrSmall: { width: 34, height: 34, objectFit: 'contain' },
+  verifyQrCol: { width: 50, justifyContent: 'center', alignItems: 'center' },
+  qrSmall: { width: 28, height: 28, objectFit: 'contain' },
+  qrVerification: { width: 46, height: 46, objectFit: 'contain' },
   verifyDetailsCol: { flex: 1, justifyContent: 'center' },
   verifyTitle: { fontSize: 6.5, fontFamily: DOCUMENT_FONT_STACK, marginBottom: 2 },
-  verifyLabel: { fontSize: 5.2, color: MUTED, textTransform: 'uppercase' },
-  verifyValue: { fontSize: 5.9, color: INK, marginBottom: 1.5 },
+  verifyLabel: { fontSize: 4.8, color: MUTED, textTransform: 'uppercase' },
+  verifyValue: { fontSize: 5.4, color: INK, marginBottom: 1.5 },
   watermark: {
     position: 'absolute',
     top: '42%',
@@ -264,17 +361,27 @@ export const documentStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     color: MUTED,
-    fontSize: 5.3,
+    fontSize: 5.1,
   },
-  footerLeft: { width: '34%' },
-  footerCentre: { width: '51%', textAlign: 'center' },
+  footerLeft: { width: '44%' },
+  footerCentre: { width: '41%', textAlign: 'center' },
   footerRight: { width: '15%', textAlign: 'right' },
   signatureRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   signature: { flex: 1, minHeight: 48, paddingTop: 2, paddingHorizontal: 2 },
-  signatureStatement: { fontSize: 5.35, textAlign: 'center', minHeight: 16, color: '#344054' },
+  signatureStatement: {
+    fontSize: 5.35,
+    textAlign: 'center',
+    minHeight: 16,
+    color: '#344054',
+  },
   signatureImage: { height: 22, maxWidth: 96, objectFit: 'contain', objectPosition: 'left' },
-  signatureName: { fontSize: 14.5, lineHeight: 1.05, fontFamily: SIGNATURE_FONT, marginTop: 2 },
-  warnings: { marginTop: 2, marginBottom: 2 },
+  signatureName: {
+    fontSize: 14.5,
+    lineHeight: 1.05,
+    fontFamily: SIGNATURE_FONT,
+    marginTop: 2,
+  },
+  warnings: { marginTop: 3, marginBottom: 2 },
   warning: {
     fontSize: 6.3,
     fontFamily: DOCUMENT_FONT_STACK,
@@ -341,19 +448,17 @@ export function DocumentHeader({
 }) {
   const contact = [branding?.phone, branding?.email, branding?.website].filter(Boolean).join('  ·  ');
   const tenantLogo = branding?.documentLogoUrl || branding?.logoUrl;
+  const identityMeta = [version ? `v${version}` : null, issueDate, status].filter(Boolean).join(' · ');
+
   return (
     <View style={[documentStyles.header, { borderBottomColor: theme.primary }]}>
       <View style={documentStyles.headerLogoZone}>
-        <Image src={coatOfArmsPath} style={documentStyles.logo} />
+        <Image src={coatOfArmsPath} style={documentStyles.coatOfArmsLogo} />
       </View>
       <View style={documentStyles.headerOrgZone}>
-        <Text style={{ fontSize: 7, fontFamily: DOCUMENT_FONT_STACK, textAlign: 'center' }}>
-          REPUBLIC OF NAMIBIA
-        </Text>
+        <Text style={documentStyles.republic}>REPUBLIC OF NAMIBIA</Text>
         <Text style={[documentStyles.title, { color: theme.primary }]}>{title.toUpperCase()}</Text>
-        <Text style={{ fontSize: 5.3, marginTop: 2, textAlign: 'center' }}>
-          OFFICE / MINISTRY / DEPARTMENT / MUNICIPALITY
-        </Text>
+        <Text style={documentStyles.tenantContext}>OFFICE / MINISTRY / DEPARTMENT / MUNICIPALITY</Text>
         <Text style={documentStyles.organisation}>
           {safePdfValue(branding?.organisationName, 'Government Fleet')}
         </Text>
@@ -362,14 +467,9 @@ export function DocumentHeader({
         {contact ? <SafePdfText value={contact} style={documentStyles.orgDetail} /> : null}
       </View>
       <View style={documentStyles.headerTitleZone}>
-        {tenantLogo ? <Image src={tenantLogo} style={documentStyles.logo} /> : null}
+        {tenantLogo ? <Image src={tenantLogo} style={documentStyles.tenantLogo} /> : null}
         {showIdentity && reference ? <SafePdfText value={reference} style={documentStyles.reference} /> : null}
-        {showIdentity && (version || issueDate) ? (
-          <Text style={documentStyles.meta}>
-            {[version ? `Version ${version}` : null, issueDate].filter(Boolean).join(' · ')}
-          </Text>
-        ) : null}
-        {showIdentity && status ? <SafePdfText value={status} style={documentStyles.statusBadge} /> : null}
+        {showIdentity && identityMeta ? <SafePdfText value={identityMeta} style={documentStyles.meta} /> : null}
         {showIdentity && qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
       </View>
     </View>
@@ -393,12 +493,7 @@ export function DocumentSection({
 }) {
   return (
     <View style={documentStyles.section} wrap={wrap} minPresenceAhead={minPresenceAhead} break={breakBefore}>
-      <Text
-        style={[
-          documentStyles.sectionTitle,
-          { color: theme.primary, borderBottomColor: theme.rule, backgroundColor: theme.tint },
-        ]}
-      >
+      <Text style={[documentStyles.sectionTitle, { color: theme.primary, backgroundColor: theme.tint }]}>
         {title}
       </Text>
       <View style={documentStyles.sectionBody}>{children}</View>
@@ -454,6 +549,7 @@ export function DocumentTable({
   theme?: PdfTheme;
 }) {
   if (!rows.length) return <SafePdfText value={emptyLabel} style={documentStyles.empty} />;
+
   const fallbackWidth = `${100 / columns.length}%`;
   const cellStyle = (column: DocumentTableColumn, heading: boolean) => ({
     ...(heading ? documentStyles.tableHeading : documentStyles.tableCell),
@@ -461,9 +557,10 @@ export function DocumentTable({
     textAlign: column.align || 'left',
     ...(heading ? { color: theme.primary } : {}),
   });
+
   return (
     <View style={documentStyles.table} minPresenceAhead={22}>
-      <View style={[documentStyles.tableHeader, { backgroundColor: theme.tint, borderBottomColor: theme.rule }]} fixed>
+      <View style={[documentStyles.tableHeader, { backgroundColor: theme.tint }]} fixed>
         {columns.map((column) => (
           <SafePdfText key={column.key} value={column.label} style={cellStyle(column, true)} />
         ))}
@@ -537,8 +634,8 @@ export function DocumentExecutiveCertification({
   theme?: PdfTheme;
 }) {
   return (
-    <View style={{ marginTop: 5 }} wrap={false}>
-      <Text style={[documentStyles.sectionTitle, { color: theme.primary, borderBottomColor: theme.rule, backgroundColor: theme.tint }]}>
+    <View style={{ marginTop: 7 }} wrap={false}>
+      <Text style={[documentStyles.sectionTitle, { color: theme.primary, backgroundColor: theme.tint }]}>
         Executive certification
       </Text>
       <View style={documentStyles.sectionBody}>
@@ -572,20 +669,35 @@ export function DocumentVerificationBlock({
   theme?: PdfTheme;
 }) {
   return (
-    <View style={[documentStyles.verificationBlock, { borderColor: theme.rule }]} wrap={false}>
-      <View style={documentStyles.verifyQrCol}>{qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}</View>
+    <View
+      style={[
+        documentStyles.verificationBlock,
+        { borderTopWidth: 0.25, borderTopColor: theme.rule },
+      ]}
+      wrap={false}
+    >
+      <View style={documentStyles.verifyQrCol}>
+        {qrCode ? (
+          <Image src={qrCode} style={documentStyles.qrVerification} />
+        ) : (
+          <SafePdfText value="QR unavailable" style={documentStyles.verifyLabel} />
+        )}
+      </View>
       <View style={documentStyles.verifyDetailsCol}>
         <SafePdfText value="Verification code" style={documentStyles.verifyLabel} />
         <SafePdfText value={verificationCode} style={[documentStyles.verifyTitle, { color: theme.primary }]} />
       </View>
       <View style={documentStyles.verifyDetailsCol}>
-        <SafePdfText value="Short link" style={documentStyles.verifyLabel} />
-        <SafePdfText value={verificationUrl} style={documentStyles.verifyValue} />
+        <SafePdfText value="Verify online" style={documentStyles.verifyLabel} />
+        <SafePdfText value={compactVerificationUrl(verificationUrl)} style={documentStyles.verifyValue} />
       </View>
-      <View style={{ ...documentStyles.verifyDetailsCol, flex: 1.35 }}>
-        <SafePdfText value="Document hash (SHA256)" style={documentStyles.verifyLabel} />
-        <SafePdfText value={documentHash} style={documentStyles.verifyValue} />
-        <SafePdfText value={`${branding?.organisationName || 'Government Fleet'} · Official digital record`} style={documentStyles.verifyLabel} />
+      <View style={{ ...documentStyles.verifyDetailsCol, flex: 1.05 }}>
+        <SafePdfText value="Fingerprint" style={documentStyles.verifyLabel} />
+        <SafePdfText value={compactFingerprint(documentHash)} style={documentStyles.verifyValue} />
+        <SafePdfText
+          value={`${branding?.organisationName || 'Government Fleet'} · Official digital record`}
+          style={documentStyles.verifyLabel}
+        />
       </View>
     </View>
   );
@@ -594,32 +706,42 @@ export function DocumentVerificationBlock({
 export function DocumentVerificationFooter({
   branding,
   verificationCode,
-  verificationUrl,
+  verificationUrl: _verificationUrl,
   documentHash,
+  generatedAt,
   theme = tenantPdfTheme(branding),
 }: {
   branding?: ResolvedTenantBranding | null;
   verificationCode?: unknown;
   verificationUrl?: unknown;
   documentHash?: unknown;
+  generatedAt?: unknown;
   theme?: PdfTheme;
 }) {
+  const generatedTimestamp = formatGeneratedTimestamp(
+    generatedAt,
+    branding?.locale || 'en-NA',
+    branding?.timezone || 'Africa/Windhoek',
+  );
   const verificationParts = verificationCode
     ? [
-        `Verify: ${safePdfValue(verificationCode)}`,
-        verificationUrl ? safePdfValue(verificationUrl) : null,
-        documentHash ? `FP: ${safePdfValue(documentHash)}` : null,
+        `Verify ${safePdfValue(verificationCode)}`,
+        documentHash ? `FP ${compactFingerprint(documentHash)}` : null,
       ].filter(Boolean)
     : ['Internal record'];
+  const footerParts = [
+    branding?.documentFooter || `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`,
+    generatedTimestamp ? `Generated ${generatedTimestamp}` : null,
+  ].filter(Boolean);
 
   return (
     <View style={[documentStyles.footer, { borderTopColor: theme.primary }]} fixed>
-      <SafePdfText
-        value={branding?.documentFooter || `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`}
-        style={documentStyles.footerLeft}
-      />
+      <SafePdfText value={footerParts.join(' · ')} style={documentStyles.footerLeft} />
       <SafePdfText value={verificationParts.join(' · ')} style={documentStyles.footerCentre} />
-      <Text style={documentStyles.footerRight} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+      <Text
+        style={documentStyles.footerRight}
+        render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`}
+      />
     </View>
   );
 }

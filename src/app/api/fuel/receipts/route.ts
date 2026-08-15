@@ -15,6 +15,7 @@ import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { parseFuelReceiptText, receiptValidationFlags, type ReceiptFields } from '@/lib/receipt-ocr';
+import { enrichFuelReceiptFields } from '@/lib/receipt-ocr-enrichment';
 import { AI_OCR_CONFIDENCE, extractReceiptWithAi, isAiFeatureEnabled } from '@/lib/ai';
 import { ALLOWED_IMAGE_TYPES, UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
 import { fuelScopeCondition } from '@/lib/record-scope';
@@ -184,7 +185,8 @@ export async function POST(request: NextRequest) {
         try {
           const recognition = await worker.recognize(processed);
           const parsed = parseFuelReceiptText(recognition.data.text, recognition.data.confidence);
-          extractionData = { ...parsed.fields };
+          const enriched = enrichFuelReceiptFields(recognition.data.text, parsed.fields);
+          extractionData = { ...enriched };
           fieldConfidence = parsed.confidence;
           extractionConfidence = Math.max(0, Math.min(1, recognition.data.confidence / 100));
           rawOcrResponse = {
@@ -194,7 +196,7 @@ export async function POST(request: NextRequest) {
             engineVersion: recognition.data.version,
           };
           flags = receiptValidationFlags({
-            fields: parsed.fields,
+            fields: enriched,
             vehicleRegistration: context.registration,
             vehicleFuelType: context.fuelType,
             currentOdometer: context.currentOdometer,
@@ -408,6 +410,30 @@ export async function PATCH(request: NextRequest) {
     } else {
       const verified = action === 'verify';
       const now = new Date();
+      const linkedReceipts = await db
+        .select({ id: fuelReceipts.id, isVerified: fuelReceipts.isVerified })
+        .from(fuelReceipts)
+        .where(
+          and(
+            eq(fuelReceipts.transactionId, record.transactionId),
+            eq(fuelReceipts.tenantId, session.tenantId),
+          ),
+        );
+      const pendingOtherReceipts = linkedReceipts.filter(
+        (linked) => linked.id !== receiptId && !linked.isVerified,
+      );
+      const transactionVerified = verified && pendingOtherReceipts.length === 0;
+      const transactionState = verified
+        ? transactionVerified
+          ? 'verified'
+          : 'flagged'
+        : 'rejected';
+      const transactionNote = verified
+        ? transactionVerified
+          ? null
+          : `Awaiting verification of ${pendingOtherReceipts.length} additional receipt${pendingOtherReceipts.length === 1 ? '' : 's'}`
+        : reason;
+
       await runAtomicMutations((executor) => [
         executor
           .update(fuelReceipts)
@@ -421,10 +447,10 @@ export async function PATCH(request: NextRequest) {
         executor
           .update(fuelTransactions)
           .set({
-            isVerified: verified,
+            isVerified: transactionVerified,
             verifiedByUserId: session.user.id,
-            anomalyState: verified ? 'verified' : 'rejected',
-            anomalyNotes: reason,
+            anomalyState: transactionState,
+            anomalyNotes: transactionNote,
             updatedAt: now,
           })
           .where(eq(fuelTransactions.id, record.transactionId)),
@@ -440,7 +466,12 @@ export async function PATCH(request: NextRequest) {
             receiptVerified: record.receipt.isVerified,
             receiptStatus: record.receipt.ocrStatus,
           },
-          after: { verified, status: verified ? 'verified' : 'rejected' },
+          after: {
+            verified,
+            status: verified ? 'verified' : 'rejected',
+            transactionVerified,
+            pendingLinkedReceipts: pendingOtherReceipts.length,
+          },
           reason,
           sourceChannel: 'web',
         }),

@@ -158,8 +158,12 @@ export async function GET(request: NextRequest) {
       const ocrConfidenceAvg = row.ocrConfidence
         ? Object.values(row.ocrConfidence).filter((v): v is number => typeof v === 'number')
         : [];
+      // Driver licence OCR confidence is stored as a 0..1 fraction. Convert it
+      // at the API boundary so every queue consumer receives a true percentage.
       const confidence = ocrConfidenceAvg.length
-        ? Math.round(ocrConfidenceAvg.reduce((sum, value) => sum + value, 0) / ocrConfidenceAvg.length)
+        ? Math.round(
+            (ocrConfidenceAvg.reduce((sum, value) => sum + value, 0) / ocrConfidenceAvg.length) * 100,
+          )
         : null;
 
       return {

@@ -107,7 +107,7 @@ export async function GET(
         : null,
     ]);
 
-    const [codes, corrections, previous, allVersions] = await Promise.all([
+    const [codes, corrections, previous, allVersions, duplicateMatches] = await Promise.all([
       db.select({ code: driverLicenceCodes.code }).from(driverLicenceCodes).where(eq(driverLicenceCodes.licenceId, id)),
       db.select().from(driverLicenceCorrections).where(eq(driverLicenceCorrections.licenceId, id)).orderBy(desc(driverLicenceCorrections.createdAt)),
       db
@@ -135,9 +135,31 @@ export async function GET(
         .from(driverLicences)
         .where(eq(driverLicences.driverProfileId, profileId))
         .orderBy(desc(driverLicences.version)),
+      db
+        .select({
+          licenceId: driverLicences.id,
+          employeeId: employees.id,
+          employeeNumber: employees.employeeNumber,
+          firstName: employees.firstName,
+          lastName: employees.lastName,
+        })
+        .from(driverLicences)
+        .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
+        .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
+        .where(
+          and(
+            eq(employees.tenantId, auth.session.tenantId),
+            eq(driverLicences.isVerified, true),
+            sql`${driverLicences.id} <> ${id}::uuid`,
+            sql`${driverLicences.driverProfileId} <> ${profileId}::uuid`,
+            sql`upper(regexp_replace(${driverLicences.licenceNumber}, '[^A-Z0-9]', '', 'g')) = upper(regexp_replace(${licence.licence.licenceNumber}, '[^A-Z0-9]', '', 'g'))`,
+          ),
+        )
+        .limit(1),
     ]);
 
     const currentVerified = previous[0] ?? null;
+    const duplicateLicence = duplicateMatches[0] ?? null;
     const currentVerifiedUrl = currentVerified?.frontImageKey
       ? await getSignedFileUrl(currentVerified.frontImageKey, 3600).catch(() => null)
       : null;
@@ -150,6 +172,7 @@ export async function GET(
 
     const warnings: string[] = [];
     if (rawOcr.qualityWarnings?.length) warnings.push(...rawOcr.qualityWarnings);
+    if (duplicateLicence) warnings.push('duplicate_licence_number');
     if (currentVerified && currentVerified.id !== licence.licence.id) {
       if (
         licence.licence.licenceNumber !== currentVerified.licenceNumber &&
@@ -194,6 +217,13 @@ export async function GET(
           driverStatus: licence.driverStatus,
           availabilityStatus: licence.profileAvailability,
         },
+        duplicateLicence: duplicateLicence
+          ? {
+              employeeId: duplicateLicence.employeeId,
+              employeeNumber: duplicateLicence.employeeNumber,
+              driverName: `${duplicateLicence.firstName} ${duplicateLicence.lastName}`,
+            }
+          : null,
         currentVerified: currentVerified
           ? {
               ...currentVerified,

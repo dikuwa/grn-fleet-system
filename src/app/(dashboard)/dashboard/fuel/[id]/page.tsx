@@ -168,7 +168,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
         title={`${t.make} ${t.model}`}
         description={`${t.licenceNumber}${t.vehicleRegisterNumber ? ` · ${t.vehicleRegisterNumber}` : ''} · ${formatDate(t.transactionAt)}`}
       >
-        {!t.isVerified && canVerify && (
+        {!t.isVerified && canVerify && receipts.length === 0 && (
           <FuelReviewActions transactionId={t.id} anomalyState={anomalyState} />
         )}
         <Button variant="secondary" size="sm" asChild>
@@ -333,9 +333,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
               )}
               {access.recordScope === 'tenant' && (
                 <Button variant="secondary" size="sm" asChild>
-                  <Link href={`/dashboard/reimbursements/${reimbursement.id}`}>
-                    Open reimbursement claim
-                  </Link>
+                  <Link href={`/dashboard/reimbursements/${reimbursement.id}`}>Open reimbursement claim</Link>
                 </Button>
               )}
             </CardContent>
@@ -363,6 +361,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
                       extractionData: receipt.extractionData ?? null,
                     }}
                     canEdit={canCorrectReceipt}
+                    canVerify={canVerify}
                   />
                 ))}
               </div>

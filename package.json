@@ -35,7 +35,7 @@
     "data-reset:demo-accounts:execute": "tsx src/scripts/data-reset-cli.ts --mode=demo-accounts --execute",
     "data-reset:demo-vehicles:dry-run": "tsx src/scripts/data-reset-cli.ts --mode=demo-vehicles --dry-run",
     "data-reset:demo-vehicles:execute": "tsx src/scripts/data-reset-cli.ts --mode=demo-vehicles --execute",
-    "qa:official-documents": "tsx scripts/render-official-document-qa.tsx"
+    "qa:official-documents": "tsx scripts/render-official-document-qa.tsx && tsx scripts/render-snapshot-document-qa.tsx"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.750.0",

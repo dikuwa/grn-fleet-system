@@ -279,13 +279,44 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const extracted = parseNamibianLicenceOcr(rawText);
     const confidence = licenceOcrConfidence(extracted, meanConfidence);
-    const licenceNumber = String(
-      form.get('licenceNumber') || extracted.licenceNumber || `PENDING-${Date.now()}`,
-    ).trim();
-    const issueDate = String(
-      form.get('issueDate') || extracted.validFrom || new Date().toISOString().slice(0, 10),
-    );
-    const expiryDate = String(form.get('expiryDate') || extracted.validUntil || issueDate);
+    const manualFallback = {
+      licenceNumber: String(form.get('licenceNumber') || '').trim(),
+      licenceClass: String(form.get('licenceClass') || '').trim(),
+      issueDate: String(form.get('issueDate') || '').trim(),
+      expiryDate: String(form.get('expiryDate') || '').trim(),
+      holderName: String(form.get('holderName') || '').trim(),
+    };
+
+    // OCR is the provisional source of truth when it actually extracted a field.
+    // Typed values are fallback only; they must never silently overwrite OCR evidence.
+    const licenceNumber = String(extracted.licenceNumber || manualFallback.licenceNumber).trim();
+    const issueDate = String(extracted.validFrom || manualFallback.issueDate).trim();
+    const expiryDate = String(extracted.validUntil || manualFallback.expiryDate).trim();
+    const codes = (
+      extracted.licenceCodes.length
+        ? extracted.licenceCodes
+        : manualFallback.licenceClass.split(',')
+    )
+      .map((code) => code.trim().toUpperCase())
+      .filter(Boolean);
+    const licenceClass = codes.join(',');
+
+    const requiredValues = { licenceNumber, licenceClass, issueDate, expiryDate };
+    const missingFields = Object.entries(requiredValues)
+      .filter(([, value]) => !value)
+      .map(([field]) => field);
+    if (missingFields.length) {
+      return NextResponse.json(
+        {
+          error: `OCR could not read all required licence details. Provide ${missingFields.join(', ')} before submitting.`,
+          code: 'LICENCE_REQUIRED_FIELDS_MISSING',
+          missingFields,
+          extracted,
+          qualityWarnings,
+        },
+        { status: 422 },
+      );
+    }
     if (!validDateOnly(issueDate) || !validDateOnly(expiryDate)) {
       return NextResponse.json({ error: 'Licence issue and expiry dates must be valid dates.' }, { status: 422 });
     }
@@ -293,16 +324,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: 'Licence expiry date cannot be before its issue date.' }, { status: 422 });
     }
 
-    const codes = (
-      extracted.licenceCodes.length
-        ? extracted.licenceCodes
-        : String(form.get('licenceClass') || '').split(',')
-    )
-      .map((code) => code.trim().toUpperCase())
-      .filter(Boolean);
-    const licenceClass = codes.join(',') || 'PENDING';
+    const fallbackFields = [
+      !extracted.licenceNumber && manualFallback.licenceNumber ? 'licenceNumber' : null,
+      !extracted.licenceCodes.length && manualFallback.licenceClass ? 'licenceClass' : null,
+      !extracted.validFrom && manualFallback.issueDate ? 'issueDate' : null,
+      !extracted.validUntil && manualFallback.expiryDate ? 'expiryDate' : null,
+      !extracted.holderName && manualFallback.holderName ? 'holderName' : null,
+    ].filter((field): field is string => Boolean(field));
+    if (fallbackFields.length) qualityWarnings.push('manual_fallback_used');
+
     const licenceId = randomUUID();
-    const verificationStatus = rawText ? 'awaiting_review' : 'needs_correction';
+    const verificationStatus = rawText && fallbackFields.length === 0 ? 'awaiting_review' : 'needs_correction';
 
     // Only structurally valid submissions reach object storage. Track every key
     // as it succeeds so a partial upload or rolled-back database transaction can
@@ -333,7 +365,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           licenceClass,
           issueDate,
           expiryDate,
-          holderName: extracted.holderName || String(form.get('holderName') || '') || null,
+          holderName: extracted.holderName || manualFallback.holderName || null,
           dateOfBirth: extracted.dateOfBirth || null,
           nationalIdNumber: extracted.nationalIdNumber || null,
           driverRestrictionCode: extracted.driverRestrictionCode || null,
@@ -341,7 +373,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           frontImageKey: uploaded.front || null,
           backImageKey: uploaded.back || null,
           sourcePdfKey: uploaded.sourcePdf || null,
-          rawOcrResult: { text: rawText, extracted, qualityWarnings },
+          rawOcrResult: { text: rawText, extracted, manualFallback, fallbackFields, qualityWarnings },
           ocrConfidence: confidence,
           ocrProvider: images.length ? 'tesseract.js' : null,
           entryMethod: rawText ? 'ocr_review' : 'manual',
@@ -365,6 +397,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             isActive: false,
             previousVerifiedLicencePreserved: true,
             qualityWarnings,
+            fallbackFields,
             extractedFields: Object.keys(extracted),
           },
           summary: `Driver licence version ${version} uploaded for employee ${id}`,
@@ -398,7 +431,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
 
     return NextResponse.json(
-      { data: licence, extracted, confidence, qualityWarnings, manualEntryRequired: !rawText },
+      {
+        data: licence,
+        extracted,
+        confidence,
+        qualityWarnings,
+        fallbackFields,
+        manualEntryRequired: !rawText || fallbackFields.length > 0,
+      },
       { status: 201 },
     );
   } catch (error) {

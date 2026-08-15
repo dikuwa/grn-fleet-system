@@ -50,19 +50,21 @@ export async function GET(request: NextRequest) {
       .where(whereClause);
     const total = Number(totalResult?.count ?? 0);
 
-    // Fetch share links with document info
+    // Fetch share links with document info. Never expose tokenHash: it is a
+    // server-side verification secret derivative and has no UI purpose.
     const [rows, [summary]] = await Promise.all([
       db
         .select({
           id: shareLinks.id,
-          tokenHash: shareLinks.tokenHash,
           shortSlug: shareLinks.shortSlug,
+          verificationCode: shareLinks.verificationCode,
           expiresAt: shareLinks.expiresAt,
           isExpired: sql<boolean>`${shareLinks.expiresAt} < now()`,
           isRevoked: shareLinks.isRevoked,
           maxViews: shareLinks.maxViews,
           currentViews: shareLinks.currentViews,
           redactionProfile: shareLinks.redactionProfile,
+          accessPolicy: shareLinks.accessPolicy,
           lastAccessedAt: shareLinks.lastAccessedAt,
           createdAt: shareLinks.createdAt,
           documentId: shareLinks.documentId,
@@ -136,6 +138,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required field: documentId' }, { status: 400 });
     }
 
+    const parsedExpiryHours = Number(expiresInHours);
+    if (!Number.isFinite(parsedExpiryHours) || parsedExpiryHours < 1 || parsedExpiryHours > 8760) {
+      return NextResponse.json(
+        { error: 'Share-link expiry must be between 1 hour and 1 year.' },
+        { status: 422 },
+      );
+    }
+    const normalizedExpiryHours = Math.round(parsedExpiryHours);
+
+    const parsedMaxViews = maxViews === undefined || maxViews === null || Number(maxViews) === 0
+      ? null
+      : Number(maxViews);
+    if (
+      parsedMaxViews !== null &&
+      (!Number.isInteger(parsedMaxViews) || parsedMaxViews < 1 || parsedMaxViews > 100000)
+    ) {
+      return NextResponse.json(
+        { error: 'Maximum views must be 0 (unlimited) or a whole number between 1 and 100000.' },
+        { status: 422 },
+      );
+    }
+
+    const normalizedRedactionProfile = typeof redactionProfile === 'string' && redactionProfile.trim()
+      ? redactionProfile.trim()
+      : 'external_standard';
+    const normalizedAllowDownload = Boolean(allowDownload);
+    const tenantId = session.tenantId;
+    const expiresAt = new Date(Date.now() + normalizedExpiryHours * 60 * 60 * 1000);
+
     const db = getDb();
 
     // Verify document exists and belongs to this tenant
@@ -145,7 +176,7 @@ export async function POST(request: NextRequest) {
       .where(
         and(
           eq(generatedDocuments.id, documentId),
-          eq(generatedDocuments.tenantId, session.tenantId),
+          eq(generatedDocuments.tenantId, tenantId),
         ),
       )
       .limit(1);
@@ -166,7 +197,7 @@ export async function POST(request: NextRequest) {
         .from(shareLinks)
         .where(
           and(
-            eq(shareLinks.tenantId, session.tenantId),
+            eq(shareLinks.tenantId, tenantId),
             eq(shareLinks.documentId, documentId),
             eq(shareLinks.isRevoked, false),
             gte(shareLinks.expiresAt, new Date()),
@@ -174,18 +205,30 @@ export async function POST(request: NextRequest) {
         )
         .orderBy(desc(shareLinks.createdAt))
         .limit(1);
+
       if (existing?.shortSlug) {
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-        return NextResponse.json({
-          success: true,
-          reused: true,
-          data: { ...existing, shareUrl: `${baseUrl}/v/${existing.shortSlug}` },
-        });
+        const existingPolicy = (existing.accessPolicy ?? {}) as {
+          allowDownload?: boolean;
+          allowPreview?: boolean;
+        };
+        const expiryDifferenceMs = Math.abs(existing.expiresAt.getTime() - expiresAt.getTime());
+        const settingsMatch =
+          existing.maxViews === parsedMaxViews &&
+          existing.redactionProfile === normalizedRedactionProfile &&
+          Boolean(existingPolicy.allowDownload) === normalizedAllowDownload &&
+          expiryDifferenceMs <= 5 * 60 * 1000;
+
+        if (settingsMatch) {
+          const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+          const { tokenHash: _tokenHash, ...safeExisting } = existing;
+          return NextResponse.json({
+            success: true,
+            reused: true,
+            data: { ...safeExisting, shareUrl: `${baseUrl}/v/${encodeURIComponent(existing.shortSlug)}` },
+          });
+        }
       }
     }
-
-    const tenantId = session.tenantId;
-    const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
 
     // Generate secure token
     const { token, tokenHash } = await generateShareToken(documentId, expiresAt);
@@ -207,9 +250,9 @@ export async function POST(request: NextRequest) {
         shortSlug,
         verificationCode,
         expiresAt,
-        maxViews: maxViews || null,
-        redactionProfile: redactionProfile || 'external_standard',
-        accessPolicy: { allowPreview: true, allowDownload: Boolean(allowDownload) },
+        maxViews: parsedMaxViews,
+        redactionProfile: normalizedRedactionProfile,
+        accessPolicy: { allowPreview: true, allowDownload: normalizedAllowDownload },
         createdByUserId: userId || 'system',
       })
       .returning();
@@ -224,8 +267,8 @@ export async function POST(request: NextRequest) {
       after: {
         shortSlug,
         expiresAt: expiresAt.toISOString(),
-        maxViews: maxViews || null,
-        allowDownload: Boolean(allowDownload),
+        maxViews: parsedMaxViews,
+        allowDownload: normalizedAllowDownload,
       },
       summary: `Secure link created for ${doc.documentType}`,
       sourceChannel: 'web',
@@ -234,11 +277,12 @@ export async function POST(request: NextRequest) {
     // Build shareable URL
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const shareUrl = `${baseUrl}/v/${encodeURIComponent(shortSlug)}`;
+    const { tokenHash: _tokenHash, ...safeLink } = link;
 
     return NextResponse.json({
       success: true,
       data: {
-        ...link,
+        ...safeLink,
         shareUrl,
         legacyShareUrl: `${baseUrl}/share/${encodeURIComponent(token)}`,
       },

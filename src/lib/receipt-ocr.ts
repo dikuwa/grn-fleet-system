@@ -28,10 +28,49 @@ export interface ParsedReceipt {
   confidence: Record<string, number>;
 }
 
-const number = String.raw`([0-9]+(?:[.,][0-9]{1,2})?)`;
+// Receipt values commonly contain OCR-inserted spaces, comma decimals, thousand
+// separators, or 3 decimal places for pump prices. Keep the capture permissive;
+// parseReceiptNumber performs the strict normalisation afterwards.
+const receiptNumber = String.raw`([0-9][0-9 .,'’]*[0-9]|[0-9])`;
 
-function normaliseNumber(value: string): number {
-  return Number(value.replace(',', '.'));
+function parseReceiptNumber(value: string): number | undefined {
+  let raw = value
+    .trim()
+    .replace(/[’']/g, '')
+    .replace(/\s+/g, '');
+  if (!raw || !/\d/.test(raw)) return undefined;
+
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    // Whichever separator appears last is the decimal separator; the other is
+    // a thousands separator (e.g. 1,234.56 or 1.234,56).
+    const decimalIndex = Math.max(lastComma, lastDot);
+    const decimalSeparator = raw[decimalIndex];
+    const integerPart = raw.slice(0, decimalIndex).replace(/[.,]/g, '');
+    const fractionPart = raw.slice(decimalIndex + 1).replace(/[.,]/g, '');
+    raw = `${integerPart}.${fractionPart}`;
+    if (decimalSeparator !== ',' && decimalSeparator !== '.') return undefined;
+  } else if (lastComma >= 0 || lastDot >= 0) {
+    const separator = lastComma >= 0 ? ',' : '.';
+    const separatorIndex = raw.lastIndexOf(separator);
+    const decimals = raw.length - separatorIndex - 1;
+    const occurrences = raw.split(separator).length - 1;
+
+    if (occurrences > 1 && decimals === 3) {
+      // 1,234,567 is overwhelmingly more likely to be grouping than a fuel
+      // value with repeated decimal separators.
+      raw = raw.replace(new RegExp(`\\${separator}`, 'g'), '');
+    } else if (decimals >= 1 && decimals <= 3) {
+      raw = `${raw.slice(0, separatorIndex).replace(/[.,]/g, '')}.${raw.slice(separatorIndex + 1)}`;
+    } else {
+      raw = raw.replace(/[.,]/g, '');
+    }
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function firstMatch(text: string, patterns: RegExp[]): string | undefined {
@@ -42,49 +81,61 @@ function firstMatch(text: string, patterns: RegExp[]): string | undefined {
   return undefined;
 }
 
+function positive(value: number | undefined): number | undefined {
+  return value !== undefined && value > 0 ? value : undefined;
+}
+
 /** Deterministic parser kept separate from OCR so it can be tested with real receipt samples. */
 export function parseFuelReceiptText(text: string, ocrConfidence = 0): ParsedReceipt {
   const compact = text.replace(/\r/g, '');
   const lines = compact.split('\n').map((line) => line.trim()).filter(Boolean);
+
   const amountRaw = firstMatch(compact, [
-    new RegExp(String.raw`(?:TOTAL|AMOUNT|N\$|NAD)\s*:?\s*(?:N\$|NAD)?\s*${number}`, 'i'),
+    new RegExp(String.raw`(?:GRAND\s+TOTAL|TOTAL\s+(?:DUE|AMOUNT)|TOTAL|AMOUNT\s+(?:DUE|PAID)|AMOUNT)\s*:?\s*(?:N\$|NAD|R)?\s*${receiptNumber}`, 'i'),
+    new RegExp(String.raw`(?:N\$|NAD)\s*${receiptNumber}\s*(?:TOTAL|AMOUNT)?`, 'i'),
   ]);
   const litresRaw = firstMatch(compact, [
-    new RegExp(String.raw`(?:LITRES?|LTRS?|QTY|QUANTITY)\s*:?\s*${number}`, 'i'),
-    new RegExp(String.raw`${number}\s*(?:L|LTR|LITRES?)\b`, 'i'),
+    new RegExp(String.raw`(?:LITRES?|LITERS?|LTRS?|QTY|QUANTITY|VOLUME)\s*:?\s*${receiptNumber}`, 'i'),
+    new RegExp(String.raw`${receiptNumber}\s*(?:L|LTRS?|LITRES?|LITERS?)\b`, 'i'),
   ]);
   const priceRaw = firstMatch(compact, [
-    new RegExp(String.raw`(?:PRICE\/?L|P\/?L|UNIT PRICE)\s*:?\s*${number}`, 'i'),
+    new RegExp(String.raw`(?:PRICE\s*(?:\/|PER)\s*(?:L|LITRE|LITER)|P\s*\/\s*L|UNIT\s+PRICE|RATE)\s*:?\s*(?:N\$|NAD|R)?\s*${receiptNumber}`, 'i'),
+    new RegExp(String.raw`(?:N\$|NAD|R)?\s*${receiptNumber}\s*(?:\/\s*L|PER\s+(?:LITRE|LITER))`, 'i'),
   ]);
   const odometerRaw = firstMatch(compact, [
-    /(?:ODOMETER|ODO|MILEAGE)\s*:?\s*([0-9]{2,8})/i,
+    /(?:ODOMETER|ODO|MILEAGE|KM\s*READING)\s*:?\s*([0-9][0-9 .,'’]{1,10})/i,
   ]);
   const date = firstMatch(compact, [
-    /\b([0-3]?\d[/-][01]?\d[/-](?:20)?\d{2})\b/,
-    /\b((?:20)\d{2}[/-][01]\d[/-][0-3]\d)\b/,
+    /\b([0-3]?\d[/.\-][01]?\d[/.\-](?:20)?\d{2})\b/,
+    /\b((?:20)\d{2}[/.\-][01]\d[/.\-][0-3]\d)\b/,
   ]);
   const time = firstMatch(compact, [/\b([0-2]?\d:[0-5]\d(?::[0-5]\d)?)\b/]);
   const reference = firstMatch(compact, [
     /(?:TRANSACTION|TRANS|REFERENCE|REF|TERMINAL)\s*(?:NO|NUMBER|#|ID)?\s*:?\s*([A-Z0-9-]{4,})/i,
   ]);
-  const receiptNumber = firstMatch(compact, [
-    /(?:RECEIPT|INVOICE)\s*(?:NO|NUMBER|#)?\s*:?\s*([A-Z0-9-]{3,})/i,
+  const receiptNo = firstMatch(compact, [
+    /(?:RECEIPT|INVOICE|SLIP)\s*(?:NO|NUMBER|#)?\s*:?\s*([A-Z0-9-]{3,})/i,
   ]);
   const registration = firstMatch(compact, [
     /(?:REG(?:ISTRATION)?|VEHICLE)\s*(?:NO|NUMBER|#)?\s*:?\s*([A-Z]{1,4}[- ]?[A-Z0-9]{2,8})/i,
   ]);
   const vat = firstMatch(compact, [/(?:VAT)\s*(?:NO|NUMBER|#)?\s*:?\s*([A-Z0-9-]{4,})/i]);
-  const fuelType = firstMatch(compact, [/\b(DIESEL|PETROL|UNLEADED|ULP\s*95|ULP\s*93)\b/i]);
+  const fuelType = firstMatch(compact, [/\b(DIESEL(?:\s*50)?|PETROL|UNLEADED|ULP\s*95|ULP\s*93)\b/i]);
   const pumpNumber = firstMatch(compact, [/(?:PUMP|NOZZLE)\s*(?:NO|NUMBER|#)?\s*:?\s*([0-9A-Z]{1,4})/i]);
   const attendant = firstMatch(compact, [/(?:ATTENDANT|OPERATOR|CASHIER)\s*(?:NO|NUMBER|#)?\s*:?\s*([A-Z0-9-]{2,30})/i]);
-  const cardNumber = firstMatch(compact, [/(?:CARD\s*(?:NO|NUMBER|#)?|FUEL\s*CARD)\s*:?\s*([A-Z0-9-]{6,})/i]);
+  const cardNumber = firstMatch(compact, [/(?:CARD\s*(?:NO|NUMBER|#)?|FUEL\s*CARD)\s*:?\s*([A-Z0-9*-]{6,})/i]);
 
-  const amount = amountRaw ? normaliseNumber(amountRaw) : undefined;
-  const litres = litresRaw ? normaliseNumber(litresRaw) : undefined;
-  let pricePerLitre = priceRaw ? normaliseNumber(priceRaw) : undefined;
+  // Unknown or OCR-corrupted numeric values remain undefined. In particular,
+  // zero is never manufactured as a fallback because downstream fuel fields
+  // are operational values and a fake zero looks like a successful extraction.
+  const amount = positive(amountRaw ? parseReceiptNumber(amountRaw) : undefined);
+  const litres = positive(litresRaw ? parseReceiptNumber(litresRaw) : undefined);
+  let pricePerLitre = positive(priceRaw ? parseReceiptNumber(priceRaw) : undefined);
+  const odometer = positive(odometerRaw ? parseReceiptNumber(odometerRaw) : undefined);
+
   let computedPricePerLitre: number | undefined;
-  if (pricePerLitre === undefined && amount !== undefined && litres !== undefined && litres > 0) {
-    computedPricePerLitre = Number((amount / litres).toFixed(2));
+  if (pricePerLitre === undefined && amount !== undefined && litres !== undefined) {
+    computedPricePerLitre = Number((amount / litres).toFixed(3));
   }
   if (pricePerLitre === undefined && computedPricePerLitre !== undefined) pricePerLitre = computedPricePerLitre;
 
@@ -94,7 +145,7 @@ export function parseFuelReceiptText(text: string, ocrConfidence = 0): ParsedRec
     transactionTime: time,
     transactionReference: reference,
     pumpNumber,
-    receiptNumber,
+    receiptNumber: receiptNo,
     registrationNumber: registration?.toUpperCase().replace(/\s+/g, ''),
     vatNumber: vat,
     fuelType: fuelType?.toLowerCase().replace(/\s+/g, '_'),
@@ -105,7 +156,7 @@ export function parseFuelReceiptText(text: string, ocrConfidence = 0): ParsedRec
     computedPricePerLitre,
     attendant,
     cardNumber,
-    odometer: odometerRaw ? Number(odometerRaw) : undefined,
+    odometer: odometer === undefined ? undefined : Math.round(odometer),
   };
 
   const base = Math.max(0, Math.min(1, ocrConfidence / 100));
@@ -133,7 +184,7 @@ export function receiptValidationFlags(input: {
     fields.registrationNumber.replace(/[^A-Z0-9]/gi, '').toUpperCase() !==
       input.vehicleRegistration.replace(/[^A-Z0-9]/gi, '').toUpperCase()
   ) flags.push('registration_mismatch');
-  if (fields.fuelType && !fields.fuelType.includes(input.vehicleFuelType.toLowerCase())) {
+  if (fields.fuelType && input.vehicleFuelType && !fields.fuelType.includes(input.vehicleFuelType.toLowerCase())) {
     flags.push('fuel_type_mismatch');
   }
   if (fields.odometer !== undefined && fields.odometer < input.currentOdometer) {
@@ -151,6 +202,7 @@ export function receiptValidationFlags(input: {
     fields.litres !== undefined &&
     fields.litres > 0 &&
     fields.pricePerLitre !== undefined &&
+    fields.pricePerLitre > 0 &&
     Math.abs(fields.amount / fields.litres - fields.pricePerLitre) / fields.pricePerLitre > 0.1
   ) {
     flags.push('amount_litres_inconsistent');

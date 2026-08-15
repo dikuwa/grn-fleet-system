@@ -19,22 +19,22 @@ import {
 
 export interface MvaReportData {
   reference: string;
-  severity: string;
+  severity?: string | null;
   status: string;
-  occurredAt: string;
+  occurredAt?: string | null;
   location: string | null;
   description: string;
   immediateAction: string | null;
   continuationState: string | null;
   vehicleSafe: boolean | null;
   passengerSafe: boolean | null;
-  injuries: boolean;
-  numberInjured: number;
-  vehicleDamage: boolean;
-  thirdPartyInvolvement: boolean;
+  injuries?: boolean | null;
+  numberInjured?: number | null;
+  vehicleDamage?: boolean | null;
+  thirdPartyInvolvement?: boolean | null;
   policeReference: string | null;
-  emergencyServicesContacted: boolean;
-  detailsRequired: boolean;
+  emergencyServicesContacted?: boolean | null;
+  detailsRequired?: boolean | null;
 
   // Trip context
   tripReferences: {
@@ -58,9 +58,9 @@ export interface MvaReportData {
 
   // Insurance
   insuranceClaimReference: string | null;
-  insuranceNotified: boolean;
+  insuranceNotified?: boolean | null;
   insuranceNotifiedAt: string | null;
-  policeReportFiled: boolean;
+  policeReportFiled?: boolean | null;
   thirdPartyInsuranceDetails: Record<string, unknown> | null;
 
   // Technical clearance
@@ -114,6 +114,8 @@ const styles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 
 const humanStatus = (s: string) => humanizeKey(s).replace(/_/g, ' ');
+const yesNoUnknown = (value: boolean | null | undefined) =>
+  value === true ? 'Yes' : value === false ? 'No' : 'Not recorded';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -146,10 +148,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
           reference={data.accidentReportNumber || data.reference}
           version={data.documentVersion || 1}
           status={formatDocumentStatus(data.status)}
-          issueDate={formatHumanDate(
-            data.generatedAt || new Date().toISOString(),
-            branding?.locale,
-          )}
+          issueDate={data.generatedAt ? formatHumanDate(data.generatedAt, branding?.locale) : undefined}
           qrCode={data.qrCodeDataUrl}
         />
 
@@ -159,7 +158,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
             <DocumentFieldGrid
               fields={[
                 { label: 'MVAR number', value: data.accidentReportNumber || 'Pending' },
-                { label: 'Severity', value: humanizeKey(data.severity) },
+                { label: 'Severity', value: data.severity ? humanizeKey(data.severity) : 'Not recorded' },
                 { label: 'Incident reference', value: data.reference },
                 { label: 'Transport request', value: data.tripReferences.transportRequest },
                 { label: 'Trip authority', value: data.tripReferences.tripAuthority || '—' },
@@ -171,12 +170,14 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
               fields={[
                 {
                   label: 'Date & time of accident',
-                  value: formatHumanDate(data.occurredAt, branding?.locale),
+                  value: data.occurredAt
+                    ? formatHumanDate(data.occurredAt, branding?.locale)
+                    : 'Not recorded',
                 },
                 { label: 'Location', value: data.location || 'Not recorded' },
                 {
                   label: 'Continuation state',
-                  value: humanStatus(data.continuationState || 'safe_to_continue'),
+                  value: data.continuationState ? humanStatus(data.continuationState) : 'Not recorded',
                 },
                 {
                   label: 'Vehicle safe',
@@ -205,16 +206,23 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
         <DocumentSection title="Vehicle Details">
           <DocumentFieldGrid
             fields={[
-              { label: 'Registration', value: data.vehicle.registration },
-              { label: 'Register number', value: data.vehicle.registerNumber },
-              { label: 'Make', value: data.vehicle.make || '—' },
-              { label: 'Model', value: data.vehicle.model || '—' },
+              { label: 'Registration', value: data.vehicle.registration || 'Not recorded' },
+              { label: 'Register number', value: data.vehicle.registerNumber || 'Not recorded' },
+              { label: 'Make', value: data.vehicle.make || 'Not recorded' },
+              { label: 'Model', value: data.vehicle.model || 'Not recorded' },
               {
                 label: 'Injuries',
-                value: data.injuries ? `${data.numberInjured} reported` : 'None',
+                value:
+                  data.injuries === true
+                    ? data.numberInjured == null
+                      ? 'Reported; count not recorded'
+                      : `${data.numberInjured} reported`
+                    : data.injuries === false
+                      ? 'None reported'
+                      : 'Not recorded',
               },
-              { label: 'Vehicle damage', value: data.vehicleDamage ? 'Yes' : 'No' },
-              { label: 'Third party involved', value: data.thirdPartyInvolvement ? 'Yes' : 'No' },
+              { label: 'Vehicle damage', value: yesNoUnknown(data.vehicleDamage) },
+              { label: 'Third party involved', value: yesNoUnknown(data.thirdPartyInvolvement) },
             ]}
           />
         </DocumentSection>
@@ -225,10 +233,10 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
             fields={[
               {
                 label: 'Emergency services contacted',
-                value: data.emergencyServicesContacted ? 'Yes' : 'No',
+                value: yesNoUnknown(data.emergencyServicesContacted),
               },
-              { label: 'Police reference', value: data.policeReference || 'None' },
-              { label: 'Police report filed', value: data.policeReportFiled ? 'Yes' : 'No' },
+              { label: 'Police reference', value: data.policeReference || 'Not recorded' },
+              { label: 'Police report filed', value: yesNoUnknown(data.policeReportFiled) },
               { label: 'Immediate action taken', value: data.immediateAction || 'Not recorded' },
             ]}
           />
@@ -303,7 +311,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
             fields={[
               {
                 label: 'Insurer notified',
-                value: data.insuranceNotified ? 'Yes' : 'No',
+                value: yesNoUnknown(data.insuranceNotified),
               },
               {
                 label: 'Notified at',
@@ -342,7 +350,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
         </DocumentSection>
 
         {/* ---- Footer ---- */}
-        {data.detailsRequired ? (
+        {data.detailsRequired === true ? (
           <View style={{ marginTop: 8, padding: 6, backgroundColor: '#FEF3C7', borderRadius: 4 }}>
             <Text style={{ fontSize: 9, color: '#92400E', fontWeight: 'bold' }}>
               ⚠ Additional details are required before this report can be finalised.
@@ -368,6 +376,7 @@ export const MvaReportDocument: React.FC<{ data: MvaReportData }> = ({ data }) =
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
           documentHash={data.documentHash}
+          generatedAt={data.generatedAt}
         />
       </DocumentPage>
     </Document>

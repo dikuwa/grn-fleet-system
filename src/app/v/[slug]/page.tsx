@@ -106,6 +106,14 @@ export default async function ShortVerificationPage({
   const verificationCode = permanent
     ? result.verificationCode
     : result.shareLink.verificationCode || result.shareLink.shortSlug;
+  const downloadAllowedByPolicy =
+    !permanent &&
+    result.shareLink.accessPolicy?.allowDownload === true &&
+    document.status !== 'draft';
+  const downloadViewAvailable =
+    !permanent &&
+    (!result.shareLink.maxViews || result.shareLink.currentViews + 1 < result.shareLink.maxViews);
+  const canDownload = downloadAllowedByPolicy && downloadViewAvailable;
 
   return (
     <VerificationShell>
@@ -183,13 +191,18 @@ export default async function ShortVerificationPage({
             <p className="text-ink-500 mt-3 text-xs">
               Temporary link valid until {formatHumanDateTime(result.shareLink.expiresAt, branding?.locale)}
             </p>
-            {result.shareLink.accessPolicy?.allowDownload === true && document.status !== 'draft' && (
+            {canDownload && (
               <a
                 href={`/api/public/documents/${result.shareLink.shortSlug}/pdf`}
                 className="focus-ring bg-brand-800 mt-3 inline-flex min-h-10 items-center rounded-lg px-4 text-sm font-medium text-white"
               >
                 Download verified PDF
               </a>
+            )}
+            {downloadAllowedByPolicy && !downloadViewAvailable && (
+              <p className="text-status-pending-text mt-3 text-xs">
+                This verification used the final permitted access for the temporary link, so a separate PDF download is no longer available.
+              </p>
             )}
           </>
         )}
