@@ -35,6 +35,7 @@ export function DocumentViewerActions({
     try {
       await printPdfFromUrl(previewUrl);
     } catch (error) {
+      console.error('Document print failed:', error);
       setPrintError(error instanceof Error ? error.message : 'Could not prepare the PDF for printing.');
     } finally {
       setPrinting(false);
@@ -45,40 +46,36 @@ export function DocumentViewerActions({
     <>
       <div className="flex flex-col items-end gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" size="sm" asChild>
+          <Button variant="secondary" size="sm" asChild className="text-status-success-text hover:text-status-success-text">
             <a href={pdfUrl} download={downloadName}>
               <Download className="h-4 w-4" /> Download PDF
             </a>
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
+          <Button variant="secondary" size="sm" className="text-brand-700 hover:text-brand-700" onClick={() => setPreviewOpen(true)}>
             <Eye className="h-4 w-4" /> Preview
           </Button>
-          <Button variant="secondary" size="sm" loading={printing} onClick={() => void printDocument()}>
+          <Button variant="secondary" size="sm" className="text-status-pending-text hover:text-status-pending-text" loading={printing} onClick={() => void printDocument()}>
             <Printer className="h-4 w-4" /> Print
           </Button>
         </div>
-        {printError ? (
-          <p className="text-status-error-text max-w-md text-right text-xs" role="alert">{printError}</p>
-        ) : null}
+        {printError ? <p className="text-status-error-text max-w-md text-right text-xs" role="alert">{printError}</p> : null}
       </div>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="bg-surface flex h-[88dvh] w-[calc(100vw-2rem)] max-w-6xl flex-col overflow-hidden p-0 shadow-2xl sm:w-[calc(100vw-4rem)] [&>button.absolute]:hidden">
+        <DialogContent className="bg-surface flex h-[94dvh] w-[96vw] max-w-[1400px] flex-col overflow-hidden p-0 shadow-2xl sm:h-[90dvh] sm:w-[92vw] [&>button.absolute]:hidden">
           <DialogHeader className="border-border bg-surface mb-0 flex min-h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-3 py-2 sm:px-5">
             <div className="min-w-0">
               <DialogTitle className="truncate text-sm sm:text-base">Document preview</DialogTitle>
-              <DialogDescription className="truncate text-xs">
-                Official PDF preview. Close this window to return to the document record.
-              </DialogDescription>
+              <DialogDescription className="truncate text-xs">Official PDF · use the page and zoom controls without leaving GovFleet.</DialogDescription>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button variant="secondary" size="sm" asChild className="hidden sm:inline-flex">
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <Button variant="secondary" size="sm" asChild className="text-status-success-text hover:text-status-success-text">
                 <a href={pdfUrl} download={downloadName}>
-                  <Download className="h-4 w-4" /> Download
+                  <Download className="h-4 w-4" /> <span className="hidden md:inline">Download</span>
                 </a>
               </Button>
-              <Button variant="secondary" size="sm" loading={printing} onClick={() => void printDocument()}>
-                <Printer className="h-4 w-4" /> Print
+              <Button variant="secondary" size="sm" className="text-status-pending-text hover:text-status-pending-text" loading={printing} onClick={() => void printDocument()}>
+                <Printer className="h-4 w-4" /> <span className="hidden sm:inline">Print</span>
               </Button>
               <DialogClose asChild>
                 <Button variant="secondary" size="sm" aria-label="Close document preview">
@@ -88,10 +85,10 @@ export function DocumentViewerActions({
             </div>
           </DialogHeader>
 
-          <div className="bg-muted/40 min-h-0 flex-1 overflow-auto p-3 sm:p-5">
-            <div className="border-border bg-white mx-auto h-full min-h-[560px] w-full max-w-[980px] overflow-hidden rounded-[10px] border shadow-sm">
-              <DocumentPdfPreview url={previewUrl} title="Official document PDF preview" />
-            </div>
+          {printError ? <div className="border-status-error-text/20 bg-status-error-bg text-status-error-text shrink-0 border-b px-4 py-2 text-xs" role="alert">{printError}</div> : null}
+
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <DocumentPdfPreview url={previewUrl} title="Official document PDF preview" />
           </div>
         </DialogContent>
       </Dialog>
