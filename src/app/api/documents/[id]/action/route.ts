@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, ne } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { auditEvents } from '@/db/schema/audit';
@@ -61,6 +61,34 @@ export async function POST(
       );
     }
 
+    // Never allow an older draft to be promoted after a newer version exists.
+    // Doing so would create multiple plausible "current" official records and
+    // can resurrect stale snapshot data after a regeneration.
+    if (action === 'issue') {
+      const [latest] = await db
+        .select({ id: generatedDocuments.id, documentVersion: generatedDocuments.documentVersion })
+        .from(generatedDocuments)
+        .where(
+          and(
+            eq(generatedDocuments.tenantId, session.tenantId),
+            eq(generatedDocuments.entityType, doc.entityType),
+            eq(generatedDocuments.entityId, doc.entityId),
+            eq(generatedDocuments.documentType, doc.documentType),
+          ),
+        )
+        .orderBy(desc(generatedDocuments.documentVersion))
+        .limit(1);
+
+      if (!latest || latest.id !== doc.id) {
+        return NextResponse.json(
+          {
+            error: `Only the latest document version can be issued. Version ${latest?.documentVersion ?? 'unknown'} is newer than version ${doc.documentVersion}.`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const now = new Date();
     const nextStatus = action === 'issue' ? 'issued' : 'superseded';
     const documentHash = action === 'issue'
@@ -75,30 +103,56 @@ export async function POST(
           .digest('hex')
       : doc.hash;
 
-    await runAtomicMutations((tx) => [
-      tx.update(generatedDocuments)
-        .set({ status: nextStatus, hash: documentHash, updatedAt: now })
-        .where(
-          and(
-            eq(generatedDocuments.id, id),
-            eq(generatedDocuments.tenantId, session.tenantId),
-            eq(generatedDocuments.status, doc.status),
+    await runAtomicMutations((tx) => {
+      const mutations = [];
+
+      if (action === 'issue') {
+        // Enforce one current issued version at the write boundary. This also
+        // self-heals any historical duplicate-issued state when the next version
+        // is formally issued.
+        mutations.push(
+          tx.update(generatedDocuments)
+            .set({ status: 'superseded', updatedAt: now })
+            .where(
+              and(
+                eq(generatedDocuments.tenantId, session.tenantId),
+                eq(generatedDocuments.entityType, doc.entityType),
+                eq(generatedDocuments.entityId, doc.entityId),
+                eq(generatedDocuments.documentType, doc.documentType),
+                eq(generatedDocuments.status, 'issued'),
+                ne(generatedDocuments.id, id),
+              ),
+            ),
+        );
+      }
+
+      mutations.push(
+        tx.update(generatedDocuments)
+          .set({ status: nextStatus, hash: documentHash, updatedAt: now })
+          .where(
+            and(
+              eq(generatedDocuments.id, id),
+              eq(generatedDocuments.tenantId, session.tenantId),
+              eq(generatedDocuments.status, doc.status),
+            ),
           ),
-        ),
-      tx.insert(auditEvents).values({
-        tenantId: doc.tenantId,
-        tenantSequence: Date.now(),
-        eventType: action === 'issue' ? 'document_issued' : 'document_superseded',
-        actorUserId: session.user.id,
-        action,
-        entityType: 'document',
-        entityId: id,
-        summary: `Document ${action === 'issue' ? 'issued' : 'superseded'}: ${doc.documentType || 'unknown'}`,
-        before: { status: doc.status },
-        after: { status: nextStatus },
-        sourceChannel: 'web',
-      }),
-    ]);
+        tx.insert(auditEvents).values({
+          tenantId: doc.tenantId,
+          tenantSequence: Date.now(),
+          eventType: action === 'issue' ? 'document_issued' : 'document_superseded',
+          actorUserId: session.user.id,
+          action,
+          entityType: 'document',
+          entityId: id,
+          summary: `Document ${action === 'issue' ? 'issued' : 'superseded'}: ${doc.documentType || 'unknown'}`,
+          before: { status: doc.status },
+          after: { status: nextStatus },
+          sourceChannel: 'web',
+        }),
+      );
+
+      return mutations;
+    });
 
     const [updated] = await db
       .select()
