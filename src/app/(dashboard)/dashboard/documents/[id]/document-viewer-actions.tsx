@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Download, Eye, Printer, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,30 +29,12 @@ export function DocumentViewerActions({
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
-  const previewFrameRef = useRef<HTMLIFrameElement>(null);
   const pdfUrl = `/api/documents/${documentId}/pdf`;
   const previewUrl = `${pdfUrl}?preview=1`;
   const downloadName = `${documentType}-${documentId}.pdf`;
 
   const printDocument = async () => {
     setPrintError(null);
-
-    // When a visible preview is already open, try that exact PDF surface first.
-    // Browser PDF viewers vary in whether they expose print() from an iframe, so
-    // the helper provides a top-level native PDF fallback when this is blocked.
-    if (previewOpen) {
-      try {
-        const previewWindow = previewFrameRef.current?.contentWindow;
-        if (previewWindow) {
-          previewWindow.focus();
-          previewWindow.print();
-          return;
-        }
-      } catch {
-        // Fall through to the browser-native top-level PDF print surface.
-      }
-    }
-
     try {
       await printPdfFromUrl(previewUrl);
     } catch (error) {
@@ -82,8 +64,8 @@ export function DocumentViewerActions({
       </div>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="bg-surface !inset-0 !top-0 !left-0 !h-dvh !max-h-dvh !w-screen !max-w-none !translate-x-0 !translate-y-0 !rounded-none !border-0 !p-0 sm:!inset-0 sm:!top-0 sm:!left-0 sm:!h-dvh sm:!max-h-dvh sm:!w-screen sm:!max-w-none sm:!translate-x-0 sm:!translate-y-0 sm:!rounded-none sm:!p-0">
-          <DialogHeader className="border-border bg-surface mb-0 flex min-h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-3 py-2 pr-14 sm:px-5">
+        <DialogContent className="bg-surface !inset-0 !top-0 !left-0 !h-dvh !max-h-dvh !w-screen !max-w-none !translate-x-0 !translate-y-0 !rounded-none !border-0 !p-0 [&>button.absolute]:hidden sm:!inset-0 sm:!top-0 sm:!left-0 sm:!h-dvh sm:!max-h-dvh sm:!w-screen sm:!max-w-none sm:!translate-x-0 sm:!translate-y-0 sm:!rounded-none sm:!p-0">
+          <DialogHeader className="border-border bg-surface mb-0 flex min-h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-3 py-2 sm:px-5">
             <div className="min-w-0">
               <DialogTitle className="truncate text-sm sm:text-base">Document preview</DialogTitle>
               <DialogDescription className="truncate text-xs">
@@ -109,7 +91,6 @@ export function DocumentViewerActions({
 
           <div className="bg-muted/30 min-h-0 flex-1 overflow-hidden">
             <iframe
-              ref={previewFrameRef}
               src={previewUrl}
               title="Official document PDF preview"
               className="h-full w-full border-0 bg-white"
