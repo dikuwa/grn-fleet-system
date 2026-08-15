@@ -10,11 +10,11 @@ import { vehicleAllocations } from '@/db/schema/trips';
 import { validateDocumentSnapshot } from '@/lib/document-validation';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
 import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
+import { buildTransportRequestRenderSnapshot } from '@/lib/pdf/verified-transport-request';
 import * as core from '@/lib/document-generator-core';
 
 export type { DocumentType } from '@/lib/document-generator-core';
 export const generateDocument = core.generateDocument;
-export const onRequestSubmitted = core.onRequestSubmitted;
 export const onTripClosed = core.onTripClosed;
 
 interface AuthorityDriverSnapshot {
@@ -187,6 +187,25 @@ async function persistSnapshotEnrichment(
     )
     .returning();
   return updated || document;
+}
+
+/**
+ * Generate a submitted Transport Request snapshot. If regeneration preserves
+ * the established auto-issued behaviour, immediately freeze the full visual
+ * payload so the new issued version cannot fall back to mutable allocation or
+ * approval tables later.
+ */
+export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
+  const document = await core.onRequestSubmitted(requestId, tenantId, userId);
+  if (!document || document.status !== 'issued') return document;
+
+  const renderData = await buildTransportRequestRenderSnapshot(document.id, { issuing: true });
+  if (!renderData) {
+    console.warn(`[DocGen] Could not build immutable Transport Request render snapshot ${requestId}`);
+    return document;
+  }
+
+  return persistSnapshotEnrichment(document, tenantId, { renderData });
 }
 
 /**
