@@ -1,35 +1,27 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { ChevronLeft, CheckCircle2, Wrench, CalendarClock } from 'lucide-react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import {Input, Label} from '@/components/ui/input';
+import { Input, Label, Textarea } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
-import { ChevronLeft, CheckCircle2, Wrench, CalendarClock } from 'lucide-react';
+import { StyledSelect } from '@/components/ui/styled-select';
+import { DatePicker } from '@/components/ui/date-picker';
+import { VehicleCombobox, type VehicleSearchOption } from '@/components/ui/vehicle-combobox';
 import { useToast } from '@/lib/use-toast';
-import Link from 'next/link';
-
-interface Vehicle {
-  id: string;
-  licenceNumber: string;
-  make: string;
-  model: string;
-  currentOdometer: number;
-  status: string;
-}
 
 export default function NewMaintenancePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [loadingVehicles, setLoadingVehicles] = useState(true);
+  const [selectedVehicle, setSelectedVehicle] = useState<VehicleSearchOption | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
   const [formData, setFormData] = useState({
-    vehicleId: '',
+    vehicleId: searchParams.get('vehicleId') || '',
     serviceDate: '',
     serviceOdometer: '',
     serviceType: 'scheduled',
@@ -45,33 +37,45 @@ export default function NewMaintenancePage() {
     setFormData((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  const fetchVehicles = useCallback(async () => {
-    try {
-      const res = await fetch('/api/fleet');
-      if (!res.ok) throw new Error('Failed to load vehicles');
-      const json = await res.json();
-      const list = Array.isArray(json) ? json : (json.rows ?? []);
-      setVehicles(list);
-    } catch {
-      toast({ title: 'Failed to load vehicles', description: 'Could not fetch vehicle data', variant: 'error' });
-    } finally {
-      setLoadingVehicles(false);
-    }
-  }, [toast]);
-
   useEffect(() => {
-    const timer = window.setTimeout(() => void fetchVehicles(), 0);
-    return () => window.clearTimeout(timer);
-  }, [fetchVehicles]);
+    const vehicleId = searchParams.get('vehicleId');
+    if (!vehicleId || selectedVehicle?.id === vehicleId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/fleet/${vehicleId}`, { cache: 'no-store' });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error || 'Vehicle could not be loaded');
+        if (cancelled) return;
+        const vehicle = json.vehicle as VehicleSearchOption;
+        setSelectedVehicle(vehicle);
+        setFormData((prev) => ({
+          ...prev,
+          vehicleId: vehicle.id,
+          serviceOdometer: prev.serviceOdometer || String(vehicle.currentOdometer ?? ''),
+        }));
+      } catch (error) {
+        if (!cancelled) {
+          toast({
+            title: 'Vehicle could not be preselected',
+            description: error instanceof Error ? error.message : 'Search for the vehicle manually.',
+            variant: 'error',
+          });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [searchParams, selectedVehicle?.id, toast]);
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = useCallback(async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!formData.vehicleId) {
+      toast({ title: 'Vehicle required', description: 'Search for and select a vehicle before saving.', variant: 'error' });
+      return;
+    }
     setIsSubmitting(true);
-
     try {
-      const selectedVehicle = vehicles.find((v) => v.id === formData.vehicleId);
-
-      const res = await fetch('/api/maintenance', {
+      const response = await fetch('/api/maintenance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -87,212 +91,141 @@ export default function NewMaintenancePage() {
           nextServiceOdometer: formData.nextServiceOdometer || undefined,
         }),
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to create maintenance event');
-      }
-
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to create maintenance event');
       toast({
-        title: 'Maintenance Event Created',
+        title: 'Maintenance event created',
         description: `${formData.serviceType} — ${formData.description} for ${selectedVehicle?.licenceNumber || formData.vehicleId}`,
         variant: 'success',
       });
       router.push('/dashboard/maintenance');
-    } catch (err) {
-      console.error('Maintenance creation failed:', err);
+    } catch (error) {
       toast({
-        title: 'Failed to Create',
-        description: err instanceof Error ? err.message : 'Maintenance event could not be saved',
+        title: 'Failed to create maintenance record',
+        description: error instanceof Error ? error.message : 'Maintenance event could not be saved',
         variant: 'error',
       });
+    } finally {
       setIsSubmitting(false);
     }
-  }, [router, formData, vehicles, toast]);
-
-  const selectedVehicle = vehicles.find((v) => v.id === formData.vehicleId);
+  }, [formData, router, selectedVehicle?.licenceNumber, toast]);
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Maintenance', href: '/dashboard/maintenance' },
-          { label: 'Schedule Maintenance' },
-        ]}
-      />
+      <Breadcrumbs items={[
+        { label: 'Dashboard', href: '/dashboard' },
+        { label: 'Maintenance', href: '/dashboard/maintenance' },
+        { label: 'Schedule Maintenance' },
+      ]} />
       <PageHeader title="Schedule Maintenance" description="Record a vehicle service or repair event">
         <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/maintenance">
-            <ChevronLeft className="h-4 w-4" /> Back to Maintenance
-          </Link>
+          <Link href="/dashboard/maintenance"><ChevronLeft className="h-4 w-4" /> Back to Maintenance</Link>
         </Button>
       </PageHeader>
 
       <form onSubmit={handleSubmit}>
-        {/* Vehicle Selection */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Wrench className="h-4 w-4 text-status-info-text" />
-              Vehicle & Service Details
+              <Wrench className="h-4 w-4 text-status-info-text" /> Vehicle &amp; Service Details
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <Label required>Vehicle</Label>
-              <StyledSelect
+              <VehicleCombobox
                 value={formData.vehicleId}
-                onChange={(e) => {
-                  const v = vehicles.find((veh) => veh.id === e.target.value);
+                selectedOption={selectedVehicle}
+                onSelect={(vehicle) => {
+                  setSelectedVehicle(vehicle);
                   updateForm({
-                    vehicleId: e.target.value,
-                    serviceOdometer: v?.currentOdometer ? String(v.currentOdometer) : formData.serviceOdometer,
+                    vehicleId: vehicle?.id || '',
+                    serviceOdometer: vehicle ? String(vehicle.currentOdometer ?? '') : '',
                   });
                 }}
-                required
-                disabled={loadingVehicles}
-                placeholder={loadingVehicles ? 'Loading vehicles...' : 'Select vehicle...'}
-              >
-                {vehicles.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.licenceNumber} — {v.make} {v.model} ({v.currentOdometer?.toLocaleString() || 0} km)
-                  </option>
-                ))}
-              </StyledSelect>
+                placeholder="Search plate, register number, make or model…"
+              />
               {selectedVehicle && (
-                <div className="mt-1.5 flex items-center gap-2">
-                  <Badge variant={selectedVehicle.status === 'available' ? 'success' : 'info'} size="sm">
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <Badge variant={selectedVehicle.status === 'available' ? 'success' : selectedVehicle.status === 'maintenance' ? 'pending' : 'info'} size="sm">
                     {selectedVehicle.status.replace(/_/g, ' ')}
                   </Badge>
-                  <span className="text-xs text-ink-400">
-                    Current odometer: {selectedVehicle.currentOdometer?.toLocaleString() || 0} km
-                  </span>
+                  <span className="text-xs text-ink-400">Current odometer: {selectedVehicle.currentOdometer.toLocaleString()} km</span>
                 </div>
               )}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label required>Service Date</Label>
-                <StyledDateInput
-                  type="date"
-                  value={formData.serviceDate}
-                  onChange={(e) => updateForm({ serviceDate: e.target.value })}
-                  required
-                />
-              </div>
+              <DatePicker
+                label="Service Date"
+                value={formData.serviceDate}
+                onChange={(value) => updateForm({ serviceDate: value })}
+                required
+              />
               <div className="space-y-1.5">
                 <Label required>Service Type</Label>
-              <StyledSelect
-                value={formData.serviceType}
-                onChange={(e) => updateForm({ serviceType: e.target.value })}
-                placeholder="Select type"
-              >
-                <option value="scheduled">Scheduled Service</option>
-                <option value="repair">Repair</option>
-                <option value="inspection">Inspection</option>
-              </StyledSelect>
+                <StyledSelect value={formData.serviceType} onChange={(event) => updateForm({ serviceType: event.target.value })}>
+                  <option value="scheduled">Scheduled Service</option>
+                  <option value="repair">Repair</option>
+                  <option value="inspection">Inspection</option>
+                </StyledSelect>
               </div>
             </div>
 
             <div className="space-y-1.5">
               <Label required>Description</Label>
-              <Input
-                placeholder="e.g. Oil change, brake pad replacement"
-                value={formData.description}
-                onChange={(e) => updateForm({ description: e.target.value })}
-                required
-              />
+              <Input placeholder="e.g. Oil change, brake pad replacement" value={formData.description} onChange={(event) => updateForm({ description: event.target.value })} required />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label>Service Odometer (km)</Label>
-                <Input
-                  type="number"
-                  placeholder="e.g. 45000"
-                  value={formData.serviceOdometer}
-                  onChange={(e) => updateForm({ serviceOdometer: e.target.value })}
-                />
+                <Input type="number" min={0} placeholder="e.g. 45000" value={formData.serviceOdometer} onChange={(event) => updateForm({ serviceOdometer: event.target.value })} />
               </div>
               <div className="space-y-1.5">
                 <Label>Cost (NAD)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  placeholder="e.g. 2500.00"
-                  value={formData.cost}
-                  onChange={(e) => updateForm({ cost: e.target.value })}
-                />
+                <Input type="number" min={0} step="0.01" placeholder="e.g. 2500.00" value={formData.cost} onChange={(event) => updateForm({ cost: event.target.value })} />
               </div>
               <div className="space-y-1.5">
                 <Label>Vendor Name</Label>
-                <Input
-                  placeholder="e.g. Toyota Dealership, Rundu"
-                  value={formData.vendorName}
-                  onChange={(e) => updateForm({ vendorName: e.target.value })}
-                />
+                <Input placeholder="e.g. Toyota Dealership, Rundu" value={formData.vendorName} onChange={(event) => updateForm({ vendorName: event.target.value })} />
               </div>
             </div>
 
             <div className="space-y-1.5">
               <Label>Notes</Label>
-              <textarea
-                value={formData.notes}
-                onChange={(e) => updateForm({ notes: e.target.value })}
-                placeholder="Any additional notes about the service..."
-                rows={3}
-                className="h-20 w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none"
-              />
+              <Textarea rows={3} value={formData.notes} onChange={(event) => updateForm({ notes: event.target.value })} placeholder="Any additional notes about the service…" />
             </div>
           </CardContent>
         </Card>
 
-        {/* Next Service Details */}
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <CalendarClock className="h-4 w-4 text-status-pending-text" />
-              Next Service Reminder
+              <CalendarClock className="h-4 w-4 text-status-pending-text" /> Next Service Reminder
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-xs text-ink-500">
-              Optionally set a reminder for the next scheduled service. The system will alert you when this date approaches.
-            </p>
+            <p className="text-xs text-ink-500">Optionally set the next service date or odometer. These are maintenance reminders, not a vehicle availability state.</p>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>Next Service Date</Label>
-                <StyledDateInput
-                  type="date"
-                  value={formData.nextServiceDate}
-                  onChange={(e) => updateForm({ nextServiceDate: e.target.value })}
-                  min={formData.serviceDate || undefined}
-                />
-              </div>
+              <DatePicker
+                label="Next Service Date"
+                value={formData.nextServiceDate}
+                onChange={(value) => updateForm({ nextServiceDate: value })}
+                min={formData.serviceDate || undefined}
+              />
               <div className="space-y-1.5">
                 <Label>Next Service Odometer (km)</Label>
-                <Input
-                  type="number"
-                  placeholder="e.g. 50000"
-                  value={formData.nextServiceOdometer}
-                  onChange={(e) => updateForm({ nextServiceOdometer: e.target.value })}
-                />
+                <Input type="number" min={0} placeholder="e.g. 50000" value={formData.nextServiceOdometer} onChange={(event) => updateForm({ nextServiceOdometer: event.target.value })} />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Submit */}
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <Button variant="secondary" size="sm" asChild>
-            <Link href="/dashboard/maintenance">Cancel</Link>
-          </Button>
+        <div className="mt-6 flex flex-wrap items-center justify-start gap-3 sm:justify-end">
+          <Button variant="secondary" size="sm" asChild><Link href="/dashboard/maintenance">Cancel</Link></Button>
           <Button variant="primary" size="sm" type="submit" loading={isSubmitting}>
-            <CheckCircle2 className="h-4 w-4" />
-            {isSubmitting ? 'Saving...' : 'Record Maintenance'}
+            <CheckCircle2 className="h-4 w-4" /> {isSubmitting ? 'Saving…' : 'Record Maintenance'}
           </Button>
         </div>
       </form>
