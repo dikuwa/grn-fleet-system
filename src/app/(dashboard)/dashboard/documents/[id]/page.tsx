@@ -167,7 +167,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
           verificationCode={verificationCode}
         />
         {canCreateShareLink && (
-          <CreateShareLinkButton documentId={doc.id} disabled={doc.status === 'draft'} />
+          <CreateShareLinkButton documentId={doc.id} disabled={doc.status !== 'issued'} />
         )}
       </PageHeader>
 
