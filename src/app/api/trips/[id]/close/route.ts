@@ -14,6 +14,7 @@ import {
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles, vehicleStatusEvents, vehicleDefects } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
@@ -336,6 +337,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             where tr.id = ${vehicleAllocations.requestId}
               and tr.tenant_id = ${tenantId}
           )`,
+        )),
+      tx.update(externalDriverAssignments)
+        .set({ state: 'completed', updatedAt: now })
+        .where(and(
+          eq(externalDriverAssignments.tenantId, tenantId),
+          eq(externalDriverAssignments.tripId, id),
+          eq(externalDriverAssignments.allocationId, trip.allocationId),
+          eq(externalDriverAssignments.state, 'accepted'),
         )),
       tx.update(vehicles)
         .set({ status: resultingVehicleStatus, updatedAt: now })
