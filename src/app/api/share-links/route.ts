@@ -8,6 +8,7 @@ import { auditEvents } from '@/db/schema/audit';
 
 const EXTERNAL_REDACTION_PROFILES = ['external_standard', 'external_minimal'] as const;
 type ExternalRedactionProfile = (typeof EXTERNAL_REDACTION_PROFILES)[number];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/share-links
@@ -48,6 +49,10 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * limit;
     const status = searchParams.get('status') || '';
     const search = searchParams.get('q')?.trim() || '';
+    const documentId = searchParams.get('documentId')?.trim() || '';
+    if (documentId && !UUID_PATTERN.test(documentId)) {
+      return NextResponse.json({ error: 'Invalid document identifier.' }, { status: 400 });
+    }
 
     const db = getDb();
 
@@ -55,6 +60,7 @@ export async function GET(request: NextRequest) {
       eq(shareLinks.tenantId, session.tenantId),
       eq(generatedDocuments.tenantId, session.tenantId),
     ];
+    if (documentId) conditions.push(eq(shareLinks.documentId, documentId));
     if (status === 'active') {
       conditions.push(eq(shareLinks.isRevoked, false));
       conditions.push(gte(shareLinks.expiresAt, new Date()));
@@ -174,6 +180,9 @@ export async function POST(request: NextRequest) {
 
     if (!documentId) {
       return NextResponse.json({ error: 'Missing required field: documentId' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(String(documentId))) {
+      return NextResponse.json({ error: 'Invalid document identifier.' }, { status: 400 });
     }
 
     const parsedExpiryHours = Number(expiresInHours);
@@ -363,6 +372,9 @@ export async function DELETE(request: NextRequest) {
 
     if (!linkId) {
       return NextResponse.json({ error: 'Missing required param: linkId' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(linkId)) {
+      return NextResponse.json({ error: 'Invalid share-link identifier.' }, { status: 400 });
     }
 
     const db = getDb();
