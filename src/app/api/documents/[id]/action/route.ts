@@ -13,6 +13,7 @@ import { buildTransportRequestRenderSnapshot } from '@/lib/pdf/verified-transpor
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
+import { enrichClosedTripFuelSummary } from '@/lib/trip-closure-document-enrichment';
 
 export async function POST(
   request: NextRequest,
@@ -47,12 +48,13 @@ export async function POST(
     }
 
     const db = getDb();
-    const [doc] = await db
+    const [loadedDoc] = await db
       .select()
       .from(generatedDocuments)
       .where(and(eq(generatedDocuments.id, id), eq(generatedDocuments.tenantId, session.tenantId)))
       .limit(1);
-    if (!doc) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
+    if (!loadedDoc) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
+    let doc = loadedDoc;
 
     const canRead = await canSessionReadGeneratedDocument(session, doc);
     if (!canRead) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
@@ -87,11 +89,33 @@ export async function POST(
       );
     }
 
+    // Closure-generated Fuel Summaries may include legacy aggregate-only drafts.
+    // Refresh the final verified transaction table and trip/vehicle identity at
+    // the formal issue boundary. The helper is draft-only and requires a closed
+    // tenant-scoped trip, so issued historical rows remain immutable.
+    if (doc.documentType === 'fuel_summary' && doc.entityType === 'trip') {
+      const enriched = await enrichClosedTripFuelSummary(doc.entityId, doc.tenantId, doc.id);
+      if (enriched) doc = enriched;
+      const fuelSnapshot = (doc.snapshotData || {}) as Record<string, unknown>;
+      if (
+        !String(fuelSnapshot.tripReference || '').trim() ||
+        !String(fuelSnapshot.vehicleLicence || '').trim() ||
+        !Array.isArray(fuelSnapshot.transactions)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'Fuel Summary cannot be formally issued until the closed-trip transaction detail and vehicle identity have been reconciled.',
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     // Trip Authority issuance is the final pre-release document boundary. The
     // driver's acceptance must cover the current vehicle and the current
     // vehicle must have passed its official departure inspection before the
-    // immutable PDF is frozen. This ensures the issued authority contains the
-    // actual inspected vehicle and beginning-odometer evidence.
+    // immutable PDF is frozen.
     if (doc.documentType === 'trip_authority' && doc.entityType === 'vehicle_allocation') {
       const [authority] = await db
         .select({
@@ -137,10 +161,6 @@ export async function POST(
       }
     }
 
-    // Issuance is the immutable boundary. Always refresh branding and the
-    // document-type visual payload here, even if the draft already contains a
-    // preview snapshot. This prevents changes made between draft generation and
-    // issue from leaving the official version with stale data.
     const preparedAt = new Date();
     const draftHash = doc.hash;
     let snapshotData = (doc.snapshotData || {}) as Record<string, unknown>;
@@ -248,10 +268,6 @@ export async function POST(
           )`
         : sql`true`;
 
-    // The target must still be the exact draft revision read above. Generation
-    // refreshes the draft hash whenever source data is rebuilt, so the SHA-256
-    // fingerprint is a precise optimistic concurrency token without timestamp
-    // precision ambiguity between PostgreSQL and JavaScript Date values.
     const targetStillDraft = sql`exists (
       select 1
       from generated_documents target
