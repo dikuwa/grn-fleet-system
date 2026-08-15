@@ -72,6 +72,12 @@ interface DriverInfo {
   availabilityStatus: string;
 }
 
+interface DuplicateLicence {
+  employeeId: string;
+  employeeNumber: string;
+  driverName: string;
+}
+
 interface ReviewPayload {
   canReview: boolean;
   licence: ReviewLicence;
@@ -83,6 +89,7 @@ interface ReviewPayload {
     source: string;
   }>;
   driver: DriverInfo;
+  duplicateLicence: DuplicateLicence | null;
   currentVerified: CurrentVerified | null;
   previousVersions: Array<{
     id: string;
@@ -101,12 +108,23 @@ function warningLabel(code: string): string {
     dark_image: 'Image too dark for OCR',
     possible_glare: 'Possible glare on image',
     ocr_failed_manual_entry_required: 'OCR failed — manual entry required',
+    duplicate_licence_number: 'Licence number is already verified for another driver',
     licence_number_mismatch: 'Licence number differs from current verified record',
     licence_class_changed: 'Licence class differs from current verified record',
     issue_date_in_future: 'Issue date is in the future',
     expiry_date_passed: 'Expiry date has already passed',
   };
   return labels[code] ?? code.replaceAll('_', ' ');
+}
+
+function averageOcrConfidence(confidence: Record<string, number> | null): number | null {
+  if (!confidence) return null;
+  const values = Object.values(confidence).filter(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value),
+  );
+  if (!values.length) return null;
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return Math.round(average <= 1 ? average * 100 : average);
 }
 
 function Detail({ label, value }: { label: string; value: React.ReactNode }) {
@@ -286,6 +304,7 @@ export default function LicenceReviewPage() {
     canReview,
     licence,
     driver,
+    duplicateLicence,
     currentVerified,
     files,
     warnings,
@@ -293,6 +312,7 @@ export default function LicenceReviewPage() {
     previousVersions,
   } = data;
   const isBlocked = ['verified', 'expired', 'superseded'].includes(licence.verificationStatus);
+  const ocrConfidencePercent = averageOcrConfidence(licence.ocrConfidence);
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -348,7 +368,12 @@ export default function LicenceReviewPage() {
               <p className="text-status-warning-text text-sm font-semibold">Review warnings</p>
               <ul className="text-ink-600 mt-2 space-y-1 text-xs leading-5">
                 {warnings.map((warning, index) => (
-                  <li key={`${warning}-${index}`}>• {warningLabel(warning)}</li>
+                  <li key={`${warning}-${index}`}>
+                    • {warningLabel(warning)}
+                    {warning === 'duplicate_licence_number' && duplicateLicence
+                      ? ` — ${duplicateLicence.driverName} (${duplicateLicence.employeeNumber})`
+                      : ''}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -459,14 +484,9 @@ export default function LicenceReviewPage() {
           <div className="border-border bg-muted/30 rounded-[8px] border p-3">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="info" size="sm">OCR source: {licence.ocrConfidence ? 'tesseract.js' : 'manual'}</Badge>
-              {licence.ocrConfidence && (
+              {ocrConfidencePercent !== null && (
                 <Badge variant="default" size="sm">
-                  Confidence: {Math.round(
-                    Object.values(licence.ocrConfidence)
-                      .filter((value): value is number => typeof value === 'number')
-                      .reduce((sum, value) => sum + value, 0) /
-                      Math.max(1, Object.values(licence.ocrConfidence).length),
-                  )}%
+                  Confidence: {ocrConfidencePercent}%
                 </Badge>
               )}
             </div>
@@ -572,7 +592,12 @@ export default function LicenceReviewPage() {
                 variant="primary"
                 size="sm"
                 loading={busy === 'approve'}
-                disabled={!confirmedValues.licenceNumber || !confirmedValues.licenceClass || !confirmedValues.expiryDate}
+                disabled={
+                  !confirmedValues.licenceNumber ||
+                  !confirmedValues.licenceClass ||
+                  !confirmedValues.issueDate ||
+                  !confirmedValues.expiryDate
+                }
                 onClick={() => setConfirmAction('approve')}
                 className="w-full sm:w-auto"
               >
