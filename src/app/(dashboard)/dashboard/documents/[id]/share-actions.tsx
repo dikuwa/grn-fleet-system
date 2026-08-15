@@ -76,7 +76,12 @@ export function ShareActions({
 
     void (async () => {
       try {
-        const response = await fetch('/api/share-links?status=active&limit=100', {
+        const params = new URLSearchParams({
+          status: 'active',
+          limit: '10',
+          documentId,
+        });
+        const response = await fetch(`/api/share-links?${params.toString()}`, {
           cache: 'no-store',
           signal: controller.signal,
         });
