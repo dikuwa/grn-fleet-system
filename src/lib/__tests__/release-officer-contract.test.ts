@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Permissions, RoleDefinitions } from '../permissions';
 import { REGIONAL_WORKFLOW_STEPS, NATIONAL_WORKFLOW_STEPS } from '../workflow-engine';
-import { eligibleWorkspacesForRoles, SystemRoles, WorkspaceIds } from '../workspaces';
+import { getEligibleWorkspaces, SystemRoles, WorkspaceIds } from '../workspaces';
 
 describe('Control Administrative Officer workflow contract', () => {
   it('keeps regional release and official inspection permissions in the protected system baseline', () => {
@@ -18,10 +18,11 @@ describe('Control Administrative Officer workflow contract', () => {
   });
 
   it('exposes separate Approvals and Inspections workspaces for the same role', () => {
-    const workspaces = eligibleWorkspacesForRoles([SystemRoles.RELEASE_OFFICER]);
+    const workspaces = getEligibleWorkspaces([SystemRoles.RELEASE_OFFICER]);
+    const workspaceIds = workspaces.map((workspace) => workspace.id);
 
-    expect(workspaces).toContain(WorkspaceIds.APPROVER);
-    expect(workspaces).toContain(WorkspaceIds.INSPECTOR);
+    expect(workspaceIds).toContain(WorkspaceIds.APPROVER);
+    expect(workspaceIds).toContain(WorkspaceIds.INSPECTOR);
   });
 
   it('keeps administrative release before final authorisation and driver acknowledgement', () => {
