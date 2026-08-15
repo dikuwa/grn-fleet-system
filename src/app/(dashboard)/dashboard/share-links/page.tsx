@@ -33,6 +33,7 @@ interface ShareLinkRow {
   shortSlug: string | null;
   expiresAt: string;
   isExpired: boolean;
+  isExhausted: boolean;
   isRevoked: boolean;
   maxViews: number | null;
   currentViews: number;
@@ -74,6 +75,7 @@ export default function ShareLinksDashboardPage() {
   const total: number = data?.total ?? 0;
   const totalPages: number = data?.totalPages ?? 1;
   const canRevoke = data?.capabilities?.canRevoke === true;
+  const canDistribute = data?.capabilities?.canDistribute === true;
 
   const handleRevoke = async (linkId: string) => {
     try {
@@ -123,7 +125,7 @@ export default function ShareLinksDashboardPage() {
     window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener');
   };
 
-  const summary = data?.summary ?? { active: 0, expired: 0, revoked: 0, views: 0 };
+  const summary = data?.summary ?? { active: 0, exhausted: 0, expired: 0, revoked: 0, views: 0 };
 
   return (
     <div className="space-y-6">
@@ -133,12 +135,20 @@ export default function ShareLinksDashboardPage() {
         description={`${total} share link${total !== 1 ? 's' : ''} tracked`}
       />
 
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardContent className="pt-4 text-center">
             <p className="text-status-success-text text-2xl font-[650] tabular-nums">{summary.active}</p>
             <p className="text-ink-500 flex items-center justify-center gap-1 text-xs">
               <CheckCircle2 className="h-3 w-3" /> Active
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 text-center">
+            <p className="text-status-warning-text text-2xl font-[650] tabular-nums">{summary.exhausted}</p>
+            <p className="text-ink-500 flex items-center justify-center gap-1 text-xs">
+              <Eye className="h-3 w-3" /> View Limit Reached
             </p>
           </CardContent>
         </Card>
@@ -181,8 +191,8 @@ export default function ShareLinksDashboardPage() {
             className="pl-9"
           />
         </div>
-        <div className="flex gap-1">
-          {['active', 'expired', 'revoked', ''].map((s) => (
+        <div className="flex flex-wrap gap-1">
+          {['active', 'exhausted', 'expired', 'revoked', ''].map((s) => (
             <button
               key={s}
               onClick={() => {
@@ -195,7 +205,7 @@ export default function ShareLinksDashboardPage() {
                   : 'text-ink-500 hover:text-ink-700 hover:bg-muted'
               }`}
             >
-              {s ? s.charAt(0).toUpperCase() + s.slice(1) : 'All'}
+              {s ? (s === 'exhausted' ? 'View Limit Reached' : s.charAt(0).toUpperCase() + s.slice(1)) : 'All'}
             </button>
           ))}
         </div>
@@ -255,7 +265,10 @@ export default function ShareLinksDashboardPage() {
         <div className="space-y-3">
           {links.map((link) => {
             const isExpired = link.isExpired;
-            const isActive = !link.isRevoked && !isExpired;
+            const isExhausted =
+              link.isExhausted ||
+              (link.maxViews !== null && link.currentViews >= link.maxViews);
+            const isActive = !link.isRevoked && !isExpired && !isExhausted;
             const docLabel = link.documentType
               .replace(/_/g, ' ')
               .replace(/\b\w/g, (c: string) => c.toUpperCase());
@@ -276,8 +289,17 @@ export default function ShareLinksDashboardPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-ink-950 text-sm font-[650]">{docLabel}</span>
-                        <Badge variant={link.isRevoked ? 'error' : isExpired ? 'pending' : 'success'} size="sm">
-                          {link.isRevoked ? 'Revoked' : isExpired ? 'Expired' : 'Active'}
+                        <Badge
+                          variant={link.isRevoked ? 'error' : isExpired || isExhausted ? 'pending' : 'success'}
+                          size="sm"
+                        >
+                          {link.isRevoked
+                            ? 'Revoked'
+                            : isExpired
+                              ? 'Expired'
+                              : isExhausted
+                                ? 'View Limit Reached'
+                                : 'Active'}
                         </Badge>
                         <Badge variant="info" size="sm">v{link.documentVersion}</Badge>
                       </div>
@@ -302,7 +324,7 @@ export default function ShareLinksDashboardPage() {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
-                    {isActive && shareUrlFor(link) && (
+                    {isActive && canDistribute && shareUrlFor(link) && (
                       <>
                         <Button variant="secondary" size="sm" onClick={() => openWhatsApp(link)} title="Share via WhatsApp">
                           <MessageCircle className="h-3 w-3" /> WhatsApp
