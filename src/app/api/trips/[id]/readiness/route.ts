@@ -411,22 +411,6 @@ export async function GET(
         .orderBy(desc(generatedDocuments.documentVersion))
         .limit(1),
     ]);
-    const currentAuthorityIssued = Boolean(
-      authority && latestAuthorityDocument?.status === 'issued',
-    );
-    gates.push({
-      key: 'trip_authority',
-      label: 'Current Trip Authority formally issued',
-      status: currentAuthorityIssued ? 'pass' : 'blocking',
-      detail: !authority
-        ? 'The canonical Trip Authority has not been created.'
-        : !latestAuthorityDocument
-          ? 'The Trip Authority document has not been generated.'
-          : latestAuthorityDocument.status !== 'issued'
-            ? `Trip Authority v${latestAuthorityDocument.documentVersion} is ${latestAuthorityDocument.status.replace(/_/g, ' ')} and must be formally issued before physical vehicle issue.`
-            : `Trip Authority v${latestAuthorityDocument.documentVersion} is formally issued (${authority.status.replace(/_/g, ' ')}).`,
-      required: true,
-    });
 
     let driverAccepted = false;
     if (authority) {
@@ -525,6 +509,32 @@ export async function GET(
       required: true,
     });
 
+    const currentAuthorityIssued = Boolean(
+      authority && latestAuthorityDocument?.status === 'issued',
+    );
+    const authorityIssuanceActionable = authority?.status === 'ready_for_departure';
+    gates.push({
+      key: 'trip_authority',
+      label: 'Current Trip Authority formally issued',
+      status: currentAuthorityIssued
+        ? 'pass'
+        : !authority
+          ? 'blocking'
+          : authorityIssuanceActionable
+            ? 'blocking'
+            : 'pending',
+      detail: !authority
+        ? 'The canonical Trip Authority has not been created.'
+        : currentAuthorityIssued
+          ? `Trip Authority v${latestAuthorityDocument?.documentVersion ?? authority.status} is formally issued (${authority.status.replace(/_/g, ' ')}).`
+          : authorityIssuanceActionable
+            ? !latestAuthorityDocument
+              ? 'The current vehicle passed departure inspection, but the Trip Authority document has not been generated.'
+              : `Trip Authority v${latestAuthorityDocument.documentVersion} is ${latestAuthorityDocument.status.replace(/_/g, ' ')} and must now be formally issued before physical vehicle issue.`
+            : 'Formal Trip Authority issuance becomes actionable after current driver acceptance and a passed departure inspection.',
+      required: true,
+    });
+
     const licenceDiscValid =
       !trip.vehicleLicenceExpiryDate ||
       !trip.allocationEndAt ||
@@ -575,7 +585,7 @@ export async function GET(
         failed: blockingCount,
         pending: pendingCount,
         ready: overallReady,
-        locked: !overallReady,
+        locked: blockingCount > 0,
       },
     });
   } catch (error) {
