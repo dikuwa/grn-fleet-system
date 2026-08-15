@@ -3,8 +3,7 @@ import { getDb } from '@/db';
 import { shareLinks, generatedDocuments } from '@/db/schema/documents';
 import { eq, and, desc, count, gte, lt, ilike, sql } from 'drizzle-orm';
 import { generateShareToken, generateShortShareIdentity } from '@/lib/share-token';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { auditEvents } from '@/db/schema/audit';
 
 /**
@@ -17,8 +16,15 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.FILE_VIEW);
-    if (permCheck instanceof NextResponse) return permCheck;
+    // Share-link register visibility is governed by its canonical dashboard
+    // route, not by generic file-view permission. Drivers need FILE_VIEW for
+    // assigned trip evidence but must never enumerate tenant share links.
+    const accessCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'view',
+    );
+    if (accessCheck instanceof NextResponse) return accessCheck;
 
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get('page') || '1', 10);
@@ -29,7 +35,6 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
 
-    // Build conditions
     const conditions = [eq(shareLinks.tenantId, session.tenantId)];
     if (status === 'active') {
       conditions.push(eq(shareLinks.isRevoked, false));
@@ -42,7 +47,6 @@ export async function GET(request: NextRequest) {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Count total
     const [totalResult] = await db
       .select({ count: count() })
       .from(shareLinks)
@@ -50,8 +54,8 @@ export async function GET(request: NextRequest) {
       .where(whereClause);
     const total = Number(totalResult?.count ?? 0);
 
-    // Fetch share links with document info. Never expose tokenHash: it is a
-    // server-side verification secret derivative and has no UI purpose.
+    // Never expose tokenHash: it is a server-side verification secret
+    // derivative and has no UI purpose.
     const [rows, [summary]] = await Promise.all([
       db
         .select({
@@ -119,11 +123,14 @@ export async function POST(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
-    if (permCheck instanceof NextResponse) return permCheck;
+    const accessCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'create',
+    );
+    if (accessCheck instanceof NextResponse) return accessCheck;
 
     const userId = session.user.id;
-
     const body = await request.json();
     const {
       documentId,
@@ -168,8 +175,6 @@ export async function POST(request: NextRequest) {
     const expiresAt = new Date(Date.now() + normalizedExpiryHours * 60 * 60 * 1000);
 
     const db = getDb();
-
-    // Verify document exists and belongs to this tenant
     const [doc] = await db
       .select()
       .from(generatedDocuments)
@@ -230,7 +235,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate secure token
     const { token, tokenHash } = await generateShareToken(documentId, expiresAt);
     const snapshot = doc.snapshotData as Record<string, unknown>;
     const readablePrefix = String(
@@ -240,7 +244,6 @@ export async function POST(request: NextRequest) {
     );
     const { shortSlug, verificationCode } = await generateShortShareIdentity(readablePrefix);
 
-    // Store share link
     const [link] = await db
       .insert(shareLinks)
       .values({
@@ -274,7 +277,6 @@ export async function POST(request: NextRequest) {
       sourceChannel: 'web',
     });
 
-    // Build shareable URL
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const shareUrl = `${baseUrl}/v/${encodeURIComponent(shortSlug)}`;
     const { tokenHash: _tokenHash, ...safeLink } = link;
@@ -302,8 +304,12 @@ export async function DELETE(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
-    if (permCheck instanceof NextResponse) return permCheck;
+    const accessCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'delete',
+    );
+    if (accessCheck instanceof NextResponse) return accessCheck;
 
     const { searchParams } = new URL(request.url);
     const linkId = searchParams.get('linkId');
