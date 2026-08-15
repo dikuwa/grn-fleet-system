@@ -23,11 +23,29 @@ import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
 import { TripAuthorityDocument, type TripAuthorityData } from './trip-authority';
 
+type TripAuthorityRenderSnapshot = Omit<
+  TripAuthorityData,
+  'verificationCode' | 'verificationUrl' | 'documentHash' | 'qrCodeDataUrl'
+>;
+
 function snapshotText(snapshot: Record<string, unknown> | null | undefined, key: string) {
   const value = snapshot?.[key];
   if (value === null || value === undefined) return undefined;
   const text = String(value).trim();
   return text || undefined;
+}
+
+function isStoredTripAuthorityRenderSnapshot(value: unknown): value is TripAuthorityRenderSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const data = value as Record<string, unknown>;
+  return (
+    typeof data.reference === 'string' &&
+    typeof data.requestReference === 'string' &&
+    typeof data.startAt === 'string' &&
+    typeof data.endAt === 'string' &&
+    !!data.vehicle &&
+    typeof data.vehicle === 'object'
+  );
 }
 
 async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Array> {
@@ -47,13 +65,15 @@ async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Arra
 }
 
 /**
- * Render a Trip Authority from the generated-document identity.
- * The generated document owns the permanent verification code/slug while the
- * operational tables remain the source of trip, vehicle, driver and approval data.
+ * Build the complete visual payload for a Trip Authority.
+ *
+ * New generated-document versions persist this payload as snapshotData.renderData
+ * so the official PDF is immutable after generation. This builder remains the
+ * compatibility path for historical thin snapshots.
  */
-export async function generateVerifiedTripAuthorityPdf(
+export async function buildTripAuthorityRenderSnapshot(
   documentId: string,
-): Promise<{ buffer: Uint8Array; filename: string } | null> {
+): Promise<TripAuthorityRenderSnapshot | null> {
   const db = getDb();
   const [document] = await db
     .select()
@@ -69,7 +89,12 @@ export async function generateVerifiedTripAuthorityPdf(
   const [alloc] = await db
     .select()
     .from(vehicleAllocations)
-    .where(eq(vehicleAllocations.id, allocationId))
+    .where(
+      and(
+        eq(vehicleAllocations.id, allocationId),
+        eq(vehicleAllocations.tenantId, tenantId),
+      ),
+    )
     .limit(1);
   if (!alloc) return null;
 
@@ -88,7 +113,10 @@ export async function generateVerifiedTripAuthorityPdf(
   if (!req) return null;
 
   const resolvedBranding = await resolveTenantDocumentBranding(tenantId);
-  const routes = await db.select().from(requestRoutes).where(eq(requestRoutes.requestId, req.id));
+  const routes = await db
+    .select()
+    .from(requestRoutes)
+    .where(and(eq(requestRoutes.requestId, req.id), eq(requestRoutes.tenantId, tenantId)));
   const routeSummary = routes.length
     ? routes.map((route) => `${route.originName} → ${route.destinationName}`).join('; ')
     : undefined;
@@ -111,7 +139,7 @@ export async function generateVerifiedTripAuthorityPdf(
       purpose: requestGoodsEquipment.purpose,
     })
     .from(requestGoodsEquipment)
-    .where(eq(requestGoodsEquipment.requestId, req.id))
+    .where(and(eq(requestGoodsEquipment.requestId, req.id), eq(requestGoodsEquipment.tenantId, tenantId)))
     .orderBy(requestGoodsEquipment.sortOrder);
 
   let requesterName: string | undefined;
@@ -147,7 +175,12 @@ export async function generateVerifiedTripAuthorityPdf(
     const passengerRows = await db
       .select()
       .from(tripAuthorityPassengers)
-      .where(eq(tripAuthorityPassengers.authorityId, authority.id));
+      .where(
+        and(
+          eq(tripAuthorityPassengers.authorityId, authority.id),
+          eq(tripAuthorityPassengers.tenantId, tenantId),
+        ),
+      );
     passengers = passengerRows.map((passenger) => ({
       name: passenger.fullName,
       employeeNumber: passenger.employeeNumber || undefined,
@@ -169,8 +202,19 @@ export async function generateVerifiedTripAuthorityPdf(
         licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
       })
       .from(tripAuthorisedDrivers)
-      .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
-      .where(eq(tripAuthorisedDrivers.authorityId, authority.id));
+      .innerJoin(
+        employees,
+        and(
+          eq(employees.id, tripAuthorisedDrivers.employeeId),
+          eq(employees.tenantId, tenantId),
+        ),
+      )
+      .where(
+        and(
+          eq(tripAuthorisedDrivers.authorityId, authority.id),
+          eq(tripAuthorisedDrivers.tenantId, tenantId),
+        ),
+      );
 
     const primary = internalDriverRows.find((row) => row.driverType === 'primary');
     if (primary) {
@@ -206,12 +250,17 @@ export async function generateVerifiedTripAuthorityPdf(
           idReference: externalParties.idReference,
         })
         .from(externalDriverAssignments)
-        .innerJoin(externalParties, eq(externalParties.id, externalDriverAssignments.externalPartyId))
+        .innerJoin(
+          externalParties,
+          and(
+            eq(externalParties.id, externalDriverAssignments.externalPartyId),
+            eq(externalParties.tenantId, tenantId),
+          ),
+        )
         .where(
           and(
             eq(externalDriverAssignments.tenantId, tenantId),
             eq(externalDriverAssignments.allocationId, allocationId),
-            eq(externalParties.tenantId, tenantId),
           ),
         )
         .orderBy(desc(externalDriverAssignments.assignedAt))
@@ -231,12 +280,16 @@ export async function generateVerifiedTripAuthorityPdf(
       }
     }
 
+    // Scope the departure inspection to this exact trip as well as tenant and
+    // vehicle. Without tripId, a later inspection for the same vehicle could be
+    // rendered into an older verified authority.
     const [departureInspection] = await db
       .select()
       .from(vehicleInspections)
       .where(
         and(
           eq(vehicleInspections.tenantId, tenantId),
+          eq(vehicleInspections.tripId, authority.tripId),
           eq(vehicleInspections.vehicleId, alloc.vehicleId),
           eq(vehicleInspections.type, 'departure'),
         ),
@@ -303,12 +356,7 @@ export async function generateVerifiedTripAuthorityPdf(
     }
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
-  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
-  const visibleHash = abbreviatedDocumentHash(document.hash) || undefined;
-
-  const data: TripAuthorityData = {
+  return {
     reference: authority?.authorityNumber || alloc.id.slice(0, 8).toUpperCase(),
     tenantName: tenant?.name,
     tenantDocumentFooter: branding?.documentFooter || undefined,
@@ -350,9 +398,38 @@ export async function generateVerifiedTripAuthorityPdf(
     authorityStatus: authority?.status || document.status,
     documentVersion: authority?.documentVersion || document.documentVersion,
     issuedAt: authority?.issuedAt?.toISOString() || document.createdAt.toISOString(),
+  };
+}
+
+export async function generateVerifiedTripAuthorityPdf(
+  documentId: string,
+): Promise<{ buffer: Uint8Array; filename: string } | null> {
+  const db = getDb();
+  const [document] = await db
+    .select()
+    .from(generatedDocuments)
+    .where(eq(generatedDocuments.id, documentId))
+    .limit(1);
+  if (!document || document.documentType !== 'trip_authority' || document.entityType !== 'vehicle_allocation') {
+    return null;
+  }
+
+  const snapshot = (document.snapshotData || {}) as Record<string, unknown>;
+  const storedRenderData = snapshot.renderData;
+  const renderSnapshot = isStoredTripAuthorityRenderSnapshot(storedRenderData)
+    ? storedRenderData
+    : await buildTripAuthorityRenderSnapshot(documentId);
+  if (!renderSnapshot) return null;
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
+  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
+
+  const data: TripAuthorityData = {
+    ...renderSnapshot,
     verificationCode: document.verificationCode,
     verificationUrl,
-    documentHash: visibleHash,
+    documentHash: abbreviatedDocumentHash(document.hash) || undefined,
     qrCodeDataUrl,
   };
 
