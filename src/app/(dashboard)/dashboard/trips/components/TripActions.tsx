@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { ArrowRightLeft, CheckSquare, Clock3, KeyRound, Repeat, XCircle } from 'lucide-react';
 import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
 import { DriverHandoverDialog } from './DriverHandoverDialog';
+import { ExternalTripStartDialog } from './ExternalTripStartDialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -72,6 +73,7 @@ export function TripActions({
   const [error, setError] = useState('');
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [handoverDialogOpen, setHandoverDialogOpen] = useState(false);
+  const [externalStartDialogOpen, setExternalStartDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [departureInspectionStatus, setDepartureInspectionStatus] = useState<GateStatus | null>(null);
@@ -125,6 +127,11 @@ export function TripActions({
   }, [refreshReadiness, router]);
 
   const handleHandoverSuccess = useCallback(() => {
+    router.refresh();
+  }, [router]);
+
+  const handleExternalStartSuccess = useCallback(() => {
+    setExternalStartDialogOpen(false);
     router.refresh();
   }, [router]);
 
@@ -183,10 +190,11 @@ export function TripActions({
         title: 'Vehicle issued',
         description:
           resolvedDriverKind === 'external'
-            ? 'Vehicle issue was recorded against the accepted external-driver assignment.'
+            ? 'Vehicle issue was recorded against the accepted external-driver assignment. Record the actual departure to start the trip.'
             : 'Vehicle issue was recorded against the assigned employee driver.',
         variant: 'success',
       });
+      await refreshReadiness();
       router.refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to issue vehicle';
@@ -195,7 +203,7 @@ export function TripActions({
     } finally {
       setIsWorking(false);
     }
-  }, [tripId, currentOdometer, router, toast]);
+  }, [tripId, currentOdometer, refreshReadiness, router, toast]);
 
   const handleCancelTrip = useCallback(async () => {
     const reason = cancelReason.trim();
@@ -248,6 +256,16 @@ export function TripActions({
       tripId={tripId}
       currentOdometer={currentOdometer}
       onSuccess={handleHandoverSuccess}
+    />
+  ) : null;
+
+  const externalStartDialog = canManage && driverKind === 'external' && hasIssue ? (
+    <ExternalTripStartDialog
+      open={externalStartDialogOpen}
+      onOpenChange={setExternalStartDialogOpen}
+      tripId={tripId}
+      minimumOdometer={currentOdometer}
+      onSuccess={handleExternalStartSuccess}
     />
   ) : null;
 
@@ -350,15 +368,26 @@ export function TripActions({
             <XCircle className="h-4 w-4" /> Cancel Trip
           </Button>
         )}
-        {hasIssue && (
+        {!readinessLoading && hasIssue && driverKind === 'external' && canManage && (
+          <Button variant="primary" size="sm" onClick={() => setExternalStartDialogOpen(true)}>
+            <CheckSquare className="h-4 w-4" /> Record Departure
+          </Button>
+        )}
+        {!readinessLoading && hasIssue && driverKind !== 'external' && (
           <span className="text-status-success-text inline-flex items-center gap-1.5 text-xs">
             <CheckSquare className="h-3.5 w-3.5" /> Vehicle issued — waiting for the driver to start the trip
+          </span>
+        )}
+        {!readinessLoading && hasIssue && driverKind === 'external' && !canManage && (
+          <span className="text-status-success-text inline-flex items-center gap-1.5 text-xs">
+            <CheckSquare className="h-3.5 w-3.5" /> Vehicle issued — Transport Office must record external-driver departure
           </span>
         )}
         {error && !cancelDialogOpen && (
           <p className="text-status-error-text mt-1 w-full text-xs">{error}</p>
         )}
         {replacementDialog}
+        {externalStartDialog}
         {cancellationDialog}
       </div>
     );
