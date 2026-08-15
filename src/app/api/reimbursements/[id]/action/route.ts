@@ -166,11 +166,15 @@ export async function POST(
       );
     }
 
-    // Reimbursement settlement may legitimately continue after operational trip
-    // closure. Fuel Summary prints the pending-claim count, so a closed trip must
-    // receive a refreshed draft (or the next version after an issued summary)
-    // whenever the reimbursement state changes.
-    if (reimbursement.tripId && reimbursement.tripStatus === 'closed') {
+    // Pending and approved-but-unpaid claims are both financially outstanding.
+    // Approval therefore does not change the printed summary count. Payment or
+    // rejection does, so only those terminal transitions should allocate/refresh
+    // a closed trip's Fuel Summary version.
+    if (
+      reimbursement.tripId &&
+      reimbursement.tripStatus === 'closed' &&
+      (actionType === 'paid' || actionType === 'rejected')
+    ) {
       try {
         const document = await generateDocument({
           documentType: 'fuel_summary',
