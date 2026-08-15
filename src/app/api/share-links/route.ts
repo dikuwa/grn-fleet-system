@@ -16,9 +16,6 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // Share-link register visibility is governed by its canonical dashboard
-    // route, not by generic file-view permission. Drivers need FILE_VIEW for
-    // assigned trip evidence but must never enumerate tenant share links.
     const accessCheck = await requireDashboardAction(
       session,
       '/dashboard/share-links',
@@ -27,15 +24,22 @@ export async function GET(request: NextRequest) {
     if (accessCheck instanceof NextResponse) return accessCheck;
 
     const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '25', 10);
+    const requestedPage = Number.parseInt(searchParams.get('page') || '1', 10);
+    const requestedLimit = Number.parseInt(searchParams.get('limit') || '25', 10);
+    const page = Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1;
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, requestedLimit))
+      : 25;
     const offset = (page - 1) * limit;
-    const status = searchParams.get('status') || ''; // active, expired, revoked, all
+    const status = searchParams.get('status') || '';
     const search = searchParams.get('q')?.trim() || '';
 
     const db = getDb();
 
-    const conditions = [eq(shareLinks.tenantId, session.tenantId)];
+    const conditions = [
+      eq(shareLinks.tenantId, session.tenantId),
+      eq(generatedDocuments.tenantId, session.tenantId),
+    ];
     if (status === 'active') {
       conditions.push(eq(shareLinks.isRevoked, false));
       conditions.push(gte(shareLinks.expiresAt, new Date()));
@@ -45,17 +49,19 @@ export async function GET(request: NextRequest) {
     } else if (status === 'revoked') conditions.push(eq(shareLinks.isRevoked, true));
     if (search) conditions.push(ilike(generatedDocuments.documentType, `%${search}%`));
 
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const whereClause = and(...conditions);
+    const documentJoin = and(
+      eq(shareLinks.documentId, generatedDocuments.id),
+      eq(generatedDocuments.tenantId, session.tenantId),
+    );
 
     const [totalResult] = await db
       .select({ count: count() })
       .from(shareLinks)
-      .innerJoin(generatedDocuments, eq(shareLinks.documentId, generatedDocuments.id))
+      .innerJoin(generatedDocuments, documentJoin)
       .where(whereClause);
     const total = Number(totalResult?.count ?? 0);
 
-    // Never expose tokenHash: it is a server-side verification secret
-    // derivative and has no UI purpose.
     const [rows, [summary]] = await Promise.all([
       db
         .select({
@@ -77,7 +83,7 @@ export async function GET(request: NextRequest) {
           documentStatus: generatedDocuments.status,
         })
         .from(shareLinks)
-        .innerJoin(generatedDocuments, eq(shareLinks.documentId, generatedDocuments.id))
+        .innerJoin(generatedDocuments, documentJoin)
         .where(whereClause)
         .orderBy(desc(shareLinks.createdAt))
         .limit(limit)
@@ -189,9 +195,14 @@ export async function POST(request: NextRequest) {
     if (!doc) {
       return NextResponse.json({ error: 'Document not found in your tenant' }, { status: 404 });
     }
-    if (doc.status === 'draft') {
+    if (doc.status !== 'issued') {
       return NextResponse.json(
-        { error: 'Issue the document before creating a public verification link' },
+        {
+          error:
+            doc.status === 'draft'
+              ? 'Issue the document before creating a public verification link'
+              : `Only the current issued document can receive a new public verification link. Current status: ${doc.status}.`,
+        },
         { status: 409 },
       );
     }
@@ -235,7 +246,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { token, tokenHash } = await generateShareToken(documentId, expiresAt);
+    const { tokenHash } = await generateShareToken(documentId, expiresAt);
     const snapshot = doc.snapshotData as Record<string, unknown>;
     const readablePrefix = String(
       snapshot.authorityNumber ||
@@ -286,7 +297,6 @@ export async function POST(request: NextRequest) {
       data: {
         ...safeLink,
         shareUrl,
-        legacyShareUrl: `${baseUrl}/share/${encodeURIComponent(token)}`,
       },
     });
   } catch (error) {
@@ -340,7 +350,8 @@ export async function DELETE(request: NextRequest) {
       sourceChannel: 'web',
     });
 
-    return NextResponse.json({ success: true, data: revoked });
+    const { tokenHash: _tokenHash, ...safeRevoked } = revoked;
+    return NextResponse.json({ success: true, data: safeRevoked });
   } catch (error) {
     console.error('Share link revoke failed:', error);
     return NextResponse.json(
