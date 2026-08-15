@@ -51,6 +51,7 @@ interface ClosureTrip {
   requesterFirstName: string | null;
   requesterLastName: string | null;
   hasReturnInspection: boolean;
+  latestReturnInspectionStatus: string | null;
   hasClosureRecord: boolean;
   reconciliationReady: boolean;
   reconciliationBlockers: string[];
@@ -82,6 +83,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       status: trips.status,
       returnedAt: trips.returnedAt,
       createdAt: trips.createdAt,
+      vehicleId: trips.vehicleId,
       make: vehicles.make,
       model: vehicles.model,
       licenceNumber: vehicles.licenceNumber,
@@ -117,6 +119,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
     .orderBy(desc(trips.returnedAt));
 
   const tripIds = rows.map((row) => row.id);
+  const currentVehicleByTrip = new Map(rows.map((row) => [row.id, row.vehicleId]));
   const driverIds = Array.from(
     new Set(rows.map((row) => row.driverEmployeeId).filter((id): id is string => Boolean(id))),
   );
@@ -131,17 +134,31 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
   ] = await Promise.all([
     tripIds.length
       ? db
-          .select({ tripId: vehicleInspections.tripId })
+          .select({
+            id: vehicleInspections.id,
+            tripId: vehicleInspections.tripId,
+            vehicleId: vehicleInspections.vehicleId,
+            status: vehicleInspections.status,
+            createdAt: vehicleInspections.createdAt,
+          })
           .from(vehicleInspections)
           .where(
             and(
               eq(vehicleInspections.tenantId, tenantId),
               inArray(vehicleInspections.tripId, tripIds),
               eq(vehicleInspections.type, 'return'),
-              inArray(vehicleInspections.status, ['completed', 'failed']),
             ),
           )
-      : Promise.resolve([] as Array<{ tripId: string | null }>),
+          .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
+      : Promise.resolve(
+          [] as Array<{
+            id: string;
+            tripId: string | null;
+            vehicleId: string;
+            status: string;
+            createdAt: Date;
+          }>,
+        ),
     tripIds.length
       ? db
           .select({ tripId: tripClosures.tripId })
@@ -193,7 +210,16 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       : Promise.resolve([] as Array<{ tripId: string }>),
   ]);
 
-  const returnInspTripIds = new Set(inspRows.map((row) => row.tripId));
+  // Rows arrive newest-first. Keep only the newest return inspection for each
+  // trip's currently allocated vehicle; an older submitted inspection must not
+  // hide a newer reinspection that is still in progress.
+  const latestReturnInspectionByTrip = new Map<string, { status: string }>();
+  for (const inspection of inspRows) {
+    if (!inspection.tripId || latestReturnInspectionByTrip.has(inspection.tripId)) continue;
+    if (inspection.vehicleId !== currentVehicleByTrip.get(inspection.tripId)) continue;
+    latestReturnInspectionByTrip.set(inspection.tripId, { status: inspection.status });
+  }
+
   const closureTripIds = new Set(closureRows.map((row) => row.tripId));
   const unverifiedFuelTripIds = new Set(unverifiedFuelRows.map((row) => row.tripId));
   const unverifiedExpenseTripIds = new Set(unverifiedExpenseRows.map((row) => row.tripId));
@@ -202,10 +228,19 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
 
   return rows.map((row) => {
     const driver = row.driverEmployeeId ? driverMap.get(row.driverEmployeeId) : null;
-    const hasReturnInspection = returnInspTripIds.has(row.id);
+    const latestReturnInspection = latestReturnInspectionByTrip.get(row.id) ?? null;
+    const hasReturnInspection = Boolean(
+      latestReturnInspection && ['completed', 'failed'].includes(latestReturnInspection.status),
+    );
     const reconciliationBlockers: string[] = [];
 
-    if (!hasReturnInspection) reconciliationBlockers.push('Return inspection required');
+    if (!latestReturnInspection) {
+      reconciliationBlockers.push('Return inspection required');
+    } else if (!hasReturnInspection) {
+      reconciliationBlockers.push(
+        `Latest return inspection is ${latestReturnInspection.status.replace(/_/g, ' ')}`,
+      );
+    }
     if (!['awaiting_reconciliation', 'completed'].includes(row.authorityStatus)) {
       reconciliationBlockers.push(
         `Trip Authority is ${row.authorityStatus.replace(/_/g, ' ')}`,
@@ -234,6 +269,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       driverFirstName: driver?.firstName ?? null,
       driverLastName: driver?.lastName ?? null,
       hasReturnInspection,
+      latestReturnInspectionStatus: latestReturnInspection?.status ?? null,
       hasClosureRecord: closureTripIds.has(row.id),
       reconciliationReady: reconciliationBlockers.length === 0,
       reconciliationBlockers,
@@ -382,7 +418,7 @@ export default async function ClosureReviewPage() {
                           />
                           {!trip.hasReturnInspection && (
                             <Badge variant="emergency" size="sm">
-                              Missing Inspection
+                              {trip.latestReturnInspectionStatus ? 'Reinspection Pending' : 'Missing Inspection'}
                             </Badge>
                           )}
                           {trip.reconciliationReady ? (
@@ -432,7 +468,7 @@ export default async function ClosureReviewPage() {
                             </span>
                           )}
                         </div>
-                        {trip.hasReturnInspection && !trip.reconciliationReady && (
+                        {!trip.reconciliationReady && trip.reconciliationBlockers.length > 0 && (
                           <p className="mt-2 text-[11px] leading-4 text-status-pending-text">
                             {trip.reconciliationBlockers.join(' · ')}
                           </p>
