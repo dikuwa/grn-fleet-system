@@ -27,7 +27,11 @@ import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { FuelReviewActions } from './FuelReviewActions';
 import { ReceiptCorrectionEditor } from './ReceiptCorrectionEditor';
-import { resolveDashboardAccess, type DashboardRecordScope } from '@/lib/dashboard-access';
+import {
+  canPerformDashboardAction,
+  resolveDashboardAccess,
+  type DashboardRecordScope,
+} from '@/lib/dashboard-access';
 import { fuelScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
@@ -126,6 +130,11 @@ export default async function FuelDetailPage({ params }: PageProps) {
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/fuel', roleNames);
   if (!access.allowed || !access.recordScope) notFound();
+  const canViewReimbursements = canPerformDashboardAction(
+    '/dashboard/reimbursements',
+    roleNames,
+    'view',
+  );
 
   let data: Awaited<ReturnType<typeof fetchFuelDetail>>;
   try {
@@ -331,7 +340,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
                   <p className="text-ink-700 text-sm">{reimbursement.notes}</p>
                 </div>
               )}
-              {access.recordScope === 'tenant' && (
+              {canViewReimbursements && (
                 <Button variant="secondary" size="sm" asChild>
                   <Link href={`/dashboard/reimbursements/${reimbursement.id}`}>Open reimbursement claim</Link>
                 </Button>
