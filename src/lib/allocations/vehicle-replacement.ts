@@ -283,13 +283,6 @@ export async function replaceVehicle(
           AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING id
       ),
-      issue_reset AS (
-        DELETE FROM trip_issues
-        WHERE allocation_id = ${allocationId}::uuid
-          AND ${issuedPreStart}
-          AND EXISTS (SELECT 1 FROM allocation_claim)
-        RETURNING id
-      ),
       request_reset AS (
         UPDATE transport_requests
         SET status = 'authorised', updated_at = ${now}
