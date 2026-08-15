@@ -20,6 +20,28 @@ import {
 } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
+
+function errorText(error: unknown): string {
+  if (!error || typeof error !== 'object') return String(error || '');
+  const record = error as { message?: unknown; cause?: unknown };
+  const parts = [typeof record.message === 'string' ? record.message : ''];
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { message?: unknown };
+    if (typeof cause.message === 'string') parts.push(cause.message);
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -147,6 +169,17 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof InspectionServiceError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    const code = postgresErrorCode(error);
+    const message = errorText(error);
+    if (code === '23514' && message.includes('inspection_lifecycle_conflict')) {
+      return NextResponse.json(
+        {
+          error:
+            'This inspection is no longer current because the trip lifecycle changed while it was being submitted. Refresh the trip and use the latest inspection state.',
+        },
+        { status: 409 },
+      );
     }
     console.error('[inspections] POST failed:', error);
     return NextResponse.json({ error: 'Failed to complete inspection' }, { status: 500 });
