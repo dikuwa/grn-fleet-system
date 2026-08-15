@@ -330,6 +330,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       : RESTRICTED_VEHICLE_STATUSES.has(currentVehicle.status)
         ? currentVehicle.status
         : 'available';
+    const liveVehicleClosureStatus = sql<string>`case
+      when ${vehicles.status} in ('maintenance', 'out_of_service', 'written_off') then ${vehicles.status}
+      when exists (
+        select 1
+        from ${vehicleDefects} vd
+        where vd.vehicle_id = ${trip.vehicleId}::uuid
+          and vd.is_blocking = true
+          and vd.resolved_at is null
+      ) then 'maintenance'
+      else 'available'
+    end`;
 
     const closureId = randomUUID();
     const now = new Date();
@@ -392,7 +403,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             eq(externalDriverAssignments.state, 'accepted'),
           )),
         tx.update(vehicles)
-          .set({ status: resultingVehicleStatus, updatedAt: now })
+          .set({ status: liveVehicleClosureStatus, updatedAt: now })
           .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, tenantId))),
         tx.insert(auditEvents).values({
           tenantId,
