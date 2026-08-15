@@ -69,6 +69,7 @@
     { "idx": 64, "version": "7", "when": 1786689000000, "tag": "0064_permanent_document_verification", "breakpoints": true },
     { "idx": 65, "version": "7", "when": 1786713500000, "tag": "0065_trip_closure_lifecycle_guard", "breakpoints": true },
     { "idx": 66, "version": "7", "when": 1786782600000, "tag": "0066_document_version_integrity", "breakpoints": true },
-    { "idx": 67, "version": "7", "when": 1786824000000, "tag": "0067_external_driver_assignment_completed", "breakpoints": true }
+    { "idx": 67, "version": "7", "when": 1786824000000, "tag": "0067_external_driver_assignment_completed", "breakpoints": true },
+    { "idx": 68, "version": "7", "when": 1786827600000, "tag": "0068_closed_trip_financial_immutability", "breakpoints": true }
   ]
 }
