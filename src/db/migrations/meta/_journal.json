@@ -67,6 +67,7 @@
     { "idx": 62, "version": "7", "when": 1786681800000, "tag": "0062_external_parties", "breakpoints": true },
     { "idx": 63, "version": "7", "when": 1786685400000, "tag": "0063_external_driver_assignments", "breakpoints": true },
     { "idx": 64, "version": "7", "when": 1786689000000, "tag": "0064_permanent_document_verification", "breakpoints": true },
-    { "idx": 65, "version": "7", "when": 1786713500000, "tag": "0065_trip_closure_lifecycle_guard", "breakpoints": true }
+    { "idx": 65, "version": "7", "when": 1786713500000, "tag": "0065_trip_closure_lifecycle_guard", "breakpoints": true },
+    { "idx": 66, "version": "7", "when": 1786782600000, "tag": "0066_document_version_integrity", "breakpoints": true }
   ]
 }
