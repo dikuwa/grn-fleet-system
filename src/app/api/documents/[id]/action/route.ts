@@ -90,7 +90,7 @@ export async function POST(
     // preview snapshot. This prevents changes made between draft generation and
     // issue from leaving the official version with stale data.
     const preparedAt = new Date();
-    const draftUpdatedAt = doc.updatedAt;
+    const draftHash = doc.hash;
     let snapshotData = (doc.snapshotData || {}) as Record<string, unknown>;
     const branding = await resolveTenantDocumentBranding(doc.tenantId);
     if (branding) {
@@ -171,16 +171,16 @@ export async function POST(
       .digest('hex');
 
     // The target must still be the exact draft revision read above. Generation
-    // can refresh a pending draft in place; updated_at is therefore the
-    // optimistic concurrency token that prevents issuance from overwriting a
-    // newer source snapshot prepared while this request was rendering.
+    // refreshes the draft hash whenever source data is rebuilt, so the SHA-256
+    // fingerprint is a precise optimistic concurrency token without timestamp
+    // precision ambiguity between PostgreSQL and JavaScript Date values.
     const targetStillDraft = sql`exists (
       select 1
       from generated_documents target
       where target.id = ${id}::uuid
         and target.tenant_id = ${session.tenantId}::uuid
         and target.status = 'draft'
-        and target.updated_at = ${draftUpdatedAt}
+        and target.hash is not distinct from ${draftHash}
     )`;
 
     await runAtomicMutations((tx) => [
@@ -209,7 +209,7 @@ export async function POST(
             eq(generatedDocuments.id, id),
             eq(generatedDocuments.tenantId, session.tenantId),
             eq(generatedDocuments.status, 'draft'),
-            eq(generatedDocuments.updatedAt, draftUpdatedAt),
+            sql`${generatedDocuments.hash} is not distinct from ${draftHash}`,
           ),
         ),
     ]);
