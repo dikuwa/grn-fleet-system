@@ -1,67 +1,118 @@
 'use client';
 
+import { fetchPdfBytes, loadPdfJs } from '@/lib/pdfjs-client';
+
 /**
- * Print the canonical authenticated PDF without opening a new tab/window.
- * The PDF is fetched in the current session, converted to a blob URL and loaded
- * into a temporary off-screen iframe. This keeps users inside GovFleet and
- * avoids popup-blocker failures.
+ * Print the canonical authenticated PDF without handing control to Chrome's
+ * protected PDF extension frame. Each page is rasterised with PDF.js into a
+ * same-origin print document, then the browser's native print dialog is opened.
  */
 export async function printPdfFromUrl(url: string): Promise<void> {
-  const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
-  if (!response.ok) throw new Error('The official PDF could not be prepared for printing.');
-
-  const blob = await response.blob();
-  if (!blob.type.includes('pdf')) throw new Error('The server did not return a printable PDF.');
-
-  const objectUrl = URL.createObjectURL(blob);
+  const [bytes, pdfjs] = await Promise.all([fetchPdfBytes(url), loadPdfJs()]);
+  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
   const iframe = document.createElement('iframe');
+
   iframe.setAttribute('aria-hidden', 'true');
   iframe.tabIndex = -1;
   iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
+  iframe.style.left = '-10000px';
+  iframe.style.top = '0';
   iframe.style.width = '1px';
   iframe.style.height = '1px';
   iframe.style.opacity = '0';
   iframe.style.pointerEvents = 'none';
-  iframe.src = objectUrl;
+  iframe.style.border = '0';
 
-  let settled = false;
-  const cleanup = () => {
-    if (settled) return;
-    settled = true;
+  document.body.appendChild(iframe);
+
+  const printDocument = iframe.contentDocument;
+  const printWindow = iframe.contentWindow;
+  if (!printDocument || !printWindow) {
     iframe.remove();
-    URL.revokeObjectURL(objectUrl);
+    await pdf.destroy?.();
+    throw new Error('The browser could not create a print document.');
+  }
+
+  let cleaned = false;
+  let cleanupTimer: number | null = null;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (cleanupTimer !== null) window.clearTimeout(cleanupTimer);
+    iframe.remove();
+    void pdf.destroy?.();
   };
 
-  await new Promise<void>((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      cleanup();
-      reject(new Error('The browser did not finish loading the PDF for printing. Try Preview, then Print again.'));
-    }, 20_000);
+  try {
+    printDocument.open();
+    printDocument.write(`<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>GovFleet official document</title>
+          <style>
+            @page { size: auto; margin: 0; }
+            * { box-sizing: border-box; }
+            html, body { margin: 0; padding: 0; background: #fff; }
+            body { width: 100%; }
+            .pdf-page { display: flex; width: 100%; align-items: flex-start; justify-content: center; break-after: page; page-break-after: always; background: #fff; }
+            .pdf-page:last-child { break-after: auto; page-break-after: auto; }
+            .pdf-page img { display: block; width: 100%; height: auto; object-fit: contain; }
+          </style>
+        </head>
+        <body></body>
+      </html>`);
+    printDocument.close();
 
-    iframe.onload = () => {
-      window.clearTimeout(timeout);
-      try {
-        const target = iframe.contentWindow;
-        if (!target) throw new Error('Print frame is unavailable.');
-        target.focus();
-        target.print();
-        // Keep the blob alive long enough for the native print dialog/viewer.
-        window.setTimeout(cleanup, 60_000);
-        resolve();
-      } catch (error) {
-        cleanup();
-        reject(error instanceof Error ? error : new Error('The browser could not start printing.'));
+    const body = printDocument.body;
+    if (!body) throw new Error('The browser could not prepare the print document.');
+
+    // Roughly 150 DPI for an A4 source: crisp enough for official text/QRs
+    // without the excessive memory cost of full 300 DPI rendering.
+    const printScale = 2.1;
+
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: printScale });
+      const canvas = printDocument.createElement('canvas');
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error(`Page ${pageNumber} could not be prepared for printing.`);
+
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      await page.render({ canvas, canvasContext: context, viewport }).promise;
+
+      const image = printDocument.createElement('img');
+      image.alt = `Official document page ${pageNumber}`;
+      image.src = canvas.toDataURL('image/png', 1);
+
+      const pageWrapper = printDocument.createElement('section');
+      pageWrapper.className = 'pdf-page';
+      pageWrapper.appendChild(image);
+      body.appendChild(pageWrapper);
+
+      if (typeof image.decode === 'function') {
+        try {
+          await image.decode();
+        } catch {
+          // The data URL is already local and complete; decode support differs by browser.
+        }
       }
-    };
+      page.cleanup?.();
+    }
 
-    iframe.onerror = () => {
-      window.clearTimeout(timeout);
-      cleanup();
-      reject(new Error('The browser could not load the PDF for printing.'));
-    };
+    printWindow.addEventListener('afterprint', cleanup, { once: true });
+    printWindow.focus();
+    printWindow.print();
 
-    document.body.appendChild(iframe);
-  });
+    // Safari and some Chromium versions do not reliably emit afterprint for a
+    // child frame. Keep the print document alive long enough for the dialog.
+    cleanupTimer = window.setTimeout(cleanup, 120_000);
+  } catch (error) {
+    cleanup();
+    throw error instanceof Error ? error : new Error('The browser could not start printing.');
+  }
 }
