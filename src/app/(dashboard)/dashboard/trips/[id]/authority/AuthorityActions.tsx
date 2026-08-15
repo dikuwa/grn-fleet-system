@@ -21,6 +21,7 @@ type AmendmentState = {
   driverKind: 'internal' | 'external' | 'unassigned';
   canSelfAcknowledge: boolean;
   canRecordExternal: boolean;
+  externalEligibilityError?: string | null;
   amendment?: {
     id: string;
     authorityVersion: number;
@@ -156,6 +157,11 @@ export function AuthorityActions({
           <strong>Revised authority acceptance required.</strong>{' '}
           The vehicle was replaced after the previous driver acceptance.
           {amendmentState.amendment?.reason ? ` Reason: ${amendmentState.amendment.reason}` : ''}
+          {amendmentState.externalEligibilityError ? (
+            <span className="mt-1 block font-semibold">
+              Acceptance is blocked: {amendmentState.externalEligibilityError}
+            </span>
+          ) : null}
         </div>
       )}
 
