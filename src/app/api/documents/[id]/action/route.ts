@@ -14,6 +14,7 @@ import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
 import { enrichClosedTripFuelSummary } from '@/lib/trip-closure-document-enrichment';
+import { refreshTripCompletionDraftForIssue } from '@/lib/trip-completion-issue-refresh';
 
 export async function POST(
   request: NextRequest,
@@ -106,6 +107,30 @@ export async function POST(
           {
             error:
               'Fuel Summary cannot be formally issued until the closed-trip transaction detail and vehicle identity have been reconciled.',
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    // Incident investigations may legitimately progress after operational trip
+    // closure. Refresh an unissued completion draft immediately before Issue so
+    // the official report freezes the latest investigation outcome without
+    // blocking later safety work or rewriting an already-issued document.
+    if (doc.documentType === 'trip_completion' && doc.entityType === 'trip') {
+      const refreshed = await refreshTripCompletionDraftForIssue(doc.entityId, doc.tenantId, doc.id);
+      if (refreshed) doc = refreshed;
+      const completionSnapshot = (doc.snapshotData || {}) as Record<string, unknown>;
+      if (
+        completionSnapshot.status !== 'closed' ||
+        !completionSnapshot.closure ||
+        !completionSnapshot.vehicle ||
+        !completionSnapshot.eventSummary
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'Trip Completion cannot be formally issued until the trip is closed and its reconciliation and safety summary can be rebuilt.',
           },
           { status: 409 },
         );
