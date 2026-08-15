@@ -39,6 +39,10 @@ export function ShareActions({
   verificationCode?: string;
 }) {
   const [copied, setCopied] = useState<'link' | 'message' | null>(null);
+  const isDraft = status?.trim().toLowerCase() === 'draft';
+  // A generated draft already has a stable verification slug internally, but
+  // that identity is not a public sharing channel until the document is issued.
+  const effectiveShareUrl = isDraft ? undefined : shareUrl;
   const defaultMessage = useMemo(
     () =>
       [
@@ -47,11 +51,11 @@ export function ShareActions({
         documentReference ? `Reference: ${documentReference}` : null,
         status ? `Status: ${status}` : null,
         'Verify securely:',
-        shareUrl,
+        effectiveShareUrl,
       ]
         .filter(Boolean)
         .join('\n'),
-    [documentReference, documentTitle, organisationName, shareUrl, status],
+    [documentReference, documentTitle, effectiveShareUrl, organisationName, status],
   );
   const [editedMessage, setEditedMessage] = useState('');
   const message = editedMessage || defaultMessage;
@@ -73,12 +77,15 @@ export function ShareActions({
         <DialogHeader>
           <DialogTitle>Share verified document</DialogTitle>
         </DialogHeader>
-        {!shareUrl ? (
+        {!effectiveShareUrl ? (
           <div className="border-status-pending-bg bg-status-pending-bg rounded-lg border p-4">
-            <p className="text-ink-950 text-sm font-medium">Create a secure link first</p>
+            <p className="text-ink-950 text-sm font-medium">
+              {isDraft ? 'Issue this document before sharing' : 'Create a secure link first'}
+            </p>
             <p className="text-ink-600 mt-1 text-xs">
-              Use “Create Link” to choose an expiry and access limit. GovFleet will reuse an
-              existing active link by default.
+              {isDraft
+                ? 'Draft verification identities are private. Once the document is formally issued, its verified public identity can be shared.'
+                : 'Use “Create Link” to choose an expiry and access limit. GovFleet will reuse an existing active link by default.'}
             </p>
           </div>
         ) : (
@@ -105,7 +112,7 @@ export function ShareActions({
               >
                 <MessageCircle className="h-4 w-4" /> Open in WhatsApp
               </Button>
-              <Button variant="secondary" onClick={() => copy(shareUrl, 'link')}>
+              <Button variant="secondary" onClick={() => copy(effectiveShareUrl, 'link')}>
                 {copied === 'link' ? (
                   <CheckCircle2 className="h-4 w-4" />
                 ) : (
@@ -145,12 +152,9 @@ export function ShareActions({
                 <Printer className="h-4 w-4" /> Print document
               </Button>
               <Button variant="secondary" asChild>
-                <a href={shareUrl} target="_blank" rel="noreferrer">
+                <a href={effectiveShareUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="h-4 w-4" /> Open verification page
                 </a>
-              </Button>
-              <Button variant="secondary" asChild>
-                <a href="/dashboard/share-links">Manage link</a>
               </Button>
             </div>
           </>
