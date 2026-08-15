@@ -10,7 +10,7 @@
  */
 
 import { getDb } from '@/db';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { generatedDocuments } from '@/db/schema/documents';
 import {
   trips,
@@ -38,6 +38,7 @@ import { departments, employees, offices } from '@/db/schema/people';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -700,16 +701,10 @@ const DOCUMENT_BUILDERS: Partial<
 /**
  * Generate a document snapshot for a given entity.
  *
- * Example usage:
- * ```ts
- * await generateDocument({
- *   documentType: 'transport_request',
- *   entityType: 'transport_request',
- *   entityId: requestId,
- *   tenantId: session.tenantId,
- *   generatedByUserId: session.user.id,
- * });
- * ```
+ * The latest-version lookup is tenant-scoped and the previous-issued supersede
+ * plus new-version insert are committed atomically. A concurrent duplicate
+ * version therefore fails as one unit at the database uniqueness backstop and
+ * cannot leave the previous official version superseded by itself.
  */
 export async function generateDocument(
   payload: DocumentPayload,
@@ -728,7 +723,25 @@ export async function generateDocument(
     console.warn(`[DocGen] No data found for ${entityType}: ${entityId}`);
     return null;
   }
+
   const branding = await resolveTenantDocumentBranding(tenantId);
+  const db = getDb();
+
+  const [existing] = await db
+    .select()
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.tenantId, tenantId),
+        eq(generatedDocuments.entityType, entityType),
+        eq(generatedDocuments.entityId, entityId),
+        eq(generatedDocuments.documentType, documentType),
+      ),
+    )
+    .orderBy(desc(generatedDocuments.documentVersion))
+    .limit(1);
+
+  const newVersion = existing ? existing.documentVersion + 1 : 1;
   const snapshotData = {
     ...sourceSnapshot,
     documentIdentity: {
@@ -741,10 +754,38 @@ export async function generateDocument(
       executiveSignatureUrl: branding?.executiveSignatureUrl,
       snapshottedAt: new Date().toISOString(),
     },
+    brandingMeta: branding
+      ? {
+          tenantId: branding.tenantId,
+          organisationName: branding.organisationName,
+          code: branding.code,
+          locale: branding.locale,
+          timezone: branding.timezone,
+          division: branding.division,
+          address: branding.address,
+          phone: branding.phone,
+          email: branding.email,
+          website: branding.website,
+          registrationNumber: branding.registrationNumber,
+          motto: branding.motto,
+          primaryColor: branding.primaryColor,
+          accentColor: branding.accentColor,
+          documentFooter: branding.documentFooter,
+          executiveSignatoryName: branding.executiveSignatoryName,
+          executiveSignatoryTitle: branding.executiveSignatoryTitle,
+        }
+      : undefined,
   };
-  const snapshotHash = createHash('sha256').update(JSON.stringify(snapshotData)).digest('hex');
+  const snapshotHash = createHash('sha256')
+    .update(
+      JSON.stringify({
+        documentType,
+        version: newVersion,
+        snapshot: snapshotData,
+      }),
+    )
+    .digest('hex');
 
-  // Validate snapshot against document type schema
   if (hasSchema(documentType)) {
     const validation = validateDocumentSnapshot(documentType, snapshotData);
     if (!validation.valid) {
@@ -752,52 +793,50 @@ export async function generateDocument(
         `[DocGen] Snapshot validation failed for ${documentType}:${entityId}`,
         validation.errors,
       );
-      // Non-blocking — store the document with a warning, but log the issue
     }
   }
 
-  const db = getDb();
-
-  // Check if a document already exists for this entity + type
-  const [existing] = await db
-    .select()
-    .from(generatedDocuments)
-    .where(
-      and(
-        eq(generatedDocuments.entityType, entityType),
-        eq(generatedDocuments.entityId, entityId),
-        eq(generatedDocuments.documentType, documentType),
-      ),
-    )
-    .orderBy(desc(generatedDocuments.documentVersion))
-    .limit(1);
-
-  const newVersion = existing ? existing.documentVersion + 1 : 1;
-
-  // If there's an existing issued document, supersede it first
-  if (existing && existing.status === 'issued') {
-    await db
-      .update(generatedDocuments)
-      .set({ status: 'superseded', updatedAt: new Date() })
-      .where(eq(generatedDocuments.id, existing.id));
-  }
+  const docId = randomUUID();
+  const now = new Date();
+  await runAtomicMutations((tx) => {
+    const mutations = [];
+    if (existing?.status === 'issued') {
+      mutations.push(
+        tx.update(generatedDocuments)
+          .set({ status: 'superseded', updatedAt: now })
+          .where(
+            and(
+              eq(generatedDocuments.id, existing.id),
+              eq(generatedDocuments.tenantId, tenantId),
+              eq(generatedDocuments.status, 'issued'),
+            ),
+          ),
+      );
+    }
+    mutations.push(
+      tx.insert(generatedDocuments).values({
+        id: docId,
+        tenantId,
+        documentType,
+        documentVersion: newVersion,
+        templateVersion,
+        entityType,
+        entityId,
+        snapshotData,
+        hash: snapshotHash,
+        status: newVersion > 1 ? 'issued' : 'draft', // preserve established regeneration behaviour
+        generatedByUserId,
+      }),
+    );
+    return mutations;
+  });
 
   const [doc] = await db
-    .insert(generatedDocuments)
-    .values({
-      tenantId,
-      documentType,
-      documentVersion: newVersion,
-      templateVersion,
-      entityType,
-      entityId,
-      snapshotData,
-      hash: snapshotHash,
-      status: newVersion > 1 ? 'issued' : 'draft', // Regenerations are auto-issued
-      generatedByUserId,
-    })
-    .returning();
-
+    .select()
+    .from(generatedDocuments)
+    .where(and(eq(generatedDocuments.id, docId), eq(generatedDocuments.tenantId, tenantId)))
+    .limit(1);
+  if (!doc) throw new Error('Generated document committed but could not be reloaded');
   return doc;
 }
 
