@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { reimbursements, fuelTransactions } from '@/db/schema/trips';
+import { reimbursements, fuelTransactions, trips } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
@@ -10,6 +10,8 @@ import {
   createScopedNotifications,
   resolveActionNotifications,
 } from '@/lib/notification-service';
+import { generateDocument } from '@/lib/document-generator';
+import { enrichClosedTripFuelSummary } from '@/lib/trip-closure-document-enrichment';
 
 // Ordinary Transport Office actions are deliberately forward-only. Paid claims
 // are financially final here; reopening/reversing one requires a separate,
@@ -67,11 +69,14 @@ export async function POST(
         transactionId: reimbursements.transactionId,
         amount: reimbursements.amount,
         claimantUserId: employees.userId,
+        tripId: fuelTransactions.tripId,
+        tripStatus: trips.status,
       })
       .from(reimbursements)
       .innerJoin(fuelTransactions, eq(reimbursements.transactionId, fuelTransactions.id))
       .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
       .innerJoin(employees, eq(reimbursements.claimantEmployeeId, employees.id))
+      .leftJoin(trips, and(eq(trips.id, fuelTransactions.tripId), eq(trips.tenantId, session.tenantId)))
       .where(
         and(
           eq(reimbursements.id, id),
@@ -159,6 +164,31 @@ export async function POST(
         },
         { status: 409 },
       );
+    }
+
+    // Reimbursement settlement may legitimately continue after operational trip
+    // closure. Fuel Summary prints the pending-claim count, so a closed trip must
+    // receive a refreshed draft (or the next version after an issued summary)
+    // whenever the reimbursement state changes.
+    if (reimbursement.tripId && reimbursement.tripStatus === 'closed') {
+      try {
+        const document = await generateDocument({
+          documentType: 'fuel_summary',
+          entityType: 'trip',
+          entityId: reimbursement.tripId,
+          tenantId: session.tenantId,
+          generatedByUserId: session.user.id,
+        });
+        if (document) {
+          await enrichClosedTripFuelSummary(
+            reimbursement.tripId,
+            session.tenantId,
+            document.id,
+          );
+        }
+      } catch (documentError) {
+        console.warn('[reimbursements/action] Fuel Summary refresh failed after committed action:', documentError);
+      }
     }
 
     // Once an officer successfully acts, remove the action-required alert from
