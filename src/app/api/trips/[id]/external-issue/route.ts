@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
@@ -114,6 +115,33 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (record.authorityStatus !== 'ready_for_departure') {
       return NextResponse.json({ error: `Trip Authority is not ready for physical issue (${record.authorityStatus})` }, { status: 409 });
     }
+
+    const [latestAuthorityDocument] = await db
+      .select({
+        id: generatedDocuments.id,
+        status: generatedDocuments.status,
+        documentVersion: generatedDocuments.documentVersion,
+      })
+      .from(generatedDocuments)
+      .where(and(
+        eq(generatedDocuments.tenantId, tenantId),
+        eq(generatedDocuments.entityType, 'vehicle_allocation'),
+        eq(generatedDocuments.entityId, record.allocationId),
+        eq(generatedDocuments.documentType, 'trip_authority'),
+      ))
+      .orderBy(desc(generatedDocuments.documentVersion))
+      .limit(1);
+    if (!latestAuthorityDocument || latestAuthorityDocument.status !== 'issued') {
+      return NextResponse.json(
+        {
+          error: latestAuthorityDocument
+            ? `The current Trip Authority (v${latestAuthorityDocument.documentVersion}) must be formally issued before physical vehicle issue.`
+            : 'The Trip Authority document must be generated and formally issued before physical vehicle issue.',
+        },
+        { status: 409 },
+      );
+    }
+
     if (record.vehicleStatus !== 'available') {
       return NextResponse.json({ error: `Vehicle is not available for issue (${record.vehicleStatus})` }, { status: 409 });
     }
@@ -232,6 +260,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
             WHERE ta.trip_id = trips.id
               AND ta.tenant_id = ${tenantId}::uuid
               AND ta.status = 'ready_for_departure'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM generated_documents gd
+            WHERE gd.tenant_id = ${tenantId}::uuid
+              AND gd.entity_type = 'vehicle_allocation'
+              AND gd.entity_id = trips.allocation_id
+              AND gd.document_type = 'trip_authority'
+              AND gd.status = 'issued'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM generated_documents newer
+                WHERE newer.tenant_id = gd.tenant_id
+                  AND newer.entity_type = gd.entity_type
+                  AND newer.entity_id = gd.entity_id
+                  AND newer.document_type = gd.document_type
+                  AND newer.document_version > gd.document_version
+              )
           )
           AND EXISTS (
             SELECT 1 FROM vehicles v
