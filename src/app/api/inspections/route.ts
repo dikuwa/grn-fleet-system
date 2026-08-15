@@ -9,6 +9,12 @@ import {
   completeOfficialInspection,
   InspectionServiceError,
 } from '@/lib/inspection-service';
+import {
+  createScopedNotifications,
+  resolveActionNotifications,
+  resolveActiveRoleRecipients,
+} from '@/lib/notification-service';
+import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 export async function POST(request: NextRequest) {
   try {
@@ -56,6 +62,47 @@ export async function POST(request: NextRequest) {
       driverAcknowledged: body.driverAcknowledged === true,
       clientSyncId: typeof body.clientSyncId === 'string' ? body.clientSyncId : null,
     });
+
+    // A passed departure inspection closes the inspection officer's action and
+    // hands the trip to Transport Administration for the separate physical
+    // issue step. Keep failed inspections actionable because the vehicle must
+    // be repaired/re-inspected before it can leave.
+    if (
+      body.type === 'departure' &&
+      result.overallPass === true &&
+      result.idempotent !== true &&
+      typeof body.tripId === 'string'
+    ) {
+      await resolveActionNotifications({
+        tenantId: session.tenantId,
+        entityType: 'trip',
+        entityId: body.tripId,
+        eventTypes: ['departure_inspection_required'],
+      }).catch((error) =>
+        console.warn('[inspections] Could not resolve departure-inspection notification:', error),
+      );
+
+      const transportRecipients = await resolveActiveRoleRecipients(session.tenantId, [
+        SystemRoles.TRANSPORT_ADMIN,
+      ]).catch(() => []);
+      if (transportRecipients.length) {
+        await createScopedNotifications({
+          tenantId: session.tenantId,
+          recipientUserIds: transportRecipients,
+          category: 'action_required',
+          eventType: 'vehicle_issue_ready',
+          title: 'Vehicle ready for physical issue',
+          body: 'The official departure inspection passed. Confirm keys, issue odometer and any fuel card handover before departure.',
+          entityType: 'trip',
+          entityId: body.tripId,
+          actionUrl: `/dashboard/trips/${body.tripId}`,
+          workspace: WorkspaceIds.TRANSPORT_ADMIN,
+          priority: 'high',
+        }).catch((error) =>
+          console.warn('[inspections] Transport issue-ready notification failed:', error),
+        );
+      }
+    }
 
     return NextResponse.json(result);
   } catch (error) {
