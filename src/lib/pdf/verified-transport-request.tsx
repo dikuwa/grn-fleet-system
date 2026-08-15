@@ -58,7 +58,7 @@ function isStoredTransportRequestRenderSnapshot(value: unknown): value is Transp
  */
 export async function buildTransportRequestRenderSnapshot(
   documentId: string,
-  options: { issuing?: boolean } = {},
+  options: { issuing?: boolean; issuedAt?: string } = {},
 ): Promise<TransportRequestRenderSnapshot | null> {
   const db = getDb();
   const [document] = await db
@@ -169,7 +169,11 @@ export async function buildTransportRequestRenderSnapshot(
     tenantDocumentFooter: branding?.documentFooter || undefined,
     branding: resolvedBranding,
     documentVersion: document.documentVersion,
-    issuedAt: document.createdAt.toISOString(),
+    issuedAt:
+      options.issuedAt ||
+      (document.status === 'issued' || document.status === 'superseded'
+        ? document.updatedAt.toISOString()
+        : document.createdAt.toISOString()),
     requester: (snapshot.requester as TransportRequestData['requester']) || { name: 'Unknown' },
     activities: snapshot.activities as TransportRequestData['activities'],
     passengers: snapshot.passengers as TransportRequestData['passengers'],
@@ -202,12 +206,17 @@ export async function generateVerifiedTransportRequestPdf(
     : await buildTransportRequestRenderSnapshot(documentId);
   if (!renderSnapshot) return null;
 
+  const publiclyVerifiable = document.status !== 'draft' && Boolean(document.verificationSlug);
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
-  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
+  const verificationUrl = publiclyVerifiable
+    ? `${baseUrl}/v/${document.verificationSlug}`
+    : undefined;
+  const qrCodeDataUrl = verificationUrl
+    ? await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 })
+    : undefined;
   const data: TransportRequestData = {
     ...renderSnapshot,
-    verificationCode: document.verificationCode,
+    verificationCode: publiclyVerifiable ? document.verificationCode : undefined,
     verificationUrl,
     qrCodeDataUrl,
     documentHash: abbreviatedDocumentHash(document.hash) || undefined,
