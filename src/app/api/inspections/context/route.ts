@@ -8,6 +8,7 @@ import {
   trips,
   vehicleAllocations,
 } from '@/db/schema/trips';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
@@ -76,56 +77,81 @@ export async function GET(request: NextRequest) {
       ? ['pending']
       : ['in_progress', 'return_due', 'return_inspection'];
 
-    const tripRows = await db.select({
-      id: trips.id,
-      status: trips.status,
-      vehicleId: trips.vehicleId,
-      requestReference: transportRequests.reference,
-      requestStatus: transportRequests.status,
-      authorityStatus: tripAuthorities.status,
-      driverEmployeeId: vehicleAllocations.driverEmployeeId,
-      make: vehicles.make,
-      model: vehicles.model,
-      licenceNumber: vehicles.licenceNumber,
-      currentOdometer: vehicles.currentOdometer,
-    }).from(trips)
-      .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
-      .innerJoin(
-        vehicleAllocations,
-        and(
-          eq(vehicleAllocations.id, trips.allocationId),
-          eq(vehicleAllocations.requestId, trips.requestId),
-          eq(vehicleAllocations.vehicleId, trips.vehicleId),
+    const [tripRows, acceptedExternalRows] = await Promise.all([
+      db.select({
+        id: trips.id,
+        status: trips.status,
+        vehicleId: trips.vehicleId,
+        requestReference: transportRequests.reference,
+        requestStatus: transportRequests.status,
+        authorityStatus: tripAuthorities.status,
+        driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        make: vehicles.make,
+        model: vehicles.model,
+        licenceNumber: vehicles.licenceNumber,
+        currentOdometer: vehicles.currentOdometer,
+      }).from(trips)
+        .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
+        .innerJoin(
+          vehicleAllocations,
+          and(
+            eq(vehicleAllocations.id, trips.allocationId),
+            eq(vehicleAllocations.requestId, trips.requestId),
+            eq(vehicleAllocations.vehicleId, trips.vehicleId),
+          ),
+        )
+        .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
+        .innerJoin(
+          tripAuthorities,
+          and(
+            eq(tripAuthorities.tripId, trips.id),
+            eq(tripAuthorities.requestId, trips.requestId),
+            eq(tripAuthorities.allocationId, trips.allocationId),
+          ),
+        )
+        .where(and(
+          eq(trips.tenantId, session.tenantId),
+          eq(transportRequests.tenantId, session.tenantId),
+          eq(vehicles.tenantId, session.tenantId),
+          eq(tripAuthorities.tenantId, session.tenantId),
+          inArray(trips.status, lifecycleStatuses),
+        ))
+        .orderBy(trips.createdAt),
+      db
+        .select({ tripId: externalDriverAssignments.tripId, issueId: externalDriverAssignments.issueId })
+        .from(externalDriverAssignments)
+        .where(
+          and(
+            eq(externalDriverAssignments.tenantId, session.tenantId),
+            eq(externalDriverAssignments.state, 'accepted'),
+          ),
         ),
-      )
-      .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
-      .innerJoin(
-        tripAuthorities,
-        and(
-          eq(tripAuthorities.tripId, trips.id),
-          eq(tripAuthorities.requestId, trips.requestId),
-          eq(tripAuthorities.allocationId, trips.allocationId),
-        ),
-      )
-      .where(and(
-        eq(trips.tenantId, session.tenantId),
-        eq(transportRequests.tenantId, session.tenantId),
-        eq(vehicles.tenantId, session.tenantId),
-        eq(tripAuthorities.tenantId, session.tenantId),
-        inArray(trips.status, lifecycleStatuses),
-      ))
-      .orderBy(trips.createdAt);
+    ]);
 
-    const eligibleTrips = tripRows.filter((trip) => {
-      if (!trip.driverEmployeeId) return false;
-      if (type === 'departure') {
+    const acceptedExternalByTrip = new Map(
+      acceptedExternalRows.map((row) => [row.tripId, { issueId: row.issueId }]),
+    );
+
+    const eligibleTrips = tripRows
+      .filter((trip) => {
+        const external = acceptedExternalByTrip.get(trip.id);
+        const hasValidDriver = Boolean(trip.driverEmployeeId || external);
+        if (!hasValidDriver) return false;
+        if (type === 'departure') {
+          return (
+            ['authorised', 'ready_for_issue', 'approved', 'approved_emergency'].includes(trip.requestStatus) &&
+            ['driver_accepted', 'awaiting_pre_trip_inspection'].includes(trip.authorityStatus)
+          );
+        }
         return (
-          ['authorised', 'ready_for_issue', 'approved', 'approved_emergency'].includes(trip.requestStatus) &&
-          ['driver_accepted', 'awaiting_pre_trip_inspection'].includes(trip.authorityStatus)
+          ['returned', 'awaiting_arrival_inspection'].includes(trip.authorityStatus) &&
+          (trip.driverEmployeeId ? true : Boolean(external?.issueId))
         );
-      }
-      return ['returned', 'awaiting_arrival_inspection'].includes(trip.authorityStatus);
-    });
+      })
+      .map((trip) => ({
+        ...trip,
+        driverKind: trip.driverEmployeeId ? ('internal' as const) : ('external' as const),
+      }));
 
     const vehicleMap = new Map<string, {
       id: string;
