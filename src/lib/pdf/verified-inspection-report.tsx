@@ -18,6 +18,11 @@ import { abbreviatedDocumentHash } from '@/lib/document-verification';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { InspectionReportDocument, type InspectionReportData } from './inspection-report';
 
+type InspectionRenderSnapshot = Omit<
+  InspectionReportData,
+  'verificationCode' | 'verificationUrl' | 'documentHash' | 'qrCodeDataUrl'
+>;
+
 async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Array> {
   const stream = await renderToStream(
     element as unknown as React.ReactElement<Record<string, unknown>>,
@@ -34,9 +39,28 @@ async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Arra
   return result;
 }
 
-export async function generateVerifiedInspectionReportPdf(
+function isStoredInspectionRenderSnapshot(value: unknown): value is InspectionRenderSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const data = value as Record<string, unknown>;
+  return (
+    typeof data.inspectionId === 'string' &&
+    typeof data.type === 'string' &&
+    !!data.vehicle &&
+    typeof data.vehicle === 'object' &&
+    Array.isArray(data.items)
+  );
+}
+
+/**
+ * Build the complete visual payload for an inspection report from operational
+ * tables. New generated document versions persist this payload inside their
+ * immutable snapshot. This function remains available as a compatibility
+ * fallback for historical generated documents created before full render
+ * snapshots were introduced.
+ */
+export async function buildInspectionReportRenderSnapshot(
   documentId: string,
-): Promise<{ buffer: Uint8Array; filename: string } | null> {
+): Promise<InspectionRenderSnapshot | null> {
   const db = getDb();
   const [document] = await db
     .select()
@@ -114,11 +138,8 @@ export async function generateVerifiedInspectionReportPdf(
   }
 
   const resolvedBranding = await resolveTenantDocumentBranding(tenantId);
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
-  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
 
-  const data: InspectionReportData = {
+  return {
     inspectionId: inspection.id,
     type: inspection.type as 'departure' | 'return',
     vehicle: {
@@ -138,16 +159,45 @@ export async function generateVerifiedInspectionReportPdf(
     driverName,
     inspectorSignedAt: inspection.signatureInspector ? inspection.updatedAt.toISOString() : undefined,
     driverSignedAt: inspection.signatureDriver ? inspection.updatedAt.toISOString() : undefined,
-    verificationCode: document.verificationCode,
-    verificationUrl,
-    documentHash: abbreviatedDocumentHash(document.hash) || undefined,
-    qrCodeDataUrl,
     items: items.map((item) => ({
       label: item.label,
       category: item.category,
       result: item.result as 'pass' | 'fail' | 'not_applicable',
       comment: item.comment || undefined,
     })),
+  };
+}
+
+export async function generateVerifiedInspectionReportPdf(
+  documentId: string,
+): Promise<{ buffer: Uint8Array; filename: string } | null> {
+  const db = getDb();
+  const [document] = await db
+    .select()
+    .from(generatedDocuments)
+    .where(eq(generatedDocuments.id, documentId))
+    .limit(1);
+  if (!document || document.documentType !== 'inspection_report' || document.entityType !== 'inspection') {
+    return null;
+  }
+
+  const snapshot = (document.snapshotData || {}) as Record<string, unknown>;
+  const storedRenderData = snapshot.renderData;
+  const renderSnapshot = isStoredInspectionRenderSnapshot(storedRenderData)
+    ? storedRenderData
+    : await buildInspectionReportRenderSnapshot(documentId);
+  if (!renderSnapshot) return null;
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
+  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
+
+  const data: InspectionReportData = {
+    ...renderSnapshot,
+    verificationCode: document.verificationCode,
+    verificationUrl,
+    documentHash: abbreviatedDocumentHash(document.hash) || undefined,
+    qrCodeDataUrl,
   };
 
   const element = React.createElement(
