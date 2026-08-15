@@ -7,6 +7,7 @@ import { auditEvents } from '@/db/schema/audit';
 import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
 const investigationStatuses = new Set(['pending', 'in_progress', 'awaiting_information', 'closed']);
 const activeTripStatuses = ['pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review'];
@@ -73,6 +74,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           after: { investigationStatus, policeReportFiled: body.policeReportFiled, policeReference: body.policeReference },
         }),
       ]);
+      await refreshIncidentOperationalDocuments({
+        tenantId: auth.session.tenantId,
+        incidentId: id,
+        tripId: context.incident.tripId,
+        actorUserId: auth.session.user.id,
+      });
       return NextResponse.json({ success: true });
     }
 
@@ -143,6 +150,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           after: { investigationStatus: 'closed', status: 'resolved' },
         }),
       ]);
+      await refreshIncidentOperationalDocuments({
+        tenantId: auth.session.tenantId,
+        incidentId: id,
+        tripId: context.incident.tripId,
+        actorUserId: auth.session.user.id,
+      });
       return NextResponse.json({ success: true });
     }
 
