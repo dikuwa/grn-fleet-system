@@ -38,20 +38,45 @@ async function fetchDocumentDetail(id: string, tenantId: string) {
 
   if (!doc) notFound();
 
-  const shares = await db
-    .select()
-    .from(shareLinks)
-    .where(and(eq(shareLinks.documentId, id), eq(shareLinks.tenantId, tenantId)))
-    .orderBy(desc(shareLinks.createdAt));
-  const [creator] = doc.generatedByUserId
-    ? await db
-        .select({ name: user.name })
-        .from(user)
-        .where(eq(user.id, doc.generatedByUserId))
-        .limit(1)
-    : [];
+  const [shares, versions, creatorRows] = await Promise.all([
+    db
+      .select()
+      .from(shareLinks)
+      .where(and(eq(shareLinks.documentId, id), eq(shareLinks.tenantId, tenantId)))
+      .orderBy(desc(shareLinks.createdAt)),
+    db
+      .select({
+        id: generatedDocuments.id,
+        documentVersion: generatedDocuments.documentVersion,
+        status: generatedDocuments.status,
+        hash: generatedDocuments.hash,
+        createdAt: generatedDocuments.createdAt,
+      })
+      .from(generatedDocuments)
+      .where(
+        and(
+          eq(generatedDocuments.tenantId, tenantId),
+          eq(generatedDocuments.entityType, doc.entityType),
+          eq(generatedDocuments.entityId, doc.entityId),
+          eq(generatedDocuments.documentType, doc.documentType),
+        ),
+      )
+      .orderBy(desc(generatedDocuments.documentVersion)),
+    doc.generatedByUserId
+      ? db
+          .select({ name: user.name })
+          .from(user)
+          .where(eq(user.id, doc.generatedByUserId))
+          .limit(1)
+      : Promise.resolve([]),
+  ]);
 
-  return { doc, shares, creatorName: creator?.name || 'GovFleet' };
+  return {
+    doc,
+    shares,
+    versions,
+    creatorName: creatorRows[0]?.name || 'GovFleet',
+  };
 }
 
 export default async function DocumentDetailPage({ params }: PageProps) {
@@ -92,7 +117,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
     );
   }
 
-  const { doc, shares, creatorName } = data;
+  const { doc, shares, versions, creatorName } = data;
   const [branding, roleNames] = await Promise.all([
     resolveTenantBranding(session.tenantId),
     getSessionRoleNames(session),
@@ -207,16 +232,43 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {doc.documentVersion > 1 && (
+      {versions.length > 1 && (
         <Card>
-          <CardHeader><CardTitle>Version History</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Version History</CardTitle>
+            <p className="text-ink-500 mt-1 text-xs">Every generated version remains addressable. Superseded records are retained for audit and verification.</p>
+          </CardHeader>
           <CardContent>
-            <div className="border-border flex items-center gap-3 rounded-[8px] border p-4">
-              <History className="text-ink-400 h-5 w-5" />
-              <div>
-                <p className="text-ink-950 text-sm font-medium">Version {doc.documentVersion}</p>
-                <p className="text-ink-500 text-xs">Current version. Prior versions are available in the document history.</p>
-              </div>
+            <div className="space-y-2">
+              {versions.map((version) => {
+                const isCurrent = version.id === doc.id;
+                return (
+                  <Link
+                    key={version.id}
+                    href={`/dashboard/documents/${version.id}`}
+                    aria-current={isCurrent ? 'page' : undefined}
+                    className={`border-border hover:bg-muted/50 flex items-center gap-3 rounded-[8px] border p-3 transition-colors ${isCurrent ? 'bg-muted/40' : ''}`}
+                  >
+                    <History className="text-ink-400 h-5 w-5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-ink-950 text-sm font-medium">Version {version.documentVersion}</p>
+                        <Badge
+                          variant={version.status === 'issued' ? 'success' : version.status === 'draft' ? 'pending' : 'cancelled'}
+                          size="sm"
+                        >
+                          {formatDocumentStatus(version.status)}
+                        </Badge>
+                        {isCurrent && <Badge variant="info" size="sm">Viewing</Badge>}
+                      </div>
+                      <p className="text-ink-500 mt-0.5 text-xs">
+                        {formatDateTime(version.createdAt)}
+                        {version.hash ? ` · ${abbreviatedDocumentHash(version.hash)}` : ''}
+                      </p>
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
