@@ -150,6 +150,21 @@ async function resolveAuthorityDriver(
   };
 }
 
+function documentSnapshotHash(
+  document: Pick<typeof generatedDocuments.$inferSelect, 'documentType' | 'documentVersion'>,
+  snapshotData: Record<string, unknown>,
+) {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        documentType: document.documentType,
+        version: document.documentVersion,
+        snapshot: snapshotData,
+      }),
+    )
+    .digest('hex');
+}
+
 async function persistSnapshotEnrichment(
   document: typeof generatedDocuments.$inferSelect,
   tenantId: string,
@@ -160,7 +175,7 @@ async function persistSnapshotEnrichment(
     ...((document.snapshotData || {}) as Record<string, unknown>),
     ...enrichment,
   };
-  const hash = createHash('sha256').update(JSON.stringify(snapshotData)).digest('hex');
+  const hash = documentSnapshotHash(document, snapshotData);
   const [updated] = await db
     .update(generatedDocuments)
     .set({ snapshotData, hash, updatedAt: new Date() })
