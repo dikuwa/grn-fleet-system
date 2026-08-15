@@ -13,8 +13,9 @@ import { ChevronLeft, ChevronRight, Database, FileText, Plus, UserRoundPlus } fr
 import { DEFAULT_PAGE_SIZE, STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
-import { getSessionRoleNames } from '@/lib/auth-helpers';
+import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
+import { Permissions } from '@/lib/permissions';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
@@ -96,9 +97,13 @@ export default async function RequestsPage({ searchParams }: PageProps) {
   if (!session) return <div className="space-y-6"><Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} /><PageHeader title="Transport Requests" description="Create and manage transport requests" /><EmptyState icon={<FileText className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view transport requests." /></div>;
   if (!isDbConnected()) return <div className="space-y-6"><Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} /><PageHeader title="Transport Requests" description="Create and manage transport requests" /><EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" description="Set the DATABASE_URL environment variable and run migrations to enable requests." /></div>;
 
-  const roleNames = await getSessionRoleNames(session);
+  const [roleNames, permissionCodes] = await Promise.all([
+    getSessionRoleNames(session),
+    getSessionPermissions(session),
+  ]);
   const access = resolveDashboardAccess('/dashboard/requests', roleNames);
   const canCreate = canPerformDashboardAction('/dashboard/requests/new', roleNames, 'create');
+  const canCreateExternal = canCreate && permissionCodes.includes(Permissions.SECURE_REQUEST_ASSIST);
   const pageTitle = access.activeWorkspace === 'personal' ? 'My Requests' : access.activeWorkspace === 'transport_admin' ? 'Incoming Operational Requests' : 'Transport Request Oversight';
   const canViewAll = access.recordScope === 'tenant';
   const viewParam = sp.view === 'mine' ? 'mine' : sp.view === 'all' ? 'all' : null;
@@ -116,7 +121,7 @@ export default async function RequestsPage({ searchParams }: PageProps) {
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Requests' }]} />
       <PageHeader title={pageTitle} description={access.activeWorkspace === 'transport_admin' ? 'Operational context is shown here before you open a request for review or allocation.' : access.accessMode === 'tenant_read_only' || access.accessMode === 'tenant_read' ? 'Read-only tenant request oversight' : canViewAll ? 'Review and manage transport requests' : 'Create and follow your requests'}>
         {canViewAll && <div className="border-border flex items-center rounded-[8px] border p-0.5"><Button variant={viewParam !== 'mine' ? 'primary' : 'ghost'} size="sm" asChild><Link href={buildFilterUrl('/dashboard/requests', sp, { view: 'all', page: undefined })}>All Requests</Link></Button><Button variant={viewParam === 'mine' ? 'primary' : 'ghost'} size="sm" asChild><Link href={buildFilterUrl('/dashboard/requests', sp, { view: 'mine', page: undefined })}>My Requests</Link></Button></div>}
-        {canCreate && <Button variant="secondary" size="sm" asChild><Link href="/dashboard/requests/external/new"><UserRoundPlus className="h-4 w-4" />External Request</Link></Button>}
+        {canCreateExternal && <Button variant="secondary" size="sm" asChild><Link href="/dashboard/requests/external/new"><UserRoundPlus className="h-4 w-4" />External Request</Link></Button>}
         {canCreate && <Button size="sm" asChild><Link href="/dashboard/requests/new"><Plus className="h-4 w-4" />New Request</Link></Button>}
       </PageHeader>
 
