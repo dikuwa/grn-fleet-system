@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
 import { trips, vehicleAllocations, vehicleInspections, tripAuthorities } from '@/db/schema/trips';
 import { vehicles, vehicleDefects, vehicleCategories } from '@/db/schema/fleet';
 import { workflowInstances, workflowActions, workflowSteps } from '@/db/schema/workflows';
@@ -381,23 +382,47 @@ export async function GET(
       required: true,
     });
 
-    const [authority] = await db
-      .select({
-        id: tripAuthorities.id,
-        status: tripAuthorities.status,
-        validFrom: tripAuthorities.validFrom,
-        validUntil: tripAuthorities.validUntil,
-      })
-      .from(tripAuthorities)
-      .where(and(eq(tripAuthorities.tripId, id), eq(tripAuthorities.tenantId, tenantId)))
-      .limit(1);
+    const [[authority], [latestAuthorityDocument]] = await Promise.all([
+      db
+        .select({
+          id: tripAuthorities.id,
+          status: tripAuthorities.status,
+          validFrom: tripAuthorities.validFrom,
+          validUntil: tripAuthorities.validUntil,
+        })
+        .from(tripAuthorities)
+        .where(and(eq(tripAuthorities.tripId, id), eq(tripAuthorities.tenantId, tenantId)))
+        .limit(1),
+      db
+        .select({
+          id: generatedDocuments.id,
+          status: generatedDocuments.status,
+          documentVersion: generatedDocuments.documentVersion,
+        })
+        .from(generatedDocuments)
+        .where(and(
+          eq(generatedDocuments.tenantId, tenantId),
+          eq(generatedDocuments.entityType, 'vehicle_allocation'),
+          eq(generatedDocuments.entityId, trip.allocationId),
+          eq(generatedDocuments.documentType, 'trip_authority'),
+        ))
+        .orderBy(desc(generatedDocuments.documentVersion))
+        .limit(1),
+    ]);
+    const currentAuthorityIssued = Boolean(
+      authority && latestAuthorityDocument?.status === 'issued',
+    );
     gates.push({
       key: 'trip_authority',
-      label: 'Trip Authority issued',
-      status: authority ? 'pass' : 'blocking',
-      detail: authority
-        ? `Trip Authority ${authority.id.slice(0, 8)}... (${authority.status.replace(/_/g, ' ')})`
-        : 'Trip Authority has not been created.',
+      label: 'Current Trip Authority formally issued',
+      status: currentAuthorityIssued ? 'pass' : 'blocking',
+      detail: !authority
+        ? 'The canonical Trip Authority has not been created.'
+        : !latestAuthorityDocument
+          ? 'The Trip Authority document has not been generated.'
+          : latestAuthorityDocument.status !== 'issued'
+            ? `Trip Authority v${latestAuthorityDocument.documentVersion} is ${latestAuthorityDocument.status.replace(/_/g, ' ')} and must be formally issued before physical vehicle issue.`
+            : `Trip Authority v${latestAuthorityDocument.documentVersion} is formally issued (${authority.status.replace(/_/g, ' ')}).`,
       required: true,
     });
 
