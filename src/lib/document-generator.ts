@@ -175,16 +175,18 @@ async function persistSnapshotEnrichment(
 }
 
 /**
- * Generate/regenerate a Trip Authority and freeze the full PDF render payload
- * together with the operational driver identity. Historical thin snapshots are
- * still supported by the verified renderer's compatibility fallback.
+ * Generate/regenerate a Trip Authority document shell when an allocation is
+ * created. The allocation lifecycle can precede provisioning of the canonical
+ * trip_authorities row, so the full visual payload is frozen here only when the
+ * authority already exists (for example a later regeneration). Otherwise the
+ * Issue lifecycle action freezes it after authority provisioning.
  */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   const document = await core.onTripIssued(allocationId, tenantId, userId);
   if (!document) return document;
 
   const driver = await resolveAuthorityDriver(allocationId, tenantId);
-  const renderData = await buildTripAuthorityRenderSnapshot(document.id);
+  const renderData = await buildTripAuthorityRenderSnapshot(document.id, { requireAuthority: true });
   const snapshotData = {
     ...((document.snapshotData || {}) as Record<string, unknown>),
     driver,
@@ -197,9 +199,6 @@ export async function onTripIssued(allocationId: string, tenantId: string, userI
       `[DocGen] Driver-aware Trip Authority validation failed for allocation ${allocationId}`,
       validation.errors,
     );
-  }
-  if (!renderData) {
-    console.warn(`[DocGen] Could not build immutable Trip Authority render snapshot ${allocationId}`);
   }
 
   return persistSnapshotEnrichment(document, tenantId, {
