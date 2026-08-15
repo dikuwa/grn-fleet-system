@@ -157,15 +157,13 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         <CardHeader className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div>
             <CardTitle>Document Preview</CardTitle>
-            <p className="text-ink-500 mt-1 text-xs">The official PDF loads securely here. Preview, Print and Download use the same source.</p>
+            <p className="text-ink-500 mt-1 text-xs">Secure in-app preview. Preview, Print and Download use the same official PDF.</p>
           </div>
           <DocumentViewerActions documentId={doc.id} documentType={documentTypeLabel(doc.documentType)} />
         </CardHeader>
         <CardContent>
-          <div className="border-border bg-muted/30 overflow-hidden rounded-[10px] border p-2 sm:p-4">
-            <div className="mx-auto aspect-[210/297] min-h-[620px] w-full max-w-[210mm] overflow-hidden rounded-[4px] bg-white shadow-sm">
-              <DocumentPdfPreview url={pdfPreviewUrl} title={`${documentTypeLabel(doc.documentType)} printable preview`} />
-            </div>
+          <div className="border-border h-[clamp(640px,76vh,980px)] min-h-0 w-full overflow-hidden rounded-[10px] border">
+            <DocumentPdfPreview url={pdfPreviewUrl} title={`${documentTypeLabel(doc.documentType)} printable preview`} />
           </div>
         </CardContent>
       </Card>
