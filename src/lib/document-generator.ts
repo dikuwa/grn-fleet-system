@@ -8,6 +8,7 @@ import { departments, employees } from '@/db/schema/people';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { validateDocumentSnapshot } from '@/lib/document-validation';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
+import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
 import * as core from '@/lib/document-generator-core';
 
 export type { DocumentType } from '@/lib/document-generator-core';
@@ -40,7 +41,12 @@ async function resolveAuthorityDriver(
   const [allocation] = await db
     .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
     .from(vehicleAllocations)
-    .where(eq(vehicleAllocations.id, allocationId))
+    .where(
+      and(
+        eq(vehicleAllocations.id, allocationId),
+        eq(vehicleAllocations.tenantId, tenantId),
+      ),
+    )
     .limit(1);
 
   if (!allocation) {
@@ -98,12 +104,17 @@ async function resolveAuthorityDriver(
       organisation: externalParties.organisationName,
     })
     .from(externalDriverAssignments)
-    .innerJoin(externalParties, eq(externalParties.id, externalDriverAssignments.externalPartyId))
+    .innerJoin(
+      externalParties,
+      and(
+        eq(externalParties.id, externalDriverAssignments.externalPartyId),
+        eq(externalParties.tenantId, tenantId),
+      ),
+    )
     .where(
       and(
         eq(externalDriverAssignments.tenantId, tenantId),
         eq(externalDriverAssignments.allocationId, allocationId),
-        eq(externalParties.tenantId, tenantId),
         inArray(externalDriverAssignments.state, ['pending_acceptance', 'accepted']),
       ),
     )
@@ -161,18 +172,20 @@ async function persistSnapshotEnrichment(
 }
 
 /**
- * Issue/regenerate a Trip Authority and enrich its immutable snapshot with the
- * operational driver identity. External drivers remain external identities;
- * no employee foreign key is fabricated for document rendering.
+ * Generate/regenerate a Trip Authority and freeze the full PDF render payload
+ * together with the operational driver identity. Historical thin snapshots are
+ * still supported by the verified renderer's compatibility fallback.
  */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   const document = await core.onTripIssued(allocationId, tenantId, userId);
   if (!document) return document;
 
   const driver = await resolveAuthorityDriver(allocationId, tenantId);
+  const renderData = await buildTripAuthorityRenderSnapshot(document.id);
   const snapshotData = {
     ...((document.snapshotData || {}) as Record<string, unknown>),
     driver,
+    ...(renderData ? { renderData } : {}),
   };
 
   const validation = validateDocumentSnapshot('trip_authority', snapshotData);
@@ -182,8 +195,14 @@ export async function onTripIssued(allocationId: string, tenantId: string, userI
       validation.errors,
     );
   }
+  if (!renderData) {
+    console.warn(`[DocGen] Could not build immutable Trip Authority render snapshot ${allocationId}`);
+  }
 
-  return persistSnapshotEnrichment(document, tenantId, { driver });
+  return persistSnapshotEnrichment(document, tenantId, {
+    driver,
+    ...(renderData ? { renderData } : {}),
+  });
 }
 
 /**
