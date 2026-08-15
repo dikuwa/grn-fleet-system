@@ -7,8 +7,13 @@ import { transportRequests } from '@/db/schema/requests';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
+import {
+  createScopedNotifications,
+  resolveActiveRoleRecipients,
+} from '@/lib/notification-service';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
+import { SystemRoles } from '@/lib/workspaces';
 
 const ACCEPTANCE_METHODS = ['in_person', 'phone', 'signed_paper', 'secure_link'] as const;
 
@@ -383,6 +388,28 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         officeLabel: 'Transport office',
       }),
     ]);
+
+    const inspectionRecipients = await resolveActiveRoleRecipients(tenantId, [
+      SystemRoles.INSPECTOR,
+      SystemRoles.RELEASE_OFFICER,
+    ]).catch(() => []);
+    if (inspectionRecipients.length) {
+      await createScopedNotifications({
+        tenantId,
+        recipientUserIds: inspectionRecipients,
+        category: 'action_required',
+        eventType: 'departure_inspection_required',
+        title: 'Departure inspection required',
+        body: `External driver acceptance has been recorded for ${record.requestReference}. Complete the official departure inspection before the vehicle can be issued.`,
+        entityType: 'trip',
+        entityId: record.assignment.tripId,
+        actionUrl: `/dashboard/inspections/new?type=departure&tripId=${record.assignment.tripId}&vehicleId=${record.assignment.allocationId}`,
+        workspace: null,
+        priority: 'high',
+      }).catch((error) =>
+        console.warn('[allocations/external/decision] Inspection notification failed:', error),
+      );
+    }
 
     return NextResponse.json({
       success: true,
