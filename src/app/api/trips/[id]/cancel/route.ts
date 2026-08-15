@@ -129,6 +129,19 @@ export async function POST(
           AND ta.status <> 'cancelled'
         RETURNING ta.id
       ),
+      generated_authority_updated AS (
+        UPDATE generated_documents gd
+        SET status = 'cancelled',
+            reason = ${reason},
+            updated_at = ${now}
+        FROM trip_claim tc
+        WHERE gd.tenant_id = ${session.tenantId}::uuid
+          AND gd.entity_type = 'vehicle_allocation'
+          AND gd.entity_id = tc.allocation_id
+          AND gd.document_type = 'trip_authority'
+          AND gd.status IN ('draft', 'issued')
+        RETURNING gd.id
+      ),
       request_updated AS (
         UPDATE transport_requests tr
         SET status = 'cancelled', updated_at = ${now}
