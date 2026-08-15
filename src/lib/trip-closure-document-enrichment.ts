@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
-import { fuelTransactions, trips } from '@/db/schema/trips';
+import { fuelTransactions, reimbursements, trips } from '@/db/schema/trips';
 
 /**
  * Closure documents are generated only after reconciliation. Enrich the new
@@ -43,6 +43,7 @@ export async function enrichClosedTripFuelSummary(
 
   const transactions = await db
     .select({
+      id: fuelTransactions.id,
       transactionAt: fuelTransactions.transactionAt,
       stationName: fuelTransactions.stationName,
       fuelType: fuelTransactions.fuelType,
@@ -66,6 +67,18 @@ export async function enrichClosedTripFuelSummary(
     throw new Error('Fuel Summary cannot be enriched while unverified trip fuel exists');
   }
 
+  let outstandingReimbursements = 0;
+  if (transactions.length) {
+    const reimbursementRows = await db
+      .select({ state: reimbursements.state })
+      .from(reimbursements)
+      .where(inArray(reimbursements.transactionId, transactions.map((transaction) => transaction.id)));
+    // Approved claims are still financially outstanding until payment is recorded.
+    outstandingReimbursements = reimbursementRows.filter((row) =>
+      row.state === 'pending' || row.state === 'approved'
+    ).length;
+  }
+
   const [document] = await db
     .select()
     .from(generatedDocuments)
@@ -84,6 +97,7 @@ export async function enrichClosedTripFuelSummary(
 
   const snapshotData = {
     ...((document.snapshotData || {}) as Record<string, unknown>),
+    pendingReimbursements: outstandingReimbursements,
     tripReference: context.requestReference,
     tripPurpose: context.purpose,
     vehicleLicence: context.vehicleLicence,
