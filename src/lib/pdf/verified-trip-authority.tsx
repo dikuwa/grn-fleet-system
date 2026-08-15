@@ -68,8 +68,9 @@ async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Arra
  * Build the complete visual payload for a Trip Authority.
  *
  * New generated-document versions persist this payload as snapshotData.renderData
- * so the official PDF is immutable after generation. This builder remains the
- * compatibility path for historical thin snapshots.
+ * so the official PDF is immutable after generation. Child tables without a
+ * tenant_id inherit their scope from the already tenant-validated request or
+ * authority parent.
  */
 export async function buildTripAuthorityRenderSnapshot(
   documentId: string,
@@ -89,12 +90,7 @@ export async function buildTripAuthorityRenderSnapshot(
   const [alloc] = await db
     .select()
     .from(vehicleAllocations)
-    .where(
-      and(
-        eq(vehicleAllocations.id, allocationId),
-        eq(vehicleAllocations.tenantId, tenantId),
-      ),
-    )
+    .where(eq(vehicleAllocations.id, allocationId))
     .limit(1);
   if (!alloc) return null;
 
@@ -113,10 +109,7 @@ export async function buildTripAuthorityRenderSnapshot(
   if (!req) return null;
 
   const resolvedBranding = await resolveTenantDocumentBranding(tenantId);
-  const routes = await db
-    .select()
-    .from(requestRoutes)
-    .where(and(eq(requestRoutes.requestId, req.id), eq(requestRoutes.tenantId, tenantId)));
+  const routes = await db.select().from(requestRoutes).where(eq(requestRoutes.requestId, req.id));
   const routeSummary = routes.length
     ? routes.map((route) => `${route.originName} → ${route.destinationName}`).join('; ')
     : undefined;
@@ -139,7 +132,7 @@ export async function buildTripAuthorityRenderSnapshot(
       purpose: requestGoodsEquipment.purpose,
     })
     .from(requestGoodsEquipment)
-    .where(and(eq(requestGoodsEquipment.requestId, req.id), eq(requestGoodsEquipment.tenantId, tenantId)))
+    .where(eq(requestGoodsEquipment.requestId, req.id))
     .orderBy(requestGoodsEquipment.sortOrder);
 
   let requesterName: string | undefined;
@@ -175,12 +168,7 @@ export async function buildTripAuthorityRenderSnapshot(
     const passengerRows = await db
       .select()
       .from(tripAuthorityPassengers)
-      .where(
-        and(
-          eq(tripAuthorityPassengers.authorityId, authority.id),
-          eq(tripAuthorityPassengers.tenantId, tenantId),
-        ),
-      );
+      .where(eq(tripAuthorityPassengers.authorityId, authority.id));
     passengers = passengerRows.map((passenger) => ({
       name: passenger.fullName,
       employeeNumber: passenger.employeeNumber || undefined,
@@ -209,12 +197,7 @@ export async function buildTripAuthorityRenderSnapshot(
           eq(employees.tenantId, tenantId),
         ),
       )
-      .where(
-        and(
-          eq(tripAuthorisedDrivers.authorityId, authority.id),
-          eq(tripAuthorisedDrivers.tenantId, tenantId),
-        ),
-      );
+      .where(eq(tripAuthorisedDrivers.authorityId, authority.id));
 
     const primary = internalDriverRows.find((row) => row.driverType === 'primary');
     if (primary) {
@@ -283,19 +266,21 @@ export async function buildTripAuthorityRenderSnapshot(
     // Scope the departure inspection to this exact trip as well as tenant and
     // vehicle. Without tripId, a later inspection for the same vehicle could be
     // rendered into an older verified authority.
-    const [departureInspection] = await db
-      .select()
-      .from(vehicleInspections)
-      .where(
-        and(
-          eq(vehicleInspections.tenantId, tenantId),
-          eq(vehicleInspections.tripId, authority.tripId),
-          eq(vehicleInspections.vehicleId, alloc.vehicleId),
-          eq(vehicleInspections.type, 'departure'),
-        ),
-      )
-      .orderBy(desc(vehicleInspections.createdAt))
-      .limit(1);
+    const [departureInspection] = authority.tripId
+      ? await db
+          .select()
+          .from(vehicleInspections)
+          .where(
+            and(
+              eq(vehicleInspections.tenantId, tenantId),
+              eq(vehicleInspections.tripId, authority.tripId),
+              eq(vehicleInspections.vehicleId, alloc.vehicleId),
+              eq(vehicleInspections.type, 'departure'),
+            ),
+          )
+          .orderBy(desc(vehicleInspections.createdAt))
+          .limit(1)
+      : [];
     if (departureInspection) {
       const itemRows = await db
         .select({
