@@ -215,19 +215,27 @@ export const documentStyles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     borderBottomWidth: 0.55,
     paddingBottom: 8,
     marginBottom: 8,
-    minHeight: 96,
+    minHeight: 102,
   },
-  headerLogoZone: { width: '20%', justifyContent: 'center', alignItems: 'flex-start' },
-  logo: { width: 76, height: 76, objectFit: 'contain' },
+  headerLogoZone: {
+    width: '18%',
+    minHeight: 94,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingTop: 2,
+  },
+  coatOfArmsLogo: { width: 68, height: 68, objectFit: 'contain' },
+  tenantLogo: { width: 76, height: 76, objectFit: 'contain' },
   headerOrgZone: {
     width: '64%',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 5,
+    paddingTop: 5,
   },
   republic: { fontSize: 7, fontFamily: DOCUMENT_FONT_STACK, textAlign: 'center' },
   tenantContext: {
@@ -245,7 +253,13 @@ export const documentStyles = StyleSheet.create({
     marginTop: 0.4,
   },
   orgDetail: { color: MUTED, fontSize: 6.4, marginTop: 1, textAlign: 'center' },
-  headerTitleZone: { width: '18%', alignItems: 'center', justifyContent: 'center' },
+  headerTitleZone: {
+    width: '18%',
+    minHeight: 94,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 2,
+  },
   continuationHeader: {
     position: 'absolute',
     top: 10,
@@ -439,7 +453,7 @@ export function DocumentHeader({
   return (
     <View style={[documentStyles.header, { borderBottomColor: theme.primary }]}>
       <View style={documentStyles.headerLogoZone}>
-        <Image src={coatOfArmsPath} style={documentStyles.logo} />
+        <Image src={coatOfArmsPath} style={documentStyles.coatOfArmsLogo} />
       </View>
       <View style={documentStyles.headerOrgZone}>
         <Text style={documentStyles.republic}>REPUBLIC OF NAMIBIA</Text>
@@ -453,7 +467,7 @@ export function DocumentHeader({
         {contact ? <SafePdfText value={contact} style={documentStyles.orgDetail} /> : null}
       </View>
       <View style={documentStyles.headerTitleZone}>
-        {tenantLogo ? <Image src={tenantLogo} style={documentStyles.logo} /> : null}
+        {tenantLogo ? <Image src={tenantLogo} style={documentStyles.tenantLogo} /> : null}
         {showIdentity && reference ? <SafePdfText value={reference} style={documentStyles.reference} /> : null}
         {showIdentity && identityMeta ? <SafePdfText value={identityMeta} style={documentStyles.meta} /> : null}
         {showIdentity && qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
