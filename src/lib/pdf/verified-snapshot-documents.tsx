@@ -127,17 +127,25 @@ export async function generateVerifiedSnapshotDocumentPdf(
     !Array.isArray(snapshot.documentIdentity)
       ? (snapshot.documentIdentity as Record<string, unknown>)
       : null;
-  const generatedAt = document.createdAt.toISOString();
+  const generatedAt =
+    document.status === 'draft'
+      ? document.updatedAt.toISOString()
+      : text(identity?.snapshottedAt) || document.updatedAt.toISOString();
+  const publiclyVerifiable = document.status !== 'draft' && Boolean(document.verificationSlug);
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
-  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
+  const verificationUrl = publiclyVerifiable
+    ? `${baseUrl}/v/${document.verificationSlug}`
+    : undefined;
+  const qrCodeDataUrl = verificationUrl
+    ? await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 })
+    : undefined;
   const common = {
     tenantName:
       branding?.organisationName || text(identity?.organisationName) || tenant?.name,
     branding,
     documentVersion: document.documentVersion,
     generatedAt,
-    verificationCode: document.verificationCode,
+    verificationCode: publiclyVerifiable ? document.verificationCode : undefined,
     verificationUrl,
     documentHash: abbreviatedDocumentHash(document.hash) || undefined,
     qrCodeDataUrl,
