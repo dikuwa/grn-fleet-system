@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
 import {
   trips,
   tripAuthorities,
@@ -79,6 +80,33 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (trip.authorityStatus !== 'ready_for_departure') {
       return NextResponse.json({ error: `Trip Authority is not ready for physical issue (${trip.authorityStatus})` }, { status: 409 });
     }
+
+    const [latestAuthorityDocument] = await db
+      .select({
+        id: generatedDocuments.id,
+        status: generatedDocuments.status,
+        documentVersion: generatedDocuments.documentVersion,
+      })
+      .from(generatedDocuments)
+      .where(and(
+        eq(generatedDocuments.tenantId, session.tenantId),
+        eq(generatedDocuments.entityType, 'vehicle_allocation'),
+        eq(generatedDocuments.entityId, trip.allocationId),
+        eq(generatedDocuments.documentType, 'trip_authority'),
+      ))
+      .orderBy(desc(generatedDocuments.documentVersion))
+      .limit(1);
+    if (!latestAuthorityDocument || latestAuthorityDocument.status !== 'issued') {
+      return NextResponse.json(
+        {
+          error: latestAuthorityDocument
+            ? `The current Trip Authority (v${latestAuthorityDocument.documentVersion}) must be formally issued before physical vehicle issue.`
+            : 'The Trip Authority document must be generated and formally issued before physical vehicle issue.',
+        },
+        { status: 409 },
+      );
+    }
+
     if (trip.vehicleStatus !== 'available') {
       return NextResponse.json({ error: `Vehicle is not available for issue (${trip.vehicleStatus})` }, { status: 409 });
     }
@@ -200,6 +228,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           )
           AND EXISTS (
             SELECT 1
+            FROM generated_documents gd
+            WHERE gd.tenant_id = ${session.tenantId}::uuid
+              AND gd.entity_type = 'vehicle_allocation'
+              AND gd.entity_id = trips.allocation_id
+              AND gd.document_type = 'trip_authority'
+              AND gd.status = 'issued'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM generated_documents newer
+                WHERE newer.tenant_id = gd.tenant_id
+                  AND newer.entity_type = gd.entity_type
+                  AND newer.entity_id = gd.entity_id
+                  AND newer.document_type = gd.document_type
+                  AND newer.document_version > gd.document_version
+              )
+          )
+          AND EXISTS (
+            SELECT 1
             FROM vehicles v
             WHERE v.id = trips.vehicle_id
               AND v.tenant_id = ${session.tenantId}::uuid
@@ -280,9 +326,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         FROM request_claim
         RETURNING id
       )
-      -- Keep the rollback sentinel dependent on the data-changing CTE results.
-      -- A constant invalid cast in the ELSE branch may be folded by PostgreSQL
-      -- while planning, which aborts even a fully successful issue operation.
       SELECT CAST(CASE
         WHEN (SELECT count(*) FROM allocation_claim) = 1
          AND (SELECT count(*) FROM trip_claim) = 1
