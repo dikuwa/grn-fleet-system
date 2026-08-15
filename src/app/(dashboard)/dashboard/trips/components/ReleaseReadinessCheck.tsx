@@ -26,6 +26,11 @@ interface ReadinessGate {
 }
 
 interface ReadinessData {
+  driver?: {
+    kind: 'internal' | 'external' | 'unassigned';
+    accepted: boolean;
+    assignmentState?: string | null;
+  };
   gates: ReadinessGate[];
   summary: {
     total: number;
@@ -59,6 +64,12 @@ const OPERATIONAL_GATE_ORDER = [
   'vehicle_issued',
 ] as const;
 
+function departureStep(data: ReadinessData) {
+  return data.driver?.kind === 'external'
+    ? 'Transport Office records external-driver departure'
+    : 'Driver starts the authorised trip';
+}
+
 function resolveOperatorSteps(data: ReadinessData, tripStatus: string) {
   const rank = new Map<string, number>(
     OPERATIONAL_GATE_ORDER.map((key, index) => [key, index]),
@@ -79,7 +90,9 @@ function resolveOperatorSteps(data: ReadinessData, tripStatus: string) {
       current: current.label,
       currentDetail: current.detail,
       currentState: current.status === 'blocking' || current.status === 'fail' ? 'blocked' : 'pending',
-      next: next?.label ?? (current.key === 'vehicle_issued' ? 'Driver starts the authorised trip' : 'Complete release and issue vehicle'),
+      next:
+        next?.label ??
+        (current.key === 'vehicle_issued' ? departureStep(data) : 'Complete release and issue vehicle'),
     };
   }
 
@@ -94,9 +107,12 @@ function resolveOperatorSteps(data: ReadinessData, tripStatus: string) {
 
   return {
     current: 'Release conditions complete',
-    currentDetail: 'All required release checks have passed for the current vehicle and driver.',
+    currentDetail:
+      data.driver?.kind === 'external'
+        ? 'All required release checks have passed for the current vehicle and external driver. Transport Office must record the actual departure after physical issue.'
+        : 'All required release checks have passed for the current vehicle and driver.',
     currentState: 'complete',
-    next: 'Driver starts the authorised trip',
+    next: departureStep(data),
   };
 }
 
@@ -110,9 +126,9 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/trips/${tripId}/readiness`);
+      const res = await fetch(`/api/trips/${tripId}/readiness`, { cache: 'no-store' });
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to check readiness');
-      const json = await res.json();
+      const json = (await res.json()) as ReadinessData;
       setData(json);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to check readiness');
@@ -250,14 +266,14 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
               <div
                 className="bg-status-success-text transition-all duration-500"
                 style={{
-                  width: `${(data.summary.passed / data.summary.total) * 100}%`,
+                  width: `${data.summary.total > 0 ? (data.summary.passed / data.summary.total) * 100 : 0}%`,
                 }}
               />
               {data.summary.failed > 0 && (
                 <div
                   className="bg-status-error-text transition-all duration-500"
                   style={{
-                    width: `${(data.summary.failed / data.summary.total) * 100}%`,
+                    width: `${data.summary.total > 0 ? (data.summary.failed / data.summary.total) * 100 : 0}%`,
                   }}
                 />
               )}
