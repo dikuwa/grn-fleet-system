@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   Copy,
@@ -21,6 +21,19 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 
+interface ShareLinkListResponse {
+  data?: {
+    links?: Array<{
+      documentId?: string;
+      shortSlug?: string | null;
+      expiresAt?: string;
+      isRevoked?: boolean;
+      maxViews?: number | null;
+      currentViews?: number | null;
+    }>;
+  };
+}
+
 export function ShareActions({
   shareUrl,
   documentTitle,
@@ -39,10 +52,57 @@ export function ShareActions({
   verificationCode?: string;
 }) {
   const [copied, setCopied] = useState<'link' | 'message' | null>(null);
+  const [controlledShareUrl, setControlledShareUrl] = useState<string | undefined>();
   const isDraft = status?.trim().toLowerCase() === 'draft';
+
   // A generated draft already has a stable verification slug internally, but
   // that identity is not a public sharing channel until the document is issued.
-  const effectiveShareUrl = isDraft ? undefined : shareUrl;
+  // For issued documents, a usable temporary link takes precedence over the
+  // permanent verification URL because its expiry, view limit and disclosure
+  // profile are the administrator's explicit sharing controls.
+  const effectiveShareUrl = isDraft ? undefined : controlledShareUrl || shareUrl;
+
+  useEffect(() => {
+    if (isDraft) {
+      setControlledShareUrl(undefined);
+      return;
+    }
+
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch('/api/share-links?status=active&limit=100', {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const payload = (await response.json().catch(() => ({}))) as ShareLinkListResponse;
+        const now = Date.now();
+        const active = payload.data?.links?.find((link) => {
+          if (link.documentId !== documentId || !link.shortSlug || link.isRevoked) return false;
+          const expiresAt = link.expiresAt ? new Date(link.expiresAt).getTime() : 0;
+          if (!Number.isFinite(expiresAt) || expiresAt <= now) return false;
+          const maxViews = link.maxViews ?? null;
+          const currentViews = link.currentViews ?? 0;
+          return maxViews === null || currentViews < maxViews;
+        });
+        if (active?.shortSlug) {
+          setControlledShareUrl(`${window.location.origin}/v/${encodeURIComponent(active.shortSlug)}`);
+        } else {
+          setControlledShareUrl(undefined);
+        }
+      } catch (error) {
+        if ((error as Error)?.name !== 'AbortError') {
+          // Share-link metadata is role-protected. Users who cannot enumerate it
+          // simply retain the permanent verification URL supplied by the page.
+          setControlledShareUrl(undefined);
+        }
+      }
+    })();
+
+    return () => controller.abort();
+  }, [documentId, isDraft]);
+
   const defaultMessage = useMemo(
     () =>
       [
