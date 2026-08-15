@@ -5,9 +5,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { and, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { trips } from '@/db/schema/trips';
 import { replaceVehicle, VehicleReplaceError } from '@/lib/allocations/vehicle-replacement';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  createScopedNotifications,
+  resolveActiveRoleRecipients,
+} from '@/lib/notification-service';
 import { Permissions } from '@/lib/permissions';
+import { SystemRoles } from '@/lib/workspaces';
 
 export async function POST(
   request: NextRequest,
@@ -40,6 +48,43 @@ export async function POST(
       },
       auth.session,
     );
+
+    // Replacement is already committed at this point. Notifications are a
+    // best-effort operational side effect and must never roll back or disguise
+    // the successful vehicle swap. A pending trip always requires the newly
+    // allocated vehicle to pass its own official departure inspection.
+    const db = getDb();
+    const [trip] = await db
+      .select({ id: trips.id, status: trips.status, vehicleId: trips.vehicleId })
+      .from(trips)
+      .where(and(eq(trips.allocationId, id), eq(trips.tenantId, auth.session.tenantId)))
+      .limit(1)
+      .catch(() => []);
+
+    if (trip?.status === 'pending') {
+      const recipients = await resolveActiveRoleRecipients(auth.session.tenantId, [
+        SystemRoles.INSPECTOR,
+        SystemRoles.RELEASE_OFFICER,
+      ]).catch(() => []);
+
+      if (recipients.length) {
+        await createScopedNotifications({
+          tenantId: auth.session.tenantId,
+          recipientUserIds: recipients,
+          category: 'action_required',
+          eventType: 'replacement_departure_inspection_required',
+          title: 'Replacement vehicle inspection required',
+          body: 'The allocated vehicle was replaced before departure. The replacement vehicle requires a new official departure inspection before physical issue.',
+          entityType: 'trip',
+          entityId: trip.id,
+          actionUrl: `/dashboard/inspections/new?type=departure&tripId=${trip.id}&vehicleId=${trip.vehicleId}`,
+          workspace: null,
+          priority: 'high',
+        }).catch((error) =>
+          console.warn('[Allocation Replace] Inspection notification failed:', error),
+        );
+      }
+    }
 
     return NextResponse.json(result);
   } catch (error) {
