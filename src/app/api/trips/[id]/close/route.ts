@@ -25,6 +25,28 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 const CLOSURE_DECISIONS = ['closed', 'requires_correction', 'follow_up'] as const;
 type ClosureDecision = (typeof CLOSURE_DECISIONS)[number];
 
+function errorText(error: unknown): string {
+  if (!error || typeof error !== 'object') return String(error || '');
+  const record = error as { message?: unknown; cause?: unknown };
+  const parts = [typeof record.message === 'string' ? record.message : ''];
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { message?: unknown };
+    if (typeof cause.message === 'string') parts.push(cause.message);
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -416,12 +438,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
   } catch (error) {
     console.error('[trips/close] POST failed:', error);
-    if ((error as { code?: string })?.code === '23505') {
+    const code = postgresErrorCode(error);
+    const message = errorText(error);
+    if (code === '23505') {
       return NextResponse.json({ error: 'Trip is already closed' }, { status: 409 });
     }
-    if (String(error).includes('closure_decision_conflict')) {
+    if (message.includes('closure_decision_conflict')) {
       return NextResponse.json(
         { error: 'This closure decision is no longer current. Refresh and review the latest trip state.' },
+        { status: 409 },
+      );
+    }
+    if (message.includes('trip_closure_lifecycle_conflict')) {
+      return NextResponse.json(
+        {
+          error:
+            'The trip, inspection, financial, or safety state changed while closure was being processed. Refresh the closure review and resolve the latest blockers before closing.',
+        },
         { status: 409 },
       );
     }
