@@ -1,67 +1,67 @@
 'use client';
 
 /**
- * Open the canonical PDF in a top-level browser PDF viewer and request print.
- *
- * Chromium/WebKit PDF viewers are unreliable when `print()` is invoked from a
- * hidden iframe. A top-level viewer is substantially more reliable and, when a
- * browser still blocks scripted printing, leaves the official PDF visibly open
- * with the browser's native Print control available instead of failing silently.
+ * Print the canonical authenticated PDF without opening a new tab/window.
+ * The PDF is fetched in the current session, converted to a blob URL and loaded
+ * into a temporary off-screen iframe. This keeps users inside GovFleet and
+ * avoids popup-blocker failures.
  */
 export async function printPdfFromUrl(url: string): Promise<void> {
-  // Open synchronously while the click still counts as a user gesture. Waiting
-  // for fetch() first can cause browsers to treat the window as a popup.
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    throw new Error('Printing was blocked by the browser. Allow pop-ups for this site and try again.');
-  }
+  const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+  if (!response.ok) throw new Error('The official PDF could not be prepared for printing.');
 
-  printWindow.document.title = 'Preparing document for print';
-  printWindow.document.body.innerHTML = `
-    <main style="font-family:system-ui,sans-serif;padding:24px;color:#172033">
-      <p>Preparing the official PDF for printing…</p>
-    </main>
-  `;
+  const blob = await response.blob();
+  if (!blob.type.includes('pdf')) throw new Error('The server did not return a printable PDF.');
 
-  try {
-    const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
-    if (!response.ok) throw new Error('The PDF could not be prepared for printing.');
+  const objectUrl = URL.createObjectURL(blob);
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.tabIndex = -1;
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '1px';
+  iframe.style.height = '1px';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+  iframe.src = objectUrl;
 
-    const blob = await response.blob();
-    if (!blob.type.includes('pdf')) throw new Error('The server did not return a PDF.');
+  let settled = false;
+  const cleanup = () => {
+    if (settled) return;
+    settled = true;
+    iframe.remove();
+    URL.revokeObjectURL(objectUrl);
+  };
 
-    const objectUrl = URL.createObjectURL(blob);
-    let revoked = false;
-    const revoke = () => {
-      if (revoked) return;
-      revoked = true;
-      URL.revokeObjectURL(objectUrl);
+  await new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('The browser did not finish loading the PDF for printing. Try Preview, then Print again.'));
+    }, 20_000);
+
+    iframe.onload = () => {
+      window.clearTimeout(timeout);
+      try {
+        const target = iframe.contentWindow;
+        if (!target) throw new Error('Print frame is unavailable.');
+        target.focus();
+        target.print();
+        // Keep the blob alive long enough for the native print dialog/viewer.
+        window.setTimeout(cleanup, 60_000);
+        resolve();
+      } catch (error) {
+        cleanup();
+        reject(error instanceof Error ? error : new Error('The browser could not start printing.'));
+      }
     };
 
-    printWindow.location.replace(objectUrl);
+    iframe.onerror = () => {
+      window.clearTimeout(timeout);
+      cleanup();
+      reject(new Error('The browser could not load the PDF for printing.'));
+    };
 
-    // Native PDF viewers do not consistently dispatch DOM load/afterprint
-    // events to the opener. Give the viewer time to initialise, then request
-    // print. If scripted print is blocked, the top-level PDF remains visible so
-    // the user can use its native Print button without dashboard chrome.
-    window.setTimeout(() => {
-      try {
-        if (printWindow.closed) {
-          revoke();
-          return;
-        }
-        printWindow.focus();
-        printWindow.print();
-      } catch {
-        // Keep the top-level PDF open as the intentional native-print fallback.
-      }
-    }, 900);
-
-    // Do not revoke while the browser PDF viewer may still be reading/printing.
-    // This is only a bounded cleanup fallback; closing the page releases it too.
-    window.setTimeout(revoke, 120_000);
-  } catch (error) {
-    printWindow.close();
-    throw error;
-  }
+    document.body.appendChild(iframe);
+  });
 }
