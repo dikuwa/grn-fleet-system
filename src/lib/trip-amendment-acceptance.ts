@@ -16,13 +16,16 @@ export interface PendingVehicleReplacementAcceptance {
  * A driver's acceptance belongs to the authority state they reviewed. If a
  * material vehicle replacement is recorded after that acceptance, the revised
  * authority must be acknowledged again. The original workflow acknowledgement
- * remains immutable; this helper only identifies whether the current authority
- * has a newer vehicle-replacement amendment than its latest acceptance time.
+ * remains immutable. If the authority has never been accepted, there is no
+ * re-acceptance to perform: the normal first acknowledgement workflow will
+ * cover the current vehicle and authority version.
  */
 export async function findPendingVehicleReplacementAcceptance(input: {
   authorityId: string;
   acceptedAt: Date | null;
 }): Promise<PendingVehicleReplacementAcceptance | null> {
+  if (!input.acceptedAt) return null;
+
   const db = getDb();
   const [amendment] = await db
     .select({
@@ -45,8 +48,7 @@ export async function findPendingVehicleReplacementAcceptance(input: {
     .orderBy(desc(tripAmendments.version), desc(tripAmendments.createdAt))
     .limit(1);
 
-  if (!amendment) return null;
-  if (input.acceptedAt && amendment.createdAt <= input.acceptedAt) return null;
+  if (!amendment || amendment.createdAt <= input.acceptedAt) return null;
 
   return {
     amendmentId: amendment.id,
