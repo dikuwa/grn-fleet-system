@@ -4,8 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { auditEvents } from '@/db/schema/audit';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
@@ -18,8 +17,15 @@ export async function POST(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
-    if (permCheck instanceof NextResponse) return permCheck;
+    // Document lifecycle is an operational mutation, not a generic file upload.
+    // Drivers and personal users may upload evidence/files but only a workspace
+    // with update rights on the canonical Documents route may issue/supersede.
+    const actionCheck = await requireDashboardAction(
+      session,
+      '/dashboard/documents',
+      'update',
+    );
+    if (actionCheck instanceof NextResponse) return actionCheck;
 
     const { id } = await params;
     const body = await request.json();
