@@ -308,9 +308,11 @@ export async function processDriverAcknowledgement(input: {
   }
 
   // Driver acceptance is the handoff into the official pre-trip inspection
-  // lifecycle. Notify every active inspection-capable role so the work becomes
-  // visible immediately rather than relying on someone to discover it by
-  // manually switching workspaces.
+  // lifecycle. Keep this action-required event visible across the recipient's
+  // eligible workspaces so a Control Administrative Officer sees the pending
+  // inspection while still in their default Approvals workspace. The
+  // notification feed will expose its action URL only after the user switches
+  // to a workspace that can access the inspection route.
   const inspectionRecipients = await resolveActiveRoleRecipients(session.tenantId, [
     SystemRoles.INSPECTOR,
     SystemRoles.RELEASE_OFFICER,
@@ -325,11 +327,11 @@ export async function processDriverAcknowledgement(input: {
       category: 'action_required',
       eventType: 'departure_inspection_required',
       title: 'Departure inspection required',
-      body: `The driver has accepted ${context.requestReference}. Complete the official departure inspection before the vehicle can depart.`,
+      body: `The driver has accepted ${context.requestReference}. Switch to the Inspections workspace and complete the official departure inspection before the vehicle can depart.`,
       entityType: 'trip',
       entityId: context.tripId,
       actionUrl: `/dashboard/inspections/new?type=departure&tripId=${context.tripId}&vehicleId=${context.vehicleId}`,
-      workspace: WorkspaceIds.INSPECTOR,
+      workspace: null,
       priority: 'high',
     }).catch((error) => console.warn('[driver-acknowledgement] Inspection notification failed:', error));
   }
