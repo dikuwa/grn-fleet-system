@@ -691,14 +691,16 @@ const DOCUMENT_BUILDERS: Partial<
 };
 
 /**
- * Generate a new immutable source snapshot in DRAFT state.
+ * Generate or refresh a source snapshot in DRAFT state.
  *
- * Generation is intentionally separate from issuance. A regenerated version
- * must never silently replace the current official document merely because a
- * lifecycle hook re-ran. The previous issued version therefore remains current
- * until the latest draft is formally issued through the document action route,
- * which freezes the final render payload, recomputes the fingerprint, supersedes
- * the old issued version and writes the audit event in one transaction.
+ * A pending draft is mutable working state, not an official historical version.
+ * Re-running a lifecycle hook therefore refreshes that same draft in place. A
+ * new version number is allocated only after the latest version has left draft
+ * state (issued/superseded). This prevents retry storms from manufacturing v2,
+ * v3, v4 drafts while preserving immutable issued history.
+ *
+ * Formal issuance remains the only operation that freezes final render data and
+ * branding, supersedes the previous official version and writes the issue audit.
  */
 export async function generateDocument(
   payload: DocumentPayload,
@@ -735,7 +737,11 @@ export async function generateDocument(
     .orderBy(desc(generatedDocuments.documentVersion))
     .limit(1);
 
-  const newVersion = existing ? existing.documentVersion + 1 : 1;
+  const targetVersion = existing?.status === 'draft'
+    ? existing.documentVersion
+    : existing
+      ? existing.documentVersion + 1
+      : 1;
   const snapshotData = {
     ...sourceSnapshot,
     documentIdentity: {
@@ -774,7 +780,7 @@ export async function generateDocument(
     .update(
       JSON.stringify({
         documentType,
-        version: newVersion,
+        version: targetVersion,
         snapshot: snapshotData,
       }),
     )
@@ -790,6 +796,33 @@ export async function generateDocument(
     }
   }
 
+  if (existing?.status === 'draft') {
+    const [refreshed] = await db
+      .update(generatedDocuments)
+      .set({
+        templateVersion,
+        snapshotData,
+        hash: snapshotHash,
+        generatedByUserId,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(generatedDocuments.id, existing.id),
+          eq(generatedDocuments.tenantId, tenantId),
+          eq(generatedDocuments.status, 'draft'),
+        ),
+      )
+      .returning();
+
+    if (refreshed) return refreshed;
+
+    // The draft may have been issued concurrently after it was read above.
+    // Re-enter once against the new latest state rather than overwriting an
+    // official document or returning stale working data.
+    return generateDocument(payload);
+  }
+
   const docId = randomUUID();
   const [doc] = await db
     .insert(generatedDocuments)
@@ -797,7 +830,7 @@ export async function generateDocument(
       id: docId,
       tenantId,
       documentType,
-      documentVersion: newVersion,
+      documentVersion: targetVersion,
       templateVersion,
       entityType,
       entityId,
