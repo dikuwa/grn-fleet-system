@@ -1,11 +1,20 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import type { AuthSession } from '@/lib/auth-helpers';
 import { getSessionWorkspace } from '@/lib/auth-helpers';
 import { WorkspaceIds } from '@/lib/workspaces';
-import { transportRequests, requestPassengers } from '@/db/schema/requests';
+import {
+  transportRequests,
+  requestDrivers,
+  requestPassengers,
+} from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
-import { trips, vehicleAllocations, vehicleInspections } from '@/db/schema/trips';
+import {
+  tripIncidents,
+  trips,
+  vehicleAllocations,
+  vehicleInspections,
+} from '@/db/schema/trips';
 
 export type GeneratedDocumentRef = {
   entityType: string;
@@ -48,28 +57,63 @@ async function canReadRequest(session: AuthSession, requestId: string): Promise<
   return Boolean(participant);
 }
 
-/**
- * Apply record scope to generated documents.
- *
- * Operational/admin workspaces retain their existing tenant-scoped FILE_VIEW
- * behaviour. The Personal workspace is intentionally narrower: a user may
- * read only documents whose underlying request belongs to them (or names them
- * as an employee passenger). This closes same-tenant ID guessing without
- * breaking Transport Administration, inspection or audit workflows.
- */
-export async function canSessionReadGeneratedDocument(
+async function canDriverReadRequest(session: AuthSession, requestId: string): Promise<boolean> {
+  const db = getDb();
+
+  const [directAssignment] = await db
+    .select({ id: transportRequests.id })
+    .from(transportRequests)
+    .innerJoin(employees, eq(employees.id, transportRequests.assignedDriverEmployeeId))
+    .where(
+      and(
+        eq(transportRequests.id, requestId),
+        eq(transportRequests.tenantId, session.tenantId),
+        eq(employees.tenantId, session.tenantId),
+        eq(employees.userId, session.user.id),
+      ),
+    )
+    .limit(1);
+  if (directAssignment) return true;
+
+  const [driverAssignment] = await db
+    .select({ id: requestDrivers.id })
+    .from(requestDrivers)
+    .innerJoin(employees, eq(employees.id, requestDrivers.employeeId))
+    .innerJoin(transportRequests, eq(transportRequests.id, requestDrivers.requestId))
+    .where(
+      and(
+        eq(requestDrivers.requestId, requestId),
+        eq(transportRequests.tenantId, session.tenantId),
+        eq(employees.tenantId, session.tenantId),
+        eq(employees.userId, session.user.id),
+        inArray(requestDrivers.driverType, ['assigned', 'additional']),
+      ),
+    )
+    .limit(1);
+
+  return Boolean(driverAssignment);
+}
+
+async function resolveRequestIdForDocument(
   session: AuthSession,
   document: GeneratedDocumentRef,
-): Promise<boolean> {
-  const { activeWorkspace } = await getSessionWorkspace(session);
-  if (activeWorkspace !== WorkspaceIds.PERSONAL) return true;
-
-  if (document.generatedByUserId === session.user.id) return true;
-
+): Promise<string | null> {
   const db = getDb();
+
   switch (document.entityType) {
-    case 'transport_request':
-      return canReadRequest(session, document.entityId);
+    case 'transport_request': {
+      const [request] = await db
+        .select({ id: transportRequests.id })
+        .from(transportRequests)
+        .where(
+          and(
+            eq(transportRequests.id, document.entityId),
+            eq(transportRequests.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      return request?.id ?? null;
+    }
 
     case 'trip': {
       const [trip] = await db
@@ -77,7 +121,7 @@ export async function canSessionReadGeneratedDocument(
         .from(trips)
         .where(and(eq(trips.id, document.entityId), eq(trips.tenantId, session.tenantId)))
         .limit(1);
-      return trip ? canReadRequest(session, trip.requestId) : false;
+      return trip?.requestId ?? null;
     }
 
     case 'vehicle_allocation': {
@@ -92,31 +136,77 @@ export async function canSessionReadGeneratedDocument(
           ),
         )
         .limit(1);
-      return allocation ? canReadRequest(session, allocation.requestId) : false;
+      return allocation?.requestId ?? null;
     }
 
     case 'inspection': {
       const [inspection] = await db
-        .select({ tripId: vehicleInspections.tripId })
+        .select({ requestId: trips.requestId })
         .from(vehicleInspections)
+        .innerJoin(trips, eq(trips.id, vehicleInspections.tripId))
         .where(
           and(
             eq(vehicleInspections.id, document.entityId),
             eq(vehicleInspections.tenantId, session.tenantId),
+            eq(trips.tenantId, session.tenantId),
           ),
         )
         .limit(1);
-      if (!inspection?.tripId) return false;
-      const [trip] = await db
+      return inspection?.requestId ?? null;
+    }
+
+    case 'trip_incident': {
+      const [incident] = await db
         .select({ requestId: trips.requestId })
-        .from(trips)
-        .where(and(eq(trips.id, inspection.tripId), eq(trips.tenantId, session.tenantId)))
+        .from(tripIncidents)
+        .innerJoin(trips, eq(trips.id, tripIncidents.tripId))
+        .where(
+          and(
+            eq(tripIncidents.id, document.entityId),
+            eq(tripIncidents.tenantId, session.tenantId),
+            eq(trips.tenantId, session.tenantId),
+          ),
+        )
         .limit(1);
-      return trip ? canReadRequest(session, trip.requestId) : false;
+      return incident?.requestId ?? null;
     }
 
     default:
-      // Personal users never receive arbitrary fleet/audit/maintenance reports.
-      return false;
+      return null;
   }
+}
+
+/**
+ * Apply the same canonical workspace record scope used by the Documents route
+ * to direct detail/PDF access. Tenant isolation alone is not sufficient:
+ * Driver sees assigned trip documents only; Personal sees owned/participating
+ * request documents; Transport Administration and Audit retain tenant-wide
+ * document registers. Other workspaces cannot bypass their route registry by
+ * guessing a generated-document id.
+ */
+export async function canSessionReadGeneratedDocument(
+  session: AuthSession,
+  document: GeneratedDocumentRef,
+): Promise<boolean> {
+  const { activeWorkspace } = await getSessionWorkspace(session);
+
+  if (
+    activeWorkspace === WorkspaceIds.TRANSPORT_ADMIN ||
+    activeWorkspace === WorkspaceIds.AUDIT
+  ) {
+    return true;
+  }
+
+  const requestId = await resolveRequestIdForDocument(session, document);
+  if (!requestId) return false;
+
+  if (activeWorkspace === WorkspaceIds.DRIVER) {
+    return canDriverReadRequest(session, requestId);
+  }
+
+  if (activeWorkspace === WorkspaceIds.PERSONAL) {
+    return canReadRequest(session, requestId);
+  }
+
+  return false;
 }
