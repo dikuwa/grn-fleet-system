@@ -74,6 +74,32 @@ describe('document and share-link role contracts', () => {
     expect(driver.actions).toEqual([]);
   });
 
+  it('keeps closure review tenant-wide and Transport Administration-only', () => {
+    const transport = resolveDashboardAccess(
+      '/dashboard/trips/closure-review',
+      [SystemRoles.TRANSPORT_ADMIN],
+      WorkspaceIds.TRANSPORT_ADMIN,
+    );
+    const auditor = resolveDashboardAccess(
+      '/dashboard/trips/closure-review',
+      [SystemRoles.AUDITOR],
+      WorkspaceIds.AUDIT,
+    );
+    const driver = resolveDashboardAccess(
+      '/dashboard/trips/closure-review',
+      [SystemRoles.DRIVER],
+      WorkspaceIds.DRIVER,
+    );
+
+    expect(transport.allowed).toBe(true);
+    expect(transport.recordScope).toBe('tenant');
+    expect(transport.actions).toEqual(expect.arrayContaining(['view', 'approve', 'update']));
+    expect(auditor.allowed).toBe(false);
+    expect(auditor.actions).toEqual([]);
+    expect(driver.allowed).toBe(false);
+    expect(driver.actions).toEqual([]);
+  });
+
   it('keeps Driver document access assigned-only and denies the share-link register', () => {
     const documents = resolveDashboardAccess(
       '/dashboard/documents',
