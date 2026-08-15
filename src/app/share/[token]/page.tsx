@@ -1,61 +1,54 @@
 import { getDb } from '@/db';
-import { shareLinks, generatedDocuments } from '@/db/schema/documents';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { eq } from 'drizzle-orm';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { APP_NAME } from '@/lib/constants';
-import { createHash } from 'node:crypto';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { TenantLogo } from '@/components/documents/tenant-logo';
 import { documentTypeLabel, formatDocumentStatus } from '@/lib/human-readable';
+import { resolveSharedDocument, verifyShareToken } from '@/lib/share-token';
 
 interface PageProps {
   params: Promise<{ token: string }>;
 }
 
-async function resolveSharedDocument(token: string) {
+async function resolveLegacySharedDocument(token: string) {
+  const verification = await verifyShareToken(token);
+  if (!verification.valid || !verification.shareLink) return null;
+
+  // Modern records use the compact verification route. Redirect before claiming
+  // a view here so /v/:slug remains the single access counter and disclosure
+  // boundary rather than charging one visit twice.
+  if (verification.shareLink.shortSlug) {
+    redirect(`/v/${encodeURIComponent(verification.shareLink.shortSlug)}`);
+  }
+
+  // Very old rows without short_slug remain backwards compatible, but access is
+  // now claimed through the same atomic expiry/revocation/max-view service.
+  const resolved = await resolveSharedDocument(token);
+  if (!resolved.document) return null;
+
+  const doc = resolved.document;
+  const link = verification.shareLink;
   const db = getDb();
-
-  // Hash the token to find the share link (Node.js crypto for server-side)
-  const tokenHash = createHash('sha256')
-    .update(token)
-    .digest('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-
-  const [link] = await db
-    .select()
-    .from(shareLinks)
-    .where(eq(shareLinks.tokenHash, tokenHash))
-    .limit(1);
-
-  if (!link) return null;
-
-  // Fetch the document
-  const [doc] = await db
-    .select()
-    .from(generatedDocuments)
-    .where(eq(generatedDocuments.id, link.documentId))
-    .limit(1);
-
-  if (!doc) return null;
-
-  // Fetch tenant + branding info
   const [tenant] = await db
     .select({
       name: tenants.name,
       code: tenants.code,
       logoUrl: tenantBranding.logoUrl,
-      brandColor: tenantBranding.primaryColor,
     })
     .from(tenants)
     .leftJoin(tenantBranding, eq(tenantBranding.tenantId, tenants.id))
     .where(eq(tenants.id, doc.tenantId))
     .limit(1);
 
-  const isExpired = new Date(link.expiresAt) < new Date();
-  const isRevoked = link.isRevoked;
+  const snapshot = doc.snapshotData as Record<string, unknown>;
+  const identity = snapshot.documentIdentity as
+    | { organisationName?: string; logoUrl?: string }
+    | undefined;
+  const brandingMeta = snapshot.brandingMeta as
+    | { organisationName?: string; code?: string }
+    | undefined;
 
   return {
     documentType: doc.documentType,
@@ -64,48 +57,41 @@ async function resolveSharedDocument(token: string) {
     createdAt: doc.createdAt.toISOString(),
     linkCreatedAt: link.createdAt.toISOString(),
     expiresAt: link.expiresAt.toISOString(),
-    isExpired,
-    isRevoked,
-    currentViews: link.currentViews,
+    currentViews: link.currentViews + 1,
     maxViews: link.maxViews,
-    tenant: tenant || { name: 'Unknown', code: '', logoUrl: null, brandColor: null },
+    tenant: {
+      name:
+        brandingMeta?.organisationName ||
+        identity?.organisationName ||
+        tenant?.name ||
+        'Government Fleet',
+      code: brandingMeta?.code || tenant?.code || '',
+      logoUrl: identity?.logoUrl || tenant?.logoUrl || null,
+    },
   };
 }
 
 export default async function SharePage({ params }: PageProps) {
   const { token } = await params;
-  const data = await resolveSharedDocument(token);
+  const data = await resolveLegacySharedDocument(token);
 
-  if (!data) {
-    notFound();
-  }
+  if (!data) notFound();
 
   const docTypeLabel = documentTypeLabel(data.documentType);
-
-  const verificationStatus = data.isRevoked
+  const verificationStatus = data.status === 'draft'
     ? {
-        label: 'Revoked',
-        color: 'text-status-error-text bg-status-error-bg border-status-error-border',
+        label: 'Draft — not issued',
+        color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg',
       }
-    : data.isExpired
+    : data.status === 'superseded'
       ? {
-          label: 'Expired',
+          label: 'Superseded',
           color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg',
         }
-      : data.status === 'draft'
-        ? {
-            label: 'Draft — not issued',
-            color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg',
-          }
-        : data.status === 'superseded'
-          ? {
-              label: 'Superseded',
-              color: 'text-status-pending-text bg-status-pending-bg border-status-pending-bg',
-            }
-          : {
-              label: 'Verified and active',
-              color: 'text-status-success-text bg-status-success-bg border-status-success-border',
-            };
+      : {
+          label: 'Verified and active',
+          color: 'text-status-success-text bg-status-success-bg border-status-success-border',
+        };
 
   return (
     <div className="bg-canvas relative flex min-h-screen items-center justify-center p-4">
@@ -113,7 +99,6 @@ export default async function SharePage({ params }: PageProps) {
         <PublicThemeToggle />
       </div>
       <div className="w-full max-w-lg">
-        {/* Header */}
         <div className="mb-8 text-center">
           <div className="bg-surface mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full shadow-sm">
             <TenantLogo
@@ -127,9 +112,7 @@ export default async function SharePage({ params }: PageProps) {
           <p className="text-ink-500 mt-1 text-sm">{APP_NAME}</p>
         </div>
 
-        {/* Verification Card */}
         <div className="bg-surface border-border space-y-6 rounded-2xl border p-6 shadow-sm">
-          {/* Status Badge */}
           <div className="flex items-center justify-between">
             <h2 className="text-ink-700 text-sm font-medium">Document Verification</h2>
             <span
@@ -139,7 +122,6 @@ export default async function SharePage({ params }: PageProps) {
             </span>
           </div>
 
-          {/* Document Info */}
           <div className="space-y-3">
             <div className="border-border flex justify-between border-b py-2">
               <span className="text-ink-500 text-sm">Document Type</span>
@@ -175,7 +157,6 @@ export default async function SharePage({ params }: PageProps) {
             )}
           </div>
 
-          {/* Validity Period */}
           <div className="bg-muted rounded-xl p-4">
             <p className="text-ink-500 mb-1 text-xs">Validity</p>
             <p className="text-ink-700 text-sm">
@@ -185,7 +166,6 @@ export default async function SharePage({ params }: PageProps) {
             </p>
           </div>
 
-          {/* Verification Seal */}
           <div className="pt-2 text-center">
             <div className="text-ink-500 inline-flex items-center gap-2 text-xs">
               <svg
@@ -206,9 +186,8 @@ export default async function SharePage({ params }: PageProps) {
           </div>
         </div>
 
-        {/* Footer */}
         <p className="text-ink-500 mt-6 text-center text-xs">
-          This verification page confirms the authenticity of a government fleet document.
+          This legacy verification page confirms authenticity only and does not disclose the document body.
           {data.status === 'superseded' && (
             <span className="mt-1 block text-amber-500">
               Note: This document has been superseded by a newer version.
