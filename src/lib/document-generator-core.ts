@@ -38,7 +38,6 @@ import { departments, employees, offices } from '@/db/schema/people';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
-import { runAtomicMutations } from '@/lib/db-atomic';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -306,7 +305,6 @@ async function buildFuelSummarySnapshot(tripId: string) {
   const totalLitres = transactions.reduce((sum, t) => sum + Number(t.litres), 0);
   const totalCost = transactions.reduce((sum, t) => sum + Number(t.amount), 0);
 
-  // Find all reimbursements linked to this trip's transactions
   let pendingReimbursements = 0;
   if (transactions.length > 0) {
     const txIds = transactions.map((t) => t.id);
@@ -340,28 +338,24 @@ async function buildVehicleHistorySnapshot(vehicleId: string) {
   const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.id, vehicleId)).limit(1);
   if (!vehicle) return null;
 
-  // All maintenance events
   const maintenance = await db
     .select()
     .from(maintenanceEvents)
     .where(eq(maintenanceEvents.vehicleId, vehicleId))
     .orderBy(desc(maintenanceEvents.serviceDate));
 
-  // All fuel transactions
   const fuel = await db
     .select()
     .from(fuelTransactions)
     .where(eq(fuelTransactions.vehicleId, vehicleId))
     .orderBy(desc(fuelTransactions.createdAt));
 
-  // All inspections
   const inspections = await db
     .select()
     .from(vehicleInspections)
     .where(eq(vehicleInspections.vehicleId, vehicleId))
     .orderBy(desc(vehicleInspections.createdAt));
 
-  // All trips
   const tripData = await db
     .select({
       id: trips.id,
@@ -528,7 +522,6 @@ async function buildTripCompletionSnapshot(tripId: string) {
     .where(eq(vehicles.id, trip.vehicleId))
     .limit(1);
 
-  // Planned route distance from the linked request's mapped routes
   let routeKm: number | null = null;
   if (trip.requestId) {
     const routeRows = await db
@@ -648,7 +641,6 @@ async function buildTripIncidentSnapshot(incidentId: string) {
     policeReference: event.policeReference,
     emergencyServicesContacted: event.emergencyServicesContacted,
     detailsRequired: event.detailsRequired,
-    // MVA report fields
     accidentReportNumber: event.accidentReportNumber,
     investigationStatus: event.investigationStatus,
     investigationNotes: event.investigationNotes,
@@ -699,12 +691,14 @@ const DOCUMENT_BUILDERS: Partial<
 };
 
 /**
- * Generate a document snapshot for a given entity.
+ * Generate a new immutable source snapshot in DRAFT state.
  *
- * The latest-version lookup is tenant-scoped and the previous-issued supersede
- * plus new-version insert are committed atomically. A concurrent duplicate
- * version therefore fails as one unit at the database uniqueness backstop and
- * cannot leave the previous official version superseded by itself.
+ * Generation is intentionally separate from issuance. A regenerated version
+ * must never silently replace the current official document merely because a
+ * lifecycle hook re-ran. The previous issued version therefore remains current
+ * until the latest draft is formally issued through the document action route,
+ * which freezes the final render payload, recomputes the fingerprint, supersedes
+ * the old issued version and writes the audit event in one transaction.
  */
 export async function generateDocument(
   payload: DocumentPayload,
@@ -797,45 +791,23 @@ export async function generateDocument(
   }
 
   const docId = randomUUID();
-  const now = new Date();
-  await runAtomicMutations((tx) => {
-    const mutations = [];
-    if (existing?.status === 'issued') {
-      mutations.push(
-        tx.update(generatedDocuments)
-          .set({ status: 'superseded', updatedAt: now })
-          .where(
-            and(
-              eq(generatedDocuments.id, existing.id),
-              eq(generatedDocuments.tenantId, tenantId),
-              eq(generatedDocuments.status, 'issued'),
-            ),
-          ),
-      );
-    }
-    mutations.push(
-      tx.insert(generatedDocuments).values({
-        id: docId,
-        tenantId,
-        documentType,
-        documentVersion: newVersion,
-        templateVersion,
-        entityType,
-        entityId,
-        snapshotData,
-        hash: snapshotHash,
-        status: newVersion > 1 ? 'issued' : 'draft', // preserve established regeneration behaviour
-        generatedByUserId,
-      }),
-    );
-    return mutations;
-  });
-
   const [doc] = await db
-    .select()
-    .from(generatedDocuments)
-    .where(and(eq(generatedDocuments.id, docId), eq(generatedDocuments.tenantId, tenantId)))
-    .limit(1);
+    .insert(generatedDocuments)
+    .values({
+      id: docId,
+      tenantId,
+      documentType,
+      documentVersion: newVersion,
+      templateVersion,
+      entityType,
+      entityId,
+      snapshotData,
+      hash: snapshotHash,
+      status: 'draft',
+      generatedByUserId,
+    })
+    .returning();
+
   if (!doc) throw new Error('Generated document committed but could not be reloaded');
   return doc;
 }
@@ -844,9 +816,7 @@ export async function generateDocument(
 // Lifecycle triggers
 // ---------------------------------------------------------------------------
 
-/**
- * Called when a transport request is submitted (not draft).
- */
+/** Called when a transport request is submitted (not draft). */
 export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
   return generateDocument({
     documentType: 'transport_request',
@@ -857,9 +827,7 @@ export async function onRequestSubmitted(requestId: string, tenantId: string, us
   });
 }
 
-/**
- * Called when a trip is closed.
- */
+/** Called when a trip is closed. */
 export async function onTripClosed(tripId: string, tenantId: string, userId: string) {
   const results = await Promise.all([
     generateDocument({
@@ -881,9 +849,7 @@ export async function onTripClosed(tripId: string, tenantId: string, userId: str
   return results.filter(Boolean);
 }
 
-/**
- * Called when a trip is issued (vehicle + driver assigned).
- */
+/** Called when a trip is issued (vehicle + driver assigned). */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   return generateDocument({
     documentType: 'trip_authority',
@@ -894,9 +860,7 @@ export async function onTripIssued(allocationId: string, tenantId: string, userI
   });
 }
 
-/**
- * Called when an inspection is completed.
- */
+/** Called when an inspection is completed. */
 export async function onInspectionCompleted(
   inspectionId: string,
   tenantId: string,
