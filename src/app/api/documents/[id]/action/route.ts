@@ -9,6 +9,7 @@ import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
 import { buildTransportRequestRenderSnapshot } from '@/lib/pdf/verified-transport-request';
+import { resolveTenantBranding } from '@/lib/tenant-branding';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
 export async function POST(
@@ -86,41 +87,71 @@ export async function POST(
       }
     }
 
-    // Freeze the exact visual payload at the issuance boundary. Draft previews
-    // may still reflect operational progress, but once issued the PDF is rendered
-    // from snapshotData.renderData rather than mutable tables.
+    // Freeze the exact visual payload at issuance. Draft previews may continue
+    // to reflect operational progress, but issued PDFs render from immutable
+    // renderData and branding metadata captured here.
     let snapshotData = (doc.snapshotData || {}) as Record<string, unknown>;
-    if (action === 'issue' && !snapshotData.renderData) {
-      if (doc.documentType === 'trip_authority') {
-        const renderData = await buildTripAuthorityRenderSnapshot(doc.id, { requireAuthority: true });
-        if (!renderData) {
-          return NextResponse.json(
-            {
-              error:
-                'Trip Authority cannot be issued until the canonical authority has been provisioned with its approved driver, passenger and authorisation data.',
+    if (action === 'issue') {
+      if (!snapshotData.brandingMeta) {
+        const branding = await resolveTenantBranding(doc.tenantId);
+        if (branding) {
+          snapshotData = {
+            ...snapshotData,
+            brandingMeta: {
+              tenantId: branding.tenantId,
+              organisationName: branding.organisationName,
+              code: branding.code,
+              locale: branding.locale,
+              timezone: branding.timezone,
+              division: branding.division,
+              address: branding.address,
+              phone: branding.phone,
+              email: branding.email,
+              website: branding.website,
+              registrationNumber: branding.registrationNumber,
+              motto: branding.motto,
+              primaryColor: branding.primaryColor,
+              accentColor: branding.accentColor,
+              documentFooter: branding.documentFooter,
+              executiveSignatoryName: branding.executiveSignatoryName,
+              executiveSignatoryTitle: branding.executiveSignatoryTitle,
             },
-            { status: 409 },
-          );
+          };
         }
-        snapshotData = { ...snapshotData, renderData };
-      } else if (doc.documentType === 'inspection_report') {
-        const renderData = await buildInspectionReportRenderSnapshot(doc.id);
-        if (!renderData) {
-          return NextResponse.json(
-            { error: 'Inspection Report cannot be issued until its completed inspection data is available.' },
-            { status: 409 },
-          );
+      }
+
+      if (!snapshotData.renderData) {
+        if (doc.documentType === 'trip_authority') {
+          const renderData = await buildTripAuthorityRenderSnapshot(doc.id, { requireAuthority: true });
+          if (!renderData) {
+            return NextResponse.json(
+              {
+                error:
+                  'Trip Authority cannot be issued until the canonical authority has been provisioned with its approved driver, passenger and authorisation data.',
+              },
+              { status: 409 },
+            );
+          }
+          snapshotData = { ...snapshotData, renderData };
+        } else if (doc.documentType === 'inspection_report') {
+          const renderData = await buildInspectionReportRenderSnapshot(doc.id);
+          if (!renderData) {
+            return NextResponse.json(
+              { error: 'Inspection Report cannot be issued until its completed inspection data is available.' },
+              { status: 409 },
+            );
+          }
+          snapshotData = { ...snapshotData, renderData };
+        } else if (doc.documentType === 'transport_request') {
+          const renderData = await buildTransportRequestRenderSnapshot(doc.id, { issuing: true });
+          if (!renderData) {
+            return NextResponse.json(
+              { error: 'Transport Request could not be prepared for official issuance.' },
+              { status: 409 },
+            );
+          }
+          snapshotData = { ...snapshotData, renderData };
         }
-        snapshotData = { ...snapshotData, renderData };
-      } else if (doc.documentType === 'transport_request') {
-        const renderData = await buildTransportRequestRenderSnapshot(doc.id, { issuing: true });
-        if (!renderData) {
-          return NextResponse.json(
-            { error: 'Transport Request could not be prepared for official issuance.' },
-            { status: 409 },
-          );
-        }
-        snapshotData = { ...snapshotData, renderData };
       }
     }
 
@@ -183,7 +214,11 @@ export async function POST(
           entityId: id,
           summary: `Document ${action === 'issue' ? 'issued' : 'superseded'}: ${doc.documentType || 'unknown'}`,
           before: { status: doc.status },
-          after: { status: nextStatus, renderSnapshotFrozen: Boolean(snapshotData.renderData) },
+          after: {
+            status: nextStatus,
+            renderSnapshotFrozen: Boolean(snapshotData.renderData),
+            brandingSnapshotFrozen: Boolean(snapshotData.brandingMeta),
+          },
           sourceChannel: 'web',
         }),
       );
