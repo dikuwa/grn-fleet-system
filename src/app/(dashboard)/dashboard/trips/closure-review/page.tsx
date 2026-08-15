@@ -12,6 +12,7 @@ import {
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
+import { externalParties } from '@/db/schema/external-parties';
 import { eq, and, desc, inArray, ne } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -48,6 +49,8 @@ interface ClosureTrip {
   requestPurpose: string | null;
   driverFirstName: string | null;
   driverLastName: string | null;
+  driverKind: 'internal' | 'external' | 'unassigned';
+  driverOrganisation: string | null;
   requesterFirstName: string | null;
   requesterLastName: string | null;
   hasReturnInspection: boolean;
@@ -92,6 +95,9 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       requesterFirstName: employees.firstName,
       requesterLastName: employees.lastName,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      externalDriverFirstName: externalParties.firstName,
+      externalDriverLastName: externalParties.lastName,
+      externalDriverOrganisation: externalParties.organisationName,
       authorityStatus: tripAuthorities.status,
     })
     .from(trips)
@@ -112,6 +118,13 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       and(
         eq(transportRequests.requesterEmployeeId, employees.id),
         eq(employees.tenantId, tenantId),
+      ),
+    )
+    .leftJoin(
+      externalParties,
+      and(
+        eq(transportRequests.assignedDriverExternalPartyId, externalParties.id),
+        eq(externalParties.tenantId, tenantId),
       ),
     )
     .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
@@ -227,7 +240,13 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
   const driverMap = new Map(driverRows.map((driver) => [driver.id, driver]));
 
   return rows.map((row) => {
-    const driver = row.driverEmployeeId ? driverMap.get(row.driverEmployeeId) : null;
+    const internalDriver = row.driverEmployeeId ? driverMap.get(row.driverEmployeeId) : null;
+    const hasExternalDriver = Boolean(row.externalDriverFirstName || row.externalDriverLastName);
+    const driverKind: ClosureTrip['driverKind'] = internalDriver
+      ? 'internal'
+      : hasExternalDriver
+        ? 'external'
+        : 'unassigned';
     const latestReturnInspection = latestReturnInspectionByTrip.get(row.id) ?? null;
     const hasReturnInspection = Boolean(
       latestReturnInspection && ['completed', 'failed'].includes(latestReturnInspection.status),
@@ -266,8 +285,10 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       requestPurpose: row.requestPurpose,
       requesterFirstName: row.requesterFirstName,
       requesterLastName: row.requesterLastName,
-      driverFirstName: driver?.firstName ?? null,
-      driverLastName: driver?.lastName ?? null,
+      driverFirstName: internalDriver?.firstName ?? row.externalDriverFirstName ?? null,
+      driverLastName: internalDriver?.lastName ?? row.externalDriverLastName ?? null,
+      driverKind,
+      driverOrganisation: driverKind === 'external' ? row.externalDriverOrganisation ?? null : null,
       hasReturnInspection,
       latestReturnInspectionStatus: latestReturnInspection?.status ?? null,
       hasClosureRecord: closureTripIds.has(row.id),
@@ -447,7 +468,8 @@ export default async function ClosureReviewPage() {
                           {trip.driverFirstName && (
                             <span className="flex items-center gap-1">
                               <User className="h-3 w-3" />
-                              Driver: {trip.driverFirstName} {trip.driverLastName}
+                              {trip.driverKind === 'external' ? 'External driver' : 'Driver'}: {trip.driverFirstName} {trip.driverLastName}
+                              {trip.driverKind === 'external' && trip.driverOrganisation ? ` · ${trip.driverOrganisation}` : ''}
                             </span>
                           )}
                           {trip.requesterFirstName && (
