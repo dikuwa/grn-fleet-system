@@ -18,6 +18,94 @@ type AcceptanceMethod = (typeof ACCEPTANCE_METHODS)[number];
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+async function loadAcceptanceContext(tripId: string, tenantId: string) {
+  const db = getDb();
+  const [record] = await db
+    .select({
+      tripId: trips.id,
+      tripStatus: trips.status,
+      tripIssuedAt: trips.issuedAt,
+      allocationId: vehicleAllocations.id,
+      driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      driverUserId: employees.userId,
+      authorityId: tripAuthorities.id,
+      authorityVersion: tripAuthorities.version,
+      authorityAcceptedAt: tripAuthorities.acceptedAt,
+      externalAssignmentId: externalDriverAssignments.id,
+      externalAssignmentState: externalDriverAssignments.state,
+    })
+    .from(trips)
+    .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
+    .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+    .leftJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
+    .leftJoin(
+      externalDriverAssignments,
+      and(
+        eq(externalDriverAssignments.tripId, trips.id),
+        eq(externalDriverAssignments.tenantId, tenantId),
+      ),
+    )
+    .where(
+      and(
+        eq(trips.id, tripId),
+        eq(trips.tenantId, tenantId),
+        eq(tripAuthorities.tenantId, tenantId),
+      ),
+    )
+    .limit(1);
+  return record ?? null;
+}
+
+/** Return whether the current authority has a vehicle amendment newer than its latest driver acceptance. */
+export async function GET(request: NextRequest, context: RouteContext) {
+  try {
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const { id: tripId } = await context.params;
+    const record = await loadAcceptanceContext(tripId, session.tenantId);
+    if (!record) return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
+
+    const pending = await findPendingVehicleReplacementAcceptance({
+      authorityId: record.authorityId,
+      acceptedAt: record.authorityAcceptedAt,
+    });
+    const driverKind = record.driverEmployeeId ? 'internal' : record.externalAssignmentId ? 'external' : 'unassigned';
+    const canSelfAcknowledge =
+      driverKind === 'internal' && Boolean(record.driverUserId) && record.driverUserId === session.user.id;
+
+    let canRecordExternal = false;
+    if (driverKind === 'external') {
+      const [routeCheck, permissionCheck] = await Promise.all([
+        requireDashboardAction(session, '/dashboard/allocations', 'update'),
+        requirePermission(session, Permissions.ALLOCATION_MANAGE),
+      ]);
+      canRecordExternal =
+        !(routeCheck instanceof NextResponse) && !(permissionCheck instanceof NextResponse);
+    }
+
+    return NextResponse.json({
+      pending: Boolean(pending),
+      driverKind,
+      canSelfAcknowledge,
+      canRecordExternal,
+      amendment: pending
+        ? {
+            id: pending.amendmentId,
+            authorityVersion: pending.authorityVersion,
+            reason: pending.reason,
+            createdAt: pending.createdAt.toISOString(),
+            originalValue: pending.originalValue,
+            newValue: pending.newValue,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error('[amendment-acceptance] GET failed:', error);
+    return NextResponse.json({ error: 'Failed to resolve revised authority acceptance state' }, { status: 500 });
+  }
+}
+
 /**
  * Record acknowledgement of a material Trip Authority amendment without
  * rewriting the driver's original workflow acknowledgement. Internal drivers
@@ -37,39 +125,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const db = getDb();
     const tenantId = session.tenantId;
-    const [record] = await db
-      .select({
-        tripId: trips.id,
-        tripStatus: trips.status,
-        tripIssuedAt: trips.issuedAt,
-        allocationId: vehicleAllocations.id,
-        driverEmployeeId: vehicleAllocations.driverEmployeeId,
-        driverUserId: employees.userId,
-        authorityId: tripAuthorities.id,
-        authorityVersion: tripAuthorities.version,
-        authorityAcceptedAt: tripAuthorities.acceptedAt,
-        externalAssignmentId: externalDriverAssignments.id,
-        externalAssignmentState: externalDriverAssignments.state,
-      })
-      .from(trips)
-      .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
-      .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
-      .leftJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
-      .leftJoin(
-        externalDriverAssignments,
-        and(
-          eq(externalDriverAssignments.tripId, trips.id),
-          eq(externalDriverAssignments.tenantId, tenantId),
-        ),
-      )
-      .where(
-        and(
-          eq(trips.id, tripId),
-          eq(trips.tenantId, tenantId),
-          eq(tripAuthorities.tenantId, tenantId),
-        ),
-      )
-      .limit(1);
+    const record = await loadAcceptanceContext(tripId, tenantId);
 
     if (!record) return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
     if (record.tripStatus !== 'pending' || record.tripIssuedAt) {
@@ -92,7 +148,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const internalDriver = Boolean(record.driverEmployeeId);
     let acceptanceMethod: AcceptanceMethod | 'driver_console' = 'driver_console';
-    let note = String(body.note || '').trim().slice(0, 1000) || null;
+    const note = String(body.note || '').trim().slice(0, 1000) || null;
 
     if (internalDriver) {
       const permission = await requirePermission(session, Permissions.DRIVER_LOG_CREATE);
@@ -157,7 +213,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       authority_claim AS (
         UPDATE trip_authorities ta
         SET accepted_at = ${now},
-            accepted_by_employee_id = ${record.driverEmployeeId}::uuid,
+            accepted_by_employee_id = ${record.driverEmployeeId ?? null}::uuid,
             acceptance_data = COALESCE(ta.acceptance_data, '{}'::jsonb)
               || jsonb_build_object('latestAmendmentAcceptance', ${acceptanceEvidence}::jsonb),
             status = 'awaiting_pre_trip_inspection',
@@ -171,7 +227,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       trip_claim AS (
         UPDATE trips t
         SET driver_acknowledged_at = ${now},
-            driver_acknowledged_by_employee_id = ${record.driverEmployeeId}::uuid,
+            driver_acknowledged_by_employee_id = ${record.driverEmployeeId ?? null}::uuid,
             updated_at = ${now}
         WHERE t.id = ${tripId}::uuid
           AND t.tenant_id = ${tenantId}::uuid
