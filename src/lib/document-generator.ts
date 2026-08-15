@@ -4,9 +4,10 @@ import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalParties } from '@/db/schema/external-parties';
+import { vehicles } from '@/db/schema/fleet';
 import { departments, employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
-import { vehicleAllocations } from '@/db/schema/trips';
+import { tripIncidents, trips, vehicleAllocations, vehicleInspections } from '@/db/schema/trips';
 import { validateDocumentSnapshot } from '@/lib/document-validation';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
 import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
@@ -14,8 +15,8 @@ import { buildTransportRequestRenderSnapshot } from '@/lib/pdf/verified-transpor
 import * as core from '@/lib/document-generator-core';
 
 export type { DocumentType } from '@/lib/document-generator-core';
-export const generateDocument = core.generateDocument;
-export const onTripClosed = core.onTripClosed;
+
+type GenerateDocumentPayload = Parameters<typeof core.generateDocument>[0];
 
 interface AuthorityDriverSnapshot {
   kind: 'internal' | 'external' | 'unassigned';
@@ -32,6 +33,108 @@ function textOrNull(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   return text || null;
+}
+
+/**
+ * Fail closed before the core snapshot builder runs. Some child tables inherit
+ * tenancy from their parent rather than carrying tenant_id themselves, so the
+ * ownership check follows the same authoritative parent relationship used by
+ * the operational workflow.
+ */
+async function sourceEntityBelongsToTenant(
+  entityType: string,
+  entityId: string,
+  tenantId: string,
+): Promise<boolean> {
+  const db = getDb();
+
+  switch (entityType) {
+    case 'transport_request': {
+      const [row] = await db
+        .select({ id: transportRequests.id })
+        .from(transportRequests)
+        .where(and(eq(transportRequests.id, entityId), eq(transportRequests.tenantId, tenantId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    case 'trip': {
+      const [row] = await db
+        .select({ id: trips.id })
+        .from(trips)
+        .where(and(eq(trips.id, entityId), eq(trips.tenantId, tenantId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    case 'vehicle_allocation': {
+      const [row] = await db
+        .select({ id: vehicleAllocations.id })
+        .from(vehicleAllocations)
+        .innerJoin(
+          transportRequests,
+          and(
+            eq(transportRequests.id, vehicleAllocations.requestId),
+            eq(transportRequests.tenantId, tenantId),
+          ),
+        )
+        .where(eq(vehicleAllocations.id, entityId))
+        .limit(1);
+      return Boolean(row);
+    }
+    case 'inspection': {
+      const [row] = await db
+        .select({ id: vehicleInspections.id })
+        .from(vehicleInspections)
+        .where(and(eq(vehicleInspections.id, entityId), eq(vehicleInspections.tenantId, tenantId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    case 'trip_incident': {
+      const [row] = await db
+        .select({ id: tripIncidents.id })
+        .from(tripIncidents)
+        .where(and(eq(tripIncidents.id, entityId), eq(tripIncidents.tenantId, tenantId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    // Maintenance and vehicle-history builders both use a vehicle ID as their
+    // source entity, so tenant ownership is established on the vehicle record.
+    case 'maintenance':
+    case 'vehicle': {
+      const [row] = await db
+        .select({ id: vehicles.id })
+        .from(vehicles)
+        .where(and(eq(vehicles.id, entityId), eq(vehicles.tenantId, tenantId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    case 'tenant':
+      return entityId === tenantId;
+    default:
+      console.warn(`[DocGen] No tenant ownership rule for source entity type: ${entityType}`);
+      return false;
+  }
+}
+
+async function assertDocumentSourceTenant(
+  entityType: string,
+  entityId: string,
+  tenantId: string,
+) {
+  const allowed = await sourceEntityBelongsToTenant(entityType, entityId, tenantId);
+  if (!allowed) {
+    console.warn(
+      `[DocGen] Refused cross-tenant or unknown source ${entityType}:${entityId} for tenant ${tenantId}`,
+    );
+  }
+  return allowed;
+}
+
+/** Public generation boundary with source-record tenant validation. */
+export async function generateDocument(payload: GenerateDocumentPayload) {
+  if (!(await assertDocumentSourceTenant(payload.entityType, payload.entityId, payload.tenantId))) {
+    return null;
+  }
+  return core.generateDocument(payload);
 }
 
 async function resolveAuthorityDriver(
@@ -196,6 +299,7 @@ async function persistSnapshotEnrichment(
  * approval tables later.
  */
 export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
+  if (!(await assertDocumentSourceTenant('transport_request', requestId, tenantId))) return null;
   const document = await core.onRequestSubmitted(requestId, tenantId, userId);
   if (!document || document.status !== 'issued') return document;
 
@@ -208,6 +312,12 @@ export async function onRequestSubmitted(requestId: string, tenantId: string, us
   return persistSnapshotEnrichment(document, tenantId, { renderData });
 }
 
+/** Generate trip-closure documents only from a trip owned by the supplied tenant. */
+export async function onTripClosed(tripId: string, tenantId: string, userId: string) {
+  if (!(await assertDocumentSourceTenant('trip', tripId, tenantId))) return [];
+  return core.onTripClosed(tripId, tenantId, userId);
+}
+
 /**
  * Generate/regenerate a Trip Authority document shell when an allocation is
  * created. The allocation lifecycle can precede provisioning of the canonical
@@ -216,6 +326,7 @@ export async function onRequestSubmitted(requestId: string, tenantId: string, us
  * Issue lifecycle action freezes it after authority provisioning.
  */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
+  if (!(await assertDocumentSourceTenant('vehicle_allocation', allocationId, tenantId))) return null;
   const document = await core.onTripIssued(allocationId, tenantId, userId);
   if (!document) return document;
 
@@ -251,6 +362,7 @@ export async function onInspectionCompleted(
   tenantId: string,
   userId: string,
 ) {
+  if (!(await assertDocumentSourceTenant('inspection', inspectionId, tenantId))) return null;
   const document = await core.onInspectionCompleted(inspectionId, tenantId, userId);
   if (!document) return document;
 
