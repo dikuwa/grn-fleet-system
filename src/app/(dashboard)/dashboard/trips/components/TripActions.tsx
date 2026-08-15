@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowRightLeft, CheckSquare, Clock3, KeyRound, Repeat, XCircle } from 'lucide-react';
+import { ArrowRightLeft, CheckSquare, Clock3, KeyRound, Repeat, RotateCcw, XCircle } from 'lucide-react';
 import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
 import { DriverHandoverDialog } from './DriverHandoverDialog';
 import { ExternalTripStartDialog } from './ExternalTripStartDialog';
+import { ExternalTripReturnDialog } from './ExternalTripReturnDialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -74,22 +75,25 @@ export function TripActions({
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [handoverDialogOpen, setHandoverDialogOpen] = useState(false);
   const [externalStartDialogOpen, setExternalStartDialogOpen] = useState(false);
+  const [externalReturnDialogOpen, setExternalReturnDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [departureInspectionStatus, setDepartureInspectionStatus] = useState<GateStatus | null>(null);
-  const [readinessLoading, setReadinessLoading] = useState(status === 'pending');
+  const [readinessLoading, setReadinessLoading] = useState(
+    status === 'pending' || status === 'in_progress',
+  );
   const [driverKind, setDriverKind] = useState<DriverKind>('unassigned');
   const [driverAccepted, setDriverAccepted] = useState(Boolean(hasAcknowledge));
 
   const midTrip = status === 'in_progress';
-  // Relief-driver handover is an internal-employee workflow. External drivers
-  // use their isolated assignment lifecycle and therefore never inherit this
-  // control merely because the trip is in progress.
+  // Relief-driver handover is an internal-employee workflow. Require the
+  // readiness API to positively resolve an internal driver before exposing it;
+  // the default/unresolved state must never grant an employee-only action.
   const canHandOverInternalDriver =
-    canManage && midTrip && driverKind !== 'external' && hasAcknowledge === true;
+    canManage && midTrip && driverKind === 'internal' && hasAcknowledge === true;
 
   const refreshReadiness = useCallback(async () => {
-    if (status !== 'pending') {
+    if (!['pending', 'in_progress'].includes(status)) {
       setReadinessLoading(false);
       return;
     }
@@ -109,6 +113,7 @@ export function TripActions({
       setDriverAccepted(json.driver?.accepted ?? fallbackAccepted);
     } catch (reason) {
       setDepartureInspectionStatus(null);
+      setDriverKind('unassigned');
       setDriverAccepted(Boolean(hasAcknowledge));
       setError(reason instanceof Error ? reason.message : 'Unable to check release readiness');
     } finally {
@@ -127,11 +132,18 @@ export function TripActions({
   }, [refreshReadiness, router]);
 
   const handleHandoverSuccess = useCallback(() => {
+    void refreshReadiness();
     router.refresh();
-  }, [router]);
+  }, [refreshReadiness, router]);
 
   const handleExternalStartSuccess = useCallback(() => {
     setExternalStartDialogOpen(false);
+    void refreshReadiness();
+    router.refresh();
+  }, [refreshReadiness, router]);
+
+  const handleExternalReturnSuccess = useCallback(() => {
+    setExternalReturnDialogOpen(false);
     router.refresh();
   }, [router]);
 
@@ -269,6 +281,16 @@ export function TripActions({
     />
   ) : null;
 
+  const externalReturnDialog = canManage && midTrip && driverKind === 'external' ? (
+    <ExternalTripReturnDialog
+      open={externalReturnDialogOpen}
+      onOpenChange={setExternalReturnDialogOpen}
+      tripId={tripId}
+      minimumOdometer={currentOdometer}
+      onSuccess={handleExternalReturnSuccess}
+    />
+  ) : null;
+
   const cancellationDialog = canManage ? (
     <Dialog
       open={cancelDialogOpen}
@@ -373,7 +395,7 @@ export function TripActions({
             <CheckSquare className="h-4 w-4" /> Record Departure
           </Button>
         )}
-        {!readinessLoading && hasIssue && driverKind !== 'external' && (
+        {!readinessLoading && hasIssue && driverKind === 'internal' && (
           <span className="text-status-success-text inline-flex items-center gap-1.5 text-xs">
             <CheckSquare className="h-3.5 w-3.5" /> Vehicle issued — waiting for the driver to start the trip
           </span>
@@ -381,6 +403,11 @@ export function TripActions({
         {!readinessLoading && hasIssue && driverKind === 'external' && !canManage && (
           <span className="text-status-success-text inline-flex items-center gap-1.5 text-xs">
             <CheckSquare className="h-3.5 w-3.5" /> Vehicle issued — Transport Office must record external-driver departure
+          </span>
+        )}
+        {!readinessLoading && hasIssue && driverKind === 'unassigned' && (
+          <span className="text-status-error-text inline-flex items-center gap-1.5 text-xs">
+            <XCircle className="h-3.5 w-3.5" /> Driver assignment could not be resolved — refresh before departure
           </span>
         )}
         {error && !cancelDialogOpen && (
@@ -397,19 +424,35 @@ export function TripActions({
     return (
       <div>
         <div className="flex flex-wrap gap-2">
-          {canHandOverInternalDriver && (
+          {readinessLoading && (
+            <span className="text-ink-500 inline-flex items-center gap-1.5 text-xs">
+              <Clock3 className="h-3.5 w-3.5" /> Resolving active driver…
+            </span>
+          )}
+          {!readinessLoading && canHandOverInternalDriver && (
             <Button variant="secondary" size="sm" onClick={() => setHandoverDialogOpen(true)}>
               <ArrowRightLeft className="h-4 w-4" /> Hand over Driver
             </Button>
           )}
-          {canReplaceVehicle && allocationId && (
+          {!readinessLoading && canManage && driverKind === 'external' && (
+            <Button variant="primary" size="sm" onClick={() => setExternalReturnDialogOpen(true)}>
+              <RotateCcw className="h-4 w-4" /> Record Return
+            </Button>
+          )}
+          {canReplaceVehicle && allocationId && driverKind !== 'unassigned' && (
             <Button variant="secondary" size="sm" onClick={() => setReplaceDialogOpen(true)}>
               <Repeat className="h-4 w-4" /> Replace Vehicle
             </Button>
           )}
+          {!readinessLoading && driverKind === 'external' && !canManage && (
+            <span className="text-ink-500 text-xs">
+              Transport Office records the external-driver vehicle return before arrival inspection.
+            </span>
+          )}
         </div>
         {error && <p className="text-status-error-text mt-1 text-xs">{error}</p>}
         {handoverDialog}
+        {externalReturnDialog}
         {replacementDialog}
       </div>
     );
