@@ -246,7 +246,10 @@ export async function POST(request: NextRequest) {
           allowPreview?: boolean;
         };
         const expiryDifferenceMs = Math.abs(existing.expiresAt.getTime() - expiresAt.getTime());
+        const hasRemainingViews =
+          existing.maxViews === null || existing.currentViews < existing.maxViews;
         const settingsMatch =
+          hasRemainingViews &&
           existing.maxViews === parsedMaxViews &&
           existing.redactionProfile === normalizedRedactionProfile &&
           Boolean(existingPolicy.allowDownload) === normalizedAllowDownload &&
