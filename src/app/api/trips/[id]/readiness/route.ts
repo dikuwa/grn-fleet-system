@@ -10,7 +10,9 @@ import { trips, vehicleAllocations, vehicleInspections, tripAuthorities } from '
 import { vehicles, vehicleDefects, vehicleCategories } from '@/db/schema/fleet';
 import { workflowInstances, workflowActions, workflowSteps } from '@/db/schema/workflows';
 import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
-import { eq, and, desc, isNull, sql } from 'drizzle-orm';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
+import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
+import { eq, and, desc, isNull, sql, inArray } from 'drizzle-orm';
 import {
   getSessionRoleNames,
   requireDashboardAction,
@@ -23,6 +25,8 @@ import { tripScopeCondition } from '@/lib/record-scope';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type DriverKind = 'internal' | 'external' | 'unassigned';
 
 interface ReadinessGate {
   key: string;
@@ -67,19 +71,26 @@ export async function GET(
         allocationState: vehicleAllocations.state,
         allocationEndAt: vehicleAllocations.endAt,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        vehicleStatus: vehicles.status,
+        vehicleLicenceExpiryDate: vehicles.licenceExpiryDate,
+        requiredLicenceClass: vehicles.requiredLicenceClass,
+        vehicleCategoryName: vehicleCategories.name,
       })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
       .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
-      .where(and(
-        eq(trips.id, id),
-        eq(vehicles.tenantId, tenantId),
-        tripScopeCondition({
-          tenantId,
-          userId: session.user.id,
-          recordScope: access.recordScope ?? 'assigned',
-        }),
-      ))
+      .leftJoin(vehicleCategories, eq(vehicles.categoryId, vehicleCategories.id))
+      .where(
+        and(
+          eq(trips.id, id),
+          eq(vehicles.tenantId, tenantId),
+          tripScopeCondition({
+            tenantId,
+            userId: session.user.id,
+            recordScope: access.recordScope ?? 'assigned',
+          }),
+        ),
+      )
       .limit(1);
 
     if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
@@ -102,10 +113,12 @@ export async function GET(
       const [releaseStep] = await db
         .select({ stepOrder: workflowSteps.stepOrder })
         .from(workflowSteps)
-        .where(and(
-          eq(workflowSteps.definitionId, workflow.definitionId),
-          eq(workflowSteps.actionType, 'release'),
-        ))
+        .where(
+          and(
+            eq(workflowSteps.definitionId, workflow.definitionId),
+            eq(workflowSteps.actionType, 'release'),
+          ),
+        )
         .orderBy(workflowSteps.stepOrder)
         .limit(1);
 
@@ -114,21 +127,18 @@ export async function GET(
         [releaseAction] = await db
           .select({ id: workflowActions.id })
           .from(workflowActions)
-          .where(and(
-            eq(workflowActions.instanceId, workflow.id),
-            eq(workflowActions.stepOrder, releaseStep.stepOrder),
-            eq(workflowActions.actionType, 'release'),
-            sql`${workflowActions.result} IN ('released', 'approved')`,
-          ))
+          .where(
+            and(
+              eq(workflowActions.instanceId, workflow.id),
+              eq(workflowActions.stepOrder, releaseStep.stepOrder),
+              eq(workflowActions.actionType, 'release'),
+              sql`${workflowActions.result} IN ('released', 'approved')`,
+            ),
+          )
           .limit(1);
       }
     }
 
-    // After final release the workflow may intentionally remain active while the
-    // assigned driver acknowledgement step is pending. A recorded successful
-    // release action is therefore authoritative evidence that request approvals
-    // and release are complete; requiring workflow.status=completed here creates
-    // a false blocker for correctly authorised trips.
     const requestApproved =
       workflow?.status === 'approved' ||
       workflow?.status === 'completed' ||
@@ -159,21 +169,71 @@ export async function GET(
       key: 'vehicle_allocated',
       label: 'Vehicle allocated',
       status: trip.vehicleId && trip.allocationState === 'confirmed' ? 'pass' : 'blocking',
-      detail: trip.vehicleId && trip.allocationState === 'confirmed'
-        ? 'Vehicle is assigned on an active confirmed allocation.'
-        : `Allocation is ${trip.allocationState || 'missing'}.`,
+      detail:
+        trip.vehicleId && trip.allocationState === 'confirmed'
+          ? 'Vehicle is assigned on an active confirmed allocation.'
+          : `Allocation is ${trip.allocationState || 'missing'}.`,
       required: true,
     });
+
+    const [externalDriver] = !trip.driverEmployeeId
+      ? await db
+          .select({
+            assignmentId: externalDriverAssignments.id,
+            assignmentState: externalDriverAssignments.state,
+            acceptedAt: externalDriverAssignments.acceptedAt,
+            partyStatus: externalParties.status,
+            licenceClass: externalDriverLicences.licenceClass,
+            licenceExpiry: externalDriverLicences.expiryDate,
+            licenceVerificationStatus: externalDriverLicences.verificationStatus,
+          })
+          .from(externalDriverAssignments)
+          .innerJoin(
+            externalParties,
+            and(
+              eq(externalParties.id, externalDriverAssignments.externalPartyId),
+              eq(externalParties.tenantId, tenantId),
+            ),
+          )
+          .innerJoin(
+            externalDriverLicences,
+            and(
+              eq(externalDriverLicences.id, externalDriverAssignments.licenceId),
+              eq(externalDriverLicences.tenantId, tenantId),
+            ),
+          )
+          .where(
+            and(
+              eq(externalDriverAssignments.tripId, id),
+              eq(externalDriverAssignments.tenantId, tenantId),
+              inArray(externalDriverAssignments.state, ['pending_acceptance', 'accepted']),
+            ),
+          )
+          .orderBy(desc(externalDriverAssignments.assignedAt))
+          .limit(1)
+      : [];
+
+    const driverKind: DriverKind = trip.driverEmployeeId
+      ? 'internal'
+      : externalDriver
+        ? 'external'
+        : 'unassigned';
+    const driverAllocated = driverKind !== 'unassigned';
 
     gates.push({
       key: 'driver_allocated',
       label: 'Driver allocated',
-      status: trip.driverEmployeeId ? 'pass' : 'blocking',
-      detail: trip.driverEmployeeId ? 'Driver assigned to this trip.' : 'No driver has been allocated.',
+      status: driverAllocated ? 'pass' : 'blocking',
+      detail:
+        driverKind === 'internal'
+          ? 'Internal employee driver assigned to this trip.'
+          : driverKind === 'external'
+            ? 'External driver assignment is attached to this trip.'
+            : 'No internal or external driver has been allocated.',
       required: true,
     });
 
-    if (trip.driverEmployeeId) {
+    if (driverKind === 'internal' && trip.driverEmployeeId) {
       const [employee] = await db
         .select({ employmentStatus: employees.employmentStatus })
         .from(employees)
@@ -184,7 +244,9 @@ export async function GET(
         key: 'driver_active_employee',
         label: 'Driver employment is active',
         status: active ? 'pass' : 'blocking',
-        detail: active ? 'Driver has active employment status.' : `Driver status is "${employee?.employmentStatus || 'unknown'}".`,
+        detail: active
+          ? 'Driver has active employment status.'
+          : `Driver status is "${employee?.employmentStatus || 'unknown'}".`,
         required: true,
       });
 
@@ -198,23 +260,27 @@ export async function GET(
         .from(driverProfiles)
         .innerJoin(employees, eq(employees.id, driverProfiles.employeeId))
         .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
-        .where(and(
-          eq(driverProfiles.employeeId, trip.driverEmployeeId),
-          eq(employees.tenantId, tenantId),
-          eq(driverLicences.isActive, true),
-          eq(driverLicences.isVerified, true),
-        ))
+        .where(
+          and(
+            eq(driverProfiles.employeeId, trip.driverEmployeeId),
+            eq(employees.tenantId, tenantId),
+            eq(driverLicences.isActive, true),
+            eq(driverLicences.isVerified, true),
+          ),
+        )
         .orderBy(desc(driverLicences.version))
         .limit(1);
 
       const licenceExpiry = profile?.expiryDate
         ? new Date(`${profile.expiryDate}T23:59:59.999Z`)
         : null;
-      const licenceValid = !!profile &&
+      const requiredThrough = trip.allocationEndAt ?? new Date();
+      const licenceValid =
+        !!profile &&
         profile.driverStatus === 'authorised' &&
         profile.verificationStatus === 'verified' &&
         !!licenceExpiry &&
-        licenceExpiry >= trip.allocationEndAt;
+        licenceExpiry >= requiredThrough;
 
       gates.push({
         key: 'driver_licence_valid',
@@ -226,36 +292,69 @@ export async function GET(
             ? `Driver status is "${profile.driverStatus}" (must be authorised).`
             : profile.verificationStatus !== 'verified'
               ? 'Licence has not been verified.'
-              : !licenceExpiry || licenceExpiry < trip.allocationEndAt
+              : !licenceExpiry || licenceExpiry < requiredThrough
                 ? `Licence expires before the trip ends (${profile.expiryDate}).`
                 : 'Licence is valid and verified through the trip end date.',
         required: true,
       });
 
-      if (trip.vehicleId && profile?.licenceClass) {
-        const [vehicleInfo] = await db
-          .select({
-            requiredLicenceClass: vehicles.requiredLicenceClass,
-            categoryName: vehicleCategories.name,
-          })
-          .from(vehicles)
-          .leftJoin(vehicleCategories, eq(vehicles.categoryId, vehicleCategories.id))
-          .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, tenantId)))
-          .limit(1);
+      if (trip.requiredLicenceClass && profile?.licenceClass) {
+        const covers = namibiaLicenceClassCovers(profile.licenceClass, trip.requiredLicenceClass);
+        gates.push({
+          key: 'driver_licence_class_match',
+          label: 'Driver licence class matches vehicle category',
+          status: covers ? 'pass' : 'blocking',
+          detail: covers
+            ? `Driver licence (${profile.licenceClass}) covers required class (${trip.requiredLicenceClass}) for ${trip.vehicleCategoryName || 'this vehicle'}.`
+            : `Driver licence class "${profile.licenceClass}" does not authorise required class "${trip.requiredLicenceClass}" for ${trip.vehicleCategoryName || 'this vehicle'}.`,
+          required: true,
+        });
+      }
+    } else if (driverKind === 'external' && externalDriver) {
+      const externalActive = externalDriver.partyStatus === 'active';
+      gates.push({
+        key: 'driver_active_employee',
+        label: 'External driver eligibility is active',
+        status: externalActive ? 'pass' : 'blocking',
+        detail: externalActive
+          ? 'External driver record is active.'
+          : `External driver record is ${externalDriver.partyStatus || 'inactive'}.`,
+        required: true,
+      });
 
-        const requiredClass = vehicleInfo?.requiredLicenceClass;
-        if (requiredClass) {
-          const covers = namibiaLicenceClassCovers(profile.licenceClass, requiredClass);
-          gates.push({
-            key: 'driver_licence_class_match',
-            label: 'Driver licence class matches vehicle category',
-            status: covers ? 'pass' : 'blocking',
-            detail: covers
-              ? `Driver licence (${profile.licenceClass}) covers required class (${requiredClass}) for ${vehicleInfo?.categoryName || 'this vehicle'}.`
-              : `Driver licence class "${profile.licenceClass}" does not authorise required class "${requiredClass}" for ${vehicleInfo?.categoryName || 'this vehicle'}.`,
-            required: true,
-          });
-        }
+      const expiry = new Date(`${externalDriver.licenceExpiry}T23:59:59.999Z`);
+      const requiredThrough = trip.allocationEndAt ?? new Date();
+      const licenceValid =
+        externalDriver.licenceVerificationStatus === 'verified' &&
+        Number.isFinite(expiry.getTime()) &&
+        expiry >= requiredThrough;
+      gates.push({
+        key: 'driver_licence_valid',
+        label: 'External driver licence valid for trip dates',
+        status: licenceValid ? 'pass' : 'blocking',
+        detail:
+          externalDriver.licenceVerificationStatus !== 'verified'
+            ? 'External driver licence has not been verified.'
+            : !Number.isFinite(expiry.getTime()) || expiry < requiredThrough
+              ? `External driver licence expires before the trip ends (${externalDriver.licenceExpiry}).`
+              : 'External driver licence is verified and valid through the trip end date.',
+        required: true,
+      });
+
+      if (trip.requiredLicenceClass && externalDriver.licenceClass) {
+        const covers = namibiaLicenceClassCovers(
+          externalDriver.licenceClass,
+          trip.requiredLicenceClass,
+        );
+        gates.push({
+          key: 'driver_licence_class_match',
+          label: 'Driver licence class matches vehicle category',
+          status: covers ? 'pass' : 'blocking',
+          detail: covers
+            ? `External driver licence (${externalDriver.licenceClass}) covers required class (${trip.requiredLicenceClass}) for ${trip.vehicleCategoryName || 'this vehicle'}.`
+            : `External driver licence class "${externalDriver.licenceClass}" does not authorise required class "${trip.requiredLicenceClass}" for ${trip.vehicleCategoryName || 'this vehicle'}.`,
+          required: true,
+        });
       }
     }
 
@@ -263,12 +362,14 @@ export async function GET(
       .select({ count: sql<number>`count(*)` })
       .from(vehicleDefects)
       .innerJoin(vehicles, eq(vehicles.id, vehicleDefects.vehicleId))
-      .where(and(
-        eq(vehicleDefects.vehicleId, trip.vehicleId),
-        eq(vehicles.tenantId, tenantId),
-        isNull(vehicleDefects.resolvedAt),
-        eq(vehicleDefects.isBlocking, true),
-      ));
+      .where(
+        and(
+          eq(vehicleDefects.vehicleId, trip.vehicleId),
+          eq(vehicles.tenantId, tenantId),
+          isNull(vehicleDefects.resolvedAt),
+          eq(vehicleDefects.isBlocking, true),
+        ),
+      );
     const noBlockingDefects = Number(blockingDefect?.count || 0) === 0;
     gates.push({
       key: 'vehicle_no_blocking_defects',
@@ -280,33 +381,13 @@ export async function GET(
       required: true,
     });
 
-    const [departureInspection] = await db
-      .select({ id: vehicleInspections.id, overallPass: vehicleInspections.overallPass, status: vehicleInspections.status })
-      .from(vehicleInspections)
-      .where(and(
-        eq(vehicleInspections.tenantId, tenantId),
-        eq(vehicleInspections.tripId, id),
-        eq(vehicleInspections.vehicleId, trip.vehicleId),
-        eq(vehicleInspections.type, 'departure'),
-      ))
-      .orderBy(desc(vehicleInspections.createdAt))
-      .limit(1);
-    const inspectionDone = departureInspection?.status === 'completed' || departureInspection?.status === 'failed';
-    const inspectionPassed = departureInspection?.status === 'completed' && departureInspection.overallPass === true;
-    gates.push({
-      key: 'departure_inspection',
-      label: 'Current vehicle pre-departure inspection completed',
-      status: inspectionPassed ? 'pass' : inspectionDone ? 'blocking' : 'pending',
-      detail: !departureInspection
-        ? 'The currently allocated vehicle has not been inspected for this trip.'
-        : inspectionPassed
-          ? 'The currently allocated vehicle passed its pre-departure inspection.'
-          : 'The current vehicle inspection did not pass. A replacement vehicle requires its own inspection.',
-      required: true,
-    });
-
     const [authority] = await db
-      .select({ id: tripAuthorities.id, status: tripAuthorities.status, validFrom: tripAuthorities.validFrom, validUntil: tripAuthorities.validUntil })
+      .select({
+        id: tripAuthorities.id,
+        status: tripAuthorities.status,
+        validFrom: tripAuthorities.validFrom,
+        validUntil: tripAuthorities.validUntil,
+      })
       .from(tripAuthorities)
       .where(and(eq(tripAuthorities.tripId, id), eq(tripAuthorities.tenantId, tenantId)))
       .limit(1);
@@ -320,49 +401,101 @@ export async function GET(
       required: true,
     });
 
+    let driverAccepted = false;
     if (authority) {
-      const acceptedStatuses = new Set(['driver_accepted', 'awaiting_pre_trip_inspection', 'ready_for_departure', 'in_progress']);
+      if (driverKind === 'external') {
+        driverAccepted =
+          externalDriver?.assignmentState === 'accepted' && Boolean(externalDriver.acceptedAt);
+      } else if (driverKind === 'internal') {
+        const acceptedStatuses = new Set([
+          'driver_accepted',
+          'awaiting_pre_trip_inspection',
+          'ready_for_departure',
+          'in_progress',
+        ]);
+        driverAccepted = acceptedStatuses.has(authority.status);
+      }
+
       gates.push({
         key: 'driver_acknowledged',
-        label: 'Driver has accepted trip',
-        status: acceptedStatuses.has(authority.status) ? 'pass' : 'pending',
-        detail: acceptedStatuses.has(authority.status)
-          ? 'Driver has accepted the Trip Authority.'
-          : `Trip Authority status: ${authority.status.replace(/_/g, ' ')}.`,
+        label: driverKind === 'external' ? 'External driver acceptance recorded' : 'Driver has accepted trip',
+        status: driverAccepted ? 'pass' : 'pending',
+        detail: driverAccepted
+          ? driverKind === 'external'
+            ? 'Transport Administration has recorded the external driver acceptance.'
+            : 'Driver has accepted the Trip Authority.'
+          : driverKind === 'external'
+            ? `External driver assignment is ${externalDriver?.assignmentState || 'not available'}.`
+            : `Trip Authority status: ${authority.status.replace(/_/g, ' ')}.`,
         required: true,
       });
 
       const now = new Date();
-      const withinValidity = (!authority.validFrom || now >= authority.validFrom) &&
+      const withinValidity =
+        (!authority.validFrom || now >= authority.validFrom) &&
         (!authority.validUntil || now <= authority.validUntil);
       gates.push({
         key: 'authority_validity',
         label: 'Trip Authority is within its validity period',
         status: withinValidity ? 'pass' : 'blocking',
-        detail: withinValidity ? 'Trip Authority is currently valid.' : 'Trip Authority is outside its approved validity period.',
+        detail: withinValidity
+          ? 'Trip Authority is currently valid.'
+          : 'Trip Authority is outside its approved validity period.',
         required: true,
       });
     }
 
-    const [vehicle] = await db
-      .select({ status: vehicles.status, licenceExpiryDate: vehicles.licenceExpiryDate })
-      .from(vehicles)
-      .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, tenantId)))
+    const [departureInspection] = await db
+      .select({
+        id: vehicleInspections.id,
+        overallPass: vehicleInspections.overallPass,
+        status: vehicleInspections.status,
+      })
+      .from(vehicleInspections)
+      .where(
+        and(
+          eq(vehicleInspections.tenantId, tenantId),
+          eq(vehicleInspections.tripId, id),
+          eq(vehicleInspections.vehicleId, trip.vehicleId),
+          eq(vehicleInspections.type, 'departure'),
+        ),
+      )
+      .orderBy(desc(vehicleInspections.createdAt))
       .limit(1);
-    const licenceDiscValid = !vehicle?.licenceExpiryDate ||
-      new Date(`${vehicle.licenceExpiryDate}T23:59:59.999Z`) >= trip.allocationEndAt;
-    const usableStatus = !!vehicle && !['maintenance', 'out_of_service', 'written_off', 'decommissioned', 'expired'].includes(vehicle.status);
+    const inspectionDone =
+      departureInspection?.status === 'completed' || departureInspection?.status === 'failed';
+    const inspectionPassed =
+      departureInspection?.status === 'completed' && departureInspection.overallPass === true;
+    gates.push({
+      key: 'departure_inspection',
+      label: 'Current vehicle pre-departure inspection completed',
+      status: inspectionPassed ? 'pass' : inspectionDone ? 'blocking' : 'pending',
+      detail: !departureInspection
+        ? 'The currently allocated vehicle has not been inspected for this trip.'
+        : inspectionPassed
+          ? 'The currently allocated vehicle passed its pre-departure inspection.'
+          : 'The current vehicle inspection did not pass. A replacement vehicle requires its own inspection.',
+      required: true,
+    });
+
+    const licenceDiscValid =
+      !trip.vehicleLicenceExpiryDate ||
+      !trip.allocationEndAt ||
+      new Date(`${trip.vehicleLicenceExpiryDate}T23:59:59.999Z`) >= trip.allocationEndAt;
+    const usableStatus =
+      !!trip.vehicleStatus &&
+      !['maintenance', 'out_of_service', 'written_off', 'decommissioned', 'expired'].includes(
+        trip.vehicleStatus,
+      );
     gates.push({
       key: 'vehicle_documents',
       label: 'Vehicle documents valid for trip dates',
       status: usableStatus && licenceDiscValid ? 'pass' : 'blocking',
-      detail: !vehicle
-        ? 'Vehicle record is missing.'
-        : !licenceDiscValid
-          ? `Vehicle licence expires before the trip ends (${vehicle.licenceExpiryDate}).`
-          : usableStatus
-            ? 'Vehicle status and licence expiry permit release.'
-            : `Vehicle status is "${vehicle.status}".`,
+      detail: !licenceDiscValid
+        ? `Vehicle licence expires before the trip ends (${trip.vehicleLicenceExpiryDate}).`
+        : usableStatus
+          ? 'Vehicle status and licence expiry permit release.'
+          : `Vehicle status is "${trip.vehicleStatus || 'unknown'}".`,
       required: true,
     });
 
@@ -383,6 +516,11 @@ export async function GET(
     const overallReady = blockingCount === 0 && pendingRequired === 0;
 
     return NextResponse.json({
+      driver: {
+        kind: driverKind,
+        accepted: driverAccepted,
+        assignmentState: driverKind === 'external' ? externalDriver?.assignmentState ?? null : null,
+      },
       gates,
       summary: {
         total: gates.length,
