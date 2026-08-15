@@ -224,7 +224,7 @@ export const TripCompletionDocument: React.FC<{ data: TripCompletionData }> = ({
                   },
                   { label: 'Transactions', value: String(data.fuelSummary.transactionCount) },
                   {
-                    label: 'Pending reimbursements',
+                    label: 'Outstanding reimbursements',
                     value: String(data.fuelSummary.pendingReimbursements),
                   },
                 ]}
