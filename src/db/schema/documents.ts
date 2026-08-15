@@ -48,6 +48,27 @@ export const generatedDocuments = pgTable(
   (table) => [
     uniqueIndex('uq_generated_documents_verification_slug').on(table.verificationSlug),
     uniqueIndex('uq_generated_documents_verification_code').on(table.verificationCode),
+    // Document versions are scoped by tenant + source entity + document family.
+    // This closes the read-then-increment race at the database boundary even if
+    // two application requests attempt to generate the same next version.
+    uniqueIndex('uq_generated_documents_entity_version').on(
+      table.tenantId,
+      table.entityType,
+      table.entityId,
+      table.documentType,
+      table.documentVersion,
+    ),
+    // There may be many historical/superseded versions but exactly one current
+    // issued version for an entity/document family.
+    uniqueIndex('uq_generated_documents_current_issued')
+      .on(table.tenantId, table.entityType, table.entityId, table.documentType)
+      .where(sql`${table.status} = 'issued'`),
+    index('idx_generated_documents_tenant_entity').on(
+      table.tenantId,
+      table.entityType,
+      table.entityId,
+      table.documentType,
+    ),
   ],
 );
 
