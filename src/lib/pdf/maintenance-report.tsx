@@ -27,8 +27,8 @@ import {
 export interface MaintenanceReportData {
   vehicleId: string;
   vehicle?: string;
-  totalEvents: number;
-  totalCost: number;
+  totalEvents?: number | null;
+  totalCost?: number | null;
   nextServiceDate?: string | null;
   nextServiceOdometer?: number | null;
 
@@ -120,8 +120,17 @@ export const MaintenanceReportDocument: React.FC<{ data: MaintenanceReportData }
           <DocumentSection title="Service schedule">
             <DocumentFieldGrid
               fields={[
-                { label: 'Total maintenance events', value: String(data.totalEvents) },
-                { label: 'Total cost', value: formatMoney(data.totalCost, branding?.locale) },
+                {
+                  label: 'Total maintenance events',
+                  value: data.totalEvents == null ? 'Not recorded' : String(data.totalEvents),
+                },
+                {
+                  label: 'Total cost',
+                  value:
+                    data.totalCost == null
+                      ? 'Not recorded'
+                      : formatMoney(data.totalCost, branding?.locale),
+                },
                 {
                   label: 'Next service date',
                   value: data.nextServiceDate
