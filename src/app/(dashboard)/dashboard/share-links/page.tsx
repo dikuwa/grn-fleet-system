@@ -26,10 +26,10 @@ import {
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
+import { useToast } from '@/lib/use-toast';
 
 interface ShareLinkRow {
   id: string;
-  tokenHash: string;
   shortSlug: string | null;
   expiresAt: string;
   isExpired: boolean;
@@ -49,6 +49,7 @@ export default function ShareLinksDashboardPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const { toast } = useToast();
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['share-links', statusFilter, searchQuery, page],
@@ -72,13 +73,24 @@ export default function ShareLinksDashboardPage() {
   const links: ShareLinkRow[] = data?.links ?? [];
   const total: number = data?.total ?? 0;
   const totalPages: number = data?.totalPages ?? 1;
+  const canRevoke = data?.capabilities?.canRevoke === true;
 
   const handleRevoke = async (linkId: string) => {
     try {
-      const res = await fetch(`/api/share-links?linkId=${linkId}`, { method: 'DELETE' });
-      if (res.ok) refetch();
-    } catch {
-      /* silent */
+      const res = await fetch(`/api/share-links?linkId=${encodeURIComponent(linkId)}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Could not revoke the secure link');
+      toast({ title: 'Share link revoked', variant: 'success' });
+      await refetch();
+    } catch (revokeError) {
+      toast({
+        title: 'Could not revoke share link',
+        description:
+          revokeError instanceof Error ? revokeError.message : 'Please refresh and try again.',
+        variant: 'error',
+      });
     }
   };
 
@@ -91,7 +103,16 @@ export default function ShareLinksDashboardPage() {
   const copyLink = async (link: ShareLinkRow) => {
     const url = shareUrlFor(link);
     if (!url) return;
-    await navigator.clipboard.writeText(url);
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({ title: 'Secure link copied', variant: 'success' });
+    } catch {
+      toast({
+        title: 'Could not copy link',
+        description: 'Copy the secure verification URL from the document page instead.',
+        variant: 'pending',
+      });
+    }
   };
 
   const openWhatsApp = (link: ShareLinkRow) => {
@@ -112,13 +133,10 @@ export default function ShareLinksDashboardPage() {
         description={`${total} share link${total !== 1 ? 's' : ''} tracked`}
       />
 
-      {/* Summary Stats */}
       <div className="grid gap-4 sm:grid-cols-4">
         <Card>
           <CardContent className="pt-4 text-center">
-            <p className="text-status-success-text text-2xl font-[650] tabular-nums">
-              {summary.active}
-            </p>
+            <p className="text-status-success-text text-2xl font-[650] tabular-nums">{summary.active}</p>
             <p className="text-ink-500 flex items-center justify-center gap-1 text-xs">
               <CheckCircle2 className="h-3 w-3" /> Active
             </p>
@@ -126,9 +144,7 @@ export default function ShareLinksDashboardPage() {
         </Card>
         <Card>
           <CardContent className="pt-4 text-center">
-            <p className="text-status-warning-text text-2xl font-[650] tabular-nums">
-              {summary.expired}
-            </p>
+            <p className="text-status-warning-text text-2xl font-[650] tabular-nums">{summary.expired}</p>
             <p className="text-ink-500 flex items-center justify-center gap-1 text-xs">
               <Clock className="h-3 w-3" /> Expired
             </p>
@@ -136,9 +152,7 @@ export default function ShareLinksDashboardPage() {
         </Card>
         <Card>
           <CardContent className="pt-4 text-center">
-            <p className="text-status-error-text text-2xl font-[650] tabular-nums">
-              {summary.revoked}
-            </p>
+            <p className="text-status-error-text text-2xl font-[650] tabular-nums">{summary.revoked}</p>
             <p className="text-ink-500 flex items-center justify-center gap-1 text-xs">
               <XCircle className="h-3 w-3" /> Revoked
             </p>
@@ -154,7 +168,6 @@ export default function ShareLinksDashboardPage() {
         </Card>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative max-w-sm flex-1">
           <Search className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
@@ -199,7 +212,6 @@ export default function ShareLinksDashboardPage() {
         />
       </div>
 
-      {/* Error */}
       {error && (
         <Card>
           <CardContent className="pt-4">
@@ -213,14 +225,10 @@ export default function ShareLinksDashboardPage() {
         </Card>
       )}
 
-      {/* Loading */}
       {isLoading && (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div
-              key={i}
-              className="border-border flex animate-pulse items-center gap-3 rounded-[8px] border p-4"
-            >
+            <div key={i} className="border-border flex animate-pulse items-center gap-3 rounded-[8px] border p-4">
               <div className="bg-muted h-10 w-10 shrink-0 rounded-[8px]" />
               <div className="flex-1 space-y-2">
                 <div className="bg-muted h-4 w-48 rounded" />
@@ -231,7 +239,6 @@ export default function ShareLinksDashboardPage() {
         </div>
       )}
 
-      {/* Empty */}
       {!isLoading && !error && links.length === 0 && (
         <EmptyState
           icon={<Link2 className="h-6 w-6" />}
@@ -244,7 +251,6 @@ export default function ShareLinksDashboardPage() {
         />
       )}
 
-      {/* Share Link List */}
       {!isLoading && links.length > 0 && (
         <div className="space-y-3">
           {links.map((link) => {
@@ -255,41 +261,30 @@ export default function ShareLinksDashboardPage() {
               .replace(/\b\w/g, (c: string) => c.toUpperCase());
 
             return (
-              <div
-                key={link.id}
-                className="border-border bg-surface hover:border-brand-100 rounded-[10px] border p-4 transition-all hover:shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-4">
+              <div key={link.id} className="border-border bg-surface hover:border-brand-100 rounded-[10px] border p-4 transition-all hover:shadow-sm">
+                <div className="flex flex-col items-stretch justify-between gap-4 sm:flex-row sm:items-start">
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <div
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] ${
-                        isActive
-                          ? 'bg-status-success-bg text-status-success-text'
-                          : link.isRevoked
-                            ? 'bg-status-error-bg text-status-error-text'
-                            : 'bg-status-warning-bg text-status-warning-text'
-                      }`}
-                    >
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] ${
+                      isActive
+                        ? 'bg-status-success-bg text-status-success-text'
+                        : link.isRevoked
+                          ? 'bg-status-error-bg text-status-error-text'
+                          : 'bg-status-warning-bg text-status-warning-text'
+                    }`}>
                       <Link2 className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-ink-950 text-sm font-[650]">{docLabel}</span>
-                        <Badge
-                          variant={link.isRevoked ? 'error' : isExpired ? 'pending' : 'success'}
-                          size="sm"
-                        >
+                        <Badge variant={link.isRevoked ? 'error' : isExpired ? 'pending' : 'success'} size="sm">
                           {link.isRevoked ? 'Revoked' : isExpired ? 'Expired' : 'Active'}
                         </Badge>
-                        <Badge variant="info" size="sm">
-                          v{link.documentVersion}
-                        </Badge>
+                        <Badge variant="info" size="sm">v{link.documentVersion}</Badge>
                       </div>
                       <div className="text-ink-500 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                         <span className="tabular-nums">
                           <Eye className="mr-1 inline h-3 w-3" />
-                          {link.currentViews}
-                          {link.maxViews ? ` / ${link.maxViews}` : ''} views
+                          {link.currentViews}{link.maxViews ? ` / ${link.maxViews}` : ''} views
                         </span>
                         <span>
                           <CalendarClock className="mr-1 inline h-3 w-3" />
@@ -306,28 +301,18 @@ export default function ShareLinksDashboardPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
                     {isActive && shareUrlFor(link) && (
                       <>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => openWhatsApp(link)}
-                          title="Share via WhatsApp"
-                        >
+                        <Button variant="secondary" size="sm" onClick={() => openWhatsApp(link)} title="Share via WhatsApp">
                           <MessageCircle className="h-3 w-3" /> WhatsApp
                         </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => copyLink(link)}
-                          title="Copy secure link"
-                        >
+                        <Button variant="secondary" size="sm" onClick={() => copyLink(link)} title="Copy secure link">
                           <Copy className="h-3 w-3" /> Copy
                         </Button>
                       </>
                     )}
-                    {isActive && (
+                    {isActive && canRevoke && (
                       <Button variant="destructive" size="sm" onClick={() => handleRevoke(link.id)}>
                         <Trash2 className="h-3 w-3" /> Revoke
                       </Button>
@@ -340,27 +325,14 @@ export default function ShareLinksDashboardPage() {
         </div>
       )}
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div className="border-border flex items-center justify-between border-t pt-4">
-          <p className="text-ink-500 text-xs">
-            Page {page} of {totalPages} ({total} total)
-          </p>
+          <p className="text-ink-500 text-xs">Page {page} of {totalPages} ({total} total)</p>
           <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
+            <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
               <ChevronLeft className="h-3 w-3" /> Previous
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
+            <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
               Next <ChevronRight className="h-3 w-3" />
             </Button>
           </div>
