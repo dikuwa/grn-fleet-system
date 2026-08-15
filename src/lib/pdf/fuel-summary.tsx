@@ -137,7 +137,7 @@ export const FuelSummaryDocument: React.FC<{ data: FuelSummaryData }> = ({ data 
                   value: formatOptionalNumber(data.transactionCount),
                 },
                 {
-                  label: 'Pending reimbursements',
+                  label: 'Outstanding reimbursements',
                   value: formatOptionalNumber(data.pendingReimbursements),
                 },
                 {
