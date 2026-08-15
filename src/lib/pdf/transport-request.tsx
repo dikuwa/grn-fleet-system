@@ -152,6 +152,7 @@ export const TransportRequestDocument: React.FC<{
   const totalRouteKm =
     data.routes?.reduce((sum, r) => sum + (r.estimatedKilometres ?? 0), 0) ??
     data.totalAuthorisedKilometres;
+  const documentTimestamp = data.submittedAt || data.issuedAt;
 
   return (
     <Document title={`Transport Request ${data.reference}`}>
@@ -163,10 +164,7 @@ export const TransportRequestDocument: React.FC<{
           reference={data.reference}
           version={data.documentVersion || 1}
           status={formatDocumentStatus(status)}
-          issueDate={formatHumanDate(
-            data.submittedAt || data.issuedAt || new Date().toISOString(),
-            branding?.locale,
-          )}
+          issueDate={documentTimestamp ? formatHumanDate(documentTimestamp, branding?.locale) : undefined}
           qrCode={data.qrCodeDataUrl}
         />
 
@@ -467,6 +465,7 @@ export const TransportRequestDocument: React.FC<{
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
           documentHash={data.documentHash}
+          generatedAt={documentTimestamp}
         />
       </DocumentPage>
     </Document>
