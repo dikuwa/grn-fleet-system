@@ -1,4 +1,4 @@
-import { and, eq, inArray, or } from 'drizzle-orm';
+import { and, eq, inArray, ne, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import type { AuthSession } from '@/lib/auth-helpers';
 import { getSessionWorkspace } from '@/lib/auth-helpers';
@@ -10,6 +10,7 @@ import {
 } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import {
+  tripAuthorities,
   tripIncidents,
   trips,
   vehicleAllocations,
@@ -51,6 +52,7 @@ async function canReadRequest(session: AuthSession, requestId: string): Promise<
         eq(transportRequests.tenantId, session.tenantId),
         eq(employees.tenantId, session.tenantId),
         eq(employees.userId, session.user.id),
+        ne(requestPassengers.status, 'removed'),
       ),
     )
     .limit(1);
@@ -169,6 +171,20 @@ async function resolveRequestIdForDocument(
         )
         .limit(1);
       return incident?.requestId ?? null;
+    }
+
+    case 'trip_authority': {
+      const [authority] = await db
+        .select({ requestId: tripAuthorities.requestId })
+        .from(tripAuthorities)
+        .where(
+          and(
+            eq(tripAuthorities.id, document.entityId),
+            eq(tripAuthorities.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      return authority?.requestId ?? null;
     }
 
     default:
