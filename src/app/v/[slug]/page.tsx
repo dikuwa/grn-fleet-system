@@ -1,4 +1,7 @@
+import { and, desc, eq } from 'drizzle-orm';
 import { AlertTriangle, CheckCircle2, CircleSlash2, ShieldCheck } from 'lucide-react';
+import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { TenantLogo } from '@/components/documents/tenant-logo';
 import { resolvePublicVerification } from '@/lib/document-verification';
@@ -104,6 +107,15 @@ function frozenVerificationBranding(
   } as ResolvedTenantBranding;
 }
 
+function frozenIssueTimestamp(snapshot: Record<string, unknown>, legacyCreatedAt: Date) {
+  const identity = snapshot.documentIdentity;
+  if (identity && typeof identity === 'object' && !Array.isArray(identity)) {
+    const snapshottedAt = (identity as Record<string, unknown>).snapshottedAt;
+    if (typeof snapshottedAt === 'string' && snapshottedAt.trim()) return snapshottedAt;
+  }
+  return legacyCreatedAt;
+}
+
 export default async function ShortVerificationPage({
   params,
 }: {
@@ -130,6 +142,32 @@ export default async function ShortVerificationPage({
   const branding = frozenVerificationBranding(snapshot, liveBranding);
   const status = getVerificationState(document.status);
   const permanent = result.kind === 'permanent';
+  const frozenIssueAt = frozenIssueTimestamp(snapshot, document.createdAt);
+
+  const currentVersion =
+    document.status === 'superseded'
+      ? (
+          await getDb()
+            .select({
+              id: generatedDocuments.id,
+              documentVersion: generatedDocuments.documentVersion,
+              verificationSlug: generatedDocuments.verificationSlug,
+            })
+            .from(generatedDocuments)
+            .where(
+              and(
+                eq(generatedDocuments.tenantId, document.tenantId),
+                eq(generatedDocuments.entityType, document.entityType),
+                eq(generatedDocuments.entityId, document.entityId),
+                eq(generatedDocuments.documentType, document.documentType),
+                eq(generatedDocuments.status, 'issued'),
+              ),
+            )
+            .orderBy(desc(generatedDocuments.documentVersion))
+            .limit(1)
+        )[0]
+      : null;
+
   const shareSummary = permanent
     ? null
     : buildPublicDocumentSummary({
@@ -147,7 +185,7 @@ export default async function ShortVerificationPage({
     ['Reference', reference],
     ['Status', formatDocumentStatus(document.status)],
     ['Version', `v${document.documentVersion}`],
-    ['Issue date', formatHumanDateTime(document.createdAt, branding?.locale)],
+    ['Issue date', formatHumanDateTime(frozenIssueAt, branding?.locale)],
     ['Issuing authority', branding?.organisationName || 'Government Fleet'],
   ];
 
@@ -208,6 +246,17 @@ export default async function ShortVerificationPage({
             </p>
             <h1 className="text-ink-950 text-xl font-bold">{status.label}</h1>
             <p className="text-ink-700 mt-1 text-sm">{status.message}</p>
+            {currentVersion?.verificationSlug && (
+              <p className="text-ink-700 mt-2 text-sm">
+                Current official version:{' '}
+                <a
+                  href={`/v/${currentVersion.verificationSlug}`}
+                  className="focus-ring text-brand-800 font-semibold underline underline-offset-2"
+                >
+                  verify v{currentVersion.documentVersion}
+                </a>
+              </p>
+            )}
           </div>
         </div>
       </div>
