@@ -8,6 +8,7 @@ import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
+import { buildTransportRequestRenderSnapshot } from '@/lib/pdf/verified-transport-request';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
 export async function POST(
@@ -19,9 +20,6 @@ export async function POST(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // Document lifecycle is an operational mutation, not a generic file upload.
-    // Drivers and personal users may upload evidence/files but only a workspace
-    // with update rights on the canonical Documents route may issue/supersede.
     const actionCheck = await requireDashboardAction(
       session,
       '/dashboard/documents',
@@ -63,9 +61,6 @@ export async function POST(
       );
     }
 
-    // Never allow an older draft to be promoted after a newer version exists.
-    // Doing so would create multiple plausible "current" official records and
-    // can resurrect stale snapshot data after a regeneration.
     if (action === 'issue') {
       const [latest] = await db
         .select({ id: generatedDocuments.id, documentVersion: generatedDocuments.documentVersion })
@@ -91,11 +86,9 @@ export async function POST(
       }
     }
 
-    // Freeze the complete visual payload at the actual issuance boundary.
-    // Trip Authority generated-document shells are created at allocation time,
-    // before the canonical authority may exist, so issuance refuses to proceed
-    // until a complete authority payload can be captured. Inspection reports
-    // similarly store the exact checklist/signatory/branding render payload.
+    // Freeze the exact visual payload at the issuance boundary. Draft previews
+    // may still reflect operational progress, but once issued the PDF is rendered
+    // from snapshotData.renderData rather than mutable tables.
     let snapshotData = (doc.snapshotData || {}) as Record<string, unknown>;
     if (action === 'issue' && !snapshotData.renderData) {
       if (doc.documentType === 'trip_authority') {
@@ -115,6 +108,15 @@ export async function POST(
         if (!renderData) {
           return NextResponse.json(
             { error: 'Inspection Report cannot be issued until its completed inspection data is available.' },
+            { status: 409 },
+          );
+        }
+        snapshotData = { ...snapshotData, renderData };
+      } else if (doc.documentType === 'transport_request') {
+        const renderData = await buildTransportRequestRenderSnapshot(doc.id, { issuing: true });
+        if (!renderData) {
+          return NextResponse.json(
+            { error: 'Transport Request could not be prepared for official issuance.' },
             { status: 409 },
           );
         }
@@ -140,9 +142,6 @@ export async function POST(
       const mutations = [];
 
       if (action === 'issue') {
-        // Enforce one current issued version at the write boundary. This also
-        // self-heals any historical duplicate-issued state when the next version
-        // is formally issued.
         mutations.push(
           tx.update(generatedDocuments)
             .set({ status: 'superseded', updatedAt: now })
