@@ -477,7 +477,7 @@ export default async function DashboardPage() {
                 <p className="text-ink-600 mt-1 text-sm font-medium">{metric.label}</p>
                 {metric.href && (
                   <Link
-                    className="text-brand-700 focus-ring mt-4 inline-flex items-center gap-1 rounded text-xs font-semibold hover:underline"
+                    className="text-brand-700 focus-ring mt-4 inline-flex cursor-pointer items-center gap-1 rounded text-xs font-semibold hover:underline"
                     href={metric.href}
                   >
                     Open <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" aria-hidden="true" />
@@ -491,19 +491,24 @@ export default async function DashboardPage() {
 
       {links.length > 0 && (
         <section className="border-border border-t pt-5" aria-labelledby="workspace-shortcuts-heading">
-          <div className="mb-3">
-            <h2 id="workspace-shortcuts-heading" className="text-ink-950 text-sm font-semibold">Workspace shortcuts</h2>
-            <p className="text-ink-500 mt-1 text-xs">Frequently used routes available to the active role.</p>
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 id="workspace-shortcuts-heading" className="text-ink-950 text-sm font-semibold">Workspace shortcuts</h2>
+              <p className="text-ink-500 mt-1 text-xs">Frequently used routes available to the active role.</p>
+            </div>
+            <p className="text-ink-400 hidden text-[11px] sm:block">Open a workspace without leaving your current responsibility scope.</p>
           </div>
-          <div className="grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
-            {links.map(([href, label]) => (
+          <div className="border-border bg-surface grid overflow-hidden rounded-[12px] border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
+            {links.map(([href, label], index) => (
               <Link
                 key={href}
                 href={href}
-                className="border-border text-ink-700 hover:text-brand-700 focus-ring group flex min-h-12 items-center justify-between gap-3 border-b py-3 text-sm transition-colors motion-reduce:transition-none"
+                className={`focus-ring group flex min-h-14 cursor-pointer items-center justify-between gap-3 px-4 py-3 text-sm transition-[background-color,color,box-shadow] hover:bg-muted/60 hover:text-brand-700 motion-reduce:transition-none ${index % 3 !== 2 ? 'lg:border-r lg:border-border' : ''} ${index < links.length - 3 ? 'lg:border-b lg:border-border' : ''} ${index % 2 === 0 ? 'sm:border-r sm:border-border lg:border-r' : ''} ${index < links.length - 2 ? 'sm:border-b sm:border-border lg:border-b' : ''}`}
               >
-                <span>{label}</span>
-                <ArrowRight className="text-ink-400 group-hover:text-brand-700 h-4 w-4 shrink-0 transition-colors motion-reduce:transition-none" aria-hidden="true" />
+                <span className="text-ink-700 group-hover:text-brand-700 min-w-0 truncate font-medium transition-colors motion-reduce:transition-none">{label}</span>
+                <span className="border-border bg-canvas text-ink-400 group-hover:border-brand-200 group-hover:bg-brand-50 group-hover:text-brand-700 dark:group-hover:border-brand-900/70 dark:group-hover:bg-brand-950/30 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors motion-reduce:transition-none">
+                  <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" aria-hidden="true" />
+                </span>
               </Link>
             ))}
           </div>
