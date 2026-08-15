@@ -52,6 +52,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const [record] = await db
       .select({
         assignmentId: externalDriverAssignments.id,
+        externalPartyId: externalDriverAssignments.externalPartyId,
         assignmentState: externalDriverAssignments.state,
         assignmentIssueId: externalDriverAssignments.issueId,
         assignmentAcceptedAt: externalDriverAssignments.acceptedAt,
@@ -64,8 +65,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
         requestId: trips.requestId,
         requestReference: transportRequests.reference,
         requestStatus: transportRequests.status,
+        requestExternalDriverPartyId: transportRequests.assignedDriverExternalPartyId,
         allocationId: trips.allocationId,
         allocationState: vehicleAllocations.state,
+        allocationVersion: vehicleAllocations.version,
         vehicleId: trips.vehicleId,
         vehicleStatus: vehicles.status,
         vehicleOdometer: vehicles.currentOdometer,
@@ -99,6 +102,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (!record) return NextResponse.json({ error: 'External-driver trip not found' }, { status: 404 });
     if (record.assignmentState !== 'accepted' || !record.assignmentAcceptedAt) {
       return NextResponse.json({ error: 'External driver acceptance must be recorded before vehicle issue' }, { status: 409 });
+    }
+    if (record.requestExternalDriverPartyId !== record.externalPartyId) {
+      return NextResponse.json({ error: 'The accepted external driver is no longer the request’s assigned driver' }, { status: 409 });
     }
     if (record.assignmentIssueId || record.tripIssuedAt) {
       return NextResponse.json({ error: 'Vehicle has already been physically issued for this trip' }, { status: 409 });
@@ -170,7 +176,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           eq(vehicleInspections.type, 'departure'),
         ),
       )
-      .orderBy(desc(vehicleInspections.createdAt))
+      .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
       .limit(1);
     if (!departureInspection || departureInspection.status !== 'completed' || departureInspection.overallPass !== true) {
       return NextResponse.json(
@@ -212,8 +218,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const now = new Date();
     const auditSequence = Date.now();
 
+    // Match the internal issue boundary: replacement, cancellation and any
+    // other allocation mutation must win or lose against this exact version.
     await db.execute(sql`
-      WITH trip_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations
+        SET version = version + 1, updated_at = ${now}
+        WHERE id = ${record.allocationId}::uuid
+          AND state = 'confirmed'
+          AND version = ${record.allocationVersion}
+          AND vehicle_id = ${record.vehicleId}::uuid
+          AND driver_employee_id IS NULL
+        RETURNING id
+      ),
+      trip_claim AS (
         UPDATE trips
         SET issued_at = ${now}, updated_at = ${now}
         WHERE id = ${id}::uuid
@@ -222,6 +240,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           AND issued_at IS NULL
           AND allocation_id = ${record.allocationId}::uuid
           AND vehicle_id = ${record.vehicleId}::uuid
+          AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
             SELECT 1
             FROM external_driver_assignments eda
@@ -230,6 +249,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
             WHERE eda.id = ${record.assignmentId}::uuid
               AND eda.tenant_id = ${tenantId}::uuid
               AND eda.trip_id = trips.id
+              AND eda.allocation_id = trips.allocation_id
+              AND eda.external_party_id = ${record.externalPartyId}::uuid
               AND eda.state = 'accepted'
               AND eda.issue_id IS NULL
               AND eda.accepted_at IS NOT NULL
@@ -243,17 +264,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
               )
           )
           AND EXISTS (
-            SELECT 1 FROM vehicle_allocations va
-            WHERE va.id = trips.allocation_id
-              AND va.state = 'confirmed'
-              AND va.driver_employee_id IS NULL
-          )
-          AND EXISTS (
             SELECT 1 FROM transport_requests tr
             WHERE tr.id = trips.request_id
               AND tr.tenant_id = ${tenantId}::uuid
               AND tr.status = 'authorised'
-              AND tr.assigned_driver_external_party_id IS NOT NULL
+              AND tr.assigned_driver_external_party_id = ${record.externalPartyId}::uuid
           )
           AND EXISTS (
             SELECT 1 FROM trip_authorities ta
@@ -304,7 +319,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
                 AND latest.trip_id = trips.id
                 AND latest.vehicle_id = trips.vehicle_id
                 AND latest.type = 'departure'
-              ORDER BY latest.created_at DESC
+              ORDER BY latest.created_at DESC, latest.id DESC
               LIMIT 1
             )
               AND vi.status = 'completed'
@@ -339,6 +354,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         SET issue_id = ${issueId}::uuid, updated_at = ${now}
         WHERE id = ${record.assignmentId}::uuid
           AND tenant_id = ${tenantId}::uuid
+          AND external_party_id = ${record.externalPartyId}::uuid
           AND state = 'accepted'
           AND issue_id IS NULL
           AND EXISTS (SELECT 1 FROM issue_insert)
@@ -349,6 +365,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         SET status = 'vehicle_issued', updated_at = ${now}
         WHERE id = ${record.requestId}::uuid
           AND tenant_id = ${tenantId}::uuid
+          AND assigned_driver_external_party_id = ${record.externalPartyId}::uuid
           AND status = 'authorised'
           AND EXISTS (SELECT 1 FROM assignment_claim)
         RETURNING id
@@ -369,6 +386,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           ${`Vehicle issued to accepted external driver for ${record.requestReference}`},
           jsonb_build_object(
             'externalDriverAssignmentId', ${record.assignmentId}::text,
+            'externalDriverPartyId', ${record.externalPartyId}::text,
             'issueId', ${issueId}::text,
             'issueOdometer', ${issueOdometer}::integer,
             'keysIssued', true,
@@ -379,13 +397,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM trip_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM issue_insert) = 1
          AND (SELECT count(*) FROM assignment_claim) = 1
          AND (SELECT count(*) FROM request_claim) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
         THEN '1'
-        ELSE 'atomic_external_issue_failed_' || (SELECT count(*) FROM trip_claim)::text
+        ELSE 'atomic_external_issue_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
+          || (SELECT count(*) FROM trip_claim)::text
+          || (SELECT count(*) FROM issue_insert)::text
+          || (SELECT count(*) FROM assignment_claim)::text
+          || (SELECT count(*) FROM request_claim)::text
       END AS integer) AS committed
     `);
 
@@ -401,7 +425,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     console.error('[trips/external-issue] POST failed:', error);
     return NextResponse.json(
-      { error: 'Trip state changed concurrently or the external-driver vehicle issue could not be recorded. Refresh and try again.' },
+      { error: 'Trip, allocation, driver, or vehicle state changed while physical issue was being recorded. Refresh and review the latest state.' },
       { status: 409 },
     );
   }
