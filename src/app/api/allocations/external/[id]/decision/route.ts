@@ -47,6 +47,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       .select({
         assignment: externalDriverAssignments,
         vehicleId: vehicleAllocations.vehicleId,
+        allocationVersion: vehicleAllocations.version,
         allocationStartAt: vehicleAllocations.startAt,
         allocationEndAt: vehicleAllocations.endAt,
         allocationState: vehicleAllocations.state,
@@ -108,8 +109,37 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         return NextResponse.json({ error: 'A cancellation reason is required' }, { status: 422 });
       }
 
+      // Claim the exact allocation version first. A concurrent vehicle
+      // replacement must therefore win or lose before this cancellation can
+      // change driver evidence or release the request.
       await db.execute(sql`
-        WITH assignment_claim AS (
+        WITH allocation_claim AS (
+          UPDATE vehicle_allocations
+          SET state = 'cancelled',
+              override_reason = ${reason},
+              version = version + 1,
+              updated_at = ${now}
+          WHERE id = ${record.assignment.allocationId}::uuid
+            AND state = ${record.allocationState}
+            AND version = ${record.allocationVersion}
+            AND vehicle_id = ${record.vehicleId}::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM external_driver_assignments eda
+              INNER JOIN trips t ON t.id = eda.trip_id
+              WHERE eda.id = ${id}::uuid
+                AND eda.tenant_id = ${tenantId}::uuid
+                AND eda.allocation_id = vehicle_allocations.id
+                AND eda.state = 'pending_acceptance'
+                AND eda.issue_id IS NULL
+                AND t.tenant_id = ${tenantId}::uuid
+                AND t.status = 'pending'
+                AND t.issued_at IS NULL
+                AND t.vehicle_id = vehicle_allocations.vehicle_id
+            )
+          RETURNING id
+        ),
+        assignment_claim AS (
           UPDATE external_driver_assignments
           SET state = 'cancelled',
               cancelled_at = ${now},
@@ -120,33 +150,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             AND tenant_id = ${tenantId}::uuid
             AND state = 'pending_acceptance'
             AND issue_id IS NULL
-            AND EXISTS (
-              SELECT 1 FROM trips t
-              WHERE t.id = external_driver_assignments.trip_id
-                AND t.tenant_id = ${tenantId}::uuid
-                AND t.status = 'pending'
-                AND t.issued_at IS NULL
-            )
-            AND EXISTS (
-              SELECT 1 FROM vehicle_allocations va
-              WHERE va.id = external_driver_assignments.allocation_id
-                AND va.state IN ('provisional', 'confirmed')
-            )
+            AND EXISTS (SELECT 1 FROM allocation_claim)
           RETURNING request_id, allocation_id, trip_id
-        ),
-        allocation_cancel AS (
-          UPDATE vehicle_allocations
-          SET state = 'cancelled', override_reason = ${reason}, updated_at = ${now}
-          WHERE id = ${record.assignment.allocationId}::uuid
-            AND state IN ('provisional', 'confirmed')
-            AND EXISTS (SELECT 1 FROM assignment_claim)
-          RETURNING id
         ),
         request_driver_reset AS (
           UPDATE external_request_drivers
           SET is_confirmed = false, driver_type = 'nominated'
           WHERE request_id = ${record.assignment.requestId}::uuid
-            AND EXISTS (SELECT 1 FROM allocation_cancel)
+            AND EXISTS (SELECT 1 FROM assignment_claim)
           RETURNING id
         ),
         request_claim AS (
@@ -157,7 +168,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               updated_at = ${now}
           WHERE id = ${record.assignment.requestId}::uuid
             AND tenant_id = ${tenantId}::uuid
-            AND EXISTS (SELECT 1 FROM allocation_cancel)
+            AND assigned_driver_external_party_id = ${record.assignment.externalPartyId}::uuid
+            AND EXISTS (SELECT 1 FROM assignment_claim)
           RETURNING id
         ),
         trip_cancel AS (
@@ -167,6 +179,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             AND tenant_id = ${tenantId}::uuid
             AND status = 'pending'
             AND issued_at IS NULL
+            AND vehicle_id = ${record.vehicleId}::uuid
+            AND allocation_id = ${record.assignment.allocationId}::uuid
             AND EXISTS (SELECT 1 FROM request_claim)
           RETURNING id
         ),
@@ -195,12 +209,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           RETURNING id
         )
         SELECT CAST(CASE
-          WHEN (SELECT count(*) FROM assignment_claim) = 1
-           AND (SELECT count(*) FROM allocation_cancel) = 1
+          WHEN (SELECT count(*) FROM allocation_claim) = 1
+           AND (SELECT count(*) FROM assignment_claim) = 1
            AND (SELECT count(*) FROM request_claim) = 1
            AND (SELECT count(*) FROM trip_cancel) = 1
           THEN '1'
-          ELSE 'atomic_external_driver_cancel_failed_' || (SELECT count(*) FROM assignment_claim)::text
+          ELSE 'atomic_external_driver_cancel_failed_'
+            || (SELECT count(*) FROM allocation_claim)::text
+            || (SELECT count(*) FROM assignment_claim)::text
+            || (SELECT count(*) FROM request_claim)::text
+            || (SELECT count(*) FROM trip_cancel)::text
         END AS integer) AS committed
       `);
 
@@ -216,6 +234,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             state: 'pending_acceptance',
             allocationState: record.allocationState,
             tripStatus: record.tripStatus,
+            vehicleId: record.vehicleId,
           },
           after: {
             state: 'cancelled',
@@ -272,7 +291,31 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     const note = String(body.note || '').trim().slice(0, 1000) || null;
     await db.execute(sql`
-      WITH assignment_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE id = ${record.assignment.allocationId}::uuid
+          AND state = ${record.allocationState}
+          AND version = ${record.allocationVersion}
+          AND vehicle_id = ${record.vehicleId}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM external_driver_assignments eda
+            INNER JOIN trips t ON t.id = eda.trip_id
+            WHERE eda.id = ${id}::uuid
+              AND eda.tenant_id = ${tenantId}::uuid
+              AND eda.allocation_id = vehicle_allocations.id
+              AND eda.state = 'pending_acceptance'
+              AND eda.issue_id IS NULL
+              AND t.tenant_id = ${tenantId}::uuid
+              AND t.status = 'pending'
+              AND t.issued_at IS NULL
+              AND t.vehicle_id = vehicle_allocations.vehicle_id
+          )
+        RETURNING id
+      ),
+      assignment_claim AS (
         UPDATE external_driver_assignments
         SET state = 'accepted',
             acceptance_method = ${acceptanceMethod},
@@ -284,19 +327,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           AND tenant_id = ${tenantId}::uuid
           AND state = 'pending_acceptance'
           AND issue_id IS NULL
-          AND EXISTS (
-            SELECT 1 FROM trips t
-            WHERE t.id = external_driver_assignments.trip_id
-              AND t.tenant_id = ${tenantId}::uuid
-              AND t.status = 'pending'
-              AND t.issued_at IS NULL
-          )
-          AND EXISTS (
-            SELECT 1 FROM vehicle_allocations va
-            WHERE va.id = external_driver_assignments.allocation_id
-              AND va.state IN ('provisional', 'confirmed')
-              AND va.end_at <= (${record.allocationEndAt})
-          )
+          AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
             SELECT 1
             FROM external_parties ep
@@ -328,6 +359,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               'source', 'transport_office_external',
               'externalDriverAssignmentId', ${id}::text,
               'externalPartyId', ${record.assignment.externalPartyId}::text,
+              'acceptedVehicleId', ${record.vehicleId}::text,
+              'allocationVersion', ${record.allocationVersion + 1}::integer,
               'acceptanceMethod', ${acceptanceMethod},
               'acceptanceNote', ${note},
               'acceptedAt', ${now}::text,
@@ -337,6 +370,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         WHERE id = ${record.authorityId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND trip_id = ${record.assignment.tripId}::uuid
+          AND allocation_id = ${record.assignment.allocationId}::uuid
           AND status = 'awaiting_driver_acceptance'
           AND EXISTS (SELECT 1 FROM assignment_claim)
         RETURNING id
@@ -350,16 +384,23 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           AND tenant_id = ${tenantId}::uuid
           AND status = 'pending'
           AND issued_at IS NULL
+          AND vehicle_id = ${record.vehicleId}::uuid
+          AND allocation_id = ${record.assignment.allocationId}::uuid
           AND EXISTS (SELECT 1 FROM authority_claim)
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM assignment_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM assignment_claim) = 1
          AND (SELECT count(*) FROM request_driver_claim) = 1
          AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM trip_ack) = 1
         THEN '1'
-        ELSE 'atomic_external_driver_accept_failed_' || (SELECT count(*) FROM assignment_claim)::text
+        ELSE 'atomic_external_driver_accept_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
+          || (SELECT count(*) FROM assignment_claim)::text
+          || (SELECT count(*) FROM authority_claim)::text
+          || (SELECT count(*) FROM trip_ack)::text
       END AS integer) AS committed
     `);
 
@@ -371,10 +412,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         entityType: 'external_driver_assignment',
         entityId: id,
         summary: `Transport Office recorded ${driverName}'s trip acceptance via ${acceptanceMethod.replace(/_/g, ' ')}`,
-        before: { state: 'pending_acceptance', authorityStatus: record.authorityStatus },
+        before: {
+          state: 'pending_acceptance',
+          authorityStatus: record.authorityStatus,
+          vehicleId: record.vehicleId,
+          allocationVersion: record.allocationVersion,
+        },
         after: {
           state: 'accepted',
           authorityStatus: 'driver_accepted',
+          acceptedVehicleId: record.vehicleId,
+          allocationVersion: record.allocationVersion + 1,
           acceptanceMethod,
           acceptanceNote: note,
           acceptedAt: now.toISOString(),
@@ -418,12 +466,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       authorityStatus: 'driver_accepted',
       acceptedAt: now.toISOString(),
       acceptanceMethod,
+      acceptedVehicleId: record.vehicleId,
       driver: { name: driverName, organisation: record.partyOrganisation },
     });
   } catch (error) {
     console.error('[allocations/external/decision] PATCH failed:', error);
     return NextResponse.json(
-      { error: 'External driver decision changed concurrently or could not be recorded. Refresh and try again.' },
+      { error: 'External driver decision, vehicle assignment, or trip state changed concurrently. Refresh and review the latest assignment before trying again.' },
       { status: 409 },
     );
   }
