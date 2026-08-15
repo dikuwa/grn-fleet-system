@@ -79,7 +79,7 @@ async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Arra
  */
 export async function buildTripAuthorityRenderSnapshot(
   documentId: string,
-  options: { requireAuthority?: boolean } = {},
+  options: { requireAuthority?: boolean; issuedAt?: string } = {},
 ): Promise<TripAuthorityRenderSnapshot | null> {
   const db = getDb();
   const [document] = await db
@@ -385,7 +385,12 @@ export async function buildTripAuthorityRenderSnapshot(
     endingOdometer: authority?.endingOdometer || undefined,
     authorityStatus: authority?.status || document.status,
     documentVersion: authority?.documentVersion || document.documentVersion,
-    issuedAt: authority?.issuedAt?.toISOString() || document.createdAt.toISOString(),
+    issuedAt:
+      options.issuedAt ||
+      authority?.issuedAt?.toISOString() ||
+      (document.status === 'issued' || document.status === 'superseded'
+        ? document.updatedAt.toISOString()
+        : document.createdAt.toISOString()),
   };
 }
 
@@ -409,13 +414,18 @@ export async function generateVerifiedTripAuthorityPdf(
     : await buildTripAuthorityRenderSnapshot(documentId);
   if (!renderSnapshot) return null;
 
+  const publiclyVerifiable = document.status !== 'draft' && Boolean(document.verificationSlug);
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
-  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
+  const verificationUrl = publiclyVerifiable
+    ? `${baseUrl}/v/${document.verificationSlug}`
+    : undefined;
+  const qrCodeDataUrl = verificationUrl
+    ? await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 })
+    : undefined;
 
   const data: TripAuthorityData = {
     ...renderSnapshot,
-    verificationCode: document.verificationCode,
+    verificationCode: publiclyVerifiable ? document.verificationCode : undefined,
     verificationUrl,
     documentHash: abbreviatedDocumentHash(document.hash) || undefined,
     qrCodeDataUrl,
