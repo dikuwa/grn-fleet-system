@@ -11,6 +11,7 @@ import {
   vehicleAllocations,
   vehicleInspections,
 } from '@/db/schema/trips';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import {
   maintenanceEvents,
   vehicleDefects,
@@ -143,7 +144,28 @@ export async function completeOfficialInspection(input: InspectionInput) {
       eq(transportRequests.tenantId, tenantId),
     )).limit(1);
   if (!trip || trip.vehicleId !== input.vehicleId) fail('Trip and vehicle do not match', 404);
-  if (!trip.driverEmployeeId) fail('A valid driver must be assigned before inspection', 409);
+
+  const [externalDriver] = trip.driverEmployeeId
+    ? []
+    : await db
+        .select({
+          id: externalDriverAssignments.id,
+          state: externalDriverAssignments.state,
+          issueId: externalDriverAssignments.issueId,
+        })
+        .from(externalDriverAssignments)
+        .where(
+          and(
+            eq(externalDriverAssignments.tenantId, tenantId),
+            eq(externalDriverAssignments.tripId, input.tripId),
+            eq(externalDriverAssignments.state, 'accepted'),
+          ),
+        )
+        .orderBy(desc(externalDriverAssignments.assignedAt))
+        .limit(1);
+  if (!trip.driverEmployeeId && !externalDriver) {
+    fail('A valid internal or accepted external driver must be assigned before inspection', 409);
+  }
 
   if (input.type === 'departure') {
     if (trip.status !== 'pending' || !departureRequestStatuses.includes(trip.requestStatus)) {
@@ -164,6 +186,9 @@ export async function completeOfficialInspection(input: InspectionInput) {
     if (!returnTripStatuses.includes(trip.status)) fail('Return inspection is only available after trip execution', 409);
     if (!['returned', 'awaiting_arrival_inspection'].includes(trip.authorityStatus)) {
       fail('Trip Authority is not ready for arrival inspection', 409);
+    }
+    if (externalDriver && !externalDriver.issueId) {
+      fail('External-driver return inspection requires a completed physical vehicle issue record', 409);
     }
   }
 
@@ -232,6 +257,9 @@ export async function completeOfficialInspection(input: InspectionInput) {
   const inspectionId = randomUUID();
   const defectIds = new Map(failedItems.map((item) => [item.id, randomUUID()]));
   const sourceChannel = input.clientSyncId ? 'offline_sync' : 'web';
+  const driverWitnessReference = trip.driverEmployeeId
+    ? `driver:${trip.driverEmployeeId}`
+    : `external_assignment:${externalDriver!.id}`;
 
   await runAtomicMutations((tx) => {
     const queries: any[] = [
@@ -250,7 +278,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
         status,
         overallPass,
         signatureInspector: `acknowledged:${userId}:${now.toISOString()}`,
-        signatureDriver: `witnessed_by_inspector:${userId}:driver:${trip.driverEmployeeId}:${now.toISOString()}`,
+        signatureDriver: `witnessed_by_inspector:${userId}:${driverWitnessReference}:${now.toISOString()}`,
         notes: input.notes?.trim() || null,
         clientSyncId: input.clientSyncId || null,
       }),
@@ -386,6 +414,8 @@ export async function completeOfficialInspection(input: InspectionInput) {
         templateVersion: template.version,
         overallPass,
         criticalDefects: failedItems.filter((item) => item.isCritical).length,
+        driverKind: trip.driverEmployeeId ? 'internal' : 'external',
+        externalDriverAssignmentId: externalDriver?.id ?? null,
         driverAcknowledgementMethod: 'inspector_witnessed',
       },
     }));
