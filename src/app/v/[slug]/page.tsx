@@ -6,11 +6,11 @@ import {
   resolveTenantBranding,
   type ResolvedTenantBranding,
 } from '@/lib/tenant-branding';
+import { buildPublicDocumentSummary } from '@/lib/public-document-redaction';
 import {
   documentTypeLabel,
   formatDocumentStatus,
   formatHumanDateTime,
-  formatHumanValue,
 } from '@/lib/human-readable';
 
 export const dynamic = 'force-dynamic';
@@ -129,10 +129,20 @@ export default async function ShortVerificationPage({
   const liveBranding = await resolveTenantBranding(document.tenantId);
   const branding = frozenVerificationBranding(snapshot, liveBranding);
   const status = getVerificationState(document.status);
-  const reference = String(
-    snapshot.authorityNumber || snapshot.reference || `Version ${document.documentVersion}`,
+  const permanent = result.kind === 'permanent';
+  const shareSummary = permanent
+    ? null
+    : buildPublicDocumentSummary({
+        documentType: document.documentType,
+        documentVersion: document.documentVersion,
+        documentStatus: document.status,
+        snapshotData: snapshot,
+        profile: result.shareLink.redactionProfile,
+      });
+  const reference = shareSummary?.reference || String(
+    snapshot.authorityNumber || snapshot.reference || snapshot.requestReference || `Version ${document.documentVersion}`,
   );
-  const summary = [
+  const summary: Array<[string, string]> = [
     ['Document', documentTypeLabel(document.documentType)],
     ['Reference', reference],
     ['Status', formatDocumentStatus(document.status)],
@@ -140,16 +150,14 @@ export default async function ShortVerificationPage({
     ['Issue date', formatHumanDateTime(document.createdAt, branding?.locale)],
     ['Issuing authority', branding?.organisationName || 'Government Fleet'],
   ];
-  for (const [label, key] of [
-    ['Vehicle', 'vehicle'],
-    ['Driver', 'driver'],
-    ['Valid from', 'validFrom'],
-    ['Valid until', 'validUntil'],
-  ]) {
-    if (snapshot[key] !== undefined) summary.push([label, formatHumanValue(snapshot[key], key)]);
+
+  if (shareSummary) {
+    for (const row of shareSummary.rows) {
+      if (['Reference', 'Status', 'Version'].includes(row.label)) continue;
+      summary.push([row.label, row.value]);
+    }
   }
 
-  const permanent = result.kind === 'permanent';
   const verificationCode = permanent
     ? result.verificationCode
     : result.shareLink.verificationCode || result.shareLink.shortSlug;
