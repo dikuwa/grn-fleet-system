@@ -1,4 +1,5 @@
 import { getDb, isDbConnected } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
 import { trips, vehicleAllocations, vehicleInspections, tripAuthorities } from '@/db/schema/trips';
 import { vehicles, vehicleDefects } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
@@ -26,6 +27,7 @@ import {
 import { formatDate } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
+import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
 import Link from 'next/link';
 
 type GateStatus = 'pass' | 'blocking' | 'pending';
@@ -56,6 +58,7 @@ interface TripRow {
   issuedAt: Date | null;
   vehicleId: string | null;
   requestId: string | null;
+  allocationId: string;
   make: string | null;
   model: string | null;
   licenceNumber: string | null;
@@ -87,9 +90,10 @@ const GATE_LABELS: Record<string, string> = {
   driver_licence_valid: 'Driver licence',
   driver_licence_class_match: 'Licence class',
   vehicle_no_blocking_defects: 'Defects',
-  trip_authority: 'Authority',
+  authority_amendment_acknowledged: 'Revised authority acceptance',
   driver_acknowledged: 'Driver acceptance',
   departure_inspection: 'Inspection',
+  trip_authority: 'Formal authority',
   authority_validity: 'Authority validity',
   vehicle_documents: 'Vehicle documents',
   vehicle_issued: 'Vehicle issue',
@@ -104,9 +108,10 @@ const GATE_ORDER = [
   'driver_licence_valid',
   'driver_licence_class_match',
   'vehicle_no_blocking_defects',
-  'trip_authority',
+  'authority_amendment_acknowledged',
   'driver_acknowledged',
   'departure_inspection',
+  'trip_authority',
   'authority_validity',
   'vehicle_documents',
   'vehicle_issued',
@@ -129,6 +134,7 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
       issuedAt: trips.issuedAt,
       vehicleId: trips.vehicleId,
       requestId: trips.requestId,
+      allocationId: vehicleAllocations.id,
       make: vehicles.make,
       model: vehicles.model,
       licenceNumber: vehicles.licenceNumber,
@@ -392,22 +398,35 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
         required: true,
       });
 
-      const [authority] = await db
-        .select({
-          id: tripAuthorities.id,
-          status: tripAuthorities.status,
-          validFrom: tripAuthorities.validFrom,
-          validUntil: tripAuthorities.validUntil,
-        })
-        .from(tripAuthorities)
-        .where(and(eq(tripAuthorities.tripId, trip.id), eq(tripAuthorities.tenantId, tenantId)))
-        .limit(1);
-      gates.push({
-        key: 'trip_authority',
-        status: authority ? 'pass' : 'blocking',
-        label: GATE_LABELS.trip_authority,
-        required: true,
-      });
+      const [[authority], [latestAuthorityDocument]] = await Promise.all([
+        db
+          .select({
+            id: tripAuthorities.id,
+            status: tripAuthorities.status,
+            acceptedAt: tripAuthorities.acceptedAt,
+            validFrom: tripAuthorities.validFrom,
+            validUntil: tripAuthorities.validUntil,
+          })
+          .from(tripAuthorities)
+          .where(and(eq(tripAuthorities.tripId, trip.id), eq(tripAuthorities.tenantId, tenantId)))
+          .limit(1),
+        db
+          .select({
+            status: generatedDocuments.status,
+            documentVersion: generatedDocuments.documentVersion,
+          })
+          .from(generatedDocuments)
+          .where(
+            and(
+              eq(generatedDocuments.tenantId, tenantId),
+              eq(generatedDocuments.entityType, 'vehicle_allocation'),
+              eq(generatedDocuments.entityId, trip.allocationId),
+              eq(generatedDocuments.documentType, 'trip_authority'),
+            ),
+          )
+          .orderBy(desc(generatedDocuments.documentVersion))
+          .limit(1),
+      ]);
 
       if (authority) {
         const internalAcceptedStatuses = new Set([
@@ -416,12 +435,27 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
           'ready_for_departure',
           'in_progress',
         ]);
-        const driverAccepted =
+        let driverAccepted =
           driverKind === 'external'
             ? externalDriver?.assignmentState === 'accepted' && Boolean(externalDriver.acceptedAt)
             : driverKind === 'internal'
               ? internalAcceptedStatuses.has(authority.status)
               : false;
+
+        const pendingAmendment = await findPendingVehicleReplacementAcceptance({
+          authorityId: authority.id,
+          acceptedAt: authority.acceptedAt,
+        });
+        if (pendingAmendment) {
+          driverAccepted = false;
+          gates.push({
+            key: 'authority_amendment_acknowledged',
+            status: 'pending',
+            label: GATE_LABELS.authority_amendment_acknowledged,
+            required: true,
+          });
+        }
+
         gates.push({
           key: 'driver_acknowledged',
           status: driverAccepted ? 'pass' : 'pending',
@@ -460,6 +494,14 @@ async function computeReadinessDashboard(tenantId: string): Promise<DashboardDat
         key: 'departure_inspection',
         status: inspectionPassed ? 'pass' : inspectionDone ? 'blocking' : 'pending',
         label: GATE_LABELS.departure_inspection,
+        required: true,
+      });
+
+      const formalAuthorityIssued = Boolean(authority && latestAuthorityDocument?.status === 'issued');
+      gates.push({
+        key: 'trip_authority',
+        status: formalAuthorityIssued ? 'pass' : 'blocking',
+        label: GATE_LABELS.trip_authority,
         required: true,
       });
 
