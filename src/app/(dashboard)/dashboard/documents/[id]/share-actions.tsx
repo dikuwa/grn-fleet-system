@@ -23,11 +23,15 @@ import {
 
 interface ShareLinkListResponse {
   data?: {
+    capabilities?: {
+      canDistribute?: boolean;
+    };
     links?: Array<{
       documentId?: string;
       shortSlug?: string | null;
       expiresAt?: string;
       isRevoked?: boolean;
+      isExhausted?: boolean;
       maxViews?: number | null;
       currentViews?: number | null;
     }>;
@@ -53,6 +57,8 @@ export function ShareActions({
 }) {
   const [copied, setCopied] = useState<'link' | 'message' | null>(null);
   const [controlledShareUrl, setControlledShareUrl] = useState<string | undefined>();
+  const [distributionResolved, setDistributionResolved] = useState(false);
+  const [canDistribute, setCanDistribute] = useState(false);
   const isDraft = status?.trim().toLowerCase() === 'draft';
 
   // A generated draft already has a stable verification slug internally, but
@@ -63,12 +69,11 @@ export function ShareActions({
   const effectiveShareUrl = isDraft ? undefined : controlledShareUrl || shareUrl;
 
   useEffect(() => {
-    if (isDraft) {
-      setControlledShareUrl(undefined);
-      return;
-    }
-
     const controller = new AbortController();
+    setDistributionResolved(false);
+    setCanDistribute(false);
+    setControlledShareUrl(undefined);
+
     void (async () => {
       try {
         const response = await fetch('/api/share-links?status=active&limit=100', {
@@ -77,9 +82,15 @@ export function ShareActions({
         });
         if (!response.ok) return;
         const payload = (await response.json().catch(() => ({}))) as ShareLinkListResponse;
+        const allowed = payload.data?.capabilities?.canDistribute === true;
+        setCanDistribute(allowed);
+        if (!allowed || isDraft) return;
+
         const now = Date.now();
         const active = payload.data?.links?.find((link) => {
-          if (link.documentId !== documentId || !link.shortSlug || link.isRevoked) return false;
+          if (link.documentId !== documentId || !link.shortSlug || link.isRevoked || link.isExhausted) {
+            return false;
+          }
           const expiresAt = link.expiresAt ? new Date(link.expiresAt).getTime() : 0;
           if (!Number.isFinite(expiresAt) || expiresAt <= now) return false;
           const maxViews = link.maxViews ?? null;
@@ -88,15 +99,16 @@ export function ShareActions({
         });
         if (active?.shortSlug) {
           setControlledShareUrl(`${window.location.origin}/v/${encodeURIComponent(active.shortSlug)}`);
-        } else {
-          setControlledShareUrl(undefined);
         }
       } catch (error) {
         if ((error as Error)?.name !== 'AbortError') {
-          // Share-link metadata is role-protected. Users who cannot enumerate it
-          // simply retain the permanent verification URL supplied by the page.
+          // Fail closed: inability to resolve sharing capability must never turn
+          // a read-only document view into an external distribution channel.
+          setCanDistribute(false);
           setControlledShareUrl(undefined);
         }
+      } finally {
+        if (!controller.signal.aborted) setDistributionResolved(true);
       }
     })();
 
@@ -125,6 +137,12 @@ export function ShareActions({
     setCopied(kind);
     window.setTimeout(() => setCopied(null), 1800);
   };
+
+  // External distribution is a managed action, not a side effect of document
+  // read access. Hide it entirely unless the canonical share-link route grants
+  // create/distribution authority. This also keeps Audit and Driver workspaces
+  // read-only even when they can inspect an assigned/generated document.
+  if (!distributionResolved || !canDistribute) return null;
 
   return (
     <Dialog>
