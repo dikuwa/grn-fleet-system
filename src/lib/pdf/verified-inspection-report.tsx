@@ -188,13 +188,18 @@ export async function generateVerifiedInspectionReportPdf(
     : await buildInspectionReportRenderSnapshot(documentId);
   if (!renderSnapshot) return null;
 
+  const publiclyVerifiable = document.status !== 'draft' && Boolean(document.verificationSlug);
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
-  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
+  const verificationUrl = publiclyVerifiable
+    ? `${baseUrl}/v/${document.verificationSlug}`
+    : undefined;
+  const qrCodeDataUrl = verificationUrl
+    ? await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 })
+    : undefined;
 
   const data: InspectionReportData = {
     ...renderSnapshot,
-    verificationCode: document.verificationCode,
+    verificationCode: publiclyVerifiable ? document.verificationCode : undefined,
     verificationUrl,
     documentHash: abbreviatedDocumentHash(document.hash) || undefined,
     qrCodeDataUrl,
