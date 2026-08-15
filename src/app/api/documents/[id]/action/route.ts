@@ -129,7 +129,10 @@ export async function POST(
     }
 
     if (doc.documentType === 'trip_authority') {
-      const renderData = await buildTripAuthorityRenderSnapshot(doc.id, { requireAuthority: true });
+      const renderData = await buildTripAuthorityRenderSnapshot(doc.id, {
+        requireAuthority: true,
+        issuedAt: preparedAt.toISOString(),
+      });
       if (!renderData) {
         return NextResponse.json(
           {
