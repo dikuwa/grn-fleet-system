@@ -26,6 +26,11 @@ export type PublicVerificationResult =
  * Permanent generated-document identities are checked first. Temporary share
  * links remain a separate fallback with their existing expiry/revocation/view
  * policies, so official verification never depends on a share link staying alive.
+ *
+ * Drafts are intentionally excluded from permanent public verification. A
+ * generated snapshot receives its stable verification identity when it is
+ * created, but that identity must not become a public disclosure path before
+ * the document is formally issued.
  */
 export async function resolvePublicVerification(slug: string): Promise<PublicVerificationResult> {
   const normalised = String(slug || '').trim().toLowerCase();
@@ -39,6 +44,9 @@ export async function resolvePublicVerification(slug: string): Promise<PublicVer
     .limit(1);
 
   if (document) {
+    if (document.status === 'draft') {
+      return { kind: 'invalid', error: 'not_found' };
+    }
     return {
       kind: 'permanent',
       document,
