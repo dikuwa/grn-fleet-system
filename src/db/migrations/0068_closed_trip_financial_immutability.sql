@@ -10,11 +10,18 @@ DECLARE
   target_trip_id uuid;
   target_status text;
 BEGIN
-  target_trip_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.trip_id ELSE NEW.trip_id END;
+  IF TG_OP = 'DELETE' THEN
+    target_trip_id := OLD.trip_id;
+  ELSE
+    target_trip_id := NEW.trip_id;
+  END IF;
 
   -- Vehicle-only fuel transactions are outside a trip reconciliation boundary.
   IF target_trip_id IS NULL THEN
-    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    IF TG_OP = 'DELETE' THEN
+      RETURN OLD;
+    END IF;
+    RETURN NEW;
   END IF;
 
   SELECT status INTO target_status
@@ -26,7 +33,10 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
 
-  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
 END;
 $$;
 
