@@ -367,7 +367,7 @@ export default async function TripDetailPage({ params }: PageProps) {
 
       {inspections.length > 0 && (
         <Card>
-          <CardHeader><CardTitle>Inspections ({inspections.length})</CardHeader>
+          <CardHeader><CardTitle>Inspections ({inspections.length})</CardTitle></CardHeader>
           <CardContent className="p-0">
             <div className="divide-y divide-border">
               {inspections.map((insp) => (
