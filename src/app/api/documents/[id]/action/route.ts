@@ -223,7 +223,8 @@ export async function POST(
               and ta.allocation_id = ${doc.entityId}::uuid
               and am.amendment_type = 'vehicle_replacement'
               and am.status = 'approved'
-              and (ta.accepted_at is null or am.created_at > ta.accepted_at)
+              and ta.accepted_at is not null
+              and am.created_at > ta.accepted_at
           )`
         : sql`true`;
 
