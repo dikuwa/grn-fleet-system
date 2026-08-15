@@ -46,6 +46,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const [record] = await db
       .select({
         assignment: externalDriverAssignments,
+        vehicleId: vehicleAllocations.vehicleId,
         allocationStartAt: vehicleAllocations.startAt,
         allocationEndAt: vehicleAllocations.endAt,
         allocationState: vehicleAllocations.state,
@@ -403,7 +404,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         body: `External driver acceptance has been recorded for ${record.requestReference}. Complete the official departure inspection before the vehicle can be issued.`,
         entityType: 'trip',
         entityId: record.assignment.tripId,
-        actionUrl: `/dashboard/inspections/new?type=departure&tripId=${record.assignment.tripId}&vehicleId=${record.assignment.allocationId}`,
+        actionUrl: `/dashboard/inspections/new?type=departure&tripId=${record.assignment.tripId}&vehicleId=${record.vehicleId}`,
         workspace: null,
         priority: 'high',
       }).catch((error) =>
