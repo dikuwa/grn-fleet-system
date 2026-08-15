@@ -63,6 +63,15 @@ function snapshotBranding(
   };
 }
 
+function frozenIssueTimestamp(snapshot: Record<string, unknown>, fallback: Date): string {
+  const identity = snapshot.documentIdentity;
+  if (identity && typeof identity === 'object' && !Array.isArray(identity)) {
+    const snapshottedAt = (identity as Record<string, unknown>).snapshottedAt;
+    if (typeof snapshottedAt === 'string' && snapshottedAt.trim()) return snapshottedAt;
+  }
+  return fallback.toISOString();
+}
+
 async function streamToBuffer(element: React.ReactElement): Promise<Uint8Array> {
   const stream = await renderToStream(
     element as unknown as React.ReactElement<Record<string, unknown>>,
@@ -209,6 +218,7 @@ export async function generatePublicSharedDocumentPdf(input: {
 }): Promise<{ buffer: Uint8Array; filename: string }> {
   const snapshot = input.document.snapshotData || {};
   const branding = snapshotBranding(snapshot);
+  const issuedAt = frozenIssueTimestamp(snapshot, input.document.createdAt);
   const slug = input.shareLink.shortSlug || input.shareLink.verificationCode || input.document.id;
   const verificationUrl = `${input.baseUrl.replace(/\/$/, '')}/v/${encodeURIComponent(slug)}`;
   const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
@@ -216,7 +226,7 @@ export async function generatePublicSharedDocumentPdf(input: {
     documentType: input.document.documentType,
     documentVersion: input.document.documentVersion,
     documentStatus: input.document.status,
-    createdAt: input.document.createdAt.toISOString(),
+    createdAt: issuedAt,
     snapshotData: snapshot,
     branding,
     redactionProfile: input.shareLink.redactionProfile,
