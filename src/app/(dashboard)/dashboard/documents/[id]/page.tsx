@@ -16,8 +16,8 @@ import { createElement } from 'react';
 import { DocumentLifecycleActions } from './lifecycle-actions';
 import { CreateShareLinkButton } from './create-share-link';
 import { ShareActions } from './share-actions';
-import { QRDisplay } from './qr-display';
 import { DocumentViewerActions } from './document-viewer-actions';
+import { DocumentPdfPreview } from './document-pdf-preview';
 import { resolveTenantBranding } from '@/lib/tenant-branding';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
 import { documentTypeLabel, formatDocumentStatus, formatHumanValue } from '@/lib/human-readable';
@@ -58,13 +58,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs
-          items={[
-            { label: 'Dashboard', href: '/dashboard' },
-            { label: 'Documents', href: '/dashboard/documents' },
-            { label: 'Document' },
-          ]}
-        />
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Documents', href: '/dashboard/documents' }, { label: 'Document' }]} />
         <PageHeader title="Document Detail" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" />
       </div>
@@ -75,13 +69,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
   if (!session) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs
-          items={[
-            { label: 'Dashboard', href: '/dashboard' },
-            { label: 'Documents', href: '/dashboard/documents' },
-            { label: 'Document' },
-          ]}
-        />
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Documents', href: '/dashboard/documents' }, { label: 'Document' }]} />
         <PageHeader title="Document Detail" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" />
       </div>
@@ -95,13 +83,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
     console.error('Document detail query failed:', error);
     return (
       <div className="space-y-6">
-        <Breadcrumbs
-          items={[
-            { label: 'Dashboard', href: '/dashboard' },
-            { label: 'Documents', href: '/dashboard/documents' },
-            { label: 'Document' },
-          ]}
-        />
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Documents', href: '/dashboard/documents' }, { label: 'Document' }]} />
         <PageHeader title="Document Detail" />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Document" />
       </div>
@@ -111,12 +93,11 @@ export default async function DocumentDetailPage({ params }: PageProps) {
   const { doc, shares, creatorName } = data;
   const branding = await resolveTenantBranding(session.tenantId);
   const statusIcon = doc.status === 'issued' ? CheckCircle2 : doc.status === 'draft' ? Clock : XCircle;
-  const statusColor =
-    doc.status === 'issued'
-      ? 'text-status-success-text bg-status-success-bg'
-      : doc.status === 'draft'
-        ? 'text-status-pending-text bg-status-pending-bg'
-        : 'text-status-cancelled-text bg-status-cancelled-bg';
+  const statusColor = doc.status === 'issued'
+    ? 'text-status-success-text bg-status-success-bg'
+    : doc.status === 'draft'
+      ? 'text-status-pending-text bg-status-pending-bg'
+      : 'text-status-cancelled-text bg-status-cancelled-bg';
 
   const activeShares = shares.filter(
     (share) => Boolean(share.shortSlug) && !share.isRevoked && new Date(share.expiresAt) > new Date(),
@@ -132,32 +113,17 @@ export default async function DocumentDetailPage({ params }: PageProps) {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Documents', href: '/dashboard/documents' },
-          { label: documentTypeLabel(doc.documentType) },
-        ]}
-      />
-      <PageHeader
-        title={documentTypeLabel(doc.documentType)}
-        description={`Version ${doc.documentVersion} · ${formatDate(doc.createdAt)}`}
-      >
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Documents', href: '/dashboard/documents' }, { label: documentTypeLabel(doc.documentType) }]} />
+      <PageHeader title={documentTypeLabel(doc.documentType)} description={`Version ${doc.documentVersion} · ${formatDate(doc.createdAt)}`}>
         <Button variant="secondary" size="sm" asChild>
-          <Link href="/dashboard/documents">
-            <ChevronLeft className="h-4 w-4" /> Back
-          </Link>
+          <Link href="/dashboard/documents"><ChevronLeft className="h-4 w-4" /> Back</Link>
         </Button>
         <DocumentLifecycleActions documentId={doc.id} currentStatus={doc.status} />
         <ShareActions
           shareUrl={verificationUrl || undefined}
           documentTitle={documentTypeLabel(doc.documentType)}
           documentId={doc.id}
-          documentReference={String(
-            (doc.snapshotData as Record<string, unknown>).authorityNumber ||
-              (doc.snapshotData as Record<string, unknown>).reference ||
-              `Version ${doc.documentVersion}`,
-          )}
+          documentReference={String((doc.snapshotData as Record<string, unknown>).authorityNumber || (doc.snapshotData as Record<string, unknown>).reference || `Version ${doc.documentVersion}`)}
           status={formatDocumentStatus(doc.status)}
           organisationName={branding?.organisationName}
           verificationCode={verificationCode}
@@ -174,12 +140,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-ink-950 text-lg font-semibold">{documentTypeLabel(doc.documentType)}</h2>
-                <Badge
-                  variant={doc.status === 'issued' ? 'success' : doc.status === 'draft' ? 'pending' : 'cancelled'}
-                  size="sm"
-                >
-                  {formatDocumentStatus(doc.status)}
-                </Badge>
+                <Badge variant={doc.status === 'issued' ? 'success' : doc.status === 'draft' ? 'pending' : 'cancelled'} size="sm">{formatDocumentStatus(doc.status)}</Badge>
                 <Badge variant="info" size="sm">v{doc.documentVersion}</Badge>
               </div>
               <div className="text-ink-500 mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -196,73 +157,40 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         <CardHeader className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div>
             <CardTitle>Document Preview</CardTitle>
-            <p className="text-ink-500 mt-1 text-xs">This is the same PDF used for Preview, Print and Download.</p>
+            <p className="text-ink-500 mt-1 text-xs">The official PDF loads securely here. Preview, Print and Download use the same source.</p>
           </div>
           <DocumentViewerActions documentId={doc.id} documentType={documentTypeLabel(doc.documentType)} />
         </CardHeader>
         <CardContent>
           <div className="border-border bg-muted/30 overflow-hidden rounded-[10px] border p-2 sm:p-4">
             <div className="mx-auto aspect-[210/297] min-h-[620px] w-full max-w-[210mm] overflow-hidden rounded-[4px] bg-white shadow-sm">
-              <iframe
-                src={pdfPreviewUrl}
-                title={`${documentTypeLabel(doc.documentType)} printable preview`}
-                className="h-full min-h-[620px] w-full border-0 bg-white"
-              />
+              <DocumentPdfPreview url={pdfPreviewUrl} title={`${documentTypeLabel(doc.documentType)} printable preview`} />
             </div>
           </div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle>Document Metadata</CardTitle>
-        </CardHeader>
+        <CardHeader className="pb-2"><CardTitle>Document Metadata</CardTitle></CardHeader>
         <CardContent>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4 xl:grid-cols-7">
-            <div>
-              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Type</dt>
-              <dd className="text-ink-950 mt-0.5 text-xs font-medium">{documentTypeLabel(doc.documentType)}</dd>
-            </div>
-            <div>
-              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Version</dt>
-              <dd className="text-ink-950 mt-0.5 text-xs font-medium">{doc.documentVersion}</dd>
-            </div>
-            <div>
-              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Verification</dt>
-              <dd className="text-ink-950 mt-0.5 font-mono text-xs font-medium">{verificationCode}</dd>
-            </div>
-            <div>
-              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Status</dt>
-              <dd className="mt-0.5">
-                <Badge variant={doc.status === 'issued' ? 'success' : doc.status === 'draft' ? 'pending' : 'cancelled'} size="sm">
-                  {formatDocumentStatus(doc.status)}
-                </Badge>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Redaction</dt>
-              <dd className="text-ink-950 mt-0.5 text-xs font-medium">{formatHumanValue(doc.redactionProfile, 'redactionProfile')}</dd>
-            </div>
-            <div>
-              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Generated by</dt>
-              <dd className="text-ink-950 mt-0.5 text-xs font-medium">{creatorName}</dd>
-            </div>
-            <div>
-              <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Created</dt>
-              <dd className="text-ink-950 mt-0.5 text-xs font-medium">{formatDateTime(doc.createdAt)}</dd>
-            </div>
+            <div><dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Type</dt><dd className="text-ink-950 mt-0.5 text-xs font-medium">{documentTypeLabel(doc.documentType)}</dd></div>
+            <div><dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Version</dt><dd className="text-ink-950 mt-0.5 text-xs font-medium">{doc.documentVersion}</dd></div>
+            <div><dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Verification</dt><dd className="text-ink-950 mt-0.5 font-mono text-xs font-medium">{verificationCode || 'Not issued'}</dd></div>
+            <div><dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Status</dt><dd className="mt-0.5"><Badge variant={doc.status === 'issued' ? 'success' : doc.status === 'draft' ? 'pending' : 'cancelled'} size="sm">{formatDocumentStatus(doc.status)}</Badge></dd></div>
+            <div><dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Redaction</dt><dd className="text-ink-950 mt-0.5 text-xs font-medium">{formatHumanValue(doc.redactionProfile, 'redactionProfile')}</dd></div>
+            <div><dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Generated by</dt><dd className="text-ink-950 mt-0.5 text-xs font-medium">{creatorName}</dd></div>
+            <div><dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Created</dt><dd className="text-ink-950 mt-0.5 text-xs font-medium">{formatDateTime(doc.createdAt)}</dd></div>
             {doc.hash && (
               <div className="col-span-2 md:col-span-4 xl:col-span-7">
                 <dt className="text-ink-500 text-[10px] font-medium tracking-wider uppercase">Document fingerprint</dt>
                 <dd className="text-ink-600 mt-0.5 font-mono text-[10px]">{abbreviatedDocumentHash(doc.hash)}</dd>
-                <dd className="text-ink-400 mt-1 text-[10px]">The complete SHA-256 fingerprint is available on the public verification page.</dd>
+                <dd className="text-ink-400 mt-1 text-[10px]">The complete SHA-256 fingerprint and verification QR are available on the official PDF and public verification page.</dd>
               </div>
             )}
           </dl>
         </CardContent>
       </Card>
-
-      <QRDisplay shareUrl={verificationUrl} documentTitle={doc.documentType} />
 
       {doc.documentVersion > 1 && (
         <Card>
