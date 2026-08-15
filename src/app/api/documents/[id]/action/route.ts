@@ -87,14 +87,18 @@ export async function POST(
       );
     }
 
-    // A vehicle replacement is a material amendment to a Trip Authority. The
-    // driver's original acceptance remains immutable history, but the revised
-    // authority cannot become an official PDF until the replacement has been
-    // acknowledged. The atomic issue predicate below repeats this check so a
-    // concurrent replacement cannot race past the preflight validation.
+    // Trip Authority issuance is the final pre-release document boundary. The
+    // driver's acceptance must cover the current vehicle and the current
+    // vehicle must have passed its official departure inspection before the
+    // immutable PDF is frozen. This ensures the issued authority contains the
+    // actual inspected vehicle and beginning-odometer evidence.
     if (doc.documentType === 'trip_authority' && doc.entityType === 'vehicle_allocation') {
       const [authority] = await db
-        .select({ id: tripAuthorities.id, acceptedAt: tripAuthorities.acceptedAt })
+        .select({
+          id: tripAuthorities.id,
+          status: tripAuthorities.status,
+          acceptedAt: tripAuthorities.acceptedAt,
+        })
         .from(tripAuthorities)
         .where(
           and(
@@ -115,6 +119,17 @@ export async function POST(
                 'The vehicle changed after the driver accepted this Trip Authority. The revised authority must be acknowledged before this document version can be formally issued.',
               amendmentId: pendingAmendment.amendmentId,
               requiresAmendmentAcceptance: true,
+            },
+            { status: 409 },
+          );
+        }
+        if (authority.status !== 'ready_for_departure') {
+          return NextResponse.json(
+            {
+              error:
+                'Trip Authority can only be formally issued after the current vehicle has passed its official departure inspection.',
+              authorityStatus: authority.status,
+              requiresDepartureInspection: true,
             },
             { status: 409 },
           );
@@ -213,18 +228,23 @@ export async function POST(
       )
       .digest('hex');
 
-    const amendmentAcceptanceCurrent =
+    const tripAuthorityLifecycleCurrent =
       doc.documentType === 'trip_authority' && doc.entityType === 'vehicle_allocation'
-        ? sql`not exists (
+        ? sql`exists (
             select 1
-            from trip_amendments am
-            inner join trip_authorities ta on ta.id = am.authority_id
+            from trip_authorities ta
             where ta.tenant_id = ${session.tenantId}::uuid
               and ta.allocation_id = ${doc.entityId}::uuid
-              and am.amendment_type = 'vehicle_replacement'
-              and am.status = 'approved'
+              and ta.status = 'ready_for_departure'
               and ta.accepted_at is not null
-              and am.created_at > ta.accepted_at
+              and not exists (
+                select 1
+                from trip_amendments am
+                where am.authority_id = ta.id
+                  and am.amendment_type = 'vehicle_replacement'
+                  and am.status = 'approved'
+                  and am.created_at > ta.accepted_at
+              )
           )`
         : sql`true`;
 
@@ -239,7 +259,7 @@ export async function POST(
         and target.tenant_id = ${session.tenantId}::uuid
         and target.status = 'draft'
         and target.hash is not distinct from ${draftHash}
-        and ${amendmentAcceptanceCurrent}
+        and ${tripAuthorityLifecycleCurrent}
     )`;
 
     await runAtomicMutations((tx) => [
@@ -269,7 +289,7 @@ export async function POST(
             eq(generatedDocuments.tenantId, session.tenantId),
             eq(generatedDocuments.status, 'draft'),
             sql`${generatedDocuments.hash} is not distinct from ${draftHash}`,
-            amendmentAcceptanceCurrent,
+            tripAuthorityLifecycleCurrent,
           ),
         ),
     ]);
@@ -285,7 +305,7 @@ export async function POST(
       updated.updatedAt.getTime() !== preparedAt.getTime()
     ) {
       return NextResponse.json(
-        { error: 'This draft or its authority changed while the issue action was being prepared. Refresh and review the latest version before issuing.' },
+        { error: 'This draft or its authority lifecycle changed while the issue action was being prepared. Refresh and review the latest version before issuing.' },
         { status: 409 },
       );
     }
