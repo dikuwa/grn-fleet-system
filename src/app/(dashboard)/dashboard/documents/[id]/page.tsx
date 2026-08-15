@@ -41,7 +41,7 @@ async function fetchDocumentDetail(id: string, tenantId: string) {
   const shares = await db
     .select()
     .from(shareLinks)
-    .where(eq(shareLinks.documentId, id))
+    .where(and(eq(shareLinks.documentId, id), eq(shareLinks.tenantId, tenantId)))
     .orderBy(desc(shareLinks.createdAt));
   const [creator] = doc.generatedByUserId
     ? await db
@@ -101,6 +101,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
   const shareLinkAccess = resolveDashboardAccess('/dashboard/share-links', roleNames);
   const canManageLifecycle = documentAccess.allowed && documentAccess.actions.includes('update');
   const canCreateShareLink = shareLinkAccess.allowed && shareLinkAccess.actions.includes('create');
+  const snapshot = (doc.snapshotData || {}) as Record<string, unknown>;
 
   const statusIcon = doc.status === 'issued' ? CheckCircle2 : doc.status === 'draft' ? Clock : XCircle;
   const statusColor = doc.status === 'issued'
@@ -135,7 +136,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
           shareUrl={verificationUrl || undefined}
           documentTitle={documentTypeLabel(doc.documentType)}
           documentId={doc.id}
-          documentReference={String((doc.snapshotData as Record<string, unknown>).authorityNumber || (doc.snapshotData as Record<string, unknown>).reference || `Version ${doc.documentVersion}`)}
+          documentReference={String(snapshot.authorityNumber || snapshot.reference || snapshot.requestReference || `Version ${doc.documentVersion}`)}
           status={formatDocumentStatus(doc.status)}
           organisationName={branding?.organisationName}
           verificationCode={verificationCode}
