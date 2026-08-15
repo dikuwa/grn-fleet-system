@@ -36,6 +36,10 @@ function optionalFiniteNumber(value: unknown): number | undefined {
   return Number.isFinite(number) ? number : undefined;
 }
 
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
 /** Render stored-snapshot document families with the permanent document verification identity. */
 export async function generateVerifiedSnapshotDocumentPdf(
   documentId: string,
@@ -150,22 +154,22 @@ export async function generateVerifiedSnapshotDocumentPdf(
         | undefined;
       const data: MvaReportData = {
         reference: String(snapshot.reference ?? document.entityId ?? ''),
-        severity: String(snapshot.severity ?? 'minor'),
+        severity: typeof snapshot.severity === 'string' ? snapshot.severity : undefined,
         status: String(snapshot.status ?? 'reported'),
-        occurredAt: String(snapshot.occurredAt ?? generatedAt),
+        occurredAt: typeof snapshot.occurredAt === 'string' ? snapshot.occurredAt : undefined,
         location: (snapshot.location as string | null) ?? null,
         description: String(snapshot.description ?? ''),
         immediateAction: (snapshot.immediateAction as string | null) ?? null,
         continuationState: (snapshot.continuationState as string | null) ?? null,
-        vehicleSafe: (snapshot.vehicleSafe as boolean | null) ?? null,
-        passengerSafe: (snapshot.passengerSafe as boolean | null) ?? null,
-        injuries: Boolean(snapshot.injuries),
-        numberInjured: Number(snapshot.numberInjured ?? 0),
-        vehicleDamage: Boolean(snapshot.vehicleDamage),
-        thirdPartyInvolvement: Boolean(snapshot.thirdPartyInvolvement),
+        vehicleSafe: optionalBoolean(snapshot.vehicleSafe) ?? null,
+        passengerSafe: optionalBoolean(snapshot.passengerSafe) ?? null,
+        injuries: optionalBoolean(snapshot.injuries),
+        numberInjured: optionalFiniteNumber(snapshot.numberInjured),
+        vehicleDamage: optionalBoolean(snapshot.vehicleDamage),
+        thirdPartyInvolvement: optionalBoolean(snapshot.thirdPartyInvolvement),
         policeReference: (snapshot.policeReference as string | null) ?? null,
-        emergencyServicesContacted: Boolean(snapshot.emergencyServicesContacted),
-        detailsRequired: Boolean(snapshot.detailsRequired),
+        emergencyServicesContacted: optionalBoolean(snapshot.emergencyServicesContacted),
+        detailsRequired: optionalBoolean(snapshot.detailsRequired),
         tripReferences: {
           transportRequest: String(tripReferences?.transportRequest ?? '—'),
           tripAuthority: String(tripReferences?.tripAuthority ?? '—'),
@@ -183,9 +187,9 @@ export async function generateVerifiedSnapshotDocumentPdf(
         witnessStatements: (snapshot.witnessStatements as Array<Record<string, unknown>> | null) ?? [],
         thirdPartyDetails: (snapshot.thirdPartyDetails as Record<string, unknown> | null) ?? null,
         insuranceClaimReference: (snapshot.insuranceClaimReference as string | null) ?? null,
-        insuranceNotified: Boolean(snapshot.insuranceNotified),
+        insuranceNotified: optionalBoolean(snapshot.insuranceNotified),
         insuranceNotifiedAt: (snapshot.insuranceNotifiedAt as string | null) ?? null,
-        policeReportFiled: Boolean(snapshot.policeReportFiled),
+        policeReportFiled: optionalBoolean(snapshot.policeReportFiled),
         thirdPartyInsuranceDetails:
           (snapshot.thirdPartyInsuranceDetails as Record<string, unknown> | null) ?? null,
         technicalClearanceStatus: String(snapshot.technicalClearanceStatus ?? 'pending'),
@@ -206,8 +210,10 @@ export async function generateVerifiedSnapshotDocumentPdf(
       const tripReferences = snapshot.tripReferences as
         | { tripAuthority?: string; transportRequest?: string }
         | undefined;
-      const vehicleSafe = snapshot.vehicleSafe as boolean | null | undefined;
-      const passengerSafe = snapshot.passengerSafe as boolean | null | undefined;
+      const vehicleSafe = optionalBoolean(snapshot.vehicleSafe);
+      const passengerSafe = optionalBoolean(snapshot.passengerSafe);
+      const safetyLabel = (value: boolean | undefined, subject: string) =>
+        value === true ? `${subject} safe` : value === false ? `${subject} unsafe` : `${subject} not assessed`;
       const data: IncidentRecordData = {
         reference: String(snapshot.reference ?? document.entityId ?? document.id),
         type: String(snapshot.eventType ?? 'incident'),
@@ -218,7 +224,7 @@ export async function generateVerifiedSnapshotDocumentPdf(
         occurredAt: String(snapshot.occurredAt ?? generatedAt),
         location: (snapshot.location as string | null | undefined) ?? null,
         description: String(snapshot.description ?? ''),
-        damageOrDefects: Boolean(snapshot.vehicleDamage)
+        damageOrDefects: optionalBoolean(snapshot.vehicleDamage) === true
           ? 'Vehicle damage or defects were reported. Refer to the incident description and evidence.'
           : null,
         evidence: (snapshot.attachments as string[] | undefined) ?? [],
@@ -226,7 +232,7 @@ export async function generateVerifiedSnapshotDocumentPdf(
         safeDetermination:
           vehicleSafe === undefined && passengerSafe === undefined
             ? null
-            : `Vehicle ${vehicleSafe ? 'safe' : 'unsafe'}; passengers ${passengerSafe ? 'safe' : 'not confirmed safe'}`,
+            : `${safetyLabel(vehicleSafe, 'Vehicle')}; ${safetyLabel(passengerSafe, 'passengers')}`,
         ...common,
       };
       element = React.createElement(
