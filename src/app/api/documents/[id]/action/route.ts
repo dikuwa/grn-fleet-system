@@ -150,7 +150,10 @@ export async function POST(
       }
       snapshotData = { ...snapshotData, renderData };
     } else if (doc.documentType === 'transport_request') {
-      const renderData = await buildTransportRequestRenderSnapshot(doc.id, { issuing: true });
+      const renderData = await buildTransportRequestRenderSnapshot(doc.id, {
+        issuing: true,
+        issuedAt: preparedAt.toISOString(),
+      });
       if (!renderData) {
         return NextResponse.json(
           { error: 'Transport Request could not be prepared for official issuance.' },
