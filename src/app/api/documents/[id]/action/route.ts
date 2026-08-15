@@ -6,6 +6,8 @@ import { generatedDocuments } from '@/db/schema/documents';
 import { auditEvents } from '@/db/schema/audit';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { canSessionReadGeneratedDocument } from '@/lib/document-access';
+import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
+import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
 export async function POST(
@@ -89,6 +91,37 @@ export async function POST(
       }
     }
 
+    // Freeze the complete visual payload at the actual issuance boundary.
+    // Trip Authority generated-document shells are created at allocation time,
+    // before the canonical authority may exist, so issuance refuses to proceed
+    // until a complete authority payload can be captured. Inspection reports
+    // similarly store the exact checklist/signatory/branding render payload.
+    let snapshotData = (doc.snapshotData || {}) as Record<string, unknown>;
+    if (action === 'issue' && !snapshotData.renderData) {
+      if (doc.documentType === 'trip_authority') {
+        const renderData = await buildTripAuthorityRenderSnapshot(doc.id, { requireAuthority: true });
+        if (!renderData) {
+          return NextResponse.json(
+            {
+              error:
+                'Trip Authority cannot be issued until the canonical authority has been provisioned with its approved driver, passenger and authorisation data.',
+            },
+            { status: 409 },
+          );
+        }
+        snapshotData = { ...snapshotData, renderData };
+      } else if (doc.documentType === 'inspection_report') {
+        const renderData = await buildInspectionReportRenderSnapshot(doc.id);
+        if (!renderData) {
+          return NextResponse.json(
+            { error: 'Inspection Report cannot be issued until its completed inspection data is available.' },
+            { status: 409 },
+          );
+        }
+        snapshotData = { ...snapshotData, renderData };
+      }
+    }
+
     const now = new Date();
     const nextStatus = action === 'issue' ? 'issued' : 'superseded';
     const documentHash = action === 'issue'
@@ -97,7 +130,7 @@ export async function POST(
             JSON.stringify({
               documentType: doc.documentType,
               version: doc.documentVersion,
-              snapshot: doc.snapshotData,
+              snapshot: snapshotData,
             }),
           )
           .digest('hex')
@@ -128,7 +161,12 @@ export async function POST(
 
       mutations.push(
         tx.update(generatedDocuments)
-          .set({ status: nextStatus, hash: documentHash, updatedAt: now })
+          .set({
+            status: nextStatus,
+            hash: documentHash,
+            snapshotData,
+            updatedAt: now,
+          })
           .where(
             and(
               eq(generatedDocuments.id, id),
@@ -146,7 +184,7 @@ export async function POST(
           entityId: id,
           summary: `Document ${action === 'issue' ? 'issued' : 'superseded'}: ${doc.documentType || 'unknown'}`,
           before: { status: doc.status },
-          after: { status: nextStatus },
+          after: { status: nextStatus, renderSnapshotFrozen: Boolean(snapshotData.renderData) },
           sourceChannel: 'web',
         }),
       );
