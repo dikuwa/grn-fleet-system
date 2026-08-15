@@ -87,6 +87,7 @@ async function deliverIncidentSideEffects(
   incident: typeof tripIncidents.$inferSelect,
   officialNumber: string,
   maintenanceAssigneeUserId: string | null,
+  tripStatus: string,
 ) {
   const documentType = requiresMvaForm(input) ? 'accident_report' : 'trip_incident_report';
   const effects: Promise<unknown>[] = [
@@ -127,6 +128,22 @@ async function deliverIncidentSideEffects(
     }),
   ];
 
+  // Late incident reporting is legitimate even after operational reconciliation.
+  // Preserve the previously issued completion as historical evidence and let
+  // the document generator refresh the pending draft or allocate the next
+  // completion version for the newly disclosed safety record.
+  if (tripStatus === 'closed') {
+    effects.push(
+      generateDocument({
+        documentType: 'trip_completion',
+        entityType: 'trip',
+        entityId: input.tripId,
+        tenantId: input.tenantId,
+        generatedByUserId: input.reportedByUserId,
+      }),
+    );
+  }
+
   if (input.severity === 'critical' && maintenanceAssigneeUserId) {
     effects.push(createScopedNotifications({
       tenantId: input.tenantId,
@@ -162,7 +179,12 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
   }
 
   const [trip] = await db
-    .select({ id: trips.id, vehicleId: trips.vehicleId, vehicleStatus: vehicles.status })
+    .select({
+      id: trips.id,
+      status: trips.status,
+      vehicleId: trips.vehicleId,
+      vehicleStatus: vehicles.status,
+    })
     .from(trips)
     .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
     .where(and(eq(trips.id, input.tripId), eq(trips.tenantId, input.tenantId)))
@@ -319,6 +341,12 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
     .where(and(eq(tripIncidents.id, incidentId), eq(tripIncidents.tenantId, input.tenantId)))
     .limit(1);
   if (!incident) throw new Error('Incident was committed but could not be reloaded');
-  await deliverIncidentSideEffects(input, incident, officialNumber, maintenanceAssigneeUserId);
+  await deliverIncidentSideEffects(
+    input,
+    incident,
+    officialNumber,
+    maintenanceAssigneeUserId,
+    trip.status,
+  );
   return { incident, officialNumber };
 }
