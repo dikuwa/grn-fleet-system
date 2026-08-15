@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
+import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { employees } from '@/db/schema/people';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import {
@@ -11,8 +12,13 @@ import {
 } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { onTripIssued } from '@/lib/document-generator';
+import {
+  createScopedNotifications,
+  resolveActiveRoleRecipients,
+} from '@/lib/notification-service';
 import { Permissions } from '@/lib/permissions';
 import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
+import { SystemRoles } from '@/lib/workspaces';
 
 const ACCEPTANCE_METHODS = ['in_person', 'phone', 'signed_paper', 'secure_link'] as const;
 type AcceptanceMethod = (typeof ACCEPTANCE_METHODS)[number];
@@ -27,6 +33,8 @@ async function loadAcceptanceContext(tripId: string, tenantId: string) {
       tripStatus: trips.status,
       tripIssuedAt: trips.issuedAt,
       allocationId: vehicleAllocations.id,
+      allocationEndAt: vehicleAllocations.endAt,
+      vehicleId: vehicleAllocations.vehicleId,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
       driverUserId: employees.userId,
       authorityId: tripAuthorities.id,
@@ -34,6 +42,11 @@ async function loadAcceptanceContext(tripId: string, tenantId: string) {
       authorityAcceptedAt: tripAuthorities.acceptedAt,
       externalAssignmentId: externalDriverAssignments.id,
       externalAssignmentState: externalDriverAssignments.state,
+      externalPartyId: externalDriverAssignments.externalPartyId,
+      externalLicenceId: externalDriverAssignments.licenceId,
+      externalPartyStatus: externalParties.status,
+      externalLicenceStatus: externalDriverLicences.verificationStatus,
+      externalLicenceExpiry: externalDriverLicences.expiryDate,
     })
     .from(trips)
     .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
@@ -44,6 +57,20 @@ async function loadAcceptanceContext(tripId: string, tenantId: string) {
       and(
         eq(externalDriverAssignments.tripId, trips.id),
         eq(externalDriverAssignments.tenantId, tenantId),
+      ),
+    )
+    .leftJoin(
+      externalParties,
+      and(
+        eq(externalParties.id, externalDriverAssignments.externalPartyId),
+        eq(externalParties.tenantId, tenantId),
+      ),
+    )
+    .leftJoin(
+      externalDriverLicences,
+      and(
+        eq(externalDriverLicences.id, externalDriverAssignments.licenceId),
+        eq(externalDriverLicences.tenantId, tenantId),
       ),
     )
     .where(
@@ -76,13 +103,34 @@ export async function GET(request: NextRequest, context: RouteContext) {
       driverKind === 'internal' && Boolean(record.driverUserId) && record.driverUserId === session.user.id;
 
     let canRecordExternal = false;
+    let externalEligibilityError: string | null = null;
     if (driverKind === 'external') {
-      const [routeCheck, permissionCheck] = await Promise.all([
-        requireDashboardAction(session, '/dashboard/allocations', 'update'),
-        requirePermission(session, Permissions.ALLOCATION_MANAGE),
-      ]);
-      canRecordExternal =
-        !(routeCheck instanceof NextResponse) && !(permissionCheck instanceof NextResponse);
+      const expiryAt = record.externalLicenceExpiry
+        ? new Date(`${record.externalLicenceExpiry}T23:59:59.999Z`)
+        : null;
+      const externallyEligible =
+        record.externalAssignmentState === 'accepted' &&
+        record.externalPartyStatus === 'active' &&
+        record.externalLicenceStatus === 'verified' &&
+        !!expiryAt &&
+        Number.isFinite(expiryAt.getTime()) &&
+        expiryAt >= record.allocationEndAt;
+
+      if (!externallyEligible) {
+        externalEligibilityError =
+          record.externalPartyStatus !== 'active'
+            ? 'The external driver is no longer active.'
+            : record.externalLicenceStatus !== 'verified'
+              ? 'The external driver licence is no longer verified.'
+              : 'The external driver licence no longer covers the full trip period.';
+      } else {
+        const [routeCheck, permissionCheck] = await Promise.all([
+          requireDashboardAction(session, '/dashboard/allocations', 'update'),
+          requirePermission(session, Permissions.ALLOCATION_MANAGE),
+        ]);
+        canRecordExternal =
+          !(routeCheck instanceof NextResponse) && !(permissionCheck instanceof NextResponse);
+      }
     }
 
     return NextResponse.json({
@@ -90,6 +138,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       driverKind,
       canSelfAcknowledge,
       canRecordExternal,
+      externalEligibilityError,
       amendment: pending
         ? {
             id: pending.amendmentId,
@@ -167,6 +216,22 @@ export async function POST(request: NextRequest, context: RouteContext) {
           { status: 409 },
         );
       }
+      if (record.externalPartyStatus !== 'active' || record.externalLicenceStatus !== 'verified') {
+        return NextResponse.json(
+          { error: 'The external driver or assigned licence is no longer eligible for this trip.' },
+          { status: 409 },
+        );
+      }
+      const expiryAt = record.externalLicenceExpiry
+        ? new Date(`${record.externalLicenceExpiry}T23:59:59.999Z`)
+        : null;
+      if (!expiryAt || !Number.isFinite(expiryAt.getTime()) || expiryAt < record.allocationEndAt) {
+        return NextResponse.json(
+          { error: 'The external driver licence no longer covers the full trip period.' },
+          { status: 409 },
+        );
+      }
+
       const actionCheck = await requireDashboardAction(session, '/dashboard/allocations', 'update');
       if (actionCheck instanceof NextResponse) return actionCheck;
       const permission = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
@@ -193,6 +258,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
       recordedByUserId: session.user.id,
       externalDriverAssignmentId: record.externalAssignmentId ?? null,
     });
+    const externalEligibilityCurrent = internalDriver
+      ? sql`true`
+      : sql`exists (
+          select 1
+          from external_driver_assignments eda
+          inner join external_parties ep on ep.id = eda.external_party_id
+          inner join external_driver_licences edl on edl.id = eda.licence_id
+          inner join vehicle_allocations va on va.id = eda.allocation_id
+          where eda.id = ${record.externalAssignmentId}::uuid
+            and eda.tenant_id = ${tenantId}::uuid
+            and eda.trip_id = ${tripId}::uuid
+            and eda.state = 'accepted'
+            and eda.issue_id is null
+            and ep.tenant_id = ${tenantId}::uuid
+            and ep.status = 'active'
+            and edl.tenant_id = ${tenantId}::uuid
+            and edl.verification_status = 'verified'
+            and edl.expiry_date >= va.end_at::date
+        )`;
 
     await db.execute(sql`
       WITH amendment_claim AS (
@@ -210,6 +294,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND ta.accepted_at IS NOT NULL
               AND am.created_at > ta.accepted_at
           )
+          AND ${externalEligibilityCurrent}
         RETURNING id
       ),
       authority_claim AS (
@@ -282,6 +367,28 @@ export async function POST(request: NextRequest, context: RouteContext) {
       console.warn('[amendment-acceptance] Acceptance committed but authority draft refresh failed:', error);
     }
 
+    const inspectionRecipients = await resolveActiveRoleRecipients(tenantId, [
+      SystemRoles.INSPECTOR,
+      SystemRoles.RELEASE_OFFICER,
+    ]).catch(() => []);
+    if (inspectionRecipients.length) {
+      await createScopedNotifications({
+        tenantId,
+        recipientUserIds: inspectionRecipients,
+        category: 'action_required',
+        eventType: 'departure_inspection_required',
+        title: 'Revised authority ready for departure inspection',
+        body: 'The assigned driver has acknowledged the Trip Authority after the vehicle replacement. Complete a fresh official departure inspection for the current vehicle.',
+        entityType: 'trip',
+        entityId: tripId,
+        actionUrl: `/dashboard/inspections/new?type=departure&tripId=${tripId}&vehicleId=${record.vehicleId}`,
+        workspace: null,
+        priority: 'high',
+      }).catch((error) =>
+        console.warn('[amendment-acceptance] Inspection notification failed:', error),
+      );
+    }
+
     return NextResponse.json({
       success: true,
       amendmentId: pending.amendmentId,
@@ -296,7 +403,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     console.error('[amendment-acceptance] POST failed:', error);
     if (String(error).includes('atomic_amendment_acknowledgement_failed')) {
       return NextResponse.json(
-        { error: 'The revised authority changed while acknowledgement was being recorded. Refresh and review the latest authority.' },
+        { error: 'The revised authority changed or the driver became ineligible while acknowledgement was being recorded. Refresh and review the latest authority.' },
         { status: 409 },
       );
     }
