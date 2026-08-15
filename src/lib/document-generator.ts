@@ -5,6 +5,7 @@ import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalParties } from '@/db/schema/external-parties';
 import { departments, employees } from '@/db/schema/people';
+import { transportRequests } from '@/db/schema/requests';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { validateDocumentSnapshot } from '@/lib/document-validation';
 import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspection-report';
@@ -41,12 +42,14 @@ async function resolveAuthorityDriver(
   const [allocation] = await db
     .select({ driverEmployeeId: vehicleAllocations.driverEmployeeId })
     .from(vehicleAllocations)
-    .where(
+    .innerJoin(
+      transportRequests,
       and(
-        eq(vehicleAllocations.id, allocationId),
-        eq(vehicleAllocations.tenantId, tenantId),
+        eq(transportRequests.id, vehicleAllocations.requestId),
+        eq(transportRequests.tenantId, tenantId),
       ),
     )
+    .where(eq(vehicleAllocations.id, allocationId))
     .limit(1);
 
   if (!allocation) {
