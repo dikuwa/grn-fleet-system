@@ -4,6 +4,7 @@ import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { auditEvents } from '@/db/schema/audit';
+import { tripAuthorities } from '@/db/schema/trips';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 import { buildTripAuthorityRenderSnapshot } from '@/lib/pdf/verified-trip-authority';
@@ -11,6 +12,7 @@ import { buildInspectionReportRenderSnapshot } from '@/lib/pdf/verified-inspecti
 import { buildTransportRequestRenderSnapshot } from '@/lib/pdf/verified-transport-request';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
 
 export async function POST(
   request: NextRequest,
@@ -83,6 +85,41 @@ export async function POST(
         },
         { status: 409 },
       );
+    }
+
+    // A vehicle replacement is a material amendment to a Trip Authority. The
+    // driver's original acceptance remains immutable history, but the revised
+    // authority cannot become an official PDF until the replacement has been
+    // acknowledged. The atomic issue predicate below repeats this check so a
+    // concurrent replacement cannot race past the preflight validation.
+    if (doc.documentType === 'trip_authority' && doc.entityType === 'vehicle_allocation') {
+      const [authority] = await db
+        .select({ id: tripAuthorities.id, acceptedAt: tripAuthorities.acceptedAt })
+        .from(tripAuthorities)
+        .where(
+          and(
+            eq(tripAuthorities.allocationId, doc.entityId),
+            eq(tripAuthorities.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      if (authority) {
+        const pendingAmendment = await findPendingVehicleReplacementAcceptance({
+          authorityId: authority.id,
+          acceptedAt: authority.acceptedAt,
+        });
+        if (pendingAmendment) {
+          return NextResponse.json(
+            {
+              error:
+                'The vehicle changed after the driver accepted this Trip Authority. The revised authority must be acknowledged before this document version can be formally issued.',
+              amendmentId: pendingAmendment.amendmentId,
+              requiresAmendmentAcceptance: true,
+            },
+            { status: 409 },
+          );
+        }
+      }
     }
 
     // Issuance is the immutable boundary. Always refresh branding and the
@@ -176,6 +213,20 @@ export async function POST(
       )
       .digest('hex');
 
+    const amendmentAcceptanceCurrent =
+      doc.documentType === 'trip_authority' && doc.entityType === 'vehicle_allocation'
+        ? sql`not exists (
+            select 1
+            from trip_amendments am
+            inner join trip_authorities ta on ta.id = am.authority_id
+            where ta.tenant_id = ${session.tenantId}::uuid
+              and ta.allocation_id = ${doc.entityId}::uuid
+              and am.amendment_type = 'vehicle_replacement'
+              and am.status = 'approved'
+              and (ta.accepted_at is null or am.created_at > ta.accepted_at)
+          )`
+        : sql`true`;
+
     // The target must still be the exact draft revision read above. Generation
     // refreshes the draft hash whenever source data is rebuilt, so the SHA-256
     // fingerprint is a precise optimistic concurrency token without timestamp
@@ -187,6 +238,7 @@ export async function POST(
         and target.tenant_id = ${session.tenantId}::uuid
         and target.status = 'draft'
         and target.hash is not distinct from ${draftHash}
+        and ${amendmentAcceptanceCurrent}
     )`;
 
     await runAtomicMutations((tx) => [
@@ -216,6 +268,7 @@ export async function POST(
             eq(generatedDocuments.tenantId, session.tenantId),
             eq(generatedDocuments.status, 'draft'),
             sql`${generatedDocuments.hash} is not distinct from ${draftHash}`,
+            amendmentAcceptanceCurrent,
           ),
         ),
     ]);
@@ -231,7 +284,7 @@ export async function POST(
       updated.updatedAt.getTime() !== preparedAt.getTime()
     ) {
       return NextResponse.json(
-        { error: 'This draft changed while the issue action was being prepared. Refresh and review the latest version before issuing.' },
+        { error: 'This draft or its authority changed while the issue action was being prepared. Refresh and review the latest version before issuing.' },
         { status: 409 },
       );
     }
