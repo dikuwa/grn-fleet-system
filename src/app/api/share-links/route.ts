@@ -6,6 +6,9 @@ import { generateShareToken, generateShortShareIdentity } from '@/lib/share-toke
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { auditEvents } from '@/db/schema/audit';
 
+const EXTERNAL_REDACTION_PROFILES = ['external_standard', 'external_minimal'] as const;
+type ExternalRedactionProfile = (typeof EXTERNAL_REDACTION_PROFILES)[number];
+
 /**
  * GET /api/share-links
  * List all active share links with document info and analytics.
@@ -173,9 +176,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const normalizedRedactionProfile = typeof redactionProfile === 'string' && redactionProfile.trim()
-      ? redactionProfile.trim()
-      : 'external_standard';
+    const requestedRedactionProfile =
+      typeof redactionProfile === 'string' && redactionProfile.trim()
+        ? redactionProfile.trim()
+        : 'external_standard';
+    if (!EXTERNAL_REDACTION_PROFILES.includes(requestedRedactionProfile as ExternalRedactionProfile)) {
+      return NextResponse.json(
+        {
+          error:
+            'Public share links support External Standard or External Minimal disclosure only.',
+        },
+        { status: 422 },
+      );
+    }
+    const normalizedRedactionProfile = requestedRedactionProfile as ExternalRedactionProfile;
     const normalizedAllowDownload = Boolean(allowDownload);
     const tenantId = session.tenantId;
     const expiresAt = new Date(Date.now() + normalizedExpiryHours * 60 * 60 * 1000);
@@ -283,6 +297,7 @@ export async function POST(request: NextRequest) {
         expiresAt: expiresAt.toISOString(),
         maxViews: parsedMaxViews,
         allowDownload: normalizedAllowDownload,
+        redactionProfile: normalizedRedactionProfile,
       },
       summary: `Secure link created for ${doc.documentType}`,
       sourceChannel: 'web',
