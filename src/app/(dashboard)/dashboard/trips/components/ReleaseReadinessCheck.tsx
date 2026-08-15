@@ -42,11 +42,6 @@ interface ReadinessData {
   };
 }
 
-interface AmendmentAcceptanceState {
-  pending?: boolean;
-  driverKind?: 'internal' | 'external' | 'unassigned';
-}
-
 interface ReleaseReadinessCheckProps {
   tripId: string;
   status: string;
@@ -61,10 +56,10 @@ const OPERATIONAL_GATE_ORDER = [
   'driver_licence_valid',
   'driver_licence_class_match',
   'vehicle_no_blocking_defects',
-  'trip_authority',
-  'driver_amendment_acknowledgement',
+  'authority_amendment_acknowledged',
   'driver_acknowledged',
   'departure_inspection',
+  'trip_authority',
   'authority_validity',
   'vehicle_documents',
   'vehicle_issued',
@@ -122,42 +117,6 @@ function resolveOperatorSteps(data: ReadinessData, tripStatus: string) {
   };
 }
 
-function withAmendmentAcceptanceGate(
-  readiness: ReadinessData,
-  amendment: AmendmentAcceptanceState | null,
-): ReadinessData {
-  if (!amendment?.pending) return readiness;
-  if (readiness.gates.some((gate) => gate.key === 'driver_amendment_acknowledgement')) return readiness;
-
-  const driverKind = amendment.driverKind ?? readiness.driver?.kind ?? 'unassigned';
-  const gate: ReadinessGate = {
-    key: 'driver_amendment_acknowledgement',
-    label: 'Revised Trip Authority acknowledged',
-    status: 'pending',
-    detail:
-      driverKind === 'external'
-        ? 'The vehicle changed after the external driver accepted the authority. Transport Administration must record acceptance of the revised authority before departure inspection.'
-        : 'The vehicle changed after the driver accepted the authority. The assigned driver must review and accept the revised authority before departure inspection.',
-    required: true,
-  };
-
-  const gates = [...readiness.gates];
-  const authorityIndex = gates.findIndex((candidate) => candidate.key === 'trip_authority');
-  gates.splice(authorityIndex >= 0 ? authorityIndex + 1 : gates.length, 0, gate);
-
-  return {
-    ...readiness,
-    gates,
-    summary: {
-      ...readiness.summary,
-      total: readiness.summary.total + 1,
-      pending: readiness.summary.pending + 1,
-      ready: false,
-      locked: true,
-    },
-  };
-}
-
 export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckProps) {
   const [data, setData] = useState<ReadinessData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -168,16 +127,9 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
     setLoading(true);
     setError('');
     try {
-      const [res, amendmentRes] = await Promise.all([
-        fetch(`/api/trips/${tripId}/readiness`, { cache: 'no-store' }),
-        fetch(`/api/trips/${tripId}/amendment-acceptance`, { cache: 'no-store' }),
-      ]);
+      const res = await fetch(`/api/trips/${tripId}/readiness`, { cache: 'no-store' });
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to check readiness');
-      const json = (await res.json()) as ReadinessData;
-      const amendment = amendmentRes.ok
-        ? ((await amendmentRes.json()) as AmendmentAcceptanceState)
-        : null;
-      setData(withAmendmentAcceptanceGate(json, amendment));
+      setData((await res.json()) as ReadinessData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to check readiness');
     } finally {
