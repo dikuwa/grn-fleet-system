@@ -10,6 +10,7 @@ import {
   requireRequestAuth,
 } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { onTripIssued } from '@/lib/document-generator';
 import { Permissions } from '@/lib/permissions';
 import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
 
@@ -222,6 +223,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
         WHERE ta.id = ${record.authorityId}::uuid
           AND ta.tenant_id = ${tenantId}::uuid
           AND ta.trip_id = ${tripId}::uuid
+          AND ta.accepted_at IS NOT NULL
+          AND ta.accepted_at < ${pending.createdAt}
           AND EXISTS (SELECT 1 FROM amendment_claim)
         RETURNING id
       ),
@@ -271,11 +274,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
       console.warn('[amendment-acceptance] Acknowledgement committed but audit event failed:', error),
     );
 
+    let documentId: string | null = null;
+    try {
+      const refreshed = await onTripIssued(record.allocationId, tenantId, session.user.id);
+      documentId = refreshed?.id ?? null;
+    } catch (error) {
+      console.warn('[amendment-acceptance] Acceptance committed but authority draft refresh failed:', error);
+    }
+
     return NextResponse.json({
       success: true,
       amendmentId: pending.amendmentId,
       authorityId: record.authorityId,
       authorityVersion: pending.authorityVersion,
+      documentId,
       acceptedAt: now.toISOString(),
       driverKind: internalDriver ? 'internal' : 'external',
       nextStage: 'awaiting_pre_trip_inspection',
