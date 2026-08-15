@@ -25,6 +25,12 @@ export async function GET(request: NextRequest) {
       'view',
     );
     if (accessCheck instanceof NextResponse) return accessCheck;
+    const revokeCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'delete',
+    );
+    const canRevoke = !(revokeCheck instanceof NextResponse);
 
     const { searchParams } = new URL(request.url);
     const requestedPage = Number.parseInt(searchParams.get('page') || '1', 10);
@@ -109,6 +115,7 @@ export async function GET(request: NextRequest) {
         total,
         page,
         totalPages: Math.ceil(total / limit),
+        capabilities: { canRevoke },
         summary: {
           active: Number(summary?.active ?? 0),
           expired: Number(summary?.expired ?? 0),
@@ -119,10 +126,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('[Share Links] GET failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to list share links: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to list share links.' }, { status: 500 });
   }
 }
 
@@ -316,10 +320,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Share link creation failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to create share link: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to create share link.' }, { status: 500 });
   }
 }
 
@@ -369,9 +370,6 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true, data: safeRevoked });
   } catch (error) {
     console.error('Share link revoke failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to revoke share link: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to revoke share link.' }, { status: 500 });
   }
 }
