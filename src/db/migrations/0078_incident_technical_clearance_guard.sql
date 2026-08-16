@@ -12,7 +12,10 @@ DECLARE
 BEGIN
   IF NEW.technical_clearance_status <> 'cleared'
      OR NEW.vehicle_damage IS NOT TRUE
-     OR OLD.technical_clearance_status IS NOT DISTINCT FROM NEW.technical_clearance_status THEN
+     OR (
+       TG_OP = 'UPDATE'
+       AND OLD.technical_clearance_status IS NOT DISTINCT FROM NEW.technical_clearance_status
+     ) THEN
     RETURN NEW;
   END IF;
 
@@ -57,6 +60,6 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_enforce_incident_technical_clearance ON trip_incidents;
 CREATE TRIGGER trg_enforce_incident_technical_clearance
-BEFORE UPDATE OF technical_clearance_status, vehicle_damage, trip_id ON trip_incidents
+BEFORE INSERT OR UPDATE OF technical_clearance_status, vehicle_damage, trip_id ON trip_incidents
 FOR EACH ROW
 EXECUTE FUNCTION enforce_incident_technical_clearance();
