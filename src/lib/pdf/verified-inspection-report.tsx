@@ -75,7 +75,12 @@ export async function generateVerifiedInspectionReportPdf(
       })
       .from(inspectionItemResults)
       .innerJoin(inspectionTemplateItems, eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId))
-      .where(eq(inspectionItemResults.inspectionId, inspectionId))
+      .where(
+        and(
+          eq(inspectionItemResults.inspectionId, inspectionId),
+          eq(inspectionTemplateItems.templateId, inspection.templateId),
+        ),
+      )
       .orderBy(inspectionTemplateItems.sortOrder),
     inspection.inspectorEmployeeId
       ? db
@@ -86,6 +91,9 @@ export async function generateVerifiedInspectionReportPdf(
           .then((rows) => rows[0])
       : Promise.resolve(undefined),
   ]);
+
+  // An official inspection cannot be rendered against an unknown/cross-tenant vehicle.
+  if (!vehicle) return null;
 
   let driverName: string | undefined;
   if (inspection.driverEmployeeId) {
@@ -118,19 +126,22 @@ export async function generateVerifiedInspectionReportPdf(
   const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
   const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
 
+  const effectiveInspectionAt = inspection.status === 'in_progress'
+    ? inspection.createdAt
+    : inspection.updatedAt;
   const data: InspectionReportData = {
     inspectionId: inspection.id,
     type: inspection.type as 'departure' | 'return',
     vehicle: {
-      licenceNumber: vehicle?.licenceNumber || 'Not recorded',
-      registrationNumber: vehicle?.vehicleRegisterNumber || 'Not recorded',
+      licenceNumber: vehicle.licenceNumber,
+      registrationNumber: vehicle.vehicleRegisterNumber || 'Not recorded',
     },
     odometerReading: inspection.odometerReading,
     fuelLevel: inspection.fuelLevel,
     overallPass: inspection.overallPass,
     status: inspection.status,
     notes: inspection.notes,
-    inspectedAt: inspection.createdAt.toISOString().split('T')[0],
+    inspectedAt: effectiveInspectionAt.toISOString(),
     tenantName: tenant?.name,
     tenantDocumentFooter: branding?.documentFooter || undefined,
     branding: resolvedBranding,
