@@ -1,8 +1,13 @@
 import { getDb, isDbConnected } from '@/db';
-import { fuelTransactions, fuelReceipts, reimbursements } from '@/db/schema/trips';
+import {
+  fuelTransactions,
+  fuelReceipts,
+  receiptFieldCorrections,
+  reimbursements,
+} from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -89,7 +94,10 @@ async function fetchFuelDetail(
   if (!transaction) notFound();
 
   const [receipts, reimbursement] = await Promise.all([
-    db.select().from(fuelReceipts).where(eq(fuelReceipts.transactionId, id)),
+    db
+      .select()
+      .from(fuelReceipts)
+      .where(and(eq(fuelReceipts.transactionId, id), eq(fuelReceipts.tenantId, tenantId))),
     db
       .select({
         id: reimbursements.id,
@@ -103,7 +111,21 @@ async function fetchFuelDetail(
       .then((r) => r[0] ?? null),
   ]);
 
-  return { transaction, receipts, reimbursement };
+  const corrections = receipts.length > 0
+    ? await db
+        .select({
+          receiptId: receiptFieldCorrections.receiptId,
+          fieldName: receiptFieldCorrections.fieldName,
+          extractedValue: receiptFieldCorrections.extractedValue,
+          correctedValue: receiptFieldCorrections.correctedValue,
+          correctedAt: receiptFieldCorrections.correctedAt,
+        })
+        .from(receiptFieldCorrections)
+        .where(inArray(receiptFieldCorrections.receiptId, receipts.map((receipt) => receipt.id)))
+        .orderBy(asc(receiptFieldCorrections.correctedAt))
+    : [];
+
+  return { transaction, receipts, corrections, reimbursement };
 }
 
 export default async function FuelDetailPage({ params }: PageProps) {
@@ -156,7 +178,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
     );
   }
 
-  const { transaction: t, receipts, reimbursement } = data;
+  const { transaction: t, receipts, corrections, reimbursement } = data;
   const anomalyState = t.anomalyState ?? 'none';
   const permissions = await getSessionPermissions(session);
   const canVerify = access.actions.includes('update') && permissions.includes(Permissions.FUEL_VERIFY);
@@ -368,6 +390,17 @@ export default async function FuelDetailPage({ params }: PageProps) {
                       isVerified: receipt.isVerified,
                       ocrStatus: receipt.ocrStatus,
                       extractionData: receipt.extractionData ?? null,
+                      fieldConfidence: receipt.fieldConfidence ?? null,
+                      extractionConfidence: receipt.extractionConfidence ?? null,
+                      rawOcrResponse: receipt.rawOcrResponse ?? null,
+                      corrections: corrections
+                        .filter((correction) => correction.receiptId === receipt.id)
+                        .map((correction) => ({
+                          fieldName: correction.fieldName,
+                          extractedValue: correction.extractedValue,
+                          correctedValue: correction.correctedValue,
+                          correctedAtLabel: formatDateTime(correction.correctedAt),
+                        })),
                     }}
                     canEdit={canCorrectReceipt}
                     canVerify={canVerify}

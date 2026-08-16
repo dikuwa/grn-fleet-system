@@ -11,7 +11,13 @@ import {
   vehicleAllocations,
 } from '@/db/schema/trips';
 import { requestPassengers, requestRoutes, transportRequests } from '@/db/schema/requests';
-import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
+import {
+  departments,
+  driverLicences,
+  driverProfiles,
+  employees,
+  offices,
+} from '@/db/schema/people';
 import { tenants } from '@/db/schema/tenants';
 import { vehicles } from '@/db/schema/fleet';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
@@ -479,14 +485,25 @@ export async function provisionTripAuthority(input: {
         .select({
           employeeId: requestPassengers.employeeId,
           externalName: requestPassengers.externalName,
+          externalOrganisation: requestPassengers.externalOrganisation,
+          externalPhone: requestPassengers.externalPhone,
           firstName: employees.firstName,
           lastName: employees.lastName,
           employeeNumber: employees.employeeNumber,
           phone: employees.phone,
-          jobTitle: employees.jobTitle,
+          departmentName: departments.name,
+          officeName: offices.name,
         })
         .from(requestPassengers)
         .leftJoin(employees, eq(employees.id, requestPassengers.employeeId))
+        .leftJoin(
+          departments,
+          and(eq(departments.id, employees.departmentId), eq(departments.tenantId, input.tenantId)),
+        )
+        .leftJoin(
+          offices,
+          and(eq(offices.id, employees.officeId), eq(offices.tenantId, input.tenantId)),
+        )
         .where(
           and(
             eq(requestPassengers.requestId, input.requestId),
@@ -511,6 +528,7 @@ export async function provisionTripAuthority(input: {
             eq(employees.id, context.driverId),
             eq(employees.tenantId, input.tenantId),
             eq(driverLicences.verificationStatus, 'verified'),
+            eq(driverLicences.isActive, true),
           ),
         )
         .orderBy(desc(driverLicences.expiryDate))
@@ -679,8 +697,10 @@ export async function provisionTripAuthority(input: {
       ? `${passenger.firstName ?? ''} ${passenger.lastName ?? ''}`.trim()
       : passenger.externalName || 'External passenger',
     employeeNumber: passenger.employeeNumber,
-    officeOrDepartment: passenger.jobTitle,
-    contactNumber: passenger.phone,
+    officeOrDepartment: passenger.employeeId
+      ? [passenger.departmentName, passenger.officeName].filter(Boolean).join(' / ') || null
+      : passenger.externalOrganisation,
+    contactNumber: passenger.employeeId ? passenger.phone : passenger.externalPhone,
     passengerType: passenger.employeeId ? 'government_employee' : 'external_passenger',
     destination: route?.destinationName,
     reasonForTravel: context.request.purpose,

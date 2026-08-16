@@ -20,8 +20,23 @@ function normaliseDate(value?: string) {
   const date = value.match(/\d{2}[./-]\d{2}[./-]\d{4}|\d{4}[./-]\d{2}[./-]\d{2}/)?.[0];
   if (!date) return undefined;
   const parts = date.replace(/[./]/g, '-').split('-');
-  if (parts[0].length === 4) return parts.join('-');
-  return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  const [yearText, monthText, dayText] =
+    parts[0].length === 4 ? parts : [parts[2], parts[1], parts[0]];
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (!Number.isInteger(year) || year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return undefined;
+  }
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  return `${yearText.padStart(4, '0')}-${monthText.padStart(2, '0')}-${dayText.padStart(2, '0')}`;
 }
 
 function labelledLineValue(lines: string[], labels: RegExp[]): string | undefined {
@@ -44,18 +59,19 @@ function holderLicenceCodes(lines: string[]): string[] {
 export function parseNamibianLicenceOcr(text: string): LicenceOcrFields {
   const clean = text.replace(/\r/g, '').replace(/[ \t]+/g, ' ');
   const lines = clean.split('\n').map((line) => line.trim()).filter(Boolean);
-  const dates = [...clean.matchAll(datePattern)].map((match) => normaliseDate(match[1])).filter(Boolean) as string[];
+  const dates = [...clean.matchAll(datePattern)]
+    .map((match) => normaliseDate(match[1]))
+    .filter(Boolean) as string[];
   const findValue = (labels: string[]) => {
     const line = lines.find((entry) => labels.some((label) => entry.toLowerCase().includes(label)));
     return line?.split(/[:|]/).slice(1).join(':').trim() || undefined;
   };
 
-  const validity = labelledLineValue(lines, [
-    /(?:validity|valid)\s*[:|.-]?\s*(\d{2}[./-]\d{2}[./-]\d{4})\s*(?:-|to)\s*(\d{2}[./-]\d{2}[./-]\d{4})/i,
-  ]);
-  const validityLine = lines.find((line) => /(?:validity|valid)/i.test(line));
+  const validityLine = lines.find((line) => /(?:validity|valid\s*(?:from|until|to)?)/i.test(line));
   const validityDates = validityLine
-    ? [...validityLine.matchAll(datePattern)].map((match) => normaliseDate(match[1])).filter(Boolean) as string[]
+    ? [...validityLine.matchAll(datePattern)]
+        .map((match) => normaliseDate(match[1]))
+        .filter(Boolean) as string[]
     : [];
 
   const licenceNumber = labelledLineValue(lines, [
@@ -64,12 +80,16 @@ export function parseNamibianLicenceOcr(text: string): LicenceOcrFields {
   const codes = holderLicenceCodes(lines);
   const id = clean.match(/\b\d{6,13}\b/)?.[0];
 
+  // Validity dates are deliberately label-bound. Real OCR commonly produces
+  // unrelated date-like noise (for example a damaged DOB or card issue text).
+  // If validity cannot be read reliably, leave it undefined so the upload flow
+  // can use the user's explicit fallback rather than promoting an OCR guess.
   return {
     holderName: findValue(['surname', 'name']),
     dateOfBirth: normaliseDate(findValue(['date of birth', 'birth'])) || dates[0],
     nationalIdNumber: findValue(['identity', 'id no', 'id number'])?.replace(/\s/g, '') || id,
-    validFrom: normaliseDate(findValue(['valid from'])) || validityDates[0] || (validity ? normaliseDate(validity) : undefined) || dates.at(-2),
-    validUntil: normaliseDate(findValue(['valid until', 'expiry', 'valid to'])) || validityDates[1] || dates.at(-1),
+    validFrom: normaliseDate(findValue(['valid from'])) || validityDates[0],
+    validUntil: normaliseDate(findValue(['valid until', 'expiry', 'valid to'])) || validityDates[1],
     licenceNumber: licenceNumber || findValue(['licence no', 'license no', 'licence number'])?.replace(/\s/g, ''),
     issueNumber: findValue(['issue no', 'issue number']),
     licenceCodes: codes,
