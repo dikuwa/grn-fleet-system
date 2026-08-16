@@ -1,7 +1,8 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { AlertTriangle, CheckCircle2, CircleSlash2, ShieldCheck } from 'lucide-react';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
+import { tripAmendments, tripAuthorities } from '@/db/schema/trips';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { TenantLogo } from '@/components/documents/tenant-logo';
 import { resolvePublicVerification } from '@/lib/document-verification';
@@ -116,6 +117,41 @@ function frozenIssueTimestamp(snapshot: Record<string, unknown>, legacyCreatedAt
   return legacyCreatedAt;
 }
 
+async function hasPostIssueTripAuthorityAmendment(input: {
+  tenantId: string;
+  allocationId: string;
+  issuedAt: string | Date;
+}) {
+  const issuedAt = input.issuedAt instanceof Date ? input.issuedAt : new Date(input.issuedAt);
+  if (!Number.isFinite(issuedAt.getTime())) return false;
+
+  const db = getDb();
+  const [authority] = await db
+    .select({ id: tripAuthorities.id })
+    .from(tripAuthorities)
+    .where(
+      and(
+        eq(tripAuthorities.tenantId, input.tenantId),
+        eq(tripAuthorities.allocationId, input.allocationId),
+      ),
+    )
+    .limit(1);
+  if (!authority) return false;
+
+  const [amendment] = await db
+    .select({ id: tripAmendments.id })
+    .from(tripAmendments)
+    .where(
+      and(
+        eq(tripAmendments.authorityId, authority.id),
+        eq(tripAmendments.status, 'approved'),
+        sql`COALESCE(${tripAmendments.approvedAt}, ${tripAmendments.createdAt}) > ${issuedAt}`,
+      ),
+    )
+    .limit(1);
+  return Boolean(amendment);
+}
+
 export default async function ShortVerificationPage({
   params,
 }: {
@@ -143,6 +179,14 @@ export default async function ShortVerificationPage({
   const status = getVerificationState(document.status);
   const permanent = result.kind === 'permanent';
   const frozenIssueAt = frozenIssueTimestamp(snapshot, document.createdAt);
+  const postIssueAuthorityAmendment =
+    document.documentType === 'trip_authority' && document.entityType === 'vehicle_allocation'
+      ? await hasPostIssueTripAuthorityAmendment({
+          tenantId: document.tenantId,
+          allocationId: document.entityId,
+          issuedAt: frozenIssueAt,
+        })
+      : false;
 
   const currentVersion =
     document.status === 'superseded'
@@ -260,6 +304,20 @@ export default async function ShortVerificationPage({
           </div>
         </div>
       </div>
+
+      {postIssueAuthorityAmendment && (
+        <div className="border-status-pending-bg bg-status-pending-bg mt-4 rounded-xl border p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="text-status-pending-text mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="text-ink-950 text-sm font-semibold">Subsequent operational amendments recorded</p>
+              <p className="text-ink-700 mt-1 text-sm">
+                This is the authentic Trip Authority issued for departure. The trip record contains one or more approved operational amendments recorded after this document was issued. The original issued authority remains unchanged as historical evidence.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="border-border bg-surface mt-4 overflow-hidden rounded-xl border shadow-sm">
         {summary.map(([label, value]) => (
