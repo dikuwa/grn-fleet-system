@@ -101,7 +101,12 @@ async function deliverIncidentSideEffects(
       entityType: 'trip_incident',
       entityId: incident.id,
       actionUrl: `/dashboard/trips/${input.tripId}`,
-      workspace: WorkspaceIds.DRIVER,
+      // Incident reporting is available to both Driver and Transport Admin
+      // workspaces. Keep the reporter acknowledgement workspace-neutral so the
+      // same user can see it in whichever authorised workspace submitted it;
+      // the notification feed still strips action URLs that the active
+      // workspace cannot access.
+      workspace: null,
       priority: 'high',
     }),
     resolveActiveRoleRecipients(input.tenantId, [SystemRoles.TRANSPORT_ADMIN]).then((admins) =>
@@ -150,8 +155,8 @@ async function deliverIncidentSideEffects(
       recipientUserIds: [maintenanceAssigneeUserId],
       category: 'action_required',
       eventType: 'critical_incident_maintenance',
-      title: `${officialNumber} requires technical clearance`,
-      body: `${input.description.slice(0, 180)}. The vehicle remains blocked until the assigned defect is resolved.`,
+      title: `${officialNumber} requires maintenance review`,
+      body: `${input.description.slice(0, 180)}. Resolve the assigned blocking defect; operational technical clearance remains a separate review step before the vehicle can return to service.`,
       entityType: 'trip_incident',
       entityId: incident.id,
       actionUrl: '/dashboard/fleet/defects?status=open',
