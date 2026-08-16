@@ -55,14 +55,31 @@ export async function PATCH(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    const { id } = await params;
+    const body = await req.json();
+    const isClosing = body.status === 'closed';
+
     const permCheck = await requirePermission(
       session,
-      Permissions.INCIDENT_INVESTIGATE,
+      isClosing ? Permissions.INCIDENT_CLOSE_INVESTIGATION : Permissions.INCIDENT_INVESTIGATE,
     );
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const { id } = await params;
-    const body = await req.json();
+    const incident = await getTenantIncident(session.tenantId, id);
+    if (!incident) {
+      return NextResponse.json({ error: 'Incident not found' }, { status: 404 });
+    }
+
+    // Vehicle-damage investigations cannot be closed through this dedicated
+    // endpoint before technical clearance. The incident-review endpoint
+    // enforces the same prerequisite; keep both entry points aligned so a
+    // direct API call cannot bypass the safety handoff.
+    if (isClosing && incident.vehicleDamage && incident.technicalClearanceStatus !== 'cleared') {
+      return NextResponse.json(
+        { error: 'Vehicle-damage investigations require technical clearance before closure.' },
+        { status: 409 },
+      );
+    }
 
     const result = await updateInvestigation(
       session.tenantId,
@@ -77,7 +94,8 @@ export async function PATCH(
     );
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
+      const status = result.error === 'Incident not found' ? 404 : 400;
+      return NextResponse.json({ error: result.error }, { status });
     }
 
     return NextResponse.json({ data: result.data });
