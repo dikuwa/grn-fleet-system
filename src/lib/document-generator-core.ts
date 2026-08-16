@@ -79,224 +79,199 @@ async function buildTransportRequestSnapshot(requestId: string) {
     .limit(1);
   if (!req) return null;
 
-  const activities = await db
-    .select()
-    .from(requestActivities)
-    .where(eq(requestActivities.requestId, requestId));
-
-  const [requester] = await db
-    .select({
-      name: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.middleName}, ${employees.lastName})`,
+  const [requester, routes, passengers, drivers, attachments, goods, workflow] = await Promise.all([
+    db.select({
+      firstName: employees.firstName,
+      lastName: employees.lastName,
       employeeNumber: employees.employeeNumber,
-      designation: employees.jobTitle,
+      departmentName: departments.name,
+      officeName: offices.name,
       phone: employees.phone,
       email: employees.email,
-      department: departments.name,
-      office: offices.name,
     })
-    .from(employees)
-    .leftJoin(departments, eq(departments.id, employees.departmentId))
-    .leftJoin(offices, eq(offices.id, employees.officeId))
-    .where(eq(employees.id, req.requesterEmployeeId))
-    .limit(1);
-  const [drivers, passengers, routes, attachments, goodsAndEquipment, approvals] =
-    await Promise.all([
-      db
-        .select({
-          driverType: requestDrivers.driverType,
-          sortOrder: requestDrivers.sortOrder,
-          name: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
-          employeeNumber: employees.employeeNumber,
-          department: departments.name,
-        })
-        .from(requestDrivers)
-        .innerJoin(employees, eq(employees.id, requestDrivers.employeeId))
-        .leftJoin(departments, eq(departments.id, employees.departmentId))
-        .where(eq(requestDrivers.requestId, requestId)),
-      db
-        .select({
-          employeeId: requestPassengers.employeeId,
-          externalName: requestPassengers.externalName,
-          externalOrganisation: requestPassengers.externalOrganisation,
-          travellerRole: requestPassengers.travellerRole,
-          reasonForTravel: requestPassengers.reasonForTravel,
-          employeeName: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
-          employeeNumber: employees.employeeNumber,
-          department: departments.name,
-        })
-        .from(requestPassengers)
-        .leftJoin(employees, eq(employees.id, requestPassengers.employeeId))
-        .leftJoin(departments, eq(departments.id, employees.departmentId))
-        .where(eq(requestPassengers.requestId, requestId)),
-      db.select().from(requestRoutes).where(eq(requestRoutes.requestId, requestId)),
-      db
-        .select({ fileName: requestAttachments.fileName, mimeType: requestAttachments.mimeType })
-        .from(requestAttachments)
-        .where(eq(requestAttachments.requestId, requestId)),
-      db
-        .select({
-          description: requestGoodsEquipment.description,
-          quantity: requestGoodsEquipment.quantity,
-          purpose: requestGoodsEquipment.purpose,
-        })
-        .from(requestGoodsEquipment)
-        .where(eq(requestGoodsEquipment.requestId, requestId))
-        .orderBy(requestGoodsEquipment.sortOrder),
-      db
-        .select({
-          stage: workflowActions.stepOrder,
-          action: workflowActions.actionType,
-          decision: workflowActions.result,
-          officer: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
-          comment: workflowActions.comment,
-          dateTime: workflowActions.createdAt,
-          signed: sql<boolean>`${workflowActions.signatureRef} is not null`,
-        })
-        .from(workflowActions)
-        .innerJoin(workflowInstances, eq(workflowInstances.id, workflowActions.instanceId))
-        .leftJoin(employees, eq(employees.id, workflowActions.actorEmployeeId))
-        .where(eq(workflowInstances.requestId, requestId)),
-    ]);
+      .from(employees)
+      .leftJoin(departments, eq(departments.id, employees.departmentId))
+      .leftJoin(offices, eq(offices.id, employees.officeId))
+      .where(eq(employees.id, req.requesterEmployeeId))
+      .limit(1),
+    db.select().from(requestRoutes).where(eq(requestRoutes.requestId, requestId)).orderBy(requestRoutes.sequence),
+    db.select({
+      passenger: requestPassengers,
+      firstName: employees.firstName,
+      lastName: employees.lastName,
+      employeeNumber: employees.employeeNumber,
+    }).from(requestPassengers)
+      .leftJoin(employees, eq(employees.id, requestPassengers.employeeId))
+      .where(eq(requestPassengers.requestId, requestId)),
+    db.select({
+      driver: requestDrivers,
+      firstName: employees.firstName,
+      lastName: employees.lastName,
+      employeeNumber: employees.employeeNumber,
+    }).from(requestDrivers)
+      .leftJoin(employees, eq(employees.id, requestDrivers.employeeId))
+      .where(eq(requestDrivers.requestId, requestId)),
+    db.select().from(requestAttachments).where(eq(requestAttachments.requestId, requestId)),
+    db.select().from(requestGoodsEquipment).where(eq(requestGoodsEquipment.requestId, requestId)).orderBy(requestGoodsEquipment.createdAt),
+    db.select({
+      instance: workflowInstances,
+      action: workflowActions,
+    }).from(workflowInstances)
+      .leftJoin(workflowActions, eq(workflowActions.instanceId, workflowInstances.id))
+      .where(eq(workflowInstances.requestId, requestId))
+      .orderBy(workflowActions.createdAt),
+  ]);
 
   return {
-    id: req.id,
-    reference: req.reference,
-    revision: req.revision,
-    scope: req.scope,
-    status: req.status,
-    department: req.department,
-    purpose: req.purpose,
-    requester: {
-      name: requester?.name || 'Unknown',
-      employeeNumber: requester?.employeeNumber,
-      designation: requester?.designation,
-      department: requester?.department || req.department,
-      office: requester?.office,
-      phone: requester?.phone,
-      email: requester?.email,
-    },
-    totalAuthorisedKilometres: req.totalAuthorisedKilometres,
-    specialAuthorityRequired: req.specialAuthorityRequired,
-    submittedAt: req.submittedAt?.toISOString(),
-    activities: activities.map((a) => ({
-      title: a.title,
-      description: a.description,
-      venue: a.venue,
-      startDate: a.startDate.toISOString(),
-      endDate: a.endDate.toISOString(),
-      estimatedKilometres: a.estimatedKilometres,
+    request: req,
+    requester: requester[0] || null,
+    routes,
+    passengers: passengers.map((p) => ({
+      ...p.passenger,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      employeeNumber: p.employeeNumber,
     })),
-    passengers: passengers.map((passenger) => ({
-      name: passenger.employeeId ? passenger.employeeName : passenger.externalName,
-      employeeNumber: passenger.employeeNumber,
-      departmentOrOrganisation: passenger.employeeId
-        ? passenger.department
-        : passenger.externalOrganisation,
-      role: passenger.travellerRole,
-      travellerType: passenger.employeeId ? 'Employee' : 'External traveller',
-      reasonForTravel: passenger.reasonForTravel,
-    })),
-    travellerCount: passengers.length + 1,
-    drivers,
-    routes: routes.map((route) => ({
-      origin: route.originName,
-      destination: route.destinationName,
-      estimatedKilometres: route.totalKilometres || route.mappedDistanceKm,
-      estimatedDurationMinutes: route.mappedDurationMinutes,
+    drivers: drivers.map((d) => ({
+      ...d.driver,
+      firstName: d.firstName,
+      lastName: d.lastName,
+      employeeNumber: d.employeeNumber,
     })),
     attachments,
-    goodsAndEquipment,
-    approvalWorkflow: approvals.map((approval) => ({
-      stage: approval.stage,
-      action: approval.action,
-      officer: approval.officer || 'Officer not recorded',
-      decision: approval.decision,
-      dateTime: approval.dateTime.toISOString(),
-      comment: approval.comment,
-      signature: approval.signed ? 'Digitally signed' : 'No signature applied',
-    })),
+    goodsEquipment: goods,
+    workflow,
   };
 }
 
 async function buildTripAuthoritySnapshot(allocationId: string) {
   const db = getDb();
-  const [alloc] = await db
+
+  const [authority] = await db
+    .select()
+    .from(tripAuthorities)
+    .where(eq(tripAuthorities.allocationId, allocationId))
+    .limit(1);
+  if (!authority) return null;
+
+  const [trip] = await db.select().from(trips).where(eq(trips.id, authority.tripId)).limit(1);
+  if (!trip) return null;
+
+  const [request] = await db
+    .select()
+    .from(transportRequests)
+    .where(eq(transportRequests.id, trip.requestId))
+    .limit(1);
+
+  const [allocation] = await db
     .select()
     .from(vehicleAllocations)
     .where(eq(vehicleAllocations.id, allocationId))
     .limit(1);
-  if (!alloc) return null;
 
-  const [req] = await db
-    .select()
-    .from(transportRequests)
-    .where(eq(transportRequests.id, alloc.requestId))
-    .limit(1);
+  const [vehicle] = allocation
+    ? await db.select().from(vehicles).where(eq(vehicles.id, allocation.vehicleId)).limit(1)
+    : [null];
 
-  const [vehicle] = await db
-    .select({
-      licenceNumber: vehicles.licenceNumber,
-      make: vehicles.make,
-      model: vehicles.model,
-      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
-    })
-    .from(vehicles)
-    .where(eq(vehicles.id, alloc.vehicleId))
-    .limit(1);
+  const [requester, routes, passengers, drivers] = request
+    ? await Promise.all([
+        db.select({
+          firstName: employees.firstName,
+          lastName: employees.lastName,
+          employeeNumber: employees.employeeNumber,
+          departmentName: departments.name,
+          officeName: offices.name,
+          phone: employees.phone,
+          email: employees.email,
+        }).from(employees)
+          .leftJoin(departments, eq(departments.id, employees.departmentId))
+          .leftJoin(offices, eq(offices.id, employees.officeId))
+          .where(eq(employees.id, request.requesterEmployeeId))
+          .limit(1),
+        db.select().from(requestRoutes).where(eq(requestRoutes.requestId, request.id)).orderBy(requestRoutes.sequence),
+        db.select({
+          passenger: requestPassengers,
+          firstName: employees.firstName,
+          lastName: employees.lastName,
+          employeeNumber: employees.employeeNumber,
+        }).from(requestPassengers)
+          .leftJoin(employees, eq(employees.id, requestPassengers.employeeId))
+          .where(eq(requestPassengers.requestId, request.id)),
+        db.select({
+          driver: requestDrivers,
+          firstName: employees.firstName,
+          lastName: employees.lastName,
+          employeeNumber: employees.employeeNumber,
+        }).from(requestDrivers)
+          .leftJoin(employees, eq(employees.id, requestDrivers.employeeId))
+          .where(eq(requestDrivers.requestId, request.id)),
+      ])
+    : [[], [], [], []];
 
   return {
-    allocationId: alloc.id,
-    requestReference: req?.reference || 'N/A',
-    scope: req?.scope || 'regional',
-    vehicle: {
-      licenceNumber: vehicle?.licenceNumber || 'N/A',
-      vehicleRegisterNumber: vehicle?.vehicleRegisterNumber || 'N/A',
-      make: vehicle?.make || '',
-      model: vehicle?.model || '',
-    },
-    startAt: alloc.startAt.toISOString(),
-    endAt: alloc.endAt.toISOString(),
-    state: alloc.state,
-    allocatedByUserId: alloc.allocatedByUserId,
+    authority,
+    trip,
+    request,
+    allocation,
+    vehicle,
+    requester: requester[0] || null,
+    routes,
+    passengers: passengers.map((p) => ({
+      ...p.passenger,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      employeeNumber: p.employeeNumber,
+    })),
+    drivers: drivers.map((d) => ({
+      ...d.driver,
+      firstName: d.firstName,
+      lastName: d.lastName,
+      employeeNumber: d.employeeNumber,
+    })),
+  };
+}
+
+async function buildVehicleAllocationSnapshot(allocationId: string) {
+  const db = getDb();
+  const [allocation] = await db
+    .select()
+    .from(vehicleAllocations)
+    .where(eq(vehicleAllocations.id, allocationId))
+    .limit(1);
+  if (!allocation) return null;
+
+  const [vehicle, request] = await Promise.all([
+    db.select().from(vehicles).where(eq(vehicles.id, allocation.vehicleId)).limit(1),
+    db.select().from(transportRequests).where(eq(transportRequests.id, allocation.requestId)).limit(1),
+  ]);
+
+  return {
+    allocation,
+    vehicle: vehicle[0] || null,
+    request: request[0] || null,
   };
 }
 
 async function buildInspectionReportSnapshot(inspectionId: string) {
   const db = getDb();
-  const [insp] = await db
+  const [inspection] = await db
     .select()
     .from(vehicleInspections)
     .where(eq(vehicleInspections.id, inspectionId))
     .limit(1);
-  if (!insp) return null;
+  if (!inspection) return null;
 
-  const [vehicle] = await db
-    .select({
-      licenceNumber: vehicles.licenceNumber,
-      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
-    })
-    .from(vehicles)
-    .where(eq(vehicles.id, insp.vehicleId))
-    .limit(1);
+  const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.id, inspection.vehicleId)).limit(1);
 
   return {
-    inspectionId: insp.id,
-    type: insp.type,
-    vehicle: {
-      licenceNumber: vehicle?.licenceNumber || 'N/A',
-      registrationNumber: vehicle?.vehicleRegisterNumber || 'N/A',
-    },
-    odometerReading: insp.odometerReading,
-    fuelLevel: insp.fuelLevel,
-    overallPass: insp.overallPass,
-    status: insp.status,
-    notes: insp.notes,
-    inspectedAt: insp.createdAt.toISOString(),
+    inspection,
+    vehicle: vehicle || null,
   };
 }
 
 async function buildFuelSummarySnapshot(tripId: string) {
   const db = getDb();
+
   const transactions = await db
     .select()
     .from(fuelTransactions)
@@ -312,7 +287,7 @@ async function buildFuelSummarySnapshot(tripId: string) {
       .select()
       .from(reimbursements)
       .where(inArray(reimbursements.transactionId, txIds));
-    pendingReimbursements = rb.filter((r) => r.state === 'pending').length;
+    pendingReimbursements = rb.filter((r) => r.state === 'pending' || r.state === 'approved').length;
   }
 
   const [closure] = await db
@@ -519,391 +494,165 @@ async function buildTripCompletionSnapshot(tripId: string) {
       vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
     })
     .from(vehicles)
-    .where(eq(vehicles.id, trip.vehicleId))
+    .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, trip.tenantId)))
     .limit(1);
 
-  let routeKm: number | null = null;
-  if (trip.requestId) {
-    const routeRows = await db
-      .select()
-      .from(requestRoutes)
-      .where(eq(requestRoutes.requestId, trip.requestId));
-    if (routeRows.length > 0) {
-      routeKm = Math.round(
-        routeRows.reduce((s, r) => s + (r.totalKilometres ?? r.mappedDistanceKm ?? 0), 0),
-      );
-    }
-  }
-
   return {
-    tripId: trip.id,
+    tripId,
     status: trip.status,
-    vehicle: {
-      licenceNumber: vehicle?.licenceNumber || 'N/A',
-      registrationNumber: vehicle?.vehicleRegisterNumber || 'N/A',
-    },
-    issuedAt: trip.issuedAt?.toISOString(),
-    startedAt: trip.startedAt?.toISOString(),
-    returnedAt: trip.returnedAt?.toISOString(),
-    closedAt: trip.closedAt?.toISOString(),
-    routeKm,
-    closure: closure
+    closedAt: trip.closedAt?.toISOString() || null,
+    actualKilometres: closure?.actualKilometres || null,
+    kilometreVariance: closure?.kilometreVariance || null,
+    totalFuelLitres: fuelSummary?.totalLitres ?? 0,
+    totalFuelCost: fuelSummary?.totalCost ?? 0,
+    pendingReimbursements: fuelSummary?.pendingReimbursements ?? 0,
+    vehicle: vehicle
       ? {
-          authorisedKm: closure.authorisedKilometres,
-          actualKm: closure.actualKilometres,
-          variance: closure.kilometreVariance,
-          decision: closure.decision,
-          notes: closure.reviewNotes,
+          licenceNumber: vehicle.licenceNumber,
+          vehicleRegisterNumber: vehicle.vehicleRegisterNumber,
         }
       : null,
-    fuelSummary,
-    eventSummary: {
-      total: incidents.length,
-      incidents: incidents.filter(
-        (event) =>
-          ![
-            'mechanical_defect',
-            'electrical_defect',
-            'vehicle_defect',
-            'tyre_failure',
-            'tyre_damage',
-          ].includes(event.incidentType),
-      ).length,
-      defects: incidents.filter((event) =>
-        [
-          'mechanical_defect',
-          'electrical_defect',
-          'vehicle_defect',
-          'tyre_failure',
-          'tyre_damage',
-        ].includes(event.incidentType),
-      ).length,
-      accidents: incidents.filter((event) =>
-        ['accident', 'accident_collision'].includes(event.incidentType),
-      ).length,
-      injuries: incidents.reduce((sum, event) => sum + event.numberInjured, 0),
-      critical: incidents.filter((event) => event.severity === 'critical').length,
-      events: incidents.map((event) => ({
-        number: event.officialNumber,
-        type: event.incidentType,
-        severity: event.severity,
-        occurredAt: event.occurredAt.toISOString(),
-        continuationState: event.continuationState,
-        status: event.status,
-        policeReference: event.policeReference,
-        description: event.description,
-      })),
-    },
+    incidents: incidents.map((incident) => ({
+      id: incident.id,
+      category: incident.category,
+      occurredAt: incident.occurredAt.toISOString(),
+      status: incident.status,
+      safeToContinue: incident.safeToContinue,
+      severity: incident.severity,
+    })),
   };
 }
 
 async function buildTripIncidentSnapshot(incidentId: string) {
   const db = getDb();
-  const [record] = await db
-    .select({
-      incident: tripIncidents,
-      requestReference: transportRequests.reference,
-      authorityNumber: tripAuthorities.authorityNumber,
-      vehicleRegistration: vehicles.licenceNumber,
-      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
-      vehicleMake: vehicles.make,
-      vehicleModel: vehicles.model,
-    })
+  const [incident] = await db
+    .select()
     .from(tripIncidents)
-    .innerJoin(trips, eq(trips.id, tripIncidents.tripId))
-    .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
-    .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
-    .leftJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
-    .where(and(eq(tripIncidents.id, incidentId), eq(tripIncidents.tenantId, trips.tenantId)))
+    .where(eq(tripIncidents.id, incidentId))
     .limit(1);
-  if (!record) return null;
-  const event = record.incident;
+  if (!incident) return null;
+
+  const [trip] = await db
+    .select({ id: trips.id, status: trips.status })
+    .from(trips)
+    .where(and(eq(trips.id, incident.tripId), eq(trips.tenantId, incident.tenantId)))
+    .limit(1);
+
+  const [vehicle] = await db
+    .select({
+      licenceNumber: vehicles.licenceNumber,
+      vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+      make: vehicles.make,
+      model: vehicles.model,
+    })
+    .from(vehicles)
+    .where(and(eq(vehicles.id, incident.vehicleId), eq(vehicles.tenantId, incident.tenantId)))
+    .limit(1);
+
   return {
-    reference: event.officialNumber,
-    eventType: event.incidentType,
-    severity: event.severity,
-    status: event.status,
-    occurredAt: event.occurredAt.toISOString(),
-    location: event.location,
-    origin: event.origin,
-    destination: event.destination,
-    odometerReading: event.odometerReading,
-    description: event.description,
-    immediateAction: event.actionTaken,
-    continuationState: event.continuationState,
-    vehicleSafe: event.vehicleSafe,
-    passengerSafe: event.passengerSafe,
-    injuries: event.injuries,
-    numberInjured: event.numberInjured,
-    vehicleDamage: event.vehicleDamage,
-    thirdPartyInvolvement: event.thirdPartyInvolvement,
-    thirdPartyDetails: event.thirdPartyDetails,
-    policeReference: event.policeReference,
-    emergencyServicesContacted: event.emergencyServicesContacted,
-    detailsRequired: event.detailsRequired,
-    accidentReportNumber: event.accidentReportNumber,
-    investigationStatus: event.investigationStatus,
-    investigationNotes: event.investigationNotes,
-    investigationClosedAt: event.investigationClosedAt?.toISOString(),
-    insuranceClaimReference: event.insuranceClaimReference,
-    insuranceNotified: event.insuranceNotified,
-    insuranceNotifiedAt: event.insuranceNotifiedAt?.toISOString(),
-    policeReportFiled: event.policeReportFiled,
-    thirdPartyInsuranceDetails: event.thirdPartyInsuranceDetails,
-    witnessStatements: event.witnessStatements,
-    technicalClearanceStatus: event.technicalClearanceStatus,
-    technicalClearanceAt: event.technicalClearanceAt?.toISOString(),
-    technicalClearanceByUserId: event.technicalClearanceByUserId,
-    tripReferences: {
-      transportRequest: record.requestReference,
-      tripAuthority: record.authorityNumber,
-    },
-    vehicle: {
-      registration: record.vehicleRegistration,
-      registerNumber: record.vehicleRegisterNumber,
-      make: record.vehicleMake,
-      model: record.vehicleModel,
-    },
-    attachments: event.attachmentKeys || [],
-    offlineCreatedAt: event.offlineCreatedAt?.toISOString(),
-    serverRecordedAt: event.createdAt.toISOString(),
+    incident,
+    trip: trip || null,
+    vehicle: vehicle || null,
+  };
+}
+
+async function buildAccidentReportSnapshot(incidentId: string) {
+  const snapshot = await buildTripIncidentSnapshot(incidentId);
+  if (!snapshot) return null;
+
+  return {
+    ...snapshot,
+    reportKind: 'mva_accident',
   };
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot dispatch (by entity type + action)
+// Core generation
 // ---------------------------------------------------------------------------
 
-const BUILDERS: Record<string, (id: string) => Promise<Record<string, unknown> | null>> = {
-  transport_request: buildTransportRequestSnapshot,
-  trip: buildTripCompletionSnapshot,
-  vehicle_allocation: buildTripAuthoritySnapshot,
-  inspection: buildInspectionReportSnapshot,
-  maintenance: buildMaintenanceReportSnapshot,
-  vehicle: buildVehicleHistorySnapshot,
-  tenant: buildAuditReportSnapshot,
-  trip_incident: buildTripIncidentSnapshot,
-};
-const DOCUMENT_BUILDERS: Partial<
-  Record<DocumentType, (id: string) => Promise<Record<string, unknown> | null>>
-> = {
-  fuel_summary: buildFuelSummarySnapshot,
-};
-
-/**
- * Generate or refresh a source snapshot in DRAFT state.
- *
- * A pending draft is mutable working state, not an official historical version.
- * Re-running a lifecycle hook therefore refreshes that same draft in place. A
- * new version number is allocated only after the latest version has left draft
- * state (issued/superseded). This prevents retry storms from manufacturing v2,
- * v3, v4 drafts while preserving immutable issued history.
- *
- * Formal issuance remains the only operation that freezes final render data and
- * branding, supersedes the previous official version and writes the issue audit.
- */
-export async function generateDocument(
-  payload: DocumentPayload,
-): Promise<typeof generatedDocuments.$inferSelect | null> {
-  const { documentType, entityType, entityId, tenantId, generatedByUserId, templateVersion } =
-    payload;
-
-  const builder = DOCUMENT_BUILDERS[documentType] || BUILDERS[entityType];
-  if (!builder) {
-    console.warn(`[DocGen] No builder for entity type: ${entityType}`);
-    return null;
-  }
-
-  const sourceSnapshot = await builder(entityId);
-  if (!sourceSnapshot) {
-    console.warn(`[DocGen] No data found for ${entityType}: ${entityId}`);
-    return null;
-  }
-
-  const branding = await resolveTenantDocumentBranding(tenantId);
+export async function generateDocument(payload: DocumentPayload) {
   const db = getDb();
 
-  const [existing] = await db
-    .select()
-    .from(generatedDocuments)
-    .where(
-      and(
-        eq(generatedDocuments.tenantId, tenantId),
-        eq(generatedDocuments.entityType, entityType),
-        eq(generatedDocuments.entityId, entityId),
-        eq(generatedDocuments.documentType, documentType),
-      ),
-    )
-    .orderBy(desc(generatedDocuments.documentVersion))
-    .limit(1);
+  const { documentType, entityType, entityId, tenantId, generatedByUserId, templateVersion = '1.0' } = payload;
+  let snapshotData = payload.snapshotData;
 
-  const targetVersion = existing?.status === 'draft'
-    ? existing.documentVersion
-    : existing
-      ? existing.documentVersion + 1
-      : 1;
-  const snapshotData = {
-    ...sourceSnapshot,
+  if (!snapshotData) {
+    switch (documentType) {
+      case 'transport_request':
+        snapshotData = (await buildTransportRequestSnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'trip_authority':
+        snapshotData = (await buildTripAuthoritySnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'vehicle_allocation':
+        snapshotData = (await buildVehicleAllocationSnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'fuel_summary':
+        snapshotData = (await buildFuelSummarySnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'inspection_report':
+        snapshotData = (await buildInspectionReportSnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'trip_completion':
+        snapshotData = (await buildTripCompletionSnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'trip_incident_report':
+        snapshotData = (await buildTripIncidentSnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'accident_report':
+        snapshotData = (await buildAccidentReportSnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'maintenance_report':
+        snapshotData = (await buildMaintenanceReportSnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'vehicle_history':
+        snapshotData = (await buildVehicleHistorySnapshot(entityId)) as Record<string, unknown>;
+        break;
+      case 'audit_report':
+        snapshotData = (await buildAuditReportSnapshot(tenantId)) as Record<string, unknown>;
+        break;
+    }
+  }
+
+  if (!snapshotData) {
+    throw new Error(`Unable to build snapshot for ${documentType}:${entityId}`);
+  }
+
+  const template = templateVersion || '1.0';
+  const branding = await resolveTenantDocumentBranding(tenantId);
+  const preparedAt = new Date();
+  const snapshot = {
+    ...snapshotData,
+    branding,
     documentIdentity: {
-      organisationName: branding?.organisationName,
-      logoUrl: branding?.logoUrl,
-      primaryColor: branding?.primaryColor,
-      accentColor: branding?.accentColor,
-      executiveSignatoryName: branding?.executiveSignatoryName,
-      executiveSignatoryTitle: branding?.executiveSignatoryTitle || 'Chief Executive Officer',
-      executiveSignatureUrl: branding?.executiveSignatureUrl,
-      snapshottedAt: new Date().toISOString(),
+      preparedAt: preparedAt.toISOString(),
     },
-    brandingMeta: branding
-      ? {
-          tenantId: branding.tenantId,
-          organisationName: branding.organisationName,
-          code: branding.code,
-          locale: branding.locale,
-          timezone: branding.timezone,
-          division: branding.division,
-          address: branding.address,
-          phone: branding.phone,
-          email: branding.email,
-          website: branding.website,
-          registrationNumber: branding.registrationNumber,
-          motto: branding.motto,
-          primaryColor: branding.primaryColor,
-          accentColor: branding.accentColor,
-          documentFooter: branding.documentFooter,
-          executiveSignatoryName: branding.executiveSignatoryName,
-          executiveSignatoryTitle: branding.executiveSignatoryTitle,
-        }
-      : undefined,
   };
-  const snapshotHash = createHash('sha256')
-    .update(
-      JSON.stringify({
-        documentType,
-        version: targetVersion,
-        snapshot: snapshotData,
-      }),
-    )
-    .digest('hex');
+  const snapshotHash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
 
   if (hasSchema(documentType)) {
-    const validation = validateDocumentSnapshot(documentType, snapshotData);
-    if (!validation.valid) {
+    const validation = validateDocumentSnapshot(documentType, snapshot);
+    if (!validation.success) {
       console.warn(
-        `[DocGen] Snapshot validation failed for ${documentType}:${entityId}`,
+        `[document-generator] Snapshot validation warnings for ${documentType}:`,
         validation.errors,
       );
     }
   }
 
-  if (existing?.status === 'draft') {
-    const [refreshed] = await db
-      .update(generatedDocuments)
-      .set({
-        templateVersion,
-        snapshotData,
-        hash: snapshotHash,
-        generatedByUserId,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(generatedDocuments.id, existing.id),
-          eq(generatedDocuments.tenantId, tenantId),
-          eq(generatedDocuments.status, 'draft'),
-        ),
-      )
-      .returning();
-
-    if (refreshed) return refreshed;
-
-    // The draft may have been issued concurrently after it was read above.
-    // Re-enter once against the new latest state rather than overwriting an
-    // official document or returning stale working data.
-    return generateDocument(payload);
-  }
-
-  const docId = randomUUID();
-  const [doc] = await db
-    .insert(generatedDocuments)
-    .values({
-      id: docId,
-      tenantId,
-      documentType,
-      documentVersion: targetVersion,
-      templateVersion,
-      entityType,
-      entityId,
-      snapshotData,
-      hash: snapshotHash,
-      status: 'draft',
-      generatedByUserId,
-    })
-    .returning();
-
-  if (!doc) throw new Error('Generated document committed but could not be reloaded');
-  return doc;
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle triggers
-// ---------------------------------------------------------------------------
-
-/** Called when a transport request is submitted (not draft). */
-export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
-  return generateDocument({
-    documentType: 'transport_request',
-    entityType: 'transport_request',
-    entityId: requestId,
+  const id = randomUUID();
+  return {
+    id,
     tenantId,
-    generatedByUserId: userId,
-  });
-}
-
-/** Called when a trip is closed. */
-export async function onTripClosed(tripId: string, tenantId: string, userId: string) {
-  const results = await Promise.all([
-    generateDocument({
-      documentType: 'trip_completion',
-      entityType: 'trip',
-      entityId: tripId,
-      tenantId,
-      generatedByUserId: userId,
-    }),
-    generateDocument({
-      documentType: 'fuel_summary',
-      entityType: 'trip',
-      entityId: tripId,
-      tenantId,
-      generatedByUserId: userId,
-    }),
-  ]);
-
-  return results.filter(Boolean);
-}
-
-/** Called when a trip is issued (vehicle + driver assigned). */
-export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
-  return generateDocument({
-    documentType: 'trip_authority',
-    entityType: 'vehicle_allocation',
-    entityId: allocationId,
-    tenantId,
-    generatedByUserId: userId,
-  });
-}
-
-/** Called when an inspection is completed. */
-export async function onInspectionCompleted(
-  inspectionId: string,
-  tenantId: string,
-  userId: string,
-) {
-  return generateDocument({
-    documentType: 'inspection_report',
-    entityType: 'inspection',
-    entityId: inspectionId,
-    tenantId,
-    generatedByUserId: userId,
-  });
+    documentType,
+    entityType,
+    entityId,
+    templateVersion: template,
+    status: 'draft' as const,
+    snapshotData: snapshot,
+    snapshotHash,
+    generatedByUserId,
+    createdAt: preparedAt,
+    updatedAt: preparedAt,
+  };
 }
