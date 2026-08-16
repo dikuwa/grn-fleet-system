@@ -134,6 +134,8 @@ export async function PATCH(
       tripStatus: trips.status,
       tripIssuedAt: trips.issuedAt,
       allocationState: vehicleAllocations.state,
+      allocationStartAt: vehicleAllocations.startAt,
+      allocationEndAt: vehicleAllocations.endAt,
     })
       .from(tripAmendments)
       .innerJoin(tripAuthorities, eq(tripAuthorities.id, tripAmendments.authorityId))
@@ -198,9 +200,6 @@ export async function PATCH(
       return NextResponse.json({ success: true });
     }
 
-    // Pending amendments are based on one authority version. If another
-    // amendment was approved first, this decision must be reviewed/resubmitted
-    // against the new authority instead of silently reusing a stale version.
     if (record.amendment.version !== record.authority.version + 1) {
       return NextResponse.json(
         { error: 'This amendment was prepared against an older Trip Authority version. Reject or resubmit it against the current authority.' },
@@ -224,6 +223,18 @@ export async function PATCH(
       if (effectiveStart && effectiveEnd && effectiveEnd <= effectiveStart) {
         return NextResponse.json({ error: 'Amended authority end date must be after the start date' }, { status: 422 });
       }
+      if (effectiveStart && effectiveStart < record.allocationStartAt) {
+        return NextResponse.json(
+          { error: 'Trip Authority validity cannot begin before the reserved vehicle allocation. Update the allocation schedule first.' },
+          { status: 409 },
+        );
+      }
+      if (effectiveEnd && effectiveEnd > record.allocationEndAt) {
+        return NextResponse.json(
+          { error: 'Trip Authority validity cannot extend beyond the reserved vehicle/driver allocation. Extend the allocation schedule first so overlap and driver eligibility can be revalidated.' },
+          { status: 409 },
+        );
+      }
     }
 
     const origin = amendmentType === 'route_change' && values.origin ? String(values.origin) : null;
@@ -233,11 +244,6 @@ export async function PATCH(
     const specialConditions = amendmentType === 'special_authorisation' ? String(values.specialConditions || '') : null;
     const specialAuthorityGranted = amendmentType === 'special_authorisation' ? values.specialAuthorityGranted === true : null;
 
-    // Approval updates the canonical authority and immutable authority-version
-    // history, but deliberately does NOT supersede an already-issued generated
-    // Trip Authority. Issued documents are historical evidence; a refreshed
-    // draft is generated after commit and formal issue is the only operation
-    // allowed to supersede the previous issued document.
     await db.execute(sql`
       WITH amendment_claim AS (
         UPDATE trip_amendments
@@ -331,10 +337,6 @@ export async function PATCH(
       END AS integer) AS committed
     `);
 
-    // Before physical issue/departure, refresh the current draft so the revised
-    // authority becomes the newest generated document. The generator's own
-    // post-departure guard preserves the original issued authority once a trip
-    // has actually left and records later changes as amendment history instead.
     if (record.tripStatus === 'pending' && !record.tripIssuedAt && ['provisional', 'confirmed'].includes(record.allocationState)) {
       await onTripIssued(record.allocationId, session.tenantId, session.user.id).catch((error) =>
         console.warn('[authority/amendments] Amendment committed but Trip Authority draft refresh failed:', error),
