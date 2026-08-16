@@ -73,10 +73,14 @@ export async function processDriverAcknowledgement(input: {
       requestStatus: transportRequests.status,
       requesterUserId: transportRequests.requesterUserId,
       allocationId: vehicleAllocations.id,
+      allocationVersion: vehicleAllocations.version,
       vehicleId: vehicleAllocations.vehicleId,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
       driverUserId: employees.userId,
       tripId: trips.id,
+      tripStatus: trips.status,
+      tripIssuedAt: trips.issuedAt,
+      tripAcknowledgedAt: trips.driverAcknowledgedAt,
       authorityId: tripAuthorities.id,
       authorityStatus: tripAuthorities.status,
     })
@@ -118,11 +122,16 @@ export async function processDriverAcknowledgement(input: {
   if (!context.driverUserId || context.driverUserId !== session.user.id) {
     return { ok: false, error: forbiddenResponse('Only the driver assigned to this trip may acknowledge it.') };
   }
-  if (context.authorityStatus !== 'awaiting_driver_acceptance') {
+  if (
+    context.tripStatus !== 'pending' ||
+    context.tripIssuedAt ||
+    context.tripAcknowledgedAt ||
+    context.authorityStatus !== 'awaiting_driver_acceptance'
+  ) {
     return {
       ok: false,
       error: NextResponse.json(
-        { error: `Trip Authority is not awaiting driver acceptance (current: ${context.authorityStatus}).` },
+        { error: 'The current trip or Trip Authority is no longer awaiting this driver acknowledgement.' },
         { status: 409 },
       ),
     };
@@ -137,17 +146,53 @@ export async function processDriverAcknowledgement(input: {
     acceptedAt: now.toISOString(),
     acceptedByUserId: session.user.id,
     source: 'driver_console',
+    acceptedVehicleId: context.vehicleId,
+    acceptedAllocationVersion: context.allocationVersion + 1,
   });
 
   let commit;
   try {
     commit = await db.execute(sql`
-      WITH claimed AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${context.allocationId}::uuid
+          AND va.request_id = ${context.requestId}::uuid
+          AND va.state = 'confirmed'
+          AND va.version = ${context.allocationVersion}
+          AND va.vehicle_id = ${context.vehicleId}::uuid
+          AND va.driver_employee_id = ${context.driverEmployeeId}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.id = ${context.tripId}::uuid
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.request_id = va.request_id
+              AND t.allocation_id = va.id
+              AND t.vehicle_id = va.vehicle_id
+              AND t.status = 'pending'
+              AND t.issued_at IS NULL
+              AND t.driver_acknowledged_at IS NULL
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM trip_authorities ta
+            WHERE ta.id = ${context.authorityId}::uuid
+              AND ta.trip_id = ${context.tripId}::uuid
+              AND ta.allocation_id = va.id
+              AND ta.tenant_id = ${session.tenantId}::uuid
+              AND ta.status = 'awaiting_driver_acceptance'
+          )
+        RETURNING va.id
+      ),
+      claimed AS (
         UPDATE workflow_instances wi
         SET status = 'completed', current_step_order = ${currentStep.stepOrder}, updated_at = ${now}
         WHERE wi.id = ${instanceId}::uuid
           AND wi.status = 'active'
           AND wi.current_step_order = ${currentStep.stepOrder}
+          AND EXISTS (SELECT 1 FROM allocation_claim)
           AND NOT EXISTS (
             SELECT 1 FROM workflow_actions wa
             WHERE wa.instance_id = wi.id AND wa.step_order = ${currentStep.stepOrder}
@@ -163,15 +208,12 @@ export async function processDriverAcknowledgement(input: {
         WHERE t.id = ${context.tripId}::uuid
           AND t.request_id = c.request_id
           AND t.tenant_id = ${session.tenantId}::uuid
+          AND t.status = 'pending'
+          AND t.issued_at IS NULL
           AND t.driver_acknowledged_at IS NULL
-          AND EXISTS (
-            SELECT 1
-            FROM vehicle_allocations va
-            WHERE va.id = ${context.allocationId}::uuid
-              AND va.request_id = c.request_id
-              AND va.state = 'confirmed'
-              AND va.driver_employee_id = ${context.driverEmployeeId}::uuid
-          )
+          AND t.allocation_id = ${context.allocationId}::uuid
+          AND t.vehicle_id = ${context.vehicleId}::uuid
+          AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING t.id
       ),
       authority_updated AS (
@@ -184,8 +226,11 @@ export async function processDriverAcknowledgement(input: {
         FROM claimed c
         WHERE ta.id = ${context.authorityId}::uuid
           AND ta.request_id = c.request_id
+          AND ta.trip_id = ${context.tripId}::uuid
+          AND ta.allocation_id = ${context.allocationId}::uuid
           AND ta.tenant_id = ${session.tenantId}::uuid
           AND ta.status = 'awaiting_driver_acceptance'
+          AND EXISTS (SELECT 1 FROM trip_updated)
         RETURNING ta.id
       ),
       request_updated AS (
@@ -195,6 +240,8 @@ export async function processDriverAcknowledgement(input: {
         WHERE tr.id = c.request_id
           AND tr.tenant_id = ${session.tenantId}::uuid
           AND tr.status = ${context.requestStatus}
+          AND tr.assigned_driver_employee_id = ${context.driverEmployeeId}::uuid
+          AND EXISTS (SELECT 1 FROM authority_updated)
         RETURNING tr.id
       ),
       action_inserted AS (
@@ -207,8 +254,6 @@ export async function processDriverAcknowledgement(input: {
           ${session.user.id}, ${context.driverEmployeeId}::uuid, ${comment?.trim() || null},
           ${acceptanceDataJson}::jsonb, ${now}
         FROM claimed c
-        INNER JOIN trip_updated tu ON true
-        INNER JOIN authority_updated au ON true
         INNER JOIN request_updated ru ON ru.id = c.request_id
         RETURNING id
       ),
@@ -229,7 +274,8 @@ export async function processDriverAcknowledgement(input: {
       )
       SELECT CAST(
         CASE
-          WHEN (SELECT count(*) FROM claimed) = 1
+          WHEN (SELECT count(*) FROM allocation_claim) = 1
+           AND (SELECT count(*) FROM claimed) = 1
            AND (SELECT count(*) FROM trip_updated) = 1
            AND (SELECT count(*) FROM authority_updated) = 1
            AND (SELECT count(*) FROM request_updated) = 1
@@ -307,12 +353,6 @@ export async function processDriverAcknowledgement(input: {
     }).catch(() => undefined);
   }
 
-  // Driver acceptance is the handoff into the official pre-trip inspection
-  // lifecycle. Keep this action-required event visible across the recipient's
-  // eligible workspaces so a Control Administrative Officer sees the pending
-  // inspection while still in their default Approvals workspace. The
-  // notification feed will expose its action URL only after the user switches
-  // to a workspace that can access the inspection route.
   const inspectionRecipients = await resolveActiveRoleRecipients(session.tenantId, [
     SystemRoles.INSPECTOR,
     SystemRoles.RELEASE_OFFICER,
