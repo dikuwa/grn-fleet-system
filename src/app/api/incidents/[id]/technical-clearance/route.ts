@@ -129,6 +129,15 @@ export async function PATCH(
     return NextResponse.json({ data: result.data });
   } catch (error) {
     console.error('[incidents/technical-clearance] PATCH failed:', error);
+    if (String(error).includes('incident_technical_clearance_blocked')) {
+      return NextResponse.json(
+        {
+          error:
+            'A blocking vehicle defect was recorded while technical clearance was being granted. Refresh the incident and resolve all blocking defects before clearing the vehicle.',
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to record technical clearance' }, { status: 500 });
   }
 }
