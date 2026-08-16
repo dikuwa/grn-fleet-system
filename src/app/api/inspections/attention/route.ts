@@ -4,14 +4,15 @@
  * Live count of inspection work that is actually ready for an Inspector or
  * Control Administrative Officer to perform. Inspections are persisted when
  * completed, so counting only `vehicle_inspections.status = in_progress`
- * misses the real queue. The attention badge therefore follows the same trip
- * and Trip Authority lifecycle gates used by the inspection form context.
+ * misses the real queue. The attention badge therefore follows the same trip,
+ * driver and Trip Authority lifecycle gates used by the inspection form context.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { and, count, eq, inArray, or } from 'drizzle-orm';
+import { and, count, eq, inArray, isNotNull, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { transportRequests } from '@/db/schema/requests';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 
@@ -57,6 +58,15 @@ export async function GET(request: NextRequest) {
           eq(tripAuthorities.tenantId, session.tenantId),
         ),
       )
+      .leftJoin(
+        externalDriverAssignments,
+        and(
+          eq(externalDriverAssignments.tripId, trips.id),
+          eq(externalDriverAssignments.allocationId, trips.allocationId),
+          eq(externalDriverAssignments.tenantId, session.tenantId),
+          eq(externalDriverAssignments.state, 'accepted'),
+        ),
+      )
       .where(
         and(
           eq(trips.tenantId, session.tenantId),
@@ -65,10 +75,18 @@ export async function GET(request: NextRequest) {
               eq(trips.status, 'pending'),
               inArray(transportRequests.status, DEPARTURE_REQUEST_STATUSES),
               inArray(tripAuthorities.status, DEPARTURE_AUTHORITY_STATUSES),
+              or(
+                isNotNull(vehicleAllocations.driverEmployeeId),
+                isNotNull(externalDriverAssignments.id),
+              ),
             ),
             and(
               inArray(trips.status, RETURN_TRIP_STATUSES),
               inArray(tripAuthorities.status, RETURN_AUTHORITY_STATUSES),
+              or(
+                isNotNull(vehicleAllocations.driverEmployeeId),
+                isNotNull(externalDriverAssignments.issueId),
+              ),
             ),
           ),
         ),
