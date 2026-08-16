@@ -191,8 +191,8 @@ export function AuthorityActions({
                 <SelectContent>
                   <SelectItem value="in_person">In person</SelectItem>
                   <SelectItem value="phone">Phone</SelectItem>
-                  <SelectItem value="written">Signed paper / written confirmation</SelectItem>
-                  <SelectItem value="email">Email</SelectItem>
+                  <SelectItem value="signed_paper">Signed paper</SelectItem>
+                  <SelectItem value="secure_link">Secure link</SelectItem>
                 </SelectContent>
               </Select>
             </div>
