@@ -28,6 +28,26 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { Permissions } from '@/lib/permissions';
 
+function snapshotAuthorityVersion(snapshotData: unknown): number | null {
+  if (!snapshotData || typeof snapshotData !== 'object' || Array.isArray(snapshotData)) return null;
+  const renderData = (snapshotData as Record<string, unknown>).renderData;
+  if (!renderData || typeof renderData !== 'object' || Array.isArray(renderData)) return null;
+  const raw = (renderData as Record<string, unknown>).documentVersion;
+  const parsed = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -56,6 +76,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         allocationState: vehicleAllocations.state,
         allocationVersion: vehicleAllocations.version,
         authorityStatus: tripAuthorities.status,
+        authorityDocumentVersion: tripAuthorities.documentVersion,
         authorityBeginningOdometer: tripAuthorities.beginningOdometer,
         authorityValidUntil: tripAuthorities.validUntil,
         vehicleOdometer: vehicles.currentOdometer,
@@ -97,6 +118,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         id: generatedDocuments.id,
         status: generatedDocuments.status,
         documentVersion: generatedDocuments.documentVersion,
+        snapshotData: generatedDocuments.snapshotData,
       })
       .from(generatedDocuments)
       .where(and(
@@ -107,12 +129,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ))
       .orderBy(desc(generatedDocuments.documentVersion))
       .limit(1);
-    if (!latestAuthorityDocument || latestAuthorityDocument.status !== 'issued') {
+    const issuedSnapshotAuthorityVersion = snapshotAuthorityVersion(latestAuthorityDocument?.snapshotData);
+    if (
+      !latestAuthorityDocument ||
+      latestAuthorityDocument.status !== 'issued' ||
+      issuedSnapshotAuthorityVersion !== trip.authorityDocumentVersion
+    ) {
       return NextResponse.json(
         {
-          error: latestAuthorityDocument
-            ? `The current Trip Authority (v${latestAuthorityDocument.documentVersion}) must be formally issued before physical vehicle issue.`
-            : 'The Trip Authority document must be generated and formally issued before physical vehicle issue.',
+          error: !latestAuthorityDocument
+            ? 'The Trip Authority document must be generated and formally issued before physical vehicle issue.'
+            : latestAuthorityDocument.status !== 'issued'
+              ? `The current Trip Authority (v${latestAuthorityDocument.documentVersion}) must be formally issued before physical vehicle issue.`
+              : `The issued Trip Authority snapshot represents authority version ${issuedSnapshotAuthorityVersion ?? 'unknown'}, but the current authority is version ${trip.authorityDocumentVersion}. Regenerate and formally issue the current authority before physical vehicle issue.`,
         },
         { status: 409 },
       );
@@ -324,6 +353,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             WHERE ta.trip_id = trips.id
               AND ta.tenant_id = ${session.tenantId}::uuid
               AND ta.status = 'ready_for_departure'
+              AND ta.document_version = ${trip.authorityDocumentVersion}
           )
           AND EXISTS (
             SELECT 1
@@ -333,6 +363,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               AND gd.entity_id = trips.allocation_id
               AND gd.document_type = 'trip_authority'
               AND gd.status = 'issued'
+              AND (gd.snapshot_data #>> '{renderData,documentVersion}') ~ '^[0-9]+$'
+              AND (gd.snapshot_data #>> '{renderData,documentVersion}')::integer = ${trip.authorityDocumentVersion}
               AND NOT EXISTS (
                 SELECT 1
                 FROM generated_documents newer
@@ -485,9 +517,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ success: true, issue });
   } catch (error) {
     console.error('[trips/issue] POST failed:', error);
-    if (String(error).includes('atomic_trip_issue_failed')) {
+    const code = postgresErrorCode(error);
+    if (
+      String(error).includes('atomic_trip_issue_failed') ||
+      (code === '23514' && String(error).includes('trip_issue_authority_conflict'))
+    ) {
       return NextResponse.json(
-        { error: 'Trip, allocation, driver, vehicle, or compliance state changed while the vehicle was being issued. Refresh and review the latest trip state.' },
+        { error: 'Trip, allocation, authority document, driver, vehicle, or compliance state changed while the vehicle was being issued. Refresh and review the latest trip state.' },
         { status: 409 },
       );
     }
