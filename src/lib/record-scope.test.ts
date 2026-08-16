@@ -5,13 +5,16 @@ import { maintenanceScopeCondition } from '@/lib/record-scope';
 const dialect = new PgDialect();
 
 function renderScope(recordScope: 'tenant' | 'assigned' | 'self' | 'related') {
-  return dialect.sqlToQuery(
-    maintenanceScopeCondition({
-      tenantId: '11111111-1111-1111-1111-111111111111',
-      userId: 'maintenance-user',
-      recordScope,
-    }),
-  ).sql.toLowerCase();
+  return dialect
+    .sqlToQuery(
+      maintenanceScopeCondition({
+        tenantId: '11111111-1111-1111-1111-111111111111',
+        userId: 'maintenance-user',
+        recordScope,
+      }),
+    )
+    .sql.toLowerCase()
+    .replaceAll('"', '');
 }
 
 describe('maintenance record scope', () => {
