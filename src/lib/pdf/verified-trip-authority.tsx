@@ -7,7 +7,7 @@ import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalParties } from '@/db/schema/external-parties';
 import { vehicles } from '@/db/schema/fleet';
-import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
+import { departments, driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { requestGoodsEquipment, requestRoutes, transportRequests } from '@/db/schema/requests';
 import {
   inspectionItemResults,
@@ -141,6 +141,8 @@ export async function generateVerifiedTripAuthorityPdf(
   let authoriser: TripAuthorityData['authoriser'] | undefined;
   let transportOfficer: TripAuthorityData['transportOfficer'] | undefined;
   let preDepartureInspection: TripAuthorityData['preDepartureInspection'] | undefined;
+  let departureInspectionStatus: string | undefined;
+  let departureInspectionDate: string | undefined;
   let fuelInformation: TripAuthorityData['fuelInformation'] | undefined;
 
   if (authority) {
@@ -151,6 +153,8 @@ export async function generateVerifiedTripAuthorityPdf(
     passengers = passengerRows.map((passenger) => ({
       name: passenger.fullName,
       employeeNumber: passenger.employeeNumber || undefined,
+      department: passenger.officeOrDepartment || undefined,
+      contactNumber: passenger.contactNumber || undefined,
       passengerType: passenger.passengerType,
       destination: passenger.destination || undefined,
       indemnityConfirmed: passenger.indemnityConfirmed,
@@ -166,6 +170,7 @@ export async function generateVerifiedTripAuthorityPdf(
         jobTitle: employees.jobTitle,
         phone: employees.phone,
         nationalIdNumber: employees.nationalIdNumber,
+        departmentName: departments.name,
         licenceClass: tripAuthorisedDrivers.licenceClass,
         licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
         verifiedLicenceNumber: driverLicences.licenceNumber,
@@ -174,6 +179,10 @@ export async function generateVerifiedTripAuthorityPdf(
       })
       .from(tripAuthorisedDrivers)
       .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
+      .leftJoin(
+        departments,
+        and(eq(departments.id, employees.departmentId), eq(departments.tenantId, tenantId)),
+      )
       .leftJoin(driverProfiles, eq(driverProfiles.employeeId, tripAuthorisedDrivers.employeeId))
       .leftJoin(
         driverLicences,
@@ -192,6 +201,7 @@ export async function generateVerifiedTripAuthorityPdf(
         employeeNumber: primary.employeeNumber || undefined,
         idNumber: primary.nationalIdNumber || undefined,
         designation: primary.jobTitle || undefined,
+        department: primary.departmentName || undefined,
         contactNumber: primary.phone || undefined,
         licenceNumber: primary.verifiedLicenceNumber || primary.licenceNumberMasked || undefined,
         licenceClass: primary.verifiedLicenceClass || primary.licenceClass || undefined,
@@ -206,6 +216,8 @@ export async function generateVerifiedTripAuthorityPdf(
         name: `${row.firstName} ${row.lastName}`.trim(),
         employeeNumber: row.employeeNumber || undefined,
         idNumber: row.nationalIdNumber || undefined,
+        department: row.departmentName || undefined,
+        contactNumber: row.phone || undefined,
         licenceNumber: row.verifiedLicenceNumber || row.licenceNumberMasked || undefined,
         licenceClass: row.verifiedLicenceClass || row.licenceClass || undefined,
         licenceExpiry: row.verifiedLicenceExpiry || row.licenceExpiry?.toLocaleDateString('en-NA'),
@@ -260,6 +272,8 @@ export async function generateVerifiedTripAuthorityPdf(
       .orderBy(desc(vehicleInspections.createdAt))
       .limit(1);
     if (departureInspection) {
+      departureInspectionStatus = departureInspection.status;
+      departureInspectionDate = departureInspection.createdAt.toISOString();
       const itemRows = await db
         .select({
           result: inspectionItemResults.result,
@@ -278,7 +292,7 @@ export async function generateVerifiedTripAuthorityPdf(
           comment: item.comment || undefined,
         })),
         notes: departureInspection.notes || undefined,
-        completedAt: departureInspection.createdAt.toLocaleString('en-NA'),
+        completedAt: departureInspection.createdAt.toISOString(),
       };
     }
 
@@ -344,9 +358,12 @@ export async function generateVerifiedTripAuthorityPdf(
       vehicleRegisterNumber: vehicle?.vehicleRegisterNumber || 'Not recorded',
       make: vehicle?.make || '',
       model: vehicle?.model || '',
+      modelYear: vehicle?.manufactureYear || undefined,
       colour: vehicle?.colour || undefined,
       fuelType: vehicle?.fuelType || undefined,
       currentOdometer: vehicle?.currentOdometer || undefined,
+      inspectionStatus: departureInspectionStatus,
+      inspectionDate: departureInspectionDate,
     },
     driver,
     passengers,
