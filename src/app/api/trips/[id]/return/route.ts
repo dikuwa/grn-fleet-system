@@ -170,6 +170,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         UPDATE trip_authorities
         SET status = 'awaiting_arrival_inspection',
             ending_odometer = ${endingOdometer},
+            data = COALESCE(data, '{}'::jsonb) || jsonb_build_object(
+              'returnDeclaration',
+              jsonb_build_object(
+                'incidentDeclared', ${body.incidentDeclared}::boolean,
+                'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}::boolean,
+                'recordedAt', ${now}::timestamptz,
+                'recordedByUserId', ${session.user.id}::text,
+                'source', 'internal_driver',
+                'reconciledAt', NULL,
+                'reconciledByUserId', NULL
+              )
+            ),
             version = version + 2,
             updated_at = ${now}
         WHERE id = ${trip.authorityId}::uuid
