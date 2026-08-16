@@ -453,8 +453,6 @@ export const routeRegistry: readonly RouteDefinition[] = [
     path: '/dashboard/inspections/new',
     label: 'Perform Inspection',
     section: 'Inspections',
-    // Phase 32: drivers do not perform official inspections — only Inspectors,
-    // Release Officers (INSPECTOR workspace) and Transport Administrators.
     workspaces: [W.INSPECTOR, W.TRANSPORT_ADMIN],
     access: {
       [W.INSPECTOR]: assignedManage(),
@@ -659,7 +657,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   {
     id: 'maintenance-new',
     path: '/dashboard/maintenance/new',
-    label: 'New Maintenance Record',
+    label: 'Record Maintenance',
     section: 'Maintenance',
     workspaces: [W.MAINTENANCE],
     access: { [W.MAINTENANCE]: assignedManage() },
@@ -670,7 +668,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   {
     id: 'maintenance',
     path: '/dashboard/maintenance',
-    label: 'Assigned Work Orders',
+    label: 'Maintenance Records',
     icon: 'Wrench',
     section: 'Maintenance',
     workspaces: [W.MAINTENANCE, W.AUDIT],
