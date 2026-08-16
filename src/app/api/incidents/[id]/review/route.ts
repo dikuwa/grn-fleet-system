@@ -23,11 +23,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const requiredPermissions = action === 'insurance_update'
       ? [Permissions.INCIDENT_INSURANCE_UPDATE]
-      : action === 'technical_clearance' || action === 'return_vehicle_to_service'
-        ? [Permissions.INCIDENT_TECHNICAL_CLEARANCE, Permissions.MAINTENANCE_MANAGE]
-        : action === 'close_investigation'
-          ? [Permissions.INCIDENT_CLOSE_INVESTIGATION]
-          : [Permissions.INCIDENT_INVESTIGATE, Permissions.TRIP_INCIDENT_MANAGE];
+      : action === 'technical_clearance'
+        ? [Permissions.INCIDENT_TECHNICAL_CLEARANCE]
+        : action === 'return_vehicle_to_service'
+          ? [Permissions.INCIDENT_TECHNICAL_CLEARANCE, Permissions.MAINTENANCE_MANAGE]
+          : action === 'close_investigation'
+            ? [Permissions.INCIDENT_CLOSE_INVESTIGATION]
+            : [Permissions.INCIDENT_INVESTIGATE, Permissions.TRIP_INCIDENT_MANAGE];
     const permission = await requireAnyPermission(auth.session, requiredPermissions);
     if (permission instanceof NextResponse) return permission;
 
@@ -288,6 +290,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         { status: 409 },
       );
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Incident review could not be updated' }, { status: 500 });
+    return NextResponse.json({ error: 'Incident review could not be updated' }, { status: 500 });
   }
 }
