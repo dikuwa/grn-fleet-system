@@ -486,17 +486,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       .limit(1);
     if (!licence) return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
 
-    if (body.action !== 'correct') {
-      const workspace = await getSessionWorkspace(auth.session);
-      if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
-        return NextResponse.json(
-          { error: 'Licence review decisions are available only in the Transport Administration workspace.' },
-          { status: 403 },
-        );
-      }
-      const permission = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
-      if (permission instanceof NextResponse) return permission;
+    const workspace = await getSessionWorkspace(auth.session);
+    if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
+      return NextResponse.json(
+        { error: 'Licence review corrections and decisions are available only in the Transport Administration workspace.' },
+        { status: 403 },
+      );
     }
+    const permission = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
+    if (permission instanceof NextResponse) return permission;
 
     const current = licence.driver_licences;
     if (TERMINAL_STATUSES.has(current.verificationStatus)) {
