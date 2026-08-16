@@ -85,6 +85,39 @@ function positive(value: number | undefined): number | undefined {
   return value !== undefined && value > 0 ? value : undefined;
 }
 
+function normaliseReceiptDate(value?: string): string | undefined {
+  if (!value) return undefined;
+  const parts = value.replace(/[.]/g, '/').replace(/-/g, '/').split('/').map((part) => part.trim());
+  if (parts.length !== 3) return undefined;
+
+  let year: number;
+  let month: number;
+  let day: number;
+  if (parts[0].length === 4) {
+    year = Number(parts[0]);
+    month = Number(parts[1]);
+    day = Number(parts[2]);
+  } else {
+    day = Number(parts[0]);
+    month = Number(parts[1]);
+    const shortYear = Number(parts[2]);
+    year = parts[2].length === 2 ? 2000 + shortYear : shortYear;
+  }
+
+  if (!Number.isInteger(year) || year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return undefined;
+  }
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 /** Deterministic parser kept separate from OCR so it can be tested with real receipt samples. */
 export function parseFuelReceiptText(text: string, ocrConfidence = 0): ParsedReceipt {
   const compact = text.replace(/\r/g, '');
@@ -105,10 +138,11 @@ export function parseFuelReceiptText(text: string, ocrConfidence = 0): ParsedRec
   const odometerRaw = firstMatch(compact, [
     /(?:ODOMETER|ODO|MILEAGE|KM\s*READING)\s*:?\s*([0-9][0-9 .,'’]{1,10})/i,
   ]);
-  const date = firstMatch(compact, [
+  const dateRaw = firstMatch(compact, [
     /\b([0-3]?\d[/.\-][01]?\d[/.\-](?:20)?\d{2})\b/,
     /\b((?:20)\d{2}[/.\-][01]\d[/.\-][0-3]\d)\b/,
   ]);
+  const date = normaliseReceiptDate(dateRaw);
   const time = firstMatch(compact, [/\b([0-2]?\d:[0-5]\d(?::[0-5]\d)?)\b/]);
   const reference = firstMatch(compact, [
     /(?:TRANSACTION|TRANS|REFERENCE|REF|TERMINAL)\s*(?:NO|NUMBER|#|ID)?\s*:?\s*([A-Z0-9-]{4,})/i,
@@ -208,7 +242,7 @@ export function receiptValidationFlags(input: {
     flags.push('amount_litres_inconsistent');
   }
   if (fields.transactionDate) {
-    const parsed = new Date(fields.transactionDate);
+    const parsed = new Date(`${fields.transactionDate}T00:00:00Z`);
     if (!Number.isNaN(parsed.getTime())) {
       const lower = input.tripStart ? new Date(input.tripStart.getTime() - 24 * 60 * 60 * 1000) : null;
       const upper = input.tripEnd ? new Date(input.tripEnd.getTime() + 7 * 24 * 60 * 60 * 1000) : null;
