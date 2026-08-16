@@ -238,9 +238,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       .limit(1);
     const version = (latest?.version || 0) + 1;
 
-    // OCR and structural validation happen before storage writes. A bad date,
-    // malformed submission or OCR-processing problem therefore cannot leave
-    // unattached licence objects in R2.
     let rawText = '';
     let meanConfidence = 0;
     const qualityWarnings: string[] = [];
@@ -287,8 +284,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       holderName: String(form.get('holderName') || '').trim(),
     };
 
-    // OCR is the provisional source of truth when it actually extracted a field.
-    // Typed values are fallback only; they must never silently overwrite OCR evidence.
     const licenceNumber = String(extracted.licenceNumber || manualFallback.licenceNumber).trim();
     const issueDate = String(extracted.validFrom || manualFallback.issueDate).trim();
     const expiryDate = String(extracted.validUntil || manualFallback.expiryDate).trim();
@@ -336,9 +331,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const licenceId = randomUUID();
     const verificationStatus = rawText && fallbackFields.length === 0 ? 'awaiting_review' : 'needs_correction';
 
-    // Only structurally valid submissions reach object storage. Track every key
-    // as it succeeds so a partial upload or rolled-back database transaction can
-    // clean up only the objects created by this request.
     const tenantPrefix = `tenant/${auth.session.tenantId}`;
     const uploaded: Record<string, string> = {};
     for (const [side, value] of [
@@ -486,17 +478,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       .limit(1);
     if (!licence) return NextResponse.json({ error: 'Licence record not found' }, { status: 404 });
 
-    if (body.action !== 'correct') {
-      const workspace = await getSessionWorkspace(auth.session);
-      if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
-        return NextResponse.json(
-          { error: 'Licence review decisions are available only in the Transport Administration workspace.' },
-          { status: 403 },
-        );
-      }
-      const permission = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
-      if (permission instanceof NextResponse) return permission;
+    const workspace = await getSessionWorkspace(auth.session);
+    if (workspace.activeWorkspace !== WorkspaceIds.TRANSPORT_ADMIN) {
+      return NextResponse.json(
+        { error: 'Licence review actions are available only in the Transport Administration workspace.' },
+        { status: 403 },
+      );
     }
+    const permission = await requirePermission(auth.session, Permissions.DRIVER_REVIEW_LICENCE);
+    if (permission instanceof NextResponse) return permission;
 
     const current = licence.driver_licences;
     if (TERMINAL_STATUSES.has(current.verificationStatus)) {
