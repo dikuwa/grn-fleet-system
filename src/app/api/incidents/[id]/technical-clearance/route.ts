@@ -22,6 +22,9 @@ export async function GET(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    const permCheck = await requirePermission(session, Permissions.INCIDENT_TECHNICAL_CLEARANCE);
+    if (permCheck instanceof NextResponse) return permCheck;
+
     const { id } = await params;
     const incident = await getTenantIncident(session.tenantId, id);
     if (!incident) {

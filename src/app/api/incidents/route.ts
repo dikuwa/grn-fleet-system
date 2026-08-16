@@ -8,7 +8,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tripIncidents, trips } from '@/db/schema/trips';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
 import { createIncident } from '@/lib/incidents/create-incident';
 import { getIncidentCategory } from '@/lib/incidents/categories';
@@ -16,14 +21,22 @@ import { eq, and, desc, type SQL } from 'drizzle-orm';
 import { tripScopeCondition } from '@/lib/record-scope';
 
 async function resolveIncidentAccess(session: Parameters<typeof requirePermission>[0]) {
-  const [reportCheck, manageCheck] = await Promise.all([
+  const [reportCheck, manageCheck, viewCheck] = await Promise.all([
     requirePermission(session, Permissions.TRIP_INCIDENT_REPORT),
     requirePermission(session, Permissions.TRIP_INCIDENT_MANAGE),
+    requirePermission(session, Permissions.TRIP_VIEW),
   ]);
 
   const canReport = !(reportCheck instanceof NextResponse);
   const canManage = !(manageCheck instanceof NextResponse);
-  return { canReport, canManage, denied: !canReport && !canManage ? reportCheck : null };
+  const canView = !(viewCheck instanceof NextResponse);
+  return {
+    canReport,
+    canManage,
+    canView,
+    readDenied: !canReport && !canManage && !canView ? viewCheck : null,
+    writeDenied: !canReport && !canManage ? reportCheck : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -37,7 +50,13 @@ export async function GET(req: NextRequest) {
     const { session } = auth;
 
     const access = await resolveIncidentAccess(session);
-    if (access.denied) return access.denied;
+    if (access.readDenied) return access.readDenied;
+
+    const roleNames = await getSessionRoleNames(session);
+    const tripAccess = resolveDashboardAccess('/dashboard/trips', roleNames);
+    if (!tripAccess.allowed || !tripAccess.actions.includes('view')) {
+      return NextResponse.json({ error: 'Incident access is not available in this workspace' }, { status: 403 });
+    }
 
     const { searchParams } = new URL(req.url);
     const tripId = searchParams.get('tripId');
@@ -46,20 +65,13 @@ export async function GET(req: NextRequest) {
     const conditions: SQL[] = [
       eq(tripIncidents.tenantId, session.tenantId),
       eq(trips.tenantId, session.tenantId),
+      tripScopeCondition({
+        tenantId: session.tenantId,
+        userId: session.user.id,
+        recordScope: tripAccess.recordScope ?? 'assigned',
+      }),
     ];
     if (tripId) conditions.push(eq(tripIncidents.tripId, tripId));
-
-    // Operations managers can review the tenant register. A Driver/report-only
-    // user may only see incidents for trips assigned to that user.
-    if (!access.canManage) {
-      conditions.push(
-        tripScopeCondition({
-          tenantId: session.tenantId,
-          userId: session.user.id,
-          recordScope: 'assigned',
-        }),
-      );
-    }
 
     const rows = await db
       .select({ incident: tripIncidents })
@@ -69,7 +81,15 @@ export async function GET(req: NextRequest) {
       .orderBy(desc(tripIncidents.occurredAt));
 
     const data = rows.map((row) => row.incident);
-    return NextResponse.json({ data, total: data.length });
+    return NextResponse.json({
+      data,
+      total: data.length,
+      capabilities: {
+        canView: true,
+        canReport: access.canReport,
+        canManage: access.canManage,
+      },
+    });
   } catch (error) {
     console.error('[incidents] GET failed:', error);
     return NextResponse.json({ error: 'Failed to fetch incidents' }, { status: 500 });
@@ -87,7 +107,7 @@ export async function POST(req: NextRequest) {
     const { session } = auth;
 
     const access = await resolveIncidentAccess(session);
-    if (access.denied) return access.denied;
+    if (access.writeDenied) return access.writeDenied;
 
     const body = await req.json();
 

@@ -47,6 +47,7 @@ interface WorkspaceData {
     make: string;
     model: string;
     requestReference: string;
+    issuedAt: string | null;
   };
   authority: {
     id: string;
@@ -153,10 +154,10 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
     try {
       const response = await fetch(`/api/trips/${tripId}`, { cache: 'no-store' });
       const json = await response.json();
-      if (!response.ok) throw new Error(json.error || 'Could not load active trip');
+      if (!response.ok) throw new Error(json.error || 'Could not load trip');
       setData(json);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Could not load active trip');
+      setError(loadError instanceof Error ? loadError.message : 'Could not load trip');
     } finally {
       setLoading(false);
     }
@@ -179,14 +180,20 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
   const primaryAction = useMemo(() => {
     if (!data?.authority) return null;
     if (data.authority.status === 'awaiting_driver_acceptance') return 'accept';
-    // Phase 32: drivers do not perform official inspections — departure and
-    // arrival inspections are performed by Inspectors and Release Officers.
-    // While the vehicle awaits the pre-trip or arrival inspection the driver
-    // waits; incident/defect reporting remains available from the console.
-    if (data.authority.status === 'ready_for_departure') return 'start';
+    // Drivers do not perform official inspections. A ready authority is only
+    // actionable by the driver after Transport Office has physically issued
+    // the vehicle and the trip has an immutable issue timestamp.
+    if (data.authority.status === 'ready_for_departure' && data.trip.issuedAt) return 'start';
     if (['in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported'].includes(data.authority.status)) return 'return';
     return null;
   }, [data]);
+
+  const isOperationalTrip = Boolean(
+    data && ['pending', 'in_progress', 'return_due'].includes(data.trip.status),
+  );
+  const waitingForPhysicalIssue = Boolean(
+    data?.authority.status === 'ready_for_departure' && !data.trip.issuedAt,
+  );
 
   const patch = (key: string, value: string | boolean) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -311,7 +318,9 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
         <CardHeader className="bg-brand-50/70">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-brand-700">My Active Trip</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-brand-700">
+                {isOperationalTrip ? 'My Active Trip' : 'My Trip Record'}
+              </p>
               <CardTitle className="mt-1">{data.authority.authorityNumber}</CardTitle>
               <p className="mt-1 text-sm text-ink-600">{data.trip.licenceNumber} · {data.trip.make} {data.trip.model}</p>
             </div>
@@ -348,6 +357,11 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
               </>
             )}
           </div>
+          {waitingForPhysicalIssue && (
+            <p className="rounded-lg border border-status-pending-border bg-status-pending-bg px-3 py-2 text-sm text-status-pending-text">
+              Trip Authority is ready. Waiting for Transport Office to physically issue the vehicle before departure can be recorded.
+            </p>
+          )}
           {error && <p role="alert" className="rounded-lg border border-status-error-border bg-status-error-bg px-3 py-2 text-sm text-status-error-text">{error}</p>}
         </CardContent>
       </Card>

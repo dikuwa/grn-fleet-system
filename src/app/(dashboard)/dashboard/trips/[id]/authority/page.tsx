@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { getDb } from '@/db';
 import {
+  trips,
   tripAuthorities,
   tripAuthorityPassengers,
   tripAuthorisedDrivers,
@@ -12,8 +13,10 @@ import { employees } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { requestRoutes } from '@/db/schema/requests';
-import { requireAuth, requirePermission } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requireAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { tripScopeCondition } from '@/lib/record-scope';
 import { Card, CardContent } from '@/components/ui/card';
 import { AuthorityActions } from './AuthorityActions';
 import { TenantLogo } from '@/components/documents/tenant-logo';
@@ -24,6 +27,13 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
   const session = await requireAuth();
   const permission = await requirePermission(session, Permissions.TRIP_VIEW);
   if (permission !== true) notFound();
+
+  const roleNames = await getSessionRoleNames(session);
+  const tripAccess = resolveDashboardAccess('/dashboard/trips', roleNames);
+  if (!tripAccess.allowed || !tripAccess.actions.includes('view')) notFound();
+  const shareLinkAccess = resolveDashboardAccess('/dashboard/share-links', roleNames);
+  const canDistribute = shareLinkAccess.allowed && shareLinkAccess.actions.includes('create');
+
   const db = getDb();
   const [authority] = await db
     .select({
@@ -60,11 +70,25 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
       requestId: tripAuthorities.requestId,
     })
     .from(tripAuthorities)
+    .innerJoin(
+      trips,
+      and(eq(trips.id, tripAuthorities.tripId), eq(trips.tenantId, session.tenantId)),
+    )
     .innerJoin(tenants, eq(tenants.id, tripAuthorities.tenantId))
     .leftJoin(tenantBranding, eq(tenantBranding.tenantId, tenants.id))
     .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, tripAuthorities.allocationId))
     .innerJoin(vehicles, eq(vehicles.id, vehicleAllocations.vehicleId))
-    .where(and(eq(tripAuthorities.tripId, id), eq(tripAuthorities.tenantId, session.tenantId)))
+    .where(
+      and(
+        eq(tripAuthorities.tripId, id),
+        eq(tripAuthorities.tenantId, session.tenantId),
+        tripScopeCondition({
+          tenantId: session.tenantId,
+          userId: session.user.id,
+          recordScope: tripAccess.recordScope ?? 'assigned',
+        }),
+      ),
+    )
     .limit(1);
   if (!authority) notFound();
 
@@ -118,7 +142,11 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
           </p>
           <h1 className="text-ink-950 text-2xl font-bold">{authority.number}</h1>
         </div>
-        <AuthorityActions tripId={id} verificationUrl={verificationUrl} />
+        <AuthorityActions
+          tripId={id}
+          verificationUrl={verificationUrl}
+          canDistribute={canDistribute}
+        />
       </div>
 
       <Card className="border-brand-800 overflow-hidden border-2 bg-white text-slate-950 dark:bg-white dark:text-slate-950">
@@ -225,7 +253,6 @@ export default async function AuthorityPage({ params }: { params: Promise<{ id: 
               />
             </div>
 
-            {/* Route map — surfaced from the mapped routes on the approved request */}
             {routes.length > 0 && (
               <>
                 <SectionTitle>Route map</SectionTitle>
