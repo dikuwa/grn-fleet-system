@@ -39,9 +39,11 @@ function amendmentLabel(type?: string) {
 export function AuthorityActions({
   tripId,
   verificationUrl,
+  canDistribute = false,
 }: {
   tripId: string;
   verificationUrl?: string;
+  canDistribute?: boolean;
 }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -136,28 +138,32 @@ export function AuthorityActions({
           <Printer className="h-4 w-4" />
           Print
         </Button>
-        <Button variant="secondary" onClick={copy}>
-          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          {copied ? 'Copied' : 'Copy secure link'}
-        </Button>
-        <Button variant="secondary" asChild>
-          <a
-            href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <MessageCircle className="h-4 w-4" />
-            WhatsApp
-          </a>
-        </Button>
-        <Button variant="secondary" asChild>
-          <a
-            href={`mailto:?subject=${encodeURIComponent('Official Trip Authority')}&body=${encodeURIComponent(shareText)}`}
-          >
-            <Mail className="h-4 w-4" />
-            Email
-          </a>
-        </Button>
+        {canDistribute && verificationUrl && (
+          <>
+            <Button variant="secondary" onClick={copy}>
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? 'Copied' : 'Copy secure link'}
+            </Button>
+            <Button variant="secondary" asChild>
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <MessageCircle className="h-4 w-4" />
+                WhatsApp
+              </a>
+            </Button>
+            <Button variant="secondary" asChild>
+              <a
+                href={`mailto:?subject=${encodeURIComponent('Official Trip Authority')}&body=${encodeURIComponent(shareText)}`}
+              >
+                <Mail className="h-4 w-4" />
+                Email
+              </a>
+            </Button>
+          </>
+        )}
       </div>
 
       {amendmentState?.pending && (
