@@ -9,6 +9,8 @@ import { Input, FieldWrapper } from '@/components/ui/input';
 import { APP_NAME } from '@/lib/constants';
 import { ThemeSelector } from '@/components/layout/theme-selector';
 
+const SIGN_IN_SERVICE_UNAVAILABLE = 'Service temporarily unavailable. Please try again later.';
+
 /** Inner form component that calls useSearchParams */
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -31,9 +33,21 @@ function LoginForm() {
         body: JSON.stringify({ username: username.trim(), password }),
       });
 
-      const json = await res.json();
+      let json: Record<string, unknown> = {};
+      try {
+        json = (await res.json()) as Record<string, unknown>;
+      } catch {
+        // Infrastructure/proxy failures are not guaranteed to return JSON.
+      }
+
       if (!res.ok) {
-        setError(json.error || 'Invalid username or password');
+        const isServiceFailure = res.status === 402 || res.status >= 500;
+        const safeApiError = typeof json.error === 'string' ? json.error : null;
+        setError(
+          isServiceFailure
+            ? SIGN_IN_SERVICE_UNAVAILABLE
+            : safeApiError || 'Invalid username or password',
+        );
         setLoading(false);
         return;
       }

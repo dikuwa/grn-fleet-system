@@ -20,22 +20,26 @@ import { eq, or, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { rateLimit } from '@/lib/rate-limit';
 
+const SIGN_IN_SERVICE_UNAVAILABLE = 'Service temporarily unavailable. Please try again later.';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { username, password } = body;
 
-    if (!username?.trim()) {
+    if (typeof username !== 'string' || !username.trim()) {
       return NextResponse.json({ error: 'Username or email is required' }, { status: 400 });
     }
-    if (!password?.trim()) {
+    if (typeof password !== 'string' || !password.trim()) {
       return NextResponse.json({ error: 'Password is required' }, { status: 400 });
     }
 
-    // Rate limit: 5 sign-in attempts per IP per 60 seconds
+    const normalizedUsername = username.trim().toLowerCase();
+
+    // Rate limit: 20 sign-in attempts per IP + normalized account identifier per 60 seconds.
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
     if (process.env.NODE_ENV !== 'test' && !process.env.CI) {
-      const rl = await rateLimit(`login:${ip}:${username}`, 20, 60);
+      const rl = await rateLimit(`login:${ip}:${normalizedUsername}`, 20, 60);
       if (!rl.success) {
         const res = NextResponse.json(
           { error: 'Too many sign-in attempts. Please try again later.' },
@@ -52,12 +56,7 @@ export async function POST(request: NextRequest) {
     const [userRecord] = await db
       .select()
       .from(user)
-      .where(
-        or(
-          eq(user.username, username.trim().toLowerCase()),
-          eq(user.email, username.trim().toLowerCase()),
-        )!,
-      )
+      .where(or(eq(user.username, normalizedUsername), eq(user.email, normalizedUsername))!)
       .limit(1);
 
     if (!userRecord) {
@@ -168,7 +167,7 @@ export async function POST(request: NextRequest) {
           action: 'login',
           entityType: 'user',
           entityId: userRecord.id,
-          summary: `User signed in via ${username.includes('@') ? 'email' : 'username'}`,
+          summary: `User signed in via ${normalizedUsername.includes('@') ? 'email' : 'username'}`,
         });
       }
     } catch {
@@ -202,10 +201,9 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (error) {
+    // Keep provider/database diagnostics server-side. Never expose raw database,
+    // quota, SQL, HTTP, stack-trace, or infrastructure details to the client.
     console.error('[Custom Sign-In] Failed:', error);
-    return NextResponse.json(
-      { error: 'Sign in failed: ' + (error instanceof Error ? error.message : String(error)) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: SIGN_IN_SERVICE_UNAVAILABLE }, { status: 503 });
   }
 }
