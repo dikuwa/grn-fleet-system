@@ -24,10 +24,6 @@ import { InsuranceTrackingPanel } from '@/components/incidents/InsuranceTracking
 import { TechnicalClearanceForm } from '@/components/incidents/TechnicalClearanceForm';
 import type { InvestigationStatus, TechnicalClearanceStatus } from '@/lib/incidents/mva-constants';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface Incident {
   id: string;
   officialNumber: string;
@@ -47,7 +43,6 @@ interface Incident {
   continuationState: string;
   detailsRequired: boolean;
   attachmentKeys: string[] | null;
-  // MVA
   investigationStatus: string;
   investigationNotes: string | null;
   investigationClosedAt: string | null;
@@ -70,10 +65,6 @@ const SEVERITY_BADGE: Record<string, 'default' | 'info' | 'warning' | 'error'> =
   critical: 'error',
 };
 
-// ---------------------------------------------------------------------------
-// Inner page (suspended)
-// ---------------------------------------------------------------------------
-
 function IncidentDetailInner() {
   const params = useParams();
   const tripId = params.id as string;
@@ -81,6 +72,7 @@ function IncidentDetailInner() {
   const { toast } = useToast();
 
   const [incident, setIncident] = useState<Incident | null>(null);
+  const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState(false);
@@ -96,7 +88,9 @@ function IncidentDetailInner() {
       const found = json.data?.find((i: Incident) => i.id === incidentId);
       if (!found) throw new Error('Incident not found');
       setIncident(found);
+      setCanManage(json.capabilities?.canManage === true);
     } catch (err) {
+      setCanManage(false);
       toast({
         title: 'Error',
         description: err instanceof Error ? err.message : 'Failed to load incident',
@@ -113,6 +107,7 @@ function IncidentDetailInner() {
   }, [fetchIncident]);
 
   const generateReport = useCallback(async () => {
+    if (!canManage) return;
     setGeneratingReport(true);
     try {
       const res = await fetch(`/api/incidents/${incidentId}/mva-report`, { method: 'POST' });
@@ -132,7 +127,7 @@ function IncidentDetailInner() {
     } finally {
       setGeneratingReport(false);
     }
-  }, [incidentId, toast]);
+  }, [canManage, incidentId, toast]);
 
   const downloadReport = useCallback(async () => {
     setDownloadingReport(true);
@@ -163,6 +158,7 @@ function IncidentDetailInner() {
   }, [incidentId, incident, toast]);
 
   const completeDetails = useCallback(async () => {
+    if (!canManage) return;
     setCompletingDetails(true);
     try {
       const res = await fetch(`/api/incidents/${incidentId}/complete`, { method: 'POST' });
@@ -179,7 +175,7 @@ function IncidentDetailInner() {
     } finally {
       setCompletingDetails(false);
     }
-  }, [incidentId, toast, fetchIncident]);
+  }, [canManage, incidentId, toast, fetchIncident]);
 
   if (loading) {
     return (
@@ -227,19 +223,21 @@ function IncidentDetailInner() {
           <Button size="compact" variant="secondary" onClick={fetchIncident} title="Refresh">
             <RefreshCw className="h-4 w-4" />
           </Button>
-          <Button
-            size="compact"
-            variant="secondary"
-            onClick={generateReport}
-            disabled={generatingReport}
-          >
-            {generatingReport ? (
-              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-            ) : (
-              <FileText className="mr-1 h-4 w-4" />
-            )}
-            Generate MVAR
-          </Button>
+          {canManage && (
+            <Button
+              size="compact"
+              variant="secondary"
+              onClick={generateReport}
+              disabled={generatingReport}
+            >
+              {generatingReport ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="mr-1 h-4 w-4" />
+              )}
+              Generate MVAR
+            </Button>
+          )}
           <Button
             size="compact"
             variant="primary"
@@ -256,7 +254,6 @@ function IncidentDetailInner() {
         </div>
       </PageHeader>
 
-      {/* Overview cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="py-3">
@@ -294,7 +291,6 @@ function IncidentDetailInner() {
         </Card>
       </div>
 
-      {/* Safety flags */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-semibold">Safety & Impact</CardTitle>
@@ -324,7 +320,6 @@ function IncidentDetailInner() {
         </CardContent>
       </Card>
 
-      {/* Description */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-semibold">Description</CardTitle>
@@ -337,27 +332,28 @@ function IncidentDetailInner() {
                 <AlertTriangle className="h-4 w-4" />
                 Additional details required before this incident can be finalised.
               </div>
-              <div className="mt-3 flex justify-end">
-                <Button
-                  size="compact"
-                  variant="primary"
-                  onClick={() => setConfirmCompleteOpen(true)}
-                  disabled={completingDetails}
-                >
-                  {completingDetails ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="mr-1 h-4 w-4" />
-                  )}
-                  Complete Details
-                </Button>
-              </div>
+              {canManage && (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    size="compact"
+                    variant="primary"
+                    onClick={() => setConfirmCompleteOpen(true)}
+                    disabled={completingDetails}
+                  >
+                    {completingDetails ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="mr-1 h-4 w-4" />
+                    )}
+                    Complete Details
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </CardContent>
       </Card>
 
-      {/* Attachments */}
       {incident.attachmentKeys && incident.attachmentKeys.length > 0 && (
         <Card>
           <CardHeader>
@@ -381,8 +377,7 @@ function IncidentDetailInner() {
         </Card>
       )}
 
-      {/* MVA Workflow panels — only show for accidents or when data already exists */}
-      {(hasMvaFields ||
+      {canManage && (hasMvaFields ||
         incident.incidentType.includes('accident') ||
         incident.severity === 'critical' ||
         incident.severity === 'serious') && (
@@ -400,9 +395,7 @@ function IncidentDetailInner() {
               investigationNotes: incident.investigationNotes,
               investigationClosedAt: incident.investigationClosedAt,
               accidentReportNumber: incident.accidentReportNumber,
-              witnessStatements: incident.witnessStatements as Array<
-                Record<string, unknown>
-              > | null,
+              witnessStatements: incident.witnessStatements as Array<Record<string, unknown>> | null,
             }}
             onUpdate={fetchIncident}
           />
@@ -422,8 +415,7 @@ function IncidentDetailInner() {
           <TechnicalClearanceForm
             incidentId={incidentId}
             data={{
-              technicalClearanceStatus:
-                incident.technicalClearanceStatus as TechnicalClearanceStatus,
+              technicalClearanceStatus: incident.technicalClearanceStatus as TechnicalClearanceStatus,
               technicalClearanceAt: incident.technicalClearanceAt,
               technicalClearanceByUserId: incident.technicalClearanceByUserId,
             }}
@@ -432,21 +424,19 @@ function IncidentDetailInner() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={confirmCompleteOpen}
-        onOpenChange={setConfirmCompleteOpen}
-        title="Complete incident details?"
-        description="Marking the details as complete finalises the incident record. Missing or incomplete details will be locked from further editing."
-        confirmLabel="Complete details"
-        onConfirm={completeDetails}
-      />
+      {canManage && (
+        <ConfirmDialog
+          open={confirmCompleteOpen}
+          onOpenChange={setConfirmCompleteOpen}
+          title="Complete incident details?"
+          description="Marking the details as complete finalises the incident record. Missing or incomplete details will be locked from further editing."
+          confirmLabel="Complete details"
+          onConfirm={completeDetails}
+        />
+      )}
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Exported wrapper with Suspense
-// ---------------------------------------------------------------------------
 
 export default function IncidentDetailPage() {
   return (
