@@ -165,7 +165,6 @@ export const TransportRequestDocument: React.FC<{
           version={data.documentVersion || 1}
           status={formatDocumentStatus(status)}
           issueDate={documentTimestamp ? formatHumanDate(documentTimestamp, branding?.locale) : undefined}
-          qrCode={data.qrCodeDataUrl}
         />
 
         {/* ════════════════════════════════════════
