@@ -166,40 +166,61 @@ export function inspectionScopeCondition(context: RecordScopeContext): SQL {
 export function vehicleScopeCondition(context: RecordScopeContext): SQL {
   const tenant = eq(vehicles.tenantId, context.tenantId);
   if (context.recordScope === 'tenant') return tenant;
-  return and(
-    tenant,
-    or(
-      sql`exists (
-        select 1 from ${trips} t
-        inner join ${vehicleAllocations} va on va.id = t.allocation_id
-        inner join ${employees} e on e.id = va.driver_employee_id
-        where t.vehicle_id = ${vehicles.id}
-          and t.tenant_id = ${context.tenantId}
-          and e.tenant_id = ${context.tenantId}
-          and e.user_id = ${context.userId}
-      )`,
-      sql`exists (
-        select 1 from ${vehicleInspections} vi
-        where vi.vehicle_id = ${vehicles.id}
-          and vi.tenant_id = ${context.tenantId}
-          and vi.inspector_user_id = ${context.userId}
-      )`,
-      sql`exists (
-        select 1 from ${maintenanceEvents} me
-        where me.vehicle_id = ${vehicles.id}
-          and (me.assigned_to_user_id = ${context.userId} or me.created_by_user_id = ${context.userId})
-      )`,
-      sql`exists (
-        select 1 from ${vehicleDefects} vd
-        where vd.vehicle_id = ${vehicles.id}
-          and (
-            vd.reported_by_user_id = ${context.userId}
-            or vd.assigned_to_user_id = ${context.userId}
-            or vd.resolved_by_user_id = ${context.userId}
-          )
-      )`,
-    )!,
+
+  const userRelationship = or(
+    sql`exists (
+      select 1 from ${trips} t
+      inner join ${vehicleAllocations} va on va.id = t.allocation_id
+      inner join ${employees} e on e.id = va.driver_employee_id
+      where t.vehicle_id = ${vehicles.id}
+        and t.tenant_id = ${context.tenantId}
+        and e.tenant_id = ${context.tenantId}
+        and e.user_id = ${context.userId}
+    )`,
+    sql`exists (
+      select 1 from ${vehicleInspections} vi
+      where vi.vehicle_id = ${vehicles.id}
+        and vi.tenant_id = ${context.tenantId}
+        and vi.inspector_user_id = ${context.userId}
+    )`,
+    sql`exists (
+      select 1 from ${maintenanceEvents} me
+      where me.vehicle_id = ${vehicles.id}
+        and (me.assigned_to_user_id = ${context.userId} or me.created_by_user_id = ${context.userId})
+    )`,
+    sql`exists (
+      select 1 from ${vehicleDefects} vd
+      where vd.vehicle_id = ${vehicles.id}
+        and (
+          vd.reported_by_user_id = ${context.userId}
+          or vd.assigned_to_user_id = ${context.userId}
+          or vd.resolved_by_user_id = ${context.userId}
+        )
+    )`,
   )!;
+
+  if (context.recordScope === 'related') {
+    // Maintenance owns the related Fleet workspace. Its Defects queue deliberately
+    // includes unassigned defects so newly-created safety work cannot disappear
+    // when no officer was assigned at inspection time. The corresponding vehicle
+    // must therefore be selectable/openable for maintenance triage. Keep this
+    // exception out of assigned scope so Inspector/Driver views do not gain
+    // unrelated vehicles merely because another user's defect is unassigned.
+    return and(
+      tenant,
+      or(
+        userRelationship,
+        sql`exists (
+          select 1 from ${vehicleDefects} unassigned_defect
+          where unassigned_defect.vehicle_id = ${vehicles.id}
+            and unassigned_defect.assigned_to_user_id is null
+            and unassigned_defect.resolved_at is null
+        )`,
+      )!,
+    )!;
+  }
+
+  return and(tenant, userRelationship)!;
 }
 
 export function documentScopeCondition(context: RecordScopeContext): SQL {
