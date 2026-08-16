@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   currentNamibiaDate,
+  daysUntilNamibiaDate,
   validateMaintenanceServiceDate,
   validateNextServiceOdometer,
 } from '@/lib/maintenance-record-validation';
@@ -8,6 +9,13 @@ import {
 describe('maintenance record validation', () => {
   it('resolves the operational date in Namibia around UTC midnight', () => {
     expect(currentNamibiaDate(new Date('2026-08-15T22:30:00.000Z'))).toBe('2026-08-16');
+  });
+
+  it('measures service reminders from the Namibia calendar date', () => {
+    const shortlyAfterNamibiaMidnight = new Date('2026-08-15T22:30:00.000Z');
+    expect(daysUntilNamibiaDate('2026-08-16', shortlyAfterNamibiaMidnight)).toBe(0);
+    expect(daysUntilNamibiaDate('2026-08-17', shortlyAfterNamibiaMidnight)).toBe(1);
+    expect(daysUntilNamibiaDate('2026-08-15', shortlyAfterNamibiaMidnight)).toBe(-1);
   });
 
   it('rejects future service history while allowing the current Namibia date', () => {
