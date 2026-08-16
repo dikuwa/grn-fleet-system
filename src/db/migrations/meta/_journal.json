@@ -80,6 +80,7 @@
     { "idx": 75, "version": "7", "when": 1786852800000, "tag": "0075_return_declaration_closure_guard", "breakpoints": true },
     { "idx": 76, "version": "7", "when": 1786856400000, "tag": "0076_vehicle_odometer_monotonicity_guard", "breakpoints": true },
     { "idx": 77, "version": "7", "when": 1786860000000, "tag": "0077_official_inspection_current_assignment_guard", "breakpoints": true },
-    { "idx": 78, "version": "7", "when": 1786882920000, "tag": "0078_incident_technical_clearance_guard", "breakpoints": true }
+    { "idx": 78, "version": "7", "when": 1786882920000, "tag": "0078_incident_technical_clearance_guard", "breakpoints": true },
+    { "idx": 79, "version": "7", "when": 1786890600000, "tag": "0079_incident_clearance_terminal_guard", "breakpoints": true }
   ]
 }
