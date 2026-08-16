@@ -7,7 +7,7 @@ import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalParties } from '@/db/schema/external-parties';
 import { vehicles } from '@/db/schema/fleet';
-import { employees } from '@/db/schema/people';
+import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { requestGoodsEquipment, requestRoutes, transportRequests } from '@/db/schema/requests';
 import {
   inspectionItemResults,
@@ -160,6 +160,7 @@ export async function generateVerifiedTripAuthorityPdf(
       .select({
         driverType: tripAuthorisedDrivers.driverType,
         employeeNumber: tripAuthorisedDrivers.employeeNumber,
+        licenceNumberMasked: tripAuthorisedDrivers.licenceNumberMasked,
         firstName: employees.firstName,
         lastName: employees.lastName,
         jobTitle: employees.jobTitle,
@@ -167,9 +168,21 @@ export async function generateVerifiedTripAuthorityPdf(
         nationalIdNumber: employees.nationalIdNumber,
         licenceClass: tripAuthorisedDrivers.licenceClass,
         licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
+        verifiedLicenceNumber: driverLicences.licenceNumber,
+        verifiedLicenceClass: driverLicences.licenceClass,
+        verifiedLicenceExpiry: driverLicences.expiryDate,
       })
       .from(tripAuthorisedDrivers)
       .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
+      .leftJoin(driverProfiles, eq(driverProfiles.employeeId, tripAuthorisedDrivers.employeeId))
+      .leftJoin(
+        driverLicences,
+        and(
+          eq(driverLicences.driverProfileId, driverProfiles.id),
+          eq(driverLicences.isActive, true),
+          eq(driverLicences.isVerified, true),
+        ),
+      )
       .where(eq(tripAuthorisedDrivers.authorityId, authority.id));
 
     const primary = internalDriverRows.find((row) => row.driverType === 'primary');
@@ -180,8 +193,10 @@ export async function generateVerifiedTripAuthorityPdf(
         idNumber: primary.nationalIdNumber || undefined,
         designation: primary.jobTitle || undefined,
         contactNumber: primary.phone || undefined,
-        licenceClass: primary.licenceClass || undefined,
-        licenceExpiry: primary.licenceExpiry?.toLocaleDateString('en-NA'),
+        licenceNumber: primary.verifiedLicenceNumber || primary.licenceNumberMasked || undefined,
+        licenceClass: primary.verifiedLicenceClass || primary.licenceClass || undefined,
+        licenceExpiry:
+          primary.verifiedLicenceExpiry || primary.licenceExpiry?.toLocaleDateString('en-NA'),
         acceptedAt: authority.acceptedAt?.toLocaleString('en-NA'),
       };
     }
@@ -191,8 +206,9 @@ export async function generateVerifiedTripAuthorityPdf(
         name: `${row.firstName} ${row.lastName}`.trim(),
         employeeNumber: row.employeeNumber || undefined,
         idNumber: row.nationalIdNumber || undefined,
-        licenceClass: row.licenceClass || undefined,
-        licenceExpiry: row.licenceExpiry?.toLocaleDateString('en-NA'),
+        licenceNumber: row.verifiedLicenceNumber || row.licenceNumberMasked || undefined,
+        licenceClass: row.verifiedLicenceClass || row.licenceClass || undefined,
+        licenceExpiry: row.verifiedLicenceExpiry || row.licenceExpiry?.toLocaleDateString('en-NA'),
       }));
 
     if (!driver) {
