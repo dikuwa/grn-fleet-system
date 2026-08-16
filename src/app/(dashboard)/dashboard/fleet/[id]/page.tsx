@@ -1,5 +1,12 @@
 import { getDb, isDbConnected } from '@/db';
-import { vehicles, vehicleCategories, vehicleDocuments, vehicleDefects, maintenanceEvents, vehicleOdometerEvents, vehicleStatusEvents } from '@/db/schema/fleet';
+import {
+  vehicles,
+  vehicleCategories,
+  vehicleDocuments,
+  vehicleDefects,
+  maintenanceEvents,
+  vehicleStatusEvents,
+} from '@/db/schema/fleet';
 import { vehicleAllocations } from '@/db/schema/trips';
 import { generatedDocuments } from '@/db/schema/documents';
 import { offices } from '@/db/schema/people';
@@ -31,11 +38,27 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { LongValue } from '@/components/ui/long-value';
 import Link from 'next/link';
-import { TabsShell } from './tabs-shell';
+import { TabsShell, type VehicleDetailTabKey } from './tabs-shell';
+import { getServerSession } from '@/lib/session';
+import { getSessionRoleNames } from '@/lib/auth-helpers';
+import {
+  canPerformDashboardAction,
+  resolveDashboardAccess,
+  type DashboardRecordScope,
+} from '@/lib/dashboard-access';
+import { defectScopeCondition, maintenanceScopeCondition } from '@/lib/record-scope';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
+
+type VehicleDetailDomainAccess = {
+  tenantId: string;
+  userId: string;
+  canViewGeneratedDocuments: boolean;
+  defectScope: DashboardRecordScope | null;
+  maintenanceScope: DashboardRecordScope | null;
+};
 
 const VEHICLE_STATUS_LABELS: Record<string, string> = {
   available: 'Available',
@@ -67,17 +90,15 @@ const SEVERITY_LABELS: Record<string, string> = {
   critical: 'Critical',
 };
 
-async function fetchVehicleDetail(id: string) {
+async function fetchVehicleDetail(id: string, access: VehicleDetailDomainAccess) {
   const db = getDb();
   const vehicle = await db
     .select({
       id: vehicles.id,
-      // Section A — Vehicle identity
       licenceNumber: vehicles.licenceNumber,
       vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
       vin: vehicles.vin,
       engineNumber: vehicles.engineNumber,
-      // Section B — Vehicle description
       make: vehicles.make,
       model: vehicles.model,
       seriesName: vehicles.seriesName,
@@ -88,70 +109,94 @@ async function fetchVehicleDetail(id: string) {
       colour: vehicles.colour,
       fuelType: vehicles.fuelType,
       transmission: vehicles.transmission,
-      // Section C — Weight and capacity
       tareKg: vehicles.tareKg,
       grossVehicleMassKg: vehicles.grossVehicleMassKg,
       seatedCapacity: vehicles.seatedCapacity,
       standingCapacity: vehicles.standingCapacity,
-      // Section D — Registration and compliance
       registeringAuthority: vehicles.registeringAuthority,
       nationalVehicleClassification: vehicles.nationalVehicleClassification,
       roadworthyTestDate: vehicles.roadworthyTestDate,
       licenceExpiryDate: vehicles.licenceExpiryDate,
-      // Section E — Fleet assignment
       currentOdometer: vehicles.currentOdometer,
       status: vehicles.status,
       fuelCardNumber: vehicles.fuelCardNumber,
       notes: vehicles.notes,
-
       categoryName: vehicleCategories.name,
       officeName: offices.name,
     })
     .from(vehicles)
-    .leftJoin(vehicleCategories, eq(vehicles.categoryId, vehicleCategories.id))
-    .leftJoin(offices, eq(vehicles.officeId, offices.id))
-    .where(eq(vehicles.id, id))
-    .then((r) => r[0] ?? null);
+    .leftJoin(
+      vehicleCategories,
+      and(
+        eq(vehicles.categoryId, vehicleCategories.id),
+        eq(vehicleCategories.tenantId, access.tenantId),
+      ),
+    )
+    .leftJoin(
+      offices,
+      and(eq(vehicles.officeId, offices.id), eq(offices.tenantId, access.tenantId)),
+    )
+    .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, access.tenantId)))
+    .then((rows) => rows[0] ?? null);
 
-  if (!vehicle) {
-    notFound();
-  }
+  if (!vehicle) notFound();
 
-  const [documents, tripAuthorityDocs, defects, maintenance, odometerEvents, statusEvents] = await Promise.all([
+  const [documents, tripAuthorityDocs, defects, maintenance, statusEvents] = await Promise.all([
+    // Vehicle compliance records are part of the Fleet profile itself. Generated
+    // operational documents below remain governed by the Documents workspace.
     db
       .select()
       .from(vehicleDocuments)
       .where(eq(vehicleDocuments.vehicleId, id))
       .orderBy(desc(vehicleDocuments.createdAt)),
-    db
-      .select({ id: generatedDocuments.id })
-      .from(generatedDocuments)
-      .innerJoin(vehicleAllocations, eq(generatedDocuments.entityId, vehicleAllocations.id))
-      .where(
-        and(
-          eq(generatedDocuments.documentType, 'trip_authority'),
-          eq(generatedDocuments.entityType, 'vehicle_allocation'),
-          eq(vehicleAllocations.vehicleId, id),
-        ),
-      )
-      .orderBy(desc(generatedDocuments.createdAt))
-      .limit(5),
-    db
-      .select()
-      .from(vehicleDefects)
-      .where(eq(vehicleDefects.vehicleId, id))
-      .orderBy(desc(vehicleDefects.createdAt)),
-    db
-      .select()
-      .from(maintenanceEvents)
-      .where(eq(maintenanceEvents.vehicleId, id))
-      .orderBy(desc(maintenanceEvents.serviceDate)),
-    db
-      .select()
-      .from(vehicleOdometerEvents)
-      .where(eq(vehicleOdometerEvents.vehicleId, id))
-      .orderBy(desc(vehicleOdometerEvents.createdAt))
-      .limit(20),
+    access.canViewGeneratedDocuments
+      ? db
+          .select({ id: generatedDocuments.id })
+          .from(generatedDocuments)
+          .innerJoin(vehicleAllocations, eq(generatedDocuments.entityId, vehicleAllocations.id))
+          .where(
+            and(
+              eq(generatedDocuments.tenantId, access.tenantId),
+              eq(generatedDocuments.documentType, 'trip_authority'),
+              eq(generatedDocuments.entityType, 'vehicle_allocation'),
+              eq(vehicleAllocations.vehicleId, id),
+            ),
+          )
+          .orderBy(desc(generatedDocuments.createdAt))
+          .limit(5)
+      : Promise.resolve([]),
+    access.defectScope
+      ? db
+          .select()
+          .from(vehicleDefects)
+          .where(
+            and(
+              eq(vehicleDefects.vehicleId, id),
+              defectScopeCondition({
+                tenantId: access.tenantId,
+                userId: access.userId,
+                recordScope: access.defectScope,
+              }),
+            ),
+          )
+          .orderBy(desc(vehicleDefects.createdAt))
+      : Promise.resolve([]),
+    access.maintenanceScope
+      ? db
+          .select()
+          .from(maintenanceEvents)
+          .where(
+            and(
+              eq(maintenanceEvents.vehicleId, id),
+              maintenanceScopeCondition({
+                tenantId: access.tenantId,
+                userId: access.userId,
+                recordScope: access.maintenanceScope,
+              }),
+            ),
+          )
+          .orderBy(desc(maintenanceEvents.serviceDate))
+      : Promise.resolve([]),
     db
       .select()
       .from(vehicleStatusEvents)
@@ -163,14 +208,20 @@ async function fetchVehicleDetail(id: string) {
   type DocumentRecord = typeof vehicleDocuments.$inferSelect;
   type DefectRecord = typeof vehicleDefects.$inferSelect;
   type MaintenanceRecord = typeof maintenanceEvents.$inferSelect;
-  type OdometerRecord = typeof vehicleOdometerEvents.$inferSelect;
   type GeneratedDoc = { id: string };
-
   type StatusEventRecord = typeof vehicleStatusEvents.$inferSelect;
 
-  const openDefects = defects.filter((d: DefectRecord) => !d.resolvedAt);
+  const openDefects = defects.filter((defect: DefectRecord) => !defect.resolvedAt);
 
-  return { vehicle, documents: documents as DocumentRecord[], defects: defects as DefectRecord[], maintenance: maintenance as MaintenanceRecord[], odometerEvents: odometerEvents as OdometerRecord[], statusEvents: statusEvents as StatusEventRecord[], openDefects, tripAuthorityDocs: tripAuthorityDocs as GeneratedDoc[] };
+  return {
+    vehicle,
+    documents: documents as DocumentRecord[],
+    defects: defects as DefectRecord[],
+    maintenance: maintenance as MaintenanceRecord[],
+    statusEvents: statusEvents as StatusEventRecord[],
+    openDefects,
+    tripAuthorityDocs: tripAuthorityDocs as GeneratedDoc[],
+  };
 }
 
 export default async function VehicleDetailPage({ params }: PageProps) {
@@ -179,11 +230,13 @@ export default async function VehicleDetailPage({ params }: PageProps) {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Fleet', href: '/dashboard/fleet' },
-          { label: 'Vehicle Detail' },
-        ]} />
+        <Breadcrumbs
+          items={[
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Fleet', href: '/dashboard/fleet' },
+            { label: 'Vehicle Detail' },
+          ]}
+        />
         <PageHeader title="Vehicle Detail" description="Vehicle information could not be loaded" />
         <EmptyState
           icon={<Database className="h-6 w-6" />}
@@ -194,18 +247,52 @@ export default async function VehicleDetailPage({ params }: PageProps) {
     );
   }
 
+  const session = await getServerSession();
+  if (!session) notFound();
+  const roleNames = await getSessionRoleNames(session);
+  const defectAccess = resolveDashboardAccess('/dashboard/fleet/defects', roleNames);
+  const maintenanceAccess = resolveDashboardAccess('/dashboard/maintenance', roleNames);
+  const canViewDefects = defectAccess.allowed && defectAccess.actions.includes('view');
+  const canViewMaintenance = maintenanceAccess.allowed && maintenanceAccess.actions.includes('view');
+  const canViewGeneratedDocuments = canPerformDashboardAction(
+    '/dashboard/documents',
+    roleNames,
+    'view',
+  );
+  const canCreateMaintenance = canPerformDashboardAction(
+    '/dashboard/maintenance/new',
+    roleNames,
+    'create',
+  );
+
+  const visibleTabs: VehicleDetailTabKey[] = [
+    'documents',
+    ...(canViewDefects ? (['defects'] as VehicleDetailTabKey[]) : []),
+    ...(canViewMaintenance ? (['maintenance'] as VehicleDetailTabKey[]) : []),
+    'odometer',
+    'status',
+  ];
+
   let data: Awaited<ReturnType<typeof fetchVehicleDetail>>;
   try {
-    data = await fetchVehicleDetail(id);
+    data = await fetchVehicleDetail(id, {
+      tenantId: session.tenantId,
+      userId: session.user.id,
+      canViewGeneratedDocuments,
+      defectScope: canViewDefects ? defectAccess.recordScope : null,
+      maintenanceScope: canViewMaintenance ? maintenanceAccess.recordScope : null,
+    });
   } catch (error) {
     console.error('Vehicle detail query failed:', error);
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Fleet', href: '/dashboard/fleet' },
-          { label: 'Vehicle Detail' },
-        ]} />
+        <Breadcrumbs
+          items={[
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Fleet', href: '/dashboard/fleet' },
+            { label: 'Vehicle Detail' },
+          ]}
+        />
         <PageHeader title="Vehicle Detail" description="Vehicle information could not be loaded" />
         <EmptyState
           icon={<Database className="h-6 w-6" />}
@@ -230,12 +317,14 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         title={`${vehicle.make} ${vehicle.model}`}
         description={`${vehicle.licenceNumber}${vehicle.vehicleRegisterNumber ? ` · ${vehicle.vehicleRegisterNumber}` : ''}`}
       >
-        <Button variant="primary" size="sm" asChild>
-          <Link href={`/dashboard/maintenance/new?vehicleId=${id}`}>
-            <Wrench className="h-4 w-4" />
-            Schedule Maintenance
-          </Link>
-        </Button>
+        {canCreateMaintenance && (
+          <Button variant="primary" size="sm" asChild>
+            <Link href={`/dashboard/maintenance/new?vehicleId=${id}`}>
+              <Wrench className="h-4 w-4" />
+              Record Maintenance
+            </Link>
+          </Button>
+        )}
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/fleet">
             <ChevronLeft className="h-4 w-4" />
@@ -244,7 +333,6 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         </Button>
       </PageHeader>
 
-      {/* Vehicle Summary Card */}
       <Card className="min-w-0">
         <CardContent className="min-w-0 pt-4">
           <div className="flex min-w-0 items-center gap-4">
@@ -253,7 +341,12 @@ export default async function VehicleDetailPage({ params }: PageProps) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
-                <LongValue value={`${vehicle.make} ${vehicle.model}`} className="flex-1" valueClassName="text-lg font-semibold text-ink-950" ariaLabel="Vehicle description" />
+                <LongValue
+                  value={`${vehicle.make} ${vehicle.model}`}
+                  className="flex-1"
+                  valueClassName="text-lg font-semibold text-ink-950"
+                  ariaLabel="Vehicle description"
+                />
                 <div className="shrink-0">
                   <StatusBadge
                     status={VEHICLE_STATUS_VARIANTS[vehicle.status] ?? 'default'}
@@ -281,8 +374,6 @@ export default async function VehicleDetailPage({ params }: PageProps) {
             </div>
           </div>
 
-          {/* Vehicle Details Grid */}
-          {/* Section A — Vehicle Identity */}
           <div className="mt-6">
             <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
               <Hash className="h-3.5 w-3.5" />
@@ -296,7 +387,6 @@ export default async function VehicleDetailPage({ params }: PageProps) {
             </div>
           </div>
 
-          {/* Section B — Vehicle Description */}
           <div className="mt-6">
             <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
               <Car className="h-3.5 w-3.5" />
@@ -306,7 +396,10 @@ export default async function VehicleDetailPage({ params }: PageProps) {
               <DetailItem label="Make" value={vehicle.make} />
               <DetailItem label="Model" value={vehicle.model} />
               <DetailItem label="Series" value={vehicle.seriesName ?? '—'} />
-              <DetailItem label="Year" value={vehicle.manufactureYear ? String(vehicle.manufactureYear) : '—'} />
+              <DetailItem
+                label="Year"
+                value={vehicle.manufactureYear ? String(vehicle.manufactureYear) : '—'}
+              />
               <DetailItem label="NaTIS Category" value={vehicle.vehicleCategory ?? '—'} />
               <DetailItem label="Body Style" value={vehicle.vehicleDescription ?? '—'} />
               <DetailItem label="Drive Type" value={vehicle.driveType ?? '—'} />
@@ -317,21 +410,35 @@ export default async function VehicleDetailPage({ params }: PageProps) {
             </div>
           </div>
 
-          {/* Section C — Weight & Capacity */}
           <div className="mt-6">
             <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
               <Weight className="h-3.5 w-3.5" />
               Weight &amp; Capacity
             </h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <DetailItem label="Tare (kg)" value={vehicle.tareKg != null ? `${vehicle.tareKg.toLocaleString()} kg` : '—'} />
-              <DetailItem label="GVM (kg)" value={vehicle.grossVehicleMassKg != null ? `${vehicle.grossVehicleMassKg.toLocaleString()} kg` : '—'} />
-              <DetailItem label="Seated Capacity" value={vehicle.seatedCapacity != null ? String(vehicle.seatedCapacity) : '—'} />
-              <DetailItem label="Standing Capacity" value={vehicle.standingCapacity != null ? String(vehicle.standingCapacity) : '—'} />
+              <DetailItem
+                label="Tare (kg)"
+                value={vehicle.tareKg != null ? `${vehicle.tareKg.toLocaleString()} kg` : '—'}
+              />
+              <DetailItem
+                label="GVM (kg)"
+                value={
+                  vehicle.grossVehicleMassKg != null
+                    ? `${vehicle.grossVehicleMassKg.toLocaleString()} kg`
+                    : '—'
+                }
+              />
+              <DetailItem
+                label="Seated Capacity"
+                value={vehicle.seatedCapacity != null ? String(vehicle.seatedCapacity) : '—'}
+              />
+              <DetailItem
+                label="Standing Capacity"
+                value={vehicle.standingCapacity != null ? String(vehicle.standingCapacity) : '—'}
+              />
             </div>
           </div>
 
-          {/* Section D — Registration & Compliance */}
           <div className="mt-6">
             <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
               <ClipboardCheck className="h-3.5 w-3.5" />
@@ -339,13 +446,21 @@ export default async function VehicleDetailPage({ params }: PageProps) {
             </h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <DetailItem label="Registering Authority" value={vehicle.registeringAuthority ?? '—'} />
-              <DetailItem label="National Classification" value={vehicle.nationalVehicleClassification ?? '—'} />
-              <DetailItem label="Roadworthy Test" value={vehicle.roadworthyTestDate ? formatDate(vehicle.roadworthyTestDate) : '—'} />
-              <DetailItem label="Licence Expiry" value={vehicle.licenceExpiryDate ? formatDate(vehicle.licenceExpiryDate) : '—'} />
+              <DetailItem
+                label="National Classification"
+                value={vehicle.nationalVehicleClassification ?? '—'}
+              />
+              <DetailItem
+                label="Roadworthy Test"
+                value={vehicle.roadworthyTestDate ? formatDate(vehicle.roadworthyTestDate) : '—'}
+              />
+              <DetailItem
+                label="Licence Expiry"
+                value={vehicle.licenceExpiryDate ? formatDate(vehicle.licenceExpiryDate) : '—'}
+              />
             </div>
           </div>
 
-          {/* Section E — Fleet Assignment */}
           <div className="mt-6">
             <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
               <Building2 className="h-3.5 w-3.5" />
@@ -354,12 +469,18 @@ export default async function VehicleDetailPage({ params }: PageProps) {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <DetailItem label="Fuel Card" value={vehicle.fuelCardNumber ?? '—'} />
               <DetailItem label="Office" value={vehicle.officeName ?? '—'} />
-              <DetailItem label="Status" value={VEHICLE_STATUS_LABELS[vehicle.status] ?? vehicle.status} />
-              <DetailItem label="Odometer" value={`${vehicle.currentOdometer.toLocaleString()} km`} />
+              <DetailItem
+                label="Status"
+                value={VEHICLE_STATUS_LABELS[vehicle.status] ?? vehicle.status}
+              />
+              <DetailItem
+                label="Odometer"
+                value={`${vehicle.currentOdometer.toLocaleString()} km`}
+              />
             </div>
             {vehicle.notes && (
               <div className="mt-3 rounded-[8px] border border-border bg-canvas p-3">
-                <p className="text-xs font-medium text-ink-500 mb-1">Notes</p>
+                <p className="mb-1 text-xs font-medium text-ink-500">Notes</p>
                 <p className="text-sm text-ink-700">{vehicle.notes}</p>
               </div>
             )}
@@ -367,18 +488,17 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Tabs */}
-      <TabsShell>
-        {/* Documents Tab */}
+      <TabsShell visibleTabs={visibleTabs}>
         <Card>
           <CardHeader>
-            <CardTitle>Documents ({data.documents.length + data.tripAuthorityDocs.length})</CardTitle>
+            <CardTitle>
+              Documents ({data.documents.length + data.tripAuthorityDocs.length})
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {/* Trip Authority PDFs */}
             {data.tripAuthorityDocs.length > 0 && (
-              <div className="px-5 pb-3 pt-3 border-b border-border">
-                <p className="text-xs font-medium text-ink-500 mb-2">Trip Authority Documents</p>
+              <div className="border-b border-border px-5 pb-3 pt-3">
+                <p className="mb-2 text-xs font-medium text-ink-500">Trip Authority Documents</p>
                 <div className="space-y-2">
                   {data.tripAuthorityDocs.map((doc) => (
                     <a
@@ -386,7 +506,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                       href={`/api/documents/${doc.id}/pdf`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-[6px] bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 transition-colors"
+                      className="inline-flex items-center gap-1.5 rounded-[6px] bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 transition-colors hover:bg-brand-100"
                     >
                       <FileText className="h-3.5 w-3.5" />
                       Download Trip Authority (PDF)
@@ -423,7 +543,11 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                           <LongValue value={doc.documentName} ariaLabel="Document name" />
                         </td>
                         <td className="max-w-48 px-3 py-2 text-xs text-ink-500">
-                          <LongValue value={doc.referenceNumber} copyable ariaLabel="Document reference" />
+                          <LongValue
+                            value={doc.referenceNumber}
+                            copyable
+                            ariaLabel="Document reference"
+                          />
                         </td>
                         <td className="px-3 py-2 text-xs text-ink-500">
                           {doc.expiryDate ? formatDate(doc.expiryDate) : '—'}
@@ -444,7 +568,6 @@ export default async function VehicleDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {/* Defects Tab */}
         <Card>
           <CardHeader>
             <CardTitle>Defects ({data.openDefects.length} open)</CardTitle>
@@ -466,9 +589,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-ink-950">
-                              {defect.description}
-                            </p>
+                            <p className="text-sm font-medium text-ink-950">{defect.description}</p>
                             <StatusBadge
                               status={isOpen ? 'error' : 'success'}
                               label={isOpen ? 'Open' : 'Resolved'}
@@ -489,7 +610,9 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                             >
                               {SEVERITY_LABELS[defect.severity] || defect.severity}
                             </Badge>
-                            <span>Reported {defect.createdAt ? formatDate(defect.createdAt) : ''}</span>
+                            <span>
+                              Reported {defect.createdAt ? formatDate(defect.createdAt) : ''}
+                            </span>
                             {defect.isBlocking && (
                               <span className="font-medium text-status-error-text">Blocking</span>
                             )}
@@ -516,7 +639,6 @@ export default async function VehicleDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {/* Maintenance Tab */}
         <Card>
           <CardHeader>
             <CardTitle>Maintenance History ({data.maintenance.length})</CardTitle>
@@ -528,53 +650,46 @@ export default async function VehicleDetailPage({ params }: PageProps) {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {data.maintenance.map((event) => {
-                  return (
-                    <div key={event.id} className="px-5 py-3">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-ink-950">
-                            {event.description}
-                          </p>
-                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
+                {data.maintenance.map((event) => (
+                  <div key={event.id} className="px-5 py-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-ink-950">{event.description}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-500">
+                          <span className="flex items-center gap-1">
+                            <CalendarClock className="h-3.5 w-3.5" />
+                            {event.serviceDate ? formatDate(event.serviceDate) : ''}
+                          </span>
+                          {event.serviceOdometer != null && (
                             <span className="flex items-center gap-1">
-                              <CalendarClock className="h-3.5 w-3.5" />
-                              {event.serviceDate ? formatDate(event.serviceDate) : ''}
+                              <Gauge className="h-3.5 w-3.5" />
+                              {Number(event.serviceOdometer).toLocaleString()} km
                             </span>
-                            {event.serviceOdometer != null && (
-                              <span className="flex items-center gap-1">
-                                <Gauge className="h-3.5 w-3.5" />
-                                {Number(event.serviceOdometer).toLocaleString()} km
-                              </span>
-                            )}
-                            <Badge variant="info" size="sm">
-                              {event.serviceType.replace(/_/g, ' ')}
-                            </Badge>
-                          </div>
-                          {event.vendorName && (
-                            <p className="mt-1 text-xs text-ink-500">
-                              Vendor: {event.vendorName}
-                            </p>
                           )}
+                          <Badge variant="info" size="sm">
+                            {event.serviceType.replace(/_/g, ' ')}
+                          </Badge>
                         </div>
-                        {event.nextServiceDate && (
-                          <div className="shrink-0 text-right">
-                            <p className="text-xs text-ink-500">Next service</p>
-                            <p className="text-sm font-medium text-ink-950">
-                              {formatDate(event.nextServiceDate)}
-                            </p>
-                          </div>
+                        {event.vendorName && (
+                          <p className="mt-1 text-xs text-ink-500">Vendor: {event.vendorName}</p>
                         )}
                       </div>
+                      {event.nextServiceDate && (
+                        <div className="shrink-0 text-right">
+                          <p className="text-xs text-ink-500">Next service</p>
+                          <p className="text-sm font-medium text-ink-950">
+                            {formatDate(event.nextServiceDate)}
+                          </p>
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Status Timeline Tab */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -595,15 +710,24 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                     return (
                       <li key={event.id} className="relative pb-4">
                         {idx < data.statusEvents.length - 1 && (
-                          <span className="absolute left-2.5 top-4 -ml-px h-full w-0.5 bg-border" aria-hidden="true" />
+                          <span
+                            className="absolute left-2.5 top-4 -ml-px h-full w-0.5 bg-border"
+                            aria-hidden="true"
+                          />
                         )}
                         <div className="relative flex items-start gap-3">
-                          <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
-                            isLatest ? 'bg-brand-200 text-brand-700' : 'bg-muted text-ink-400'
-                          }`}>
-                            <div className={`h-2 w-2 rounded-full ${
-                              isLatest ? 'bg-brand-600' : 'bg-ink-300'
-                            }`} />
+                          <div
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                              isLatest
+                                ? 'bg-brand-200 text-brand-700'
+                                : 'bg-muted text-ink-400'
+                            }`}
+                          >
+                            <div
+                              className={`h-2 w-2 rounded-full ${
+                                isLatest ? 'bg-brand-600' : 'bg-ink-300'
+                              }`}
+                            />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -629,55 +753,6 @@ export default async function VehicleDetailPage({ params }: PageProps) {
             )}
           </CardContent>
         </Card>
-
-        {/* Odometer History Tab */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Odometer History ({data.odometerEvents.length})</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {data.odometerEvents.length === 0 ? (
-              <div className="px-5 pb-4">
-                <p className="text-sm text-ink-500">No odometer events recorded.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Date</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-ink-500">Odometer</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Source</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {data.odometerEvents.map((event) => {
-                      return (
-                        <tr key={event.id} className="hover:bg-canvas/50">
-                          <td className="px-3 py-2 text-xs text-ink-500">
-                            {event.createdAt ? formatDate(event.createdAt) : ''}
-                          </td>
-                          <td className="px-3 py-2 text-right text-sm tabular-nums font-medium text-ink-950">
-                            {event.odometerValue.toLocaleString()} km
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge variant="info" size="sm">
-                              {event.source.replace(/_/g, ' ')}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-2 text-xs text-ink-500">
-                            {event.notes || '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </TabsShell>
     </div>
   );
@@ -692,7 +767,9 @@ function DetailItem({ label, value }: { label: string; value: string }) {
         className="mt-0.5"
         valueClassName="text-sm text-ink-950"
         ariaLabel={label}
-        copyable={value !== '—' && ['Licence Number', 'Register Number', 'VIN', 'Engine Number'].includes(label)}
+        copyable={
+          value !== '—' && ['Licence Number', 'Register Number', 'VIN', 'Engine Number'].includes(label)
+        }
       />
     </div>
   );
