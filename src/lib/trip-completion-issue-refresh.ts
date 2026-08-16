@@ -135,8 +135,8 @@ export async function refreshTripCompletionDraftForIssue(
       totalCost: Number(totalCost.toFixed(2)),
       transactionCount: fuel.length,
       pendingReimbursements: outstandingReimbursements,
-      actualKilometres: closure.actualKilometres || null,
-      kilometreVariance: closure.kilometreVariance || null,
+      actualKilometres: closure.actualKilometres ?? null,
+      kilometreVariance: closure.kilometreVariance ?? null,
     },
     eventSummary: {
       total: incidents.length,

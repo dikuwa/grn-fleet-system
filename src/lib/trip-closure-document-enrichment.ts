@@ -4,7 +4,7 @@ import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
-import { fuelTransactions, reimbursements, trips } from '@/db/schema/trips';
+import { fuelTransactions, reimbursements, tripClosures, trips } from '@/db/schema/trips';
 
 /**
  * Closure documents are generated only after reconciliation. Enrich the new
@@ -26,6 +26,8 @@ export async function enrichClosedTripFuelSummary(
       purpose: transportRequests.purpose,
       vehicleLicence: vehicles.licenceNumber,
       vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+      actualKilometres: tripClosures.actualKilometres,
+      kilometreVariance: tripClosures.kilometreVariance,
     })
     .from(trips)
     .innerJoin(
@@ -36,6 +38,7 @@ export async function enrichClosedTripFuelSummary(
       vehicles,
       and(eq(vehicles.id, trips.vehicleId), eq(vehicles.tenantId, tenantId)),
     )
+    .innerJoin(tripClosures, eq(tripClosures.tripId, trips.id))
     .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId), eq(trips.status, 'closed')))
     .limit(1);
 
@@ -98,6 +101,8 @@ export async function enrichClosedTripFuelSummary(
   const snapshotData = {
     ...((document.snapshotData || {}) as Record<string, unknown>),
     pendingReimbursements: outstandingReimbursements,
+    actualKilometres: context.actualKilometres ?? null,
+    kilometreVariance: context.kilometreVariance ?? null,
     tripReference: context.requestReference,
     tripPurpose: context.purpose,
     vehicleLicence: context.vehicleLicence,
