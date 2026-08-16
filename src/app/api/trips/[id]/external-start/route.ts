@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
@@ -14,6 +14,7 @@ import {
 } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { onTripIssued } from '@/lib/document-generator';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
@@ -66,10 +67,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const [record] = await db
       .select({
         assignmentId: externalDriverAssignments.id,
+        externalPartyId: externalDriverAssignments.externalPartyId,
         assignmentState: externalDriverAssignments.state,
         assignmentIssueId: externalDriverAssignments.issueId,
         assignmentAcceptedAt: externalDriverAssignments.acceptedAt,
+        licenceId: externalDriverAssignments.licenceId,
         licenceStatus: externalDriverLicences.verificationStatus,
+        licenceClass: externalDriverLicences.licenceClass,
         licenceExpiry: externalDriverLicences.expiryDate,
         partyStatus: externalParties.status,
         tripStatus: trips.status,
@@ -77,11 +81,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
         requestId: trips.requestId,
         requestReference: transportRequests.reference,
         requestStatus: transportRequests.status,
+        requestExternalDriverPartyId: transportRequests.assignedDriverExternalPartyId,
         allocationId: trips.allocationId,
         allocationState: vehicleAllocations.state,
+        allocationVersion: vehicleAllocations.version,
         vehicleId: trips.vehicleId,
         vehicleStatus: vehicles.status,
         vehicleOdometer: vehicles.currentOdometer,
+        vehicleRequiredLicenceClass: vehicles.requiredLicenceClass,
+        vehicleProfessionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
         authorityValidFrom: tripAuthorities.validFrom,
@@ -120,6 +128,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (record.assignmentState !== 'accepted' || !record.assignmentAcceptedAt || !record.assignmentIssueId) {
       return NextResponse.json({ error: 'Accepted external assignment and physical issue are required before departure' }, { status: 409 });
     }
+    if (record.requestExternalDriverPartyId !== record.externalPartyId) {
+      return NextResponse.json({ error: 'The accepted external driver is no longer the request’s assigned driver' }, { status: 409 });
+    }
     if (record.tripStatus !== 'pending') {
       return NextResponse.json({ error: `Cannot start trip with status "${record.tripStatus}".` }, { status: 409 });
     }
@@ -140,6 +151,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     if (record.partyStatus !== 'active' || record.licenceStatus !== 'verified') {
       return NextResponse.json({ error: 'External driver eligibility is no longer valid' }, { status: 409 });
+    }
+    if (
+      record.vehicleRequiredLicenceClass &&
+      !namibiaLicenceClassCovers(record.licenceClass, record.vehicleRequiredLicenceClass)
+    ) {
+      return NextResponse.json(
+        { error: 'External driver licence no longer covers the current vehicle class' },
+        { status: 409 },
+      );
+    }
+    if (record.vehicleProfessionalAuthorisationRequired) {
+      return NextResponse.json(
+        {
+          error:
+            'The current vehicle requires professional driving authorisation. External departure is blocked until verified professional-authorisation evidence is supported for the assignment.',
+        },
+        { status: 409 },
+      );
     }
 
     const now = new Date();
@@ -168,8 +197,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Departure is blocked by an unresolved safety-critical defect' }, { status: 409 });
     }
 
+    // Evaluate the newest inspection, not merely any historical passed row.
     const [inspection] = await db
-      .select({ id: vehicleInspections.id, odometerReading: vehicleInspections.odometerReading })
+      .select({
+        id: vehicleInspections.id,
+        odometerReading: vehicleInspections.odometerReading,
+        status: vehicleInspections.status,
+        overallPass: vehicleInspections.overallPass,
+      })
       .from(vehicleInspections)
       .where(
         and(
@@ -177,13 +212,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
           eq(vehicleInspections.tripId, id),
           eq(vehicleInspections.vehicleId, record.vehicleId),
           eq(vehicleInspections.type, 'departure'),
-          eq(vehicleInspections.status, 'completed'),
-          eq(vehicleInspections.overallPass, true),
         ),
       )
+      .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
       .limit(1);
-    if (!inspection) {
-      return NextResponse.json({ error: 'The currently allocated vehicle requires a passed pre-departure inspection' }, { status: 409 });
+    if (!inspection || inspection.status !== 'completed' || inspection.overallPass !== true) {
+      return NextResponse.json({ error: 'The latest pre-departure inspection for the current vehicle must be completed and passed' }, { status: 409 });
     }
 
     const minimumOdometer = Math.max(
@@ -206,8 +240,32 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const beginningOdometer = Number(body.beginningOdometer);
     const auditSequence = Date.now();
 
+    // Claim the exact allocation version first so a vehicle replacement,
+    // cancellation or reassignment cannot cross the actual departure boundary
+    // using stale pre-departure assumptions.
     await db.execute(sql`
-      WITH trip_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${record.allocationId}::uuid
+          AND va.state = 'confirmed'
+          AND va.version = ${record.allocationVersion}
+          AND va.vehicle_id = ${record.vehicleId}::uuid
+          AND va.driver_employee_id IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.id = ${id}::uuid
+              AND t.tenant_id = ${tenantId}::uuid
+              AND t.allocation_id = va.id
+              AND t.vehicle_id = va.vehicle_id
+              AND t.status = 'pending'
+              AND t.issued_at IS NOT NULL
+          )
+        RETURNING id
+      ),
+      trip_claim AS (
         UPDATE trips
         SET status = 'in_progress', started_at = ${now}, updated_at = ${now}
         WHERE id = ${id}::uuid
@@ -216,6 +274,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           AND issued_at IS NOT NULL
           AND allocation_id = ${record.allocationId}::uuid
           AND vehicle_id = ${record.vehicleId}::uuid
+          AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
             SELECT 1
             FROM external_driver_assignments eda
@@ -225,10 +284,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
             WHERE eda.id = ${record.assignmentId}::uuid
               AND eda.tenant_id = ${tenantId}::uuid
               AND eda.trip_id = trips.id
+              AND eda.allocation_id = trips.allocation_id
+              AND eda.external_party_id = ${record.externalPartyId}::uuid
+              AND eda.licence_id = ${record.licenceId}::uuid
               AND eda.state = 'accepted'
               AND eda.accepted_at IS NOT NULL
-              AND eda.issue_id IS NOT NULL
+              AND eda.issue_id = ${record.assignmentIssueId}::uuid
+              AND ti.id = eda.issue_id
               AND ti.trip_id = trips.id
+              AND ti.allocation_id = trips.allocation_id
               AND ti.issue_odometer <= ${beginningOdometer}
               AND ep.tenant_id = ${tenantId}::uuid
               AND ep.status = 'active'
@@ -240,17 +304,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
               )
           )
           AND EXISTS (
-            SELECT 1 FROM vehicle_allocations va
-            WHERE va.id = trips.allocation_id
-              AND va.state = 'confirmed'
-              AND va.driver_employee_id IS NULL
-          )
-          AND EXISTS (
             SELECT 1 FROM transport_requests tr
             WHERE tr.id = trips.request_id
               AND tr.tenant_id = ${tenantId}::uuid
               AND tr.status = 'vehicle_issued'
-              AND tr.assigned_driver_external_party_id IS NOT NULL
+              AND tr.assigned_driver_external_party_id = ${record.externalPartyId}::uuid
           )
           AND EXISTS (
             SELECT 1 FROM trip_authorities ta
@@ -266,6 +324,29 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND v.tenant_id = ${tenantId}::uuid
               AND v.status = 'available'
               AND v.current_odometer <= ${beginningOdometer}
+              AND v.professional_authorisation_required = false
+              AND (
+                v.required_licence_class IS NULL
+                OR CASE
+                  WHEN upper(replace(edl.licence_class, ' ', '')) IN ('EC', 'CE') THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C', 'BE', 'EB', 'C1E', 'CE1', 'CE', 'EC')
+                  WHEN upper(replace(edl.licence_class, ' ', '')) IN ('C1E', 'CE1') THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'BE', 'EB', 'C1E', 'CE1')
+                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'C' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C')
+                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'C1' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1')
+                  WHEN upper(replace(edl.licence_class, ' ', '')) IN ('BE', 'EB') THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'BE', 'EB')
+                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'B' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) = 'B'
+                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'A' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('A', 'A1')
+                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'A1' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) = 'A1'
+                  ELSE upper(replace(edl.licence_class, ' ', '')) = upper(replace(v.required_licence_class, ' ', ''))
+                END
+              )
           )
           AND NOT EXISTS (
             SELECT 1
@@ -286,7 +367,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
                 AND latest.trip_id = trips.id
                 AND latest.vehicle_id = trips.vehicle_id
                 AND latest.type = 'departure'
-              ORDER BY latest.created_at DESC
+              ORDER BY latest.created_at DESC, latest.id DESC
               LIMIT 1
             )
               AND vi.status = 'completed'
@@ -312,6 +393,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         SET status = 'in_progress', updated_at = ${now}
         WHERE id = ${record.requestId}::uuid
           AND tenant_id = ${tenantId}::uuid
+          AND assigned_driver_external_party_id = ${record.externalPartyId}::uuid
           AND status = 'vehicle_issued'
           AND EXISTS (SELECT 1 FROM authority_claim)
         RETURNING id
@@ -322,6 +404,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         WHERE id = ${record.vehicleId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND status = 'available'
+          AND professional_authorisation_required = false
           AND EXISTS (SELECT 1 FROM request_claim)
         RETURNING id
       ),
@@ -357,7 +440,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
           ${`Transport Office started accepted external-driver trip for ${record.requestReference}`},
           jsonb_build_object(
             'externalDriverAssignmentId', ${record.assignmentId}::text,
+            'externalDriverPartyId', ${record.externalPartyId}::text,
             'authorityId', ${record.authorityId}::text,
+            'allocationVersion', ${record.allocationVersion + 1}::integer,
             'beginningOdometer', ${beginningOdometer}::integer,
             'fuelLevel', ${fuelLevel}::text,
             'passengersConfirmed', true,
@@ -368,14 +453,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM trip_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM request_claim) = 1
          AND (SELECT count(*) FROM vehicle_claim) = 1
          AND (SELECT count(*) FROM status_event) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
         THEN '1'
-        ELSE 'atomic_external_trip_start_failed_' || (SELECT count(*) FROM trip_claim)::text
+        ELSE 'atomic_external_trip_start_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
+          || (SELECT count(*) FROM trip_claim)::text
+          || (SELECT count(*) FROM authority_claim)::text
+          || (SELECT count(*) FROM request_claim)::text
+          || (SELECT count(*) FROM vehicle_claim)::text
       END AS integer) AS committed
     `);
 
@@ -401,7 +492,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     console.error('[trips/external-start] POST failed:', error);
     return NextResponse.json(
-      { error: 'Trip state changed concurrently or the external-driver trip could not be started. Refresh and try again.' },
+      { error: 'Trip, allocation, driver, vehicle, or inspection state changed while external departure was being recorded. Refresh and review the latest state.' },
       { status: 409 },
     );
   }
