@@ -42,6 +42,8 @@ export async function POST(
         issuedAt: trips.issuedAt,
         allocationId: vehicleAllocations.id,
         allocationState: vehicleAllocations.state,
+        allocationVersion: vehicleAllocations.version,
+        allocationVehicleId: vehicleAllocations.vehicleId,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         requestId: transportRequests.id,
         requestReference: transportRequests.reference,
@@ -92,29 +94,44 @@ export async function POST(
       authorityStatus: 'cancelled',
     });
 
+    // Use the same allocation -> trip lock order as physical issue and vehicle
+    // replacement. This avoids an allocation/trip deadlock when cancellation
+    // races those lifecycle transitions and makes the exact allocation version
+    // the serialization boundary for every pre-departure mutation.
     await db.execute(sql`
-      WITH trip_claim AS (
-        UPDATE trips t
-        SET status = 'cancelled', updated_at = ${now}
-        WHERE t.id = ${id}::uuid
-          AND t.tenant_id = ${session.tenantId}::uuid
-          AND t.status = 'pending'
-          AND t.issued_at IS NULL
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET state = 'cancelled',
+            override_reason = ${reason},
+            version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${context.allocationId}::uuid
+          AND va.state = ${context.allocationState}
+          AND va.version = ${context.allocationVersion}
+          AND va.vehicle_id = ${context.allocationVehicleId}::uuid
           AND EXISTS (
             SELECT 1
-            FROM vehicle_allocations va
-            WHERE va.id = t.allocation_id
-              AND va.state IN ('provisional', 'confirmed')
+            FROM trips t
+            WHERE t.id = ${id}::uuid
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.allocation_id = va.id
+              AND t.vehicle_id = va.vehicle_id
+              AND t.status = 'pending'
+              AND t.issued_at IS NULL
           )
-        RETURNING t.id, t.request_id, t.allocation_id
+        RETURNING va.id, va.request_id, va.vehicle_id
       ),
-      allocation_updated AS (
-        UPDATE vehicle_allocations va
-        SET state = 'cancelled', override_reason = ${reason}, updated_at = ${now}
-        FROM trip_claim tc
-        WHERE va.id = tc.allocation_id
-          AND va.state IN ('provisional', 'confirmed')
-        RETURNING va.id
+      trip_claim AS (
+        UPDATE trips t
+        SET status = 'cancelled', updated_at = ${now}
+        FROM allocation_claim ac
+        WHERE t.id = ${id}::uuid
+          AND t.tenant_id = ${session.tenantId}::uuid
+          AND t.allocation_id = ac.id
+          AND t.vehicle_id = ac.vehicle_id
+          AND t.status = 'pending'
+          AND t.issued_at IS NULL
+        RETURNING t.id, t.request_id, t.allocation_id
       ),
       authority_updated AS (
         UPDATE trip_authorities ta
@@ -125,6 +142,7 @@ export async function POST(
         FROM trip_claim tc
         WHERE ta.id = ${context.authorityId}::uuid
           AND ta.trip_id = tc.id
+          AND ta.allocation_id = tc.allocation_id
           AND ta.tenant_id = ${session.tenantId}::uuid
           AND ta.status <> 'cancelled'
         RETURNING ta.id
@@ -180,21 +198,20 @@ export async function POST(
           ${afterJson}::jsonb,
           'web'
         FROM trip_claim tc
-        INNER JOIN allocation_updated au ON true
         INNER JOIN authority_updated tu ON true
         INNER JOIN request_updated ru ON ru.id = tc.request_id
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM trip_claim) = 1
-         AND (SELECT count(*) FROM allocation_updated) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM authority_updated) = 1
          AND (SELECT count(*) FROM request_updated) = 1
          AND (SELECT count(*) FROM audit_inserted) = 1
         THEN '1'
         ELSE 'atomic_trip_cancel_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
           || (SELECT count(*) FROM trip_claim)::text
-          || (SELECT count(*) FROM allocation_updated)::text
           || (SELECT count(*) FROM authority_updated)::text
           || (SELECT count(*) FROM request_updated)::text
           || (SELECT count(*) FROM audit_inserted)::text
