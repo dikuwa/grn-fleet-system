@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { and, eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
-import { getDb } from '@/db';
+import { getDb, isDbConnected } from '@/db';
 import { vehicles } from '@/db/schema/fleet';
 import { getSessionRoleNames } from '@/lib/auth-helpers';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
@@ -21,12 +21,15 @@ type VehicleLayoutProps = {
  * related scope by navigating directly to a vehicle UUID.
  */
 export default async function VehicleLayout({ children, params }: VehicleLayoutProps) {
+  // Let the child page retain its existing "Database Not Configured" state.
+  if (!isDbConnected()) return children;
+
   const session = await getServerSession();
   if (!session) notFound();
 
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/fleet', roleNames);
-  if (!access.allowed || !access.actions.includes('view')) notFound();
+  if (!access.allowed || !access.actions.includes('view') || !access.recordScope) notFound();
 
   const { id } = await params;
   const db = getDb();
@@ -39,7 +42,7 @@ export default async function VehicleLayout({ children, params }: VehicleLayoutP
         vehicleScopeCondition({
           tenantId: session.tenantId,
           userId: session.user.id,
-          recordScope: access.recordScope ?? 'assigned',
+          recordScope: access.recordScope,
         }),
       ),
     )

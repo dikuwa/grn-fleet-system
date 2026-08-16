@@ -162,4 +162,31 @@ describe('document and share-link role contracts', () => {
     expect(trips.allowed).toBe(false);
     expect(trips.actions).toEqual([]);
   });
+
+  it('keeps Inspector fleet and defect access read-only without maintenance creation rights', () => {
+    const fleet = resolveDashboardAccess(
+      '/dashboard/fleet',
+      [SystemRoles.INSPECTOR],
+      WorkspaceIds.INSPECTOR,
+    );
+    const defects = resolveDashboardAccess(
+      '/dashboard/fleet/defects',
+      [SystemRoles.INSPECTOR],
+      WorkspaceIds.INSPECTOR,
+    );
+    const maintenanceCreate = resolveDashboardAccess(
+      '/dashboard/maintenance/new',
+      [SystemRoles.INSPECTOR],
+      WorkspaceIds.INSPECTOR,
+    );
+
+    expect(fleet.allowed).toBe(true);
+    expect(fleet.recordScope).toBe('assigned');
+    expect(fleet.actions).toEqual(['view']);
+    expect(defects.allowed).toBe(true);
+    expect(defects.recordScope).toBe('self');
+    expect(defects.actions).toEqual(['view']);
+    expect(maintenanceCreate.allowed).toBe(false);
+    expect(maintenanceCreate.actions).toEqual([]);
+  });
 });
