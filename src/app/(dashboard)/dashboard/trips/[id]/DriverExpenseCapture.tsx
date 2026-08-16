@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Camera, Plus, Receipt, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,10 +32,31 @@ const EMPTY = {
 
 export function DriverExpenseCapture({ tripId }: { tripId: string }) {
   const { toast } = useToast();
+  const [tripStatus, setTripStatus] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/trips/${tripId}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const payload = (await response.json().catch(() => null)) as {
+          trip?: { status?: string };
+        } | null;
+        if (!controller.signal.aborted) setTripStatus(payload?.trip?.status ?? null);
+      } catch (error) {
+        if ((error as Error)?.name !== 'AbortError') setTripStatus(null);
+      }
+    })();
+    return () => controller.abort();
+  }, [tripId]);
 
   function close() {
     if (saving) return;
@@ -100,6 +121,11 @@ export function DriverExpenseCapture({ tripId }: { tripId: string }) {
       setSaving(false);
     }
   }
+
+  // Match the server contract exactly. Driver expenses are operational capture,
+  // not historical trip editing, so returned/reconciliation/closed records stay
+  // read-only even though the Driver may still view their assigned trip.
+  if (!tripStatus || !['in_progress', 'return_due'].includes(tripStatus)) return null;
 
   if (!open) {
     return (
