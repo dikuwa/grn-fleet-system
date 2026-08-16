@@ -216,6 +216,7 @@ export function vehicleScopeCondition(context: RecordScopeContext): SQL {
         on pending_allocation.id = pending_trip.allocation_id
        and pending_allocation.request_id = pending_trip.request_id
        and pending_allocation.vehicle_id = pending_trip.vehicle_id
+       and pending_allocation.state = 'confirmed'
       inner join ${tripAuthorities} pending_authority
         on pending_authority.trip_id = pending_trip.id
        and pending_authority.request_id = pending_trip.request_id
@@ -233,6 +234,7 @@ export function vehicleScopeCondition(context: RecordScopeContext): SQL {
               or exists (
                 select 1 from ${externalDriverAssignments} departure_external
                 where departure_external.trip_id = pending_trip.id
+                  and departure_external.allocation_id = pending_trip.allocation_id
                   and departure_external.tenant_id = ${context.tenantId}
                   and departure_external.state = 'accepted'
               )
@@ -246,6 +248,7 @@ export function vehicleScopeCondition(context: RecordScopeContext): SQL {
               or exists (
                 select 1 from ${externalDriverAssignments} return_external
                 where return_external.trip_id = pending_trip.id
+                  and return_external.allocation_id = pending_trip.allocation_id
                   and return_external.tenant_id = ${context.tenantId}
                   and return_external.state = 'accepted'
                   and return_external.issue_id is not null
