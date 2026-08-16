@@ -9,15 +9,38 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicles, vehicleDefects, maintenanceEvents } from '@/db/schema/fleet';
+import {
+  maintenanceEvents,
+  vehicleDefects,
+  vehicleDocuments,
+  vehicles,
+} from '@/db/schema/fleet';
 import { vehicleAllocations } from '@/db/schema/trips';
-import {eq, and, ne, gte, isNull, lt, gt} from 'drizzle-orm';
-import { requireRequestAuth } from '@/lib/auth-helpers';
+import { and, desc, eq, gt, isNotNull, isNull, lt, ne } from 'drizzle-orm';
+import {
+  getSessionRoleNames,
+  requireDashboardAction,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
+import { vehicleScopeCondition } from '@/lib/record-scope';
 
 interface Blocker {
   type: 'overlapping_allocation' | 'critical_defect' | 'maintenance_block' | 'vehicle_status';
   detail: string;
   severity: 'error' | 'warning';
+}
+
+function isDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function addUtcDays(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 export async function GET(
@@ -29,27 +52,60 @@ export async function GET(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
+    const routeCheck = await requireDashboardAction(session, '/dashboard/fleet', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
+
     const { id } = await params;
     const { searchParams } = new URL(request.url);
     const startParam = searchParams.get('start');
     const endParam = searchParams.get('end');
 
-    const db = getDb();
+    if (startParam && !isDateOnly(startParam)) {
+      return NextResponse.json({ error: 'Start date must use YYYY-MM-DD' }, { status: 400 });
+    }
+    if (endParam && !isDateOnly(endParam)) {
+      return NextResponse.json({ error: 'End date must use YYYY-MM-DD' }, { status: 400 });
+    }
+    if (endParam && !startParam) {
+      return NextResponse.json({ error: 'A start date is required when an end date is provided' }, { status: 400 });
+    }
+    if (startParam && endParam && endParam < startParam) {
+      return NextResponse.json({ error: 'End date cannot be before the start date' }, { status: 400 });
+    }
 
-    // 1. Fetch the vehicle
+    const db = getDb();
+    const roleNames = await getSessionRoleNames(session);
+    const fleetAccess = resolveDashboardAccess('/dashboard/fleet', roleNames);
+
     const [vehicle] = await db
       .select()
       .from(vehicles)
-      .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
+      .where(
+        and(
+          eq(vehicles.id, id),
+          vehicleScopeCondition({
+            tenantId: session.tenantId,
+            userId: session.user.id,
+            recordScope: fleetAccess.recordScope ?? 'related',
+          }),
+        ),
+      )
       .limit(1);
 
     if (!vehicle) {
-      return NextResponse.json({ available: false, blockers: [{ type: 'vehicle_status', detail: 'Vehicle not found', severity: 'error' }] });
+      return NextResponse.json(
+        {
+          available: false,
+          blockers: [
+            { type: 'vehicle_status', detail: 'Vehicle not found', severity: 'error' },
+          ],
+        },
+        { status: 404 },
+      );
     }
 
     const blockers: Blocker[] = [];
 
-    // 2. Check vehicle status
     const availableStatuses = ['available', 'provisional'];
     if (!availableStatuses.includes(vehicle.status)) {
       blockers.push({
@@ -59,34 +115,33 @@ export async function GET(
       });
     }
 
-    // 3. Check for critical unresolved defects
-    const criticalDefects = await db
-      .select()
+    const blockingDefects = await db
+      .select({ id: vehicleDefects.id })
       .from(vehicleDefects)
       .where(
         and(
           eq(vehicleDefects.vehicleId, id),
-          eq(vehicleDefects.severity, 'critical'),
+          eq(vehicleDefects.isBlocking, true),
           isNull(vehicleDefects.resolvedAt),
         ),
       );
 
-    if (criticalDefects.length > 0) {
+    if (blockingDefects.length > 0) {
       blockers.push({
         type: 'critical_defect',
-        detail: `${criticalDefects.length} critical defect${criticalDefects.length > 1 ? 's' : ''} unresolved: ${criticalDefects.map((d) => d.description).join('; ')}`,
+        detail: `${blockingDefects.length} unresolved blocking defect${blockingDefects.length > 1 ? 's' : ''} prevent allocation.`,
         severity: 'error',
       });
     }
 
-    // Also check major defects (warning level)
     const majorDefects = await db
-      .select()
+      .select({ id: vehicleDefects.id })
       .from(vehicleDefects)
       .where(
         and(
           eq(vehicleDefects.vehicleId, id),
           eq(vehicleDefects.severity, 'major'),
+          eq(vehicleDefects.isBlocking, false),
           isNull(vehicleDefects.resolvedAt),
         ),
       );
@@ -94,96 +149,105 @@ export async function GET(
     if (majorDefects.length > 0) {
       blockers.push({
         type: 'critical_defect',
-        detail: `${majorDefects.length} major defect${majorDefects.length > 1 ? 's' : ''} unresolved (restricted use)`,
+        detail: `${majorDefects.length} unresolved major defect${majorDefects.length > 1 ? 's' : ''} require operational review.`,
         severity: 'warning',
       });
     }
 
-    // 4. Check overlapping allocations (if period is specified)
-    if (startParam) {
-      const startDate = new Date(startParam);
-      const endDate = endParam ? new Date(endParam) : new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+    let requestedStartDate: Date | null = null;
+    let requestedEndDate: Date | null = null;
+    let requestedEndDateOnly: string | null = null;
 
-      // An allocation overlaps if: start < requested_end AND end > requested_start
-      // AND state is not cancelled
+    if (startParam) {
+      requestedStartDate = new Date(`${startParam}T00:00:00Z`);
+      requestedEndDateOnly = endParam ?? addUtcDays(startParam, 7);
+      requestedEndDate = new Date(`${requestedEndDateOnly}T00:00:00Z`);
+
       const overlappingAllocations = await db
-        .select()
+        .select({
+          startAt: vehicleAllocations.startAt,
+          endAt: vehicleAllocations.endAt,
+          state: vehicleAllocations.state,
+        })
         .from(vehicleAllocations)
         .where(
           and(
             eq(vehicleAllocations.vehicleId, id),
-            lt(vehicleAllocations.startAt, endDate),
-            gt(vehicleAllocations.endAt, startDate),
-            ne(vehicleAllocations.state, 'cancelled')
+            lt(vehicleAllocations.startAt, requestedEndDate),
+            gt(vehicleAllocations.endAt, requestedStartDate),
+            ne(vehicleAllocations.state, 'cancelled'),
           ),
         );
 
       if (overlappingAllocations.length > 0) {
-        const alloc = overlappingAllocations[0];
+        const allocation = overlappingAllocations[0];
         blockers.push({
           type: 'overlapping_allocation',
-          detail: `Overlapping allocation exists: ${alloc.startAt.toLocaleDateString()} – ${alloc.endAt.toLocaleDateString()} (state: ${alloc.state})`,
+          detail: `Overlapping allocation exists: ${allocation.startAt.toLocaleDateString()} – ${allocation.endAt.toLocaleDateString()} (state: ${allocation.state})`,
           severity: 'error',
         });
       }
-    }
 
-    // 5. Check for scheduled maintenance blocking the period
-    if (startParam) {
-      const startDate = new Date(startParam);
-      const blockWindow = new Date(startDate.getTime() - 7 * 24 * 60 * 60 * 1000); // 1 week before
-
-      // Maintenance events where nextServiceDate falls within our window
-      const blockWindowStr = blockWindow.toISOString().split('T')[0];
-      const upcomingMaintenance = await db
-        .select()
+      const [latestReminder] = await db
+        .select({ nextServiceDate: maintenanceEvents.nextServiceDate })
         .from(maintenanceEvents)
         .where(
           and(
             eq(maintenanceEvents.vehicleId, id),
-            // Maintenance scheduled in the window that could be a blocker
-            gte(maintenanceEvents.serviceDate, blockWindowStr),
+            isNotNull(maintenanceEvents.nextServiceDate),
           ),
         )
-        .orderBy(maintenanceEvents.serviceDate)
-        .limit(5);
+        .orderBy(desc(maintenanceEvents.serviceDate), desc(maintenanceEvents.createdAt))
+        .limit(1);
 
-      // Check if any maintenance has a nextServiceDate that overlaps
-      const blockingMaintenance = upcomingMaintenance.filter(
-        (m) => m.nextServiceDate && new Date(m.nextServiceDate) >= startDate,
-      );
-
-      if (blockingMaintenance.length > 0) {
-        for (const m of blockingMaintenance) {
-          blockers.push({
-            type: 'maintenance_block',
-            detail: `Scheduled maintenance due ${m.nextServiceDate}${m.description ? `: ${m.description}` : ''}`,
-            severity: 'warning',
-          });
-        }
+      if (
+        latestReminder?.nextServiceDate &&
+        requestedEndDateOnly &&
+        latestReminder.nextServiceDate <= requestedEndDateOnly
+      ) {
+        const overdue = latestReminder.nextServiceDate < startParam;
+        blockers.push({
+          type: 'maintenance_block',
+          detail: `${overdue ? 'Next service reminder overdue since' : 'Next service reminder due'} ${latestReminder.nextServiceDate}.`,
+          severity: 'warning',
+        });
       }
     }
 
-    // 6. Check licence expiry
-    if (vehicle.licenceExpiryDate && new Date(vehicle.licenceExpiryDate) < new Date()) {
+    const complianceDate = startParam ?? new Date().toISOString().slice(0, 10);
+
+    if (vehicle.licenceExpiryDate && vehicle.licenceExpiryDate < complianceDate) {
       blockers.push({
         type: 'vehicle_status',
-        detail: `Vehicle licence expired on ${vehicle.licenceExpiryDate}`,
+        detail: `Vehicle licence expires before the requested period (${vehicle.licenceExpiryDate}).`,
         severity: 'error',
       });
     }
 
-    // 7. Check roadworthy test expiry
-    if (vehicle.roadworthyTestDate && new Date(vehicle.roadworthyTestDate) < new Date()) {
+    const [roadworthyDocument] = await db
+      .select({ expiryDate: vehicleDocuments.expiryDate })
+      .from(vehicleDocuments)
+      .where(
+        and(
+          eq(vehicleDocuments.vehicleId, id),
+          eq(vehicleDocuments.documentType, 'roadworthy'),
+          eq(vehicleDocuments.isVerified, true),
+          isNotNull(vehicleDocuments.expiryDate),
+        ),
+      )
+      .orderBy(desc(vehicleDocuments.expiryDate))
+      .limit(1);
+
+    if (roadworthyDocument?.expiryDate && roadworthyDocument.expiryDate < complianceDate) {
       blockers.push({
         type: 'vehicle_status',
-        detail: `Roadworthy test expired on ${vehicle.roadworthyTestDate}`,
+        detail: `Verified roadworthy document expires before the requested period (${roadworthyDocument.expiryDate}).`,
         severity: 'error',
       });
     }
 
-    const available = blockers.filter((b) => b.severity === 'error').length === 0;
-    const hasWarnings = blockers.filter((b) => b.severity === 'warning').length > 0;
+    const available = blockers.every((blocker) => blocker.severity !== 'error');
+    const hasWarnings = blockers.some((blocker) => blocker.severity === 'warning');
 
     return NextResponse.json({
       available,
@@ -193,14 +257,11 @@ export async function GET(
       currentOdometer: vehicle.currentOdometer,
       blockers,
       checkPeriod: startParam
-        ? { start: startParam, end: endParam || null }
+        ? { start: startParam, end: requestedEndDateOnly }
         : null,
     });
   } catch (error) {
     console.error('[Availability] Failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to check availability' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to check availability' }, { status: 500 });
   }
 }
