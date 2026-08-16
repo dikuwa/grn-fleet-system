@@ -8,7 +8,7 @@ import { externalDriverAssignments } from '@/db/schema/external-driver-assignmen
 import { externalParties } from '@/db/schema/external-parties';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { vehicleAllocations } from '@/db/schema/trips';
+import { tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
@@ -59,11 +59,19 @@ export async function generateVerifiedTransportRequestPdf(
         startAt: vehicleAllocations.startAt,
         state: vehicleAllocations.state,
         licenceNumber: vehicles.licenceNumber,
+        authorityNumber: tripAuthorities.authorityNumber,
         internalDriverName: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
       })
       .from(vehicleAllocations)
       .leftJoin(vehicles, eq(vehicles.id, vehicleAllocations.vehicleId))
       .leftJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
+      .leftJoin(
+        tripAuthorities,
+        and(
+          eq(tripAuthorities.allocationId, vehicleAllocations.id),
+          eq(tripAuthorities.tenantId, document.tenantId),
+        ),
+      )
       .where(
         and(
           eq(vehicleAllocations.requestId, document.entityId),
@@ -94,7 +102,7 @@ export async function generateVerifiedTransportRequestPdf(
 
       outcome = {
         finalStatus: document.status === 'issued' ? 'Approved' : document.status,
-        linkedAuthorityReference: `TA-${allocation.id.slice(0, 8).toUpperCase()}`,
+        linkedAuthorityReference: allocation.authorityNumber || 'Not issued',
         allocatedVehicle: allocation.licenceNumber || 'Not recorded',
         allocatedDriver: allocatedDriver || 'Not recorded',
         allocationDate: allocation.startAt?.toISOString(),
@@ -109,6 +117,7 @@ export async function generateVerifiedTransportRequestPdf(
           and(
             eq(workflowInstances.requestId, document.entityId),
             eq(workflowActions.actionType, 'authorise'),
+            eq(workflowActions.result, 'authorised'),
           ),
         )
         .orderBy(desc(workflowActions.createdAt))
