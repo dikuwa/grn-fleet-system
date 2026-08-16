@@ -1,4 +1,5 @@
 const NAMIBIA_TIME_ZONE = 'Africa/Windhoek';
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 export function currentNamibiaDate(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -17,6 +18,17 @@ export function currentNamibiaDate(now = new Date()) {
   }
 
   return `${year}-${month}-${day}`;
+}
+
+function dateOnlyToUtcMs(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+export function daysUntilNamibiaDate(targetDate: string, now = new Date()) {
+  return Math.round(
+    (dateOnlyToUtcMs(targetDate) - dateOnlyToUtcMs(currentNamibiaDate(now))) / DAY_IN_MS,
+  );
 }
 
 export function validateMaintenanceServiceDate(serviceDate: string, now = new Date()) {

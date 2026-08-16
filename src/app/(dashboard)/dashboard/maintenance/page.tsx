@@ -33,6 +33,7 @@ import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { numericCount } from '@/lib/statistics';
 import { maintenanceScopeCondition } from '@/lib/record-scope';
+import { daysUntilNamibiaDate } from '@/lib/maintenance-record-validation';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -137,7 +138,7 @@ async function fetchMaintenance(
 }
 
 const SERVICE_TYPE_LABELS: Record<string, string> = {
-  scheduled: 'Scheduled',
+  scheduled: 'Routine Service',
   repair: 'Repair',
   inspection: 'Inspection',
 };
@@ -210,7 +211,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
           <Button variant="primary" size="sm" asChild>
             <Link href="/dashboard/maintenance/new">
               <Wrench className="h-4 w-4" />
-              Schedule Maintenance
+              Record Maintenance
             </Link>
           </Button>
         )}
@@ -232,7 +233,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
         )}
       </PageHeader>
 
-      {/* Due-soon tabs */}
+      {/* Next-service reminder tabs */}
       {result.metrics.overdue > 0 || result.metrics.dueSoon > 0 ? (
         <div className="flex flex-wrap gap-2">
           <Link
@@ -254,7 +255,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
                   : 'bg-surface text-ink-500 hover:text-ink-700'
               }`}
             >
-              Due Soon ({result.metrics.dueSoon})
+              Reminder Due Soon ({result.metrics.dueSoon})
             </Link>
           )}
           {result.metrics.overdue > 0 && (
@@ -269,7 +270,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
                   : 'bg-surface text-ink-500 hover:text-ink-700'
               }`}
             >
-              Overdue ({result.metrics.overdue})
+              Reminder Overdue ({result.metrics.overdue})
             </Link>
           )}
         </div>
@@ -303,7 +304,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
               <p className="text-status-pending-text text-2xl font-[650] tabular-nums">
                 {result.metrics.upcoming}
               </p>
-              <p className="text-ink-500 text-xs">Upcoming Services</p>
+              <p className="text-ink-500 text-xs">Upcoming Service Reminders</p>
             </div>
           </CardContent>
         </Card>
@@ -313,7 +314,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
               <p className="text-status-info-text text-2xl font-[650] tabular-nums">
                 {result.metrics.scheduled}
               </p>
-              <p className="text-ink-500 text-xs">Scheduled Services</p>
+              <p className="text-ink-500 text-xs">Routine Service Records</p>
             </div>
           </CardContent>
         </Card>
@@ -333,7 +334,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
                 defaultValue={result.filters.serviceType ?? ''}
                 placeholder="All Types"
               >
-                <option value="scheduled">Scheduled</option>
+                <option value="scheduled">Routine Service</option>
                 <option value="repair">Repair</option>
                 <option value="inspection">Inspection</option>
               </StyledSelect>
@@ -401,27 +402,24 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
                     )}
                     {event.nextServiceDate &&
                       (() => {
-                        const daysUntil = Math.ceil(
-                          (new Date(event.nextServiceDate).getTime() - Date.now()) /
-                            (1000 * 60 * 60 * 24),
-                        );
+                        const daysUntil = daysUntilNamibiaDate(event.nextServiceDate);
                         if (daysUntil < 0) {
                           return (
                             <Badge variant="error" size="sm">
-                              Overdue {Math.abs(daysUntil)}d
+                              Reminder overdue {Math.abs(daysUntil)}d
                             </Badge>
                           );
                         }
                         if (daysUntil <= 7) {
                           return (
                             <Badge variant="emergency" size="sm">
-                              Due in {daysUntil}d
+                              Reminder due in {daysUntil}d
                             </Badge>
                           );
                         }
                         return (
                           <span className="text-ink-500 text-[11px]">
-                            Next: {formatDate(event.nextServiceDate)}
+                            Next service reminder: {formatDate(event.nextServiceDate)}
                           </span>
                         );
                       })()}
