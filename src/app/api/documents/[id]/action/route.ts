@@ -90,10 +90,6 @@ export async function POST(
       );
     }
 
-    // Closure-generated Fuel Summaries may include legacy aggregate-only drafts.
-    // Refresh the final verified transaction table and trip/vehicle identity at
-    // the formal issue boundary. The helper is draft-only and requires a closed
-    // tenant-scoped trip, so issued historical rows remain immutable.
     if (doc.documentType === 'fuel_summary' && doc.entityType === 'trip') {
       const enriched = await enrichClosedTripFuelSummary(doc.entityId, doc.tenantId, doc.id);
       if (enriched) doc = enriched;
@@ -113,10 +109,6 @@ export async function POST(
       }
     }
 
-    // Incident investigations may legitimately progress after operational trip
-    // closure. Refresh an unissued completion draft immediately before Issue so
-    // the official report freezes the latest investigation outcome without
-    // blocking later safety work or rewriting an already-issued document.
     if (doc.documentType === 'trip_completion' && doc.entityType === 'trip') {
       const refreshed = await refreshTripCompletionDraftForIssue(doc.entityId, doc.tenantId, doc.id);
       if (refreshed) doc = refreshed;
@@ -137,10 +129,6 @@ export async function POST(
       }
     }
 
-    // Trip Authority issuance is the final pre-release document boundary. The
-    // driver's acceptance must cover the current vehicle and the current
-    // vehicle must have passed its official departure inspection before the
-    // immutable PDF is frozen.
     if (doc.documentType === 'trip_authority' && doc.entityType === 'vehicle_allocation') {
       const [authority] = await db
         .select({
@@ -165,8 +153,9 @@ export async function POST(
           return NextResponse.json(
             {
               error:
-                'The vehicle changed after the driver accepted this Trip Authority. The revised authority must be acknowledged before this document version can be formally issued.',
+                'A material Trip Authority amendment became effective after the driver accepted the authority. The revised authority must be acknowledged before this document version can be formally issued.',
               amendmentId: pendingAmendment.amendmentId,
+              amendmentType: pendingAmendment.amendmentType,
               requiresAmendmentAcceptance: true,
             },
             { status: 409 },
@@ -278,17 +267,27 @@ export async function POST(
         ? sql`exists (
             select 1
             from trip_authorities ta
+            inner join trips t on t.id = ta.trip_id
             where ta.tenant_id = ${session.tenantId}::uuid
               and ta.allocation_id = ${doc.entityId}::uuid
               and ta.status = 'ready_for_departure'
               and ta.accepted_at is not null
+              and t.tenant_id = ${session.tenantId}::uuid
+              and t.status = 'pending'
+              and t.issued_at is null
               and not exists (
                 select 1
                 from trip_amendments am
                 where am.authority_id = ta.id
-                  and am.amendment_type = 'vehicle_replacement'
+                  and am.amendment_type in (
+                    'vehicle_replacement',
+                    'date_extension',
+                    'route_change',
+                    'purpose_clarification',
+                    'special_authorisation'
+                  )
                   and am.status = 'approved'
-                  and am.created_at > ta.accepted_at
+                  and coalesce(am.approved_at, am.created_at) > ta.accepted_at
               )
           )`
         : sql`true`;
