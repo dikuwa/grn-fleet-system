@@ -527,7 +527,10 @@ export default function ReportsPage() {
       </main>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="bg-surface flex h-[94dvh] w-[96vw] max-w-[1600px] flex-col overflow-hidden p-0 shadow-2xl sm:h-[90dvh] sm:w-[94vw] [&>button.absolute]:hidden">
+        <DialogContent
+          className="bg-surface flex h-[96dvh] flex-col overflow-hidden p-0 shadow-2xl [&>button.absolute]:hidden"
+          style={{ width: '96vw', maxWidth: '1800px' }}
+        >
           <DialogHeader className="border-border bg-surface mb-0 flex min-h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-3 py-2 sm:px-5">
             <div className="min-w-0">
               <DialogTitle className="truncate text-sm sm:text-base">
@@ -538,16 +541,31 @@ export default function ReportsPage() {
               </DialogDescription>
             </div>
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-              <Button variant="secondary" size="sm" onClick={() => void handleExport('pdf')}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="text-status-success-text hover:text-status-success-text"
+                onClick={() => void handleExport('pdf')}
+              >
                 <Download className="h-4 w-4" />
                 <span className="hidden md:inline">Download</span>
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => void handlePrint()}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="text-status-pending-text hover:text-status-pending-text"
+                onClick={() => void handlePrint()}
+              >
                 <Printer className="h-4 w-4" />
                 <span className="hidden sm:inline">Print</span>
               </Button>
               <DialogClose asChild>
-                <Button variant="secondary" size="sm" aria-label="Close report preview">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="text-status-error-text hover:text-status-error-text"
+                  aria-label="Close report preview"
+                >
                   <X className="h-4 w-4" />
                   <span className="hidden sm:inline">Close</span>
                 </Button>

@@ -57,7 +57,17 @@ test.describe('PDF Export', () => {
       )
       .first();
     await expect(exportBtn).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Preview' })).toBeVisible();
+    const previewButton = page.getByRole('button', { name: 'Preview' });
+    await expect(previewButton).toBeVisible();
+
+    await previewButton.click();
+    const previewDialog = page.getByRole('dialog');
+    await expect(previewDialog).toBeVisible();
+    const dialogBox = await previewDialog.boundingBox();
+    const viewport = page.viewportSize();
+    expect(dialogBox).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect(dialogBox!.width).toBeGreaterThanOrEqual(viewport!.width * 0.9);
   });
 
   test('2. PDF export API returns a PDF for fleet report', async ({ page, request }) => {
