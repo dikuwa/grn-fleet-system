@@ -19,6 +19,7 @@ export interface PendingAuthorityAmendmentAcceptance {
   authorityVersion: number;
   amendmentType: DriverReacceptanceAmendmentType;
   reason: string;
+  /** Effective material-change time: approval time, falling back to creation for legacy rows. */
   createdAt: Date;
   originalValue: Record<string, unknown> | null;
   newValue: Record<string, unknown>;
@@ -26,14 +27,15 @@ export interface PendingAuthorityAmendmentAcceptance {
 
 /**
  * A driver's acceptance belongs to the authority state they reviewed. Any
- * approved, driver-material amendment recorded after that acceptance must be
- * acknowledged again before departure. This includes vehicle replacement as
- * well as route, validity, purpose and special-authorisation changes.
+ * approved, driver-material amendment that became effective after that
+ * acceptance must be acknowledged again before departure. Approval time is the
+ * material-change boundary; a request drafted before driver acceptance but
+ * approved afterward must still trigger re-acceptance.
  *
  * Re-acceptance is strictly a pre-departure control. Once the vehicle has been
  * physically issued/departed, the original authority remains historical
- * evidence and later amendments are retained in amendment/version history
- * without reopening the departure-acceptance workflow.
+ * evidence and later amendments stay in amendment/version history without
+ * reopening the departure-acceptance workflow.
  */
 export async function findPendingAuthorityAmendmentAcceptance(input: {
   authorityId: string;
@@ -50,6 +52,7 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
       amendmentType: tripAmendments.amendmentType,
       reason: tripAmendments.reason,
       createdAt: tripAmendments.createdAt,
+      approvedAt: tripAmendments.approvedAt,
       originalValue: tripAmendments.originalValue,
       newValue: tripAmendments.newValue,
     })
@@ -65,10 +68,12 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
         isNull(trips.issuedAt),
       ),
     )
-    .orderBy(desc(tripAmendments.version), desc(tripAmendments.createdAt), desc(tripAmendments.id))
+    .orderBy(desc(tripAmendments.version), desc(tripAmendments.approvedAt), desc(tripAmendments.createdAt), desc(tripAmendments.id))
     .limit(1);
 
-  if (!amendment || amendment.createdAt <= input.acceptedAt) return null;
+  if (!amendment) return null;
+  const effectiveAt = amendment.approvedAt ?? amendment.createdAt;
+  if (effectiveAt <= input.acceptedAt) return null;
 
   return {
     amendmentId: amendment.id,
@@ -76,7 +81,7 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
     authorityVersion: amendment.version,
     amendmentType: amendment.amendmentType as DriverReacceptanceAmendmentType,
     reason: amendment.reason,
-    createdAt: amendment.createdAt,
+    createdAt: effectiveAt,
     originalValue: amendment.originalValue ?? null,
     newValue: amendment.newValue,
   };
