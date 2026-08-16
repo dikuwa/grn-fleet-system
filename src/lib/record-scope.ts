@@ -1,6 +1,7 @@
 import { and, eq, isNull, or, sql, type SQL } from 'drizzle-orm';
 import {
   employees,
+  externalDriverAssignments,
   fuelTransactions,
   generatedDocuments,
   maintenanceEvents,
@@ -198,6 +199,64 @@ export function vehicleScopeCondition(context: RecordScopeContext): SQL {
         )
     )`,
   )!;
+
+  if (context.recordScope === 'assigned') {
+    // Inspector vehicle lookup is a supporting view for the official inspection
+    // queue. There is no separate inspector-assignment entity: any Inspector may
+    // perform a lifecycle-eligible official inspection. Include vehicles with an
+    // eligible departure/return trip before the first inspection is recorded, while
+    // preserving historical user relationships after the work is completed.
+    const inspectionWorkPending = sql`exists (
+      select 1
+      from ${trips} pending_trip
+      inner join ${transportRequests} pending_request
+        on pending_request.id = pending_trip.request_id
+       and pending_request.tenant_id = ${context.tenantId}
+      inner join ${vehicleAllocations} pending_allocation
+        on pending_allocation.id = pending_trip.allocation_id
+       and pending_allocation.request_id = pending_trip.request_id
+       and pending_allocation.vehicle_id = pending_trip.vehicle_id
+      inner join ${tripAuthorities} pending_authority
+        on pending_authority.trip_id = pending_trip.id
+       and pending_authority.request_id = pending_trip.request_id
+       and pending_authority.allocation_id = pending_trip.allocation_id
+       and pending_authority.tenant_id = ${context.tenantId}
+      where pending_trip.vehicle_id = ${vehicles.id}
+        and pending_trip.tenant_id = ${context.tenantId}
+        and (
+          (
+            pending_trip.status = 'pending'
+            and pending_request.status in ('authorised', 'ready_for_issue', 'approved', 'approved_emergency')
+            and pending_authority.status in ('driver_accepted', 'awaiting_pre_trip_inspection')
+            and (
+              pending_allocation.driver_employee_id is not null
+              or exists (
+                select 1 from ${externalDriverAssignments} departure_external
+                where departure_external.trip_id = pending_trip.id
+                  and departure_external.tenant_id = ${context.tenantId}
+                  and departure_external.state = 'accepted'
+              )
+            )
+          )
+          or (
+            pending_trip.status in ('in_progress', 'return_due', 'return_inspection')
+            and pending_authority.status in ('returned', 'awaiting_arrival_inspection')
+            and (
+              pending_allocation.driver_employee_id is not null
+              or exists (
+                select 1 from ${externalDriverAssignments} return_external
+                where return_external.trip_id = pending_trip.id
+                  and return_external.tenant_id = ${context.tenantId}
+                  and return_external.state = 'accepted'
+                  and return_external.issue_id is not null
+              )
+            )
+          )
+        )
+    )`;
+
+    return and(tenant, or(userRelationship, inspectionWorkPending)!)!;
+  }
 
   if (context.recordScope === 'related') {
     // Maintenance owns the related Fleet workspace. Its Defects queue deliberately
