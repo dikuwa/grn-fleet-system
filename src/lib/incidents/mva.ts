@@ -178,9 +178,9 @@ export async function updateInsurance(
     }
     if (input.insuranceNotified !== undefined) {
       set.insuranceNotified = input.insuranceNotified;
-      if (input.insuranceNotified && !incident.insuranceNotifiedAt) {
-        set.insuranceNotifiedAt = new Date();
-      }
+      set.insuranceNotifiedAt = input.insuranceNotified
+        ? incident.insuranceNotifiedAt || new Date()
+        : null;
     }
     if (input.policeReportFiled !== undefined) {
       set.policeReportFiled = input.policeReportFiled;
@@ -307,6 +307,9 @@ export async function recordTechnicalClearance(
   if (!incident) return { ok: false as const, error: 'not_found' };
 
   const status = input.status;
+  if (incident.technicalClearanceStatus === 'cleared' && status !== 'cleared') {
+    return { ok: false as const, error: 'clearance_already_granted' };
+  }
 
   const row = await db.transaction(async (tx) => {
     const [updated] = await tx

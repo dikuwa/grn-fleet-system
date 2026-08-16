@@ -78,6 +78,20 @@ export async function PATCH(
       return NextResponse.json({ error: 'Incident not found' }, { status: 404 });
     }
 
+    // The current operational workflow treats a granted clearance as final.
+    // There is no revocation action that atomically re-restricts a vehicle that
+    // may already have been returned to service, so direct callers cannot turn
+    // a cleared incident back into a non-cleared state.
+    if (incident.technicalClearanceStatus === 'cleared' && body.status !== 'cleared') {
+      return NextResponse.json(
+        {
+          error:
+            'Technical clearance has already been granted. Record a new safety defect or incident if the vehicle requires renewed restriction.',
+        },
+        { status: 409 },
+      );
+    }
+
     // Technical clearance is the final safety acknowledgement for a damaged
     // vehicle. The dedicated endpoint must enforce the same blocking-defect
     // prerequisite as the incident-review workspace so callers cannot bypass
@@ -122,13 +136,29 @@ export async function PATCH(
     );
 
     if (!result.ok) {
-      const status = result.error === 'not_found' ? 404 : 400;
-      return NextResponse.json({ error: result.error }, { status });
+      const status = result.error === 'not_found'
+        ? 404
+        : result.error === 'clearance_already_granted'
+          ? 409
+          : 400;
+      const error = result.error === 'clearance_already_granted'
+        ? 'Technical clearance has already been granted and cannot be reverted by this workflow.'
+        : result.error;
+      return NextResponse.json({ error }, { status });
     }
 
     return NextResponse.json({ data: result.data });
   } catch (error) {
     console.error('[incidents/technical-clearance] PATCH failed:', error);
+    if (String(error).includes('incident_technical_clearance_revocation_blocked')) {
+      return NextResponse.json(
+        {
+          error:
+            'Technical clearance has already been granted and cannot be reverted by this workflow.',
+        },
+        { status: 409 },
+      );
+    }
     if (String(error).includes('incident_technical_clearance_blocked')) {
       return NextResponse.json(
         {
