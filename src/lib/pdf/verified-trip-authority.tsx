@@ -15,6 +15,7 @@ import {
   tripAuthorities,
   tripAuthorityPassengers,
   tripAuthorisedDrivers,
+  tripIssues,
   trips,
   vehicleAllocations,
   vehicleInspections,
@@ -338,16 +339,30 @@ export async function generateVerifiedTripAuthorityPdf(
       };
     }
 
-    const [transportEmployee] = await db
-      .select({ firstName: employees.firstName, lastName: employees.lastName, jobTitle: employees.jobTitle })
-      .from(employees)
-      .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, alloc.allocatedByUserId)))
-      .limit(1);
+    const [physicalIssue] = inspectionTripId
+      ? await db
+          .select({
+            issuedByUserId: tripIssues.issuedByUserId,
+            issuedAt: tripIssues.issuedAt,
+          })
+          .from(tripIssues)
+          .where(and(eq(tripIssues.tripId, inspectionTripId), eq(tripIssues.allocationId, allocationId)))
+          .orderBy(desc(tripIssues.issuedAt))
+          .limit(1)
+      : [];
+    const transportOfficerUserId = physicalIssue?.issuedByUserId || alloc.allocatedByUserId;
+    const [transportEmployee] = transportOfficerUserId
+      ? await db
+          .select({ firstName: employees.firstName, lastName: employees.lastName, jobTitle: employees.jobTitle })
+          .from(employees)
+          .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, transportOfficerUserId)))
+          .limit(1)
+      : [];
     if (transportEmployee) {
       transportOfficer = {
         name: `${transportEmployee.firstName} ${transportEmployee.lastName}`.trim(),
         designation: transportEmployee.jobTitle || 'Transport Officer',
-        issuedAt: authority.issuedAt?.toLocaleString('en-NA'),
+        issuedAt: (physicalIssue?.issuedAt || alloc.createdAt).toLocaleString('en-NA'),
       };
     }
 
