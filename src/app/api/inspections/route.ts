@@ -196,6 +196,15 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    if (code === '23514' && message.includes('vehicle_odometer_regression')) {
+      return NextResponse.json(
+        {
+          error:
+            'The vehicle odometer advanced while this inspection was being submitted. Refresh the inspection context and enter a reading at or above the latest vehicle odometer.',
+        },
+        { status: 409 },
+      );
+    }
     console.error('[inspections] POST failed:', error);
     return NextResponse.json({ error: 'Failed to complete inspection' }, { status: 500 });
   }
