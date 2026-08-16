@@ -12,7 +12,11 @@ import { user } from '@/db/schema/better-auth';
 import { notificationDeliveries, notifications } from '@/db/schema/notifications';
 import { employees } from '@/db/schema/people';
 import { eq, and } from 'drizzle-orm';
-import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
+import {
+  requireAnyPermission,
+  requireDashboardAction,
+  requireRequestAuth,
+} from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
@@ -39,6 +43,17 @@ export async function POST(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+
+    // Do not authorize this mutation from the union of every role attached to
+    // the account. The active workspace must itself expose the operational
+    // Delivery Dashboard; this keeps Audit and other read-only workspaces from
+    // inheriting retry capability from a second role on the same user.
+    const workspaceCheck = await requireDashboardAction(
+      session,
+      '/dashboard/notifications/deliveries',
+      'view',
+    );
+    if (workspaceCheck instanceof NextResponse) return workspaceCheck;
 
     const permCheck = await requireAnyPermission(session, [
       Permissions.TENANT_MANAGE,
