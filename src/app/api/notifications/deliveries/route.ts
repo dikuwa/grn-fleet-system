@@ -4,15 +4,16 @@
  * Returns notification delivery records enriched with notification details.
  * Supports filtering by status and channel.
  *
- * Access: Tenant administrators, transport administrators and tenant auditors.
+ * Access: Tenant administrators and transport administrators through the
+ * Delivery Dashboard workspace route. Tenant auditors use the read-only
+ * Delivery History surface instead.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { notificationDeliveries, notifications } from '@/db/schema/notifications';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,12 +23,12 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requireAnyPermission(session, [
-      Permissions.TENANT_MANAGE,
-      Permissions.DRIVER_MANAGE,
-      Permissions.AUDIT_READ,
-    ]);
-    if (permCheck instanceof NextResponse) return permCheck;
+    const accessCheck = await requireDashboardAction(
+      session,
+      '/dashboard/notifications/deliveries',
+      'view',
+    );
+    if (accessCheck instanceof NextResponse) return accessCheck;
 
     const { searchParams } = new URL(request.url);
     const statusFilter = searchParams.get('status'); // sent, failed, pending, skipped
