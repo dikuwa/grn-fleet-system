@@ -76,6 +76,7 @@
     { "idx": 71, "version": "7", "when": 1786838400000, "tag": "0071_material_authority_amendment_inspection_guard", "breakpoints": true },
     { "idx": 72, "version": "7", "when": 1786842000000, "tag": "0072_authority_amendment_physical_issue_guard", "breakpoints": true },
     { "idx": 73, "version": "7", "when": 1786845600000, "tag": "0073_current_authority_document_issue_guard", "breakpoints": true },
-    { "idx": 74, "version": "7", "when": 1786849200000, "tag": "0074_blocking_defect_reinspection_guard", "breakpoints": true }
+    { "idx": 74, "version": "7", "when": 1786849200000, "tag": "0074_blocking_defect_reinspection_guard", "breakpoints": true },
+    { "idx": 75, "version": "7", "when": 1786852800000, "tag": "0075_return_declaration_closure_guard", "breakpoints": true }
   ]
 }
