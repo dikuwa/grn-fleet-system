@@ -1,7 +1,7 @@
 import React from 'react';
 import QRCode from 'qrcode';
 import { renderToStream } from '@react-pdf/renderer';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
@@ -75,10 +75,11 @@ export async function generateVerifiedTransportRequestPdf(
       .where(
         and(
           eq(vehicleAllocations.requestId, document.entityId),
+          ne(vehicleAllocations.state, 'cancelled'),
           eq(vehicles.tenantId, document.tenantId),
         ),
       )
-      .orderBy(desc(vehicleAllocations.createdAt))
+      .orderBy(desc(vehicleAllocations.updatedAt), desc(vehicleAllocations.createdAt))
       .limit(1);
 
     if (allocation) {
@@ -93,6 +94,7 @@ export async function generateVerifiedTransportRequestPdf(
               eq(externalDriverAssignments.tenantId, document.tenantId),
               eq(externalDriverAssignments.allocationId, allocation.id),
               eq(externalParties.tenantId, document.tenantId),
+              ne(externalDriverAssignments.state, 'cancelled'),
             ),
           )
           .orderBy(desc(externalDriverAssignments.assignedAt))
