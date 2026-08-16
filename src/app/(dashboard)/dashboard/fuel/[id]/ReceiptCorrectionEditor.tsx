@@ -2,11 +2,18 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, ExternalLink, FileText, PencilLine, Save, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, FileText, History, PencilLine, Save, X, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FieldWrapper, Input, Textarea } from '@/components/ui/input';
 import { useToast } from '@/lib/use-toast';
+
+interface ReceiptCorrection {
+  fieldName: string;
+  extractedValue: string | null;
+  correctedValue: string;
+  correctedAtLabel: string;
+}
 
 interface ReceiptLike {
   id: string;
@@ -18,6 +25,7 @@ interface ReceiptLike {
   fieldConfidence?: Record<string, number> | null;
   extractionConfidence?: string | null;
   rawOcrResponse?: Record<string, unknown> | null;
+  corrections?: ReceiptCorrection[];
 }
 
 interface FieldConfig { key: string; label: string; numeric?: boolean }
@@ -44,18 +52,34 @@ function stringValue(data: Record<string, unknown> | null, key: string): string 
   return value === null || value === undefined ? '' : String(value);
 }
 
-function fieldValue(original: Record<string, string>, field: FieldConfig): string {
-  return (original[field.key] ?? '').trim();
+function fieldValue(values: Record<string, string>, field: FieldConfig): string {
+  return (values[field.key] ?? '').trim();
+}
+
+function fieldLabel(key: string): string {
+  return FIELD_ORDER.find((field) => field.key === key)?.label ?? key.replace(/([a-z])([A-Z])/g, '$1 $2');
 }
 
 export function ReceiptCorrectionEditor({ receipt, canEdit, canVerify = false }: { receipt: ReceiptLike; canEdit: boolean; canVerify?: boolean }) {
   const router = useRouter();
   const { toast } = useToast();
-  const original = useMemo<Record<string, string>>(() => {
+  const currentValues = useMemo<Record<string, string>>(() => {
     const out: Record<string, string> = {};
     for (const field of FIELD_ORDER) out[field.key] = stringValue(receipt.extractionData, field.key);
     return out;
   }, [receipt.extractionData]);
+  const corrections = receipt.corrections ?? [];
+  const originalOcrValues = useMemo<Record<string, string>>(() => {
+    const out = { ...currentValues };
+    const seen = new Set<string>();
+    for (const correction of corrections) {
+      if (seen.has(correction.fieldName)) continue;
+      seen.add(correction.fieldName);
+      out[correction.fieldName] = correction.extractedValue ?? '';
+    }
+    return out;
+  }, [corrections, currentValues]);
+  const correctedFields = new Set(corrections.map((correction) => correction.fieldName));
   const flags = Array.isArray(receipt.extractionData?.validationFlags)
     ? receipt.extractionData!.validationFlags.filter((value): value is string => typeof value === 'string')
     : [];
@@ -64,13 +88,13 @@ export function ReceiptCorrectionEditor({ receipt, canEdit, canVerify = false }:
   const overallConfidence = receipt.extractionConfidence ? Math.round(Number(receipt.extractionConfidence) * 100) : null;
 
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Record<string, string>>(original);
+  const [draft, setDraft] = useState<Record<string, string>>(currentValues);
   const [saving, setSaving] = useState(false);
   const [reviewing, setReviewing] = useState<'verify' | 'reject' | null>(null);
   const [reviewReason, setReviewReason] = useState('');
   const [opening, setOpening] = useState(false);
   const readOnly = receipt.isVerified || !canEdit;
-  const hasUsefulFields = FIELD_ORDER.some((field) => fieldValue(original, field) !== '');
+  const hasUsefulFields = FIELD_ORDER.some((field) => fieldValue(currentValues, field) !== '');
 
   async function openOriginal() {
     setOpening(true);
@@ -94,8 +118,8 @@ export function ReceiptCorrectionEditor({ receipt, canEdit, canVerify = false }:
     const changes: Record<string, string | number> = {};
     for (const field of FIELD_ORDER) {
       const value = draft[field.key] ?? '';
-      const originalValue = original[field.key] ?? '';
-      if (value === originalValue) continue;
+      const previousValue = currentValues[field.key] ?? '';
+      if (value === previousValue) continue;
       const trimmed = value.trim();
       if (field.numeric && trimmed !== '' && Number.isNaN(Number(value))) {
         toast({ title: 'Invalid number', description: `${field.label} must be a number.`, variant: 'error' });
@@ -111,7 +135,7 @@ export function ReceiptCorrectionEditor({ receipt, canEdit, canVerify = false }:
     try {
       await patchAction('correct', { corrections: changes });
       await patchAction('confirm');
-      toast({ title: 'Receipt corrections saved', description: 'OCR confirmed. Final verification still requires an authorised review.', variant: 'success' });
+      toast({ title: 'Receipt corrections saved', description: 'OCR review confirmed. Final evidence verification still requires an authorised reviewer.', variant: 'success' });
       setEditing(false);
       router.refresh();
     } catch (error) {
@@ -128,7 +152,13 @@ export function ReceiptCorrectionEditor({ receipt, canEdit, canVerify = false }:
     setReviewing(action);
     try {
       await patchAction(action, { reason: reason || undefined });
-      toast({ title: action === 'verify' ? 'Receipt evidence verified' : 'Receipt evidence rejected', description: action === 'verify' ? 'The receipt and linked fuel transaction are now verified.' : 'The receipt and linked fuel transaction were rejected with the recorded reason.', variant: action === 'verify' ? 'success' : 'error' });
+      toast({
+        title: action === 'verify' ? 'Receipt evidence verified' : 'Receipt evidence rejected',
+        description: action === 'verify'
+          ? 'This receipt is verified. The fuel transaction is verified only when every linked receipt is verified.'
+          : 'This receipt was rejected and the linked fuel transaction remains unverified.',
+        variant: action === 'verify' ? 'success' : 'error',
+      });
       setReviewReason('');
       router.refresh();
     } catch (error) {
@@ -148,14 +178,15 @@ export function ReceiptCorrectionEditor({ receipt, canEdit, canVerify = false }:
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="sm" onClick={() => void openOriginal()} loading={opening}><ExternalLink className="h-4 w-4" /> Original receipt</Button>
-          {!readOnly && !editing && <Button variant="outline" size="sm" onClick={() => { setDraft(original); setEditing(true); }}><PencilLine className="h-4 w-4" /> Edit receipt data</Button>}
+          {!readOnly && !editing && <Button variant="outline" size="sm" onClick={() => { setDraft(currentValues); setEditing(true); }}><PencilLine className="h-4 w-4" /> Edit receipt data</Button>}
         </div>
       </div>
       <p className="mt-1 text-xs text-ink-500">Uploaded {receipt.createdAtLabel}</p>
 
       {flags.length > 0 && (
         <div className="mt-3 rounded-[8px] border border-status-warning-text/20 bg-status-warning-bg p-3">
-          <p className="text-xs font-semibold text-status-warning-text">Validation flags</p>
+          <p className="text-xs font-semibold text-status-warning-text">Original OCR validation flags</p>
+          <p className="mt-1 text-[11px] leading-4 text-ink-600">These flags came from automated extraction. Manual corrections below may resolve them, but the original OCR evidence is retained.</p>
           <div className="mt-2 flex flex-wrap gap-1.5">{flags.map((flag) => <Badge key={flag} variant="warning" size="sm">{flag.replaceAll('_', ' ')}</Badge>)}</div>
         </div>
       )}
@@ -165,21 +196,38 @@ export function ReceiptCorrectionEditor({ receipt, canEdit, canVerify = false }:
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {FIELD_ORDER.map((field) => <FieldWrapper key={field.key} label={field.label}><Input value={draft[field.key] ?? ''} onChange={(event) => setDraft((previous) => ({ ...previous, [field.key]: event.target.value }))} inputMode={field.numeric ? 'decimal' : 'text'} autoComplete="off" placeholder={field.numeric ? '0.00' : ''} disabled={saving} /></FieldWrapper>)}
           </div>
-          <p className="text-xs leading-relaxed text-ink-500">Saving corrections records the manual changes and confirms the OCR review. It does not itself verify the receipt.</p>
+          <p className="text-xs leading-relaxed text-ink-500">Saving creates field-level correction history and confirms the OCR review. The original OCR output remains retained separately and this does not verify the receipt.</p>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap"><Button size="sm" onClick={() => void handleSave()} loading={saving} className="w-full sm:w-auto"><Save className="h-4 w-4" /> Save corrections &amp; confirm OCR</Button><Button variant="secondary" size="sm" onClick={() => setEditing(false)} disabled={saving} className="w-full sm:w-auto"><X className="h-4 w-4" /> Cancel</Button></div>
         </div>
       ) : (
         <div className="mt-3 space-y-3">
-          {hasUsefulFields ? <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">{FIELD_ORDER.map((field) => { const value = fieldValue(original, field); if (!value) return null; const confidence = receipt.fieldConfidence?.[field.key]; return <div key={field.key} className="flex items-baseline justify-between gap-3 text-sm"><dt className="text-ink-500">{field.label}</dt><dd className={`text-right text-ink-950 ${field.numeric ? 'tabular-nums' : ''}`}>{value}{typeof confidence === 'number' ? <span className="ml-1 text-[10px] text-ink-400">({Math.round(confidence * 100)}%)</span> : null}</dd></div>; })}</dl> : <p className="text-sm text-ink-500">{readOnly ? 'No data was extracted from this receipt.' : 'No useful data was extracted. Use “Edit receipt data” to enter the details manually.'}</p>}
+          <div>
+            <p className="mb-2 text-xs font-semibold text-ink-900">Current reviewed values</p>
+            {hasUsefulFields ? <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">{FIELD_ORDER.map((field) => { const value = fieldValue(currentValues, field); if (!value) return null; return <div key={field.key} className="flex items-baseline justify-between gap-3 text-sm"><dt className="text-ink-500">{field.label}</dt><dd className={`text-right text-ink-950 ${field.numeric ? 'tabular-nums' : ''}`}>{value}{correctedFields.has(field.key) ? <Badge variant="info" size="sm" className="ml-1">corrected</Badge> : null}</dd></div>; })}</dl> : <p className="text-sm text-ink-500">{readOnly ? 'No data was extracted from this receipt.' : 'No useful data was extracted. Use “Edit receipt data” to enter the details manually.'}</p>}
+          </div>
+
+          {corrections.length > 0 && (
+            <details className="rounded-[8px] border border-border bg-muted/20 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-ink-900">Original OCR values &amp; correction history</summary>
+              <div className="mt-3 space-y-4">
+                <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">{FIELD_ORDER.map((field) => { const value = fieldValue(originalOcrValues, field); if (!value && !correctedFields.has(field.key)) return null; const confidence = receipt.fieldConfidence?.[field.key]; return <div key={field.key} className="flex items-baseline justify-between gap-3 text-sm"><dt className="text-ink-500">{field.label}</dt><dd className={`text-right text-ink-800 ${field.numeric ? 'tabular-nums' : ''}`}>{value || '—'}{typeof confidence === 'number' ? <span className="ml-1 text-[10px] text-ink-400">({Math.round(confidence * 100)}%)</span> : null}</dd></div>; })}</dl>
+                <div className="border-t border-border pt-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-ink-900"><History className="h-3.5 w-3.5" /> Field correction history</div>
+                  <div className="space-y-2">{corrections.map((correction, index) => <div key={`${correction.fieldName}-${correction.correctedAtLabel}-${index}`} className="rounded-[6px] border border-border bg-surface px-3 py-2 text-xs"><div className="font-medium text-ink-800">{fieldLabel(correction.fieldName)}</div><div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-ink-500"><span className="line-through">{correction.extractedValue || '—'}</span><span aria-hidden="true">→</span><span className="font-medium text-ink-900">{correction.correctedValue || '—'}</span><span className="ml-auto">{correction.correctedAtLabel}</span></div></div>)}</div>
+                </div>
+              </div>
+            </details>
+          )}
+
           {rawText && <details className="rounded-[8px] border border-border bg-muted/20 p-3"><summary className="cursor-pointer text-xs font-semibold text-ink-900">Raw OCR evidence</summary><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-ink-600">{rawText}</pre></details>}
         </div>
       )}
 
       {canVerify && !receipt.isVerified && !editing && (
         <div className="mt-4 space-y-3 border-t border-border pt-3">
-          <div><p className="text-xs font-semibold text-ink-900">Authorised receipt review</p><p className="mt-0.5 text-xs leading-5 text-ink-500">Verify only after opening the original receipt and checking it against the extracted or corrected values. Rejection requires a reason.</p></div>
+          <div><p className="text-xs font-semibold text-ink-900">Authorised receipt review</p><p className="mt-0.5 text-xs leading-5 text-ink-500">Verify only after opening the original receipt and comparing it with the current reviewed values, original OCR evidence and any correction history. Rejection requires a reason.</p></div>
           <Textarea value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} rows={2} maxLength={500} placeholder="Reviewer note / rejection reason" disabled={reviewing !== null} />
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap"><Button size="sm" onClick={() => void handleReview('verify')} loading={reviewing === 'verify'} disabled={reviewing !== null} className="w-full sm:w-auto"><CheckCircle2 className="h-4 w-4" /> Verify receipt &amp; transaction</Button><Button variant="destructive" size="sm" onClick={() => void handleReview('reject')} loading={reviewing === 'reject'} disabled={reviewing !== null || !reviewReason.trim()} className="w-full sm:w-auto"><XCircle className="h-4 w-4" /> Reject evidence</Button></div>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap"><Button size="sm" onClick={() => void handleReview('verify')} loading={reviewing === 'verify'} disabled={reviewing !== null} className="w-full sm:w-auto"><CheckCircle2 className="h-4 w-4" /> Verify receipt evidence</Button><Button variant="destructive" size="sm" onClick={() => void handleReview('reject')} loading={reviewing === 'reject'} disabled={reviewing !== null || !reviewReason.trim()} className="w-full sm:w-auto"><XCircle className="h-4 w-4" /> Reject evidence</Button></div>
         </div>
       )}
     </div>
