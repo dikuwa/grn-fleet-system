@@ -98,7 +98,6 @@ function tintHex(value: string | undefined, strength = 0.955): string {
 export const officialRedTheme: PdfTheme = {
   primary: OFFICIAL_RED,
   accent: OFFICIAL_RED,
-  // Official forms use red as an accent/rule, not as a card background.
   tint: '#FFFFFF',
   ink: INK,
   muted: MUTED,
@@ -601,14 +600,28 @@ export function DocumentSignature({
   signedAt?: unknown;
   signatureUrl?: string;
 }) {
+  const hasAppliedSignature = Boolean(signatureUrl || signedAt);
   return (
     <View style={documentStyles.signature}>
       {statement ? <SafePdfText value={statement} style={documentStyles.signatureStatement} /> : null}
       {signatureUrl ? <Image src={signatureUrl} style={documentStyles.signatureImage} /> : null}
-      <SafePdfText value={name} style={documentStyles.signatureName} />
+      <SafePdfText
+        value={name}
+        style={
+          hasAppliedSignature
+            ? documentStyles.signatureName
+            : [documentStyles.muted, { fontFamily: DOCUMENT_FONT_STACK, fontSize: 7.2, marginTop: 4 }]
+        }
+      />
       <SafePdfText value={role} style={documentStyles.muted} />
       <SafePdfText
-        value={signedAt ? `Digitally approved · ${safePdfValue(signedAt)}` : 'Signature not applied'}
+        value={
+          signedAt
+            ? `Digitally approved · ${safePdfValue(signedAt)}`
+            : signatureUrl
+              ? 'Signature image applied'
+              : 'Signature not applied'
+        }
         style={documentStyles.muted}
       />
     </View>
