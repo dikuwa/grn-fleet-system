@@ -6,6 +6,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { and, eq, isNull } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { vehicleDefects } from '@/db/schema/fleet';
+import { trips } from '@/db/schema/trips';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import {
@@ -67,6 +71,47 @@ export async function PATCH(
         { error: 'status must be "cleared" or "not_cleared"' },
         { status: 400 },
       );
+    }
+
+    const incident = await getTenantIncident(session.tenantId, id);
+    if (!incident) {
+      return NextResponse.json({ error: 'Incident not found' }, { status: 404 });
+    }
+
+    // Technical clearance is the final safety acknowledgement for a damaged
+    // vehicle. The dedicated endpoint must enforce the same blocking-defect
+    // prerequisite as the incident-review workspace so callers cannot bypass
+    // the maintenance handoff by invoking this API directly.
+    if (body.status === 'cleared' && incident.vehicleDamage) {
+      const db = getDb();
+      const [trip] = await db
+        .select({ vehicleId: trips.vehicleId })
+        .from(trips)
+        .where(and(eq(trips.id, incident.tripId), eq(trips.tenantId, session.tenantId)))
+        .limit(1);
+
+      if (!trip) {
+        return NextResponse.json({ error: 'Incident trip not found' }, { status: 404 });
+      }
+
+      const [unresolvedBlockingDefect] = await db
+        .select({ id: vehicleDefects.id })
+        .from(vehicleDefects)
+        .where(
+          and(
+            eq(vehicleDefects.vehicleId, trip.vehicleId),
+            eq(vehicleDefects.isBlocking, true),
+            isNull(vehicleDefects.resolvedAt),
+          ),
+        )
+        .limit(1);
+
+      if (unresolvedBlockingDefect) {
+        return NextResponse.json(
+          { error: 'Resolve all blocking vehicle defects before technical clearance.' },
+          { status: 409 },
+        );
+      }
     }
 
     const result = await recordTechnicalClearance(
