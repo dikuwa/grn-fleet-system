@@ -66,7 +66,7 @@ const reportTypes: {
     value: 'maintenance',
     label: 'Maintenance',
     icon: <Wrench className="h-4 w-4" />,
-    description: 'Service costs, schedules, and backlog',
+    description: 'Service history, costs, and next-service reminders',
   },
   {
     value: 'requests',
@@ -96,6 +96,13 @@ const timeRanges: { value: TimeRange; label: string }[] = [
   { value: '1y', label: 'Year to Date' },
   { value: 'custom', label: 'Custom Range' },
 ];
+
+function maintenanceServiceTypeLabel(value: string) {
+  if (value === 'scheduled') return 'Routine Service';
+  if (value === 'repair') return 'Repair';
+  if (value === 'inspection') return 'Inspection';
+  return value.replace(/_/g, ' ');
+}
 
 // ---------------------------------------------------------------------------
 // Bar chart component
@@ -210,7 +217,6 @@ export default function ReportsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const fetchedRef = useRef<{ type: ReportType; range: TimeRange } | null>(null);
 
-  // Fetch data when report type or time range changes
   useEffect(() => {
     const key = { type: selectedReport, range: timeRange };
     if (
@@ -218,14 +224,13 @@ export default function ReportsPage() {
       fetchedRef.current.type === key.type &&
       fetchedRef.current.range === key.range
     ) {
-      return; // Already fetched for this combo
+      return;
     }
 
     setIsLoading(true);
     fetchedRef.current = key;
 
     fetchReportData(selectedReport, timeRange).then((data) => {
-      // Only apply if this is still the active request
       if (fetchedRef.current?.type === selectedReport && fetchedRef.current?.range === timeRange) {
         setReportData(data);
         setIsLoading(false);
@@ -351,7 +356,6 @@ export default function ReportsPage() {
         </PageHeader>
       </div>
 
-      {/* Report Type Selector */}
       <Card className="no-print">
         <CardContent className="pt-4">
           <div className="flex flex-wrap gap-3">
@@ -382,7 +386,6 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
-      {/* Time Range & Filters */}
       <div className="no-print flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <CalendarRange className="text-ink-500 h-4 w-4" />
@@ -411,31 +414,25 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* ============================== PRINTABLE REPORT ============================== */}
       <main id="print-report" className="report-surface space-y-7">
-        {/* Loading State */}
         {isLoading && (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="text-ink-400 h-6 w-6 animate-spin" />
           </div>
         )}
 
-        {/* ============================== FUEL ============================== */}
         {!isLoading && selectedReport === 'fuel' && (
           <ReportFuel data={reportData as Record<string, unknown> | null} />
         )}
 
-        {/* ============================== FLEET ============================== */}
         {!isLoading && selectedReport === 'fleet' && (
           <ReportFleet data={reportData as Record<string, unknown> | null} />
         )}
 
-        {/* ============================== TRIPS ============================== */}
         {!isLoading && selectedReport === 'trips' && (
           <ReportTrips data={reportData as Record<string, unknown> | null} />
         )}
 
-        {/* ============================== MAINTENANCE ============================== */}
         {!isLoading && selectedReport === 'maintenance' && (
           <div className="space-y-6">
             <Card>
@@ -479,8 +476,8 @@ export default function ReportsPage() {
                         }
                         return stats.map((item, i) => (
                           <tr key={i} className="border-border/50 hover:bg-muted/50 border-b">
-                            <td className="text-ink-950 px-2 py-2.5 font-medium capitalize">
-                              {item.serviceType}
+                            <td className="text-ink-950 px-2 py-2.5 font-medium">
+                              {maintenanceServiceTypeLabel(item.serviceType)}
                             </td>
                             <td className="text-ink-700 px-2 py-2.5 text-right">
                               {item.totalEvents}
@@ -499,17 +496,14 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* ============================== REQUESTS ============================== */}
         {!isLoading && selectedReport === 'requests' && (
           <ReportRequests data={reportData as Record<string, unknown> | null} />
         )}
 
-        {/* ============================== APPROVALS ============================== */}
         {!isLoading && selectedReport === 'approvals' && (
           <ReportApprovals data={reportData as Record<string, unknown> | null} />
         )}
 
-        {/* ============================== ENHANCED ANALYTICS ============================== */}
         {!isLoading && selectedReport === 'enhanced' && (
           <ReportEnhanced data={reportData as Record<string, unknown> | null} />
         )}
@@ -518,9 +512,6 @@ export default function ReportsPage() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Fuel Report Section
-// ---------------------------------------------------------------------------
 function ReportFuel({ data }: { data: Record<string, unknown> | null }) {
   const summary = data?.summary as
     | {
@@ -607,9 +598,6 @@ function ReportFuel({ data }: { data: Record<string, unknown> | null }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Fleet Report Section
-// ---------------------------------------------------------------------------
 function ReportFleet({ data }: { data: Record<string, unknown> | null }) {
   const statusDistribution = data?.statusDistribution as
     Array<{ status: string; count: number }> | undefined;
@@ -690,7 +678,7 @@ function ReportFleet({ data }: { data: Record<string, unknown> | null }) {
         <StatCard
           title="In Maintenance"
           value={String(maintenance + outOfService)}
-          description={`${maintenance} scheduled, ${outOfService} out of service`}
+          description={`${maintenance} maintenance, ${outOfService} out of service`}
           icon={<Wrench className="h-5 w-5" />}
           trend={{
             value: maintenance > 0 ? 'Requires attention' : 'All vehicles operational',
@@ -728,9 +716,6 @@ function ReportFleet({ data }: { data: Record<string, unknown> | null }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Trips Report Section
-// ---------------------------------------------------------------------------
 function formatKm(n: number | string): string {
   const v = typeof n === 'string' ? parseFloat(n) : n;
   if (isNaN(v) || v === 0) return '—';
@@ -780,7 +765,6 @@ function ReportTrips({ data }: { data: Record<string, unknown> | null }) {
         />
       </div>
 
-      {/* Route distance metrics */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Route Distance"
@@ -847,9 +831,6 @@ function ReportTrips({ data }: { data: Record<string, unknown> | null }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Approval Analytics Section
-// ---------------------------------------------------------------------------
 function ReportApprovals({ data }: { data: Record<string, unknown> | null }) {
   const avgApprovalTime = (data?.avgApprovalTime as number) ?? 0;
   const totalActions = (data?.totalActions as number) ?? 0;
@@ -896,7 +877,6 @@ function ReportApprovals({ data }: { data: Record<string, unknown> | null }) {
         />
       </div>
 
-      {/* Approval Rate Breakdown */}
       {approvalRate.length > 0 && (
         <Card>
           <CardHeader>
@@ -936,7 +916,6 @@ function ReportApprovals({ data }: { data: Record<string, unknown> | null }) {
         </Card>
       )}
 
-      {/* Steps Histogram */}
       {stepsHistogram.length > 0 && (
         <Card>
           <CardHeader>
@@ -966,9 +945,6 @@ function ReportApprovals({ data }: { data: Record<string, unknown> | null }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Enhanced Analytics Section
-// ---------------------------------------------------------------------------
 function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
   const enhanced = data as Record<string, unknown> | null;
   const approvalTurnaround = enhanced?.approvalTurnaround as
@@ -1055,7 +1031,6 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
 
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Avg. Approval Time"
@@ -1107,7 +1082,6 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Approval Detail */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -1162,7 +1136,6 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
           </CardContent>
         </Card>
 
-        {/* Vehicle Utilisation */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -1207,7 +1180,6 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
           </CardContent>
         </Card>
 
-        {/* Fuel Efficiency */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -1378,7 +1350,6 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
           </CardContent>
         </Card>
 
-        {/* Rejection Metrics */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -1440,7 +1411,6 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
           </CardContent>
         </Card>
 
-        {/* Monthly Late Trend */}
         {lateReturns?.monthlyLateTrend && lateReturns.monthlyLateTrend.length > 0 && (
           <Card>
             <CardHeader>
@@ -1465,7 +1435,6 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
           </Card>
         )}
 
-        {/* Approval Monthly Trend */}
         {approvalTurnaround?.monthlyTrend && approvalTurnaround.monthlyTrend.length > 0 && (
           <Card>
             <CardHeader>
@@ -1490,9 +1459,6 @@ function ReportEnhanced({ data }: { data: Record<string, unknown> | null }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Requests Report Section
-// ---------------------------------------------------------------------------
 function ReportRequests({ data }: { data: Record<string, unknown> | null }) {
   const requestStats = data?.requestStats as
     Array<{ totalRequests: number; status: string }> | undefined;
