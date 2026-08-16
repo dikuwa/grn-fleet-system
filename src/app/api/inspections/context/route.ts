@@ -98,6 +98,7 @@ export async function GET(request: NextRequest) {
             eq(vehicleAllocations.id, trips.allocationId),
             eq(vehicleAllocations.requestId, trips.requestId),
             eq(vehicleAllocations.vehicleId, trips.vehicleId),
+            eq(vehicleAllocations.state, 'confirmed'),
           ),
         )
         .innerJoin(vehicles, eq(vehicles.id, trips.vehicleId))
