@@ -7,13 +7,20 @@
  * the durable cross-entity transition to processDriverAcknowledgement().
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { trips, tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
-import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
+import { vehicles } from '@/db/schema/fleet';
+import {
+  driverLicences,
+  driverProfessionalAuthorisations,
+  driverProfiles,
+  employees,
+} from '@/db/schema/people';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { processDriverAcknowledgement } from '@/lib/driver-acknowledgement';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 
 export async function POST(
@@ -80,6 +87,7 @@ export async function POST(
         id: trips.id,
         status: trips.status,
         driverAcknowledgedAt: trips.driverAcknowledgedAt,
+        vehicleId: trips.vehicleId,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         requestId: transportRequests.id,
         requestReference: transportRequests.reference,
@@ -88,11 +96,17 @@ export async function POST(
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
         validUntil: tripAuthorities.validUntil,
+        requiredLicenceClass: vehicles.requiredLicenceClass,
+        professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
       })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
       .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+      .innerJoin(
+        vehicles,
+        and(eq(vehicles.id, trips.vehicleId), eq(vehicles.tenantId, session.tenantId)),
+      )
       .where(
         and(
           eq(trips.id, id),
@@ -119,8 +133,6 @@ export async function POST(
     if (!employee || employee.id !== trip.driverEmployeeId) {
       return NextResponse.json({ error: 'Only the primary assigned driver may acknowledge this trip' }, { status: 403 });
     }
-    // Once the acknowledgement is durably recorded, retries must stay idempotent
-    // even if a later workflow step has already advanced the authority status.
     if (trip.driverAcknowledgedAt) {
       return NextResponse.json({ success: true, alreadyAcknowledged: true });
     }
@@ -154,10 +166,11 @@ export async function POST(
       );
     }
 
-    // Renewal submissions remain provisional. Use only the operationally active,
-    // verified licence so a pending newer upload cannot block an otherwise valid trip.
     const [licence] = await db
       .select({
+        licenceId: driverLicences.id,
+        profileId: driverProfiles.id,
+        licenceClass: driverLicences.licenceClass,
         expiryDate: driverLicences.expiryDate,
         verificationStatus: driverLicences.verificationStatus,
         isActive: driverLicences.isActive,
@@ -169,21 +182,60 @@ export async function POST(
         and(
           eq(driverProfiles.employeeId, employee.id),
           eq(driverLicences.verificationStatus, 'verified'),
+          eq(driverLicences.isVerified, true),
           eq(driverLicences.isActive, true),
         ),
       )
-      .orderBy(desc(driverLicences.expiryDate))
+      .orderBy(desc(driverLicences.version))
       .limit(1);
     const validUntil = trip.validUntil ?? new Date();
     if (
       !licence ||
       licence.driverStatus !== 'authorised' ||
-      new Date(`${licence.expiryDate}T23:59:59Z`) < validUntil
+      new Date(`${licence.expiryDate}T23:59:59.999Z`) < validUntil
     ) {
       return NextResponse.json(
         { error: 'An active verified driver licence valid for the entire trip is required' },
         { status: 409 },
       );
+    }
+    if (
+      trip.requiredLicenceClass &&
+      !namibiaLicenceClassCovers(licence.licenceClass, trip.requiredLicenceClass)
+    ) {
+      return NextResponse.json(
+        {
+          error: `Your licence class ${licence.licenceClass} does not cover the currently allocated vehicle requirement ${trip.requiredLicenceClass}.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    let professionalAuthorisationId: string | null = null;
+    if (trip.professionalAuthorisationRequired) {
+      const requiredThrough = validUntil.toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
+      const [professionalAuthorisation] = await db
+        .select({ id: driverProfessionalAuthorisations.id })
+        .from(driverProfessionalAuthorisations)
+        .where(and(
+          eq(driverProfessionalAuthorisations.driverProfileId, licence.profileId),
+          eq(driverProfessionalAuthorisations.isVerified, true),
+          sql`${driverProfessionalAuthorisations.expiryDate} >= ${requiredThrough}::date`,
+          sql`(${driverProfessionalAuthorisations.validFrom} IS NULL OR ${driverProfessionalAuthorisations.validFrom} <= ${today}::date)`,
+        ))
+        .orderBy(desc(driverProfessionalAuthorisations.expiryDate))
+        .limit(1);
+      if (!professionalAuthorisation) {
+        return NextResponse.json(
+          {
+            error:
+              'The currently allocated vehicle requires verified professional driving authorisation valid for the trip period.',
+          },
+          { status: 409 },
+        );
+      }
+      professionalAuthorisationId = professionalAuthorisation.id;
     }
 
     const result = await processDriverAcknowledgement({
@@ -204,6 +256,10 @@ export async function POST(
         device: body.device?.trim() || null,
         tripId: trip.id,
         authorityId: trip.authorityId,
+        vehicleId: trip.vehicleId,
+        licenceId: licence.licenceId,
+        licenceClass: licence.licenceClass,
+        professionalAuthorisationId,
       },
       session,
     });
