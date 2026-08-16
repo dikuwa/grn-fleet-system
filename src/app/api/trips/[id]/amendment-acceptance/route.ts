@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
-import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
+import { vehicleAllocations, tripAuthorities, trips } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import {
   driverLicences,
@@ -10,27 +9,21 @@ import {
   driverProfiles,
   employees,
 } from '@/db/schema/people';
-import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
-import {
-  requireDashboardAction,
-  requirePermission,
-  requireRequestAuth,
-} from '@/lib/auth-helpers';
-import { recordAuditEvent } from '@/lib/audit-event';
-import { onTripIssued } from '@/lib/document-generator';
-import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
-import {
-  createScopedNotifications,
-  resolveActiveRoleRecipients,
-} from '@/lib/notification-service';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
+import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
+import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-acceptance';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
+import { onTripIssued } from '@/lib/document-generator';
+import { recordAuditEvent } from '@/lib/audit';
+import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { SystemRoles } from '@/lib/workspaces';
 
-const ACCEPTANCE_METHODS = ['in_person', 'phone', 'signed_paper', 'secure_link'] as const;
-type AcceptanceMethod = (typeof ACCEPTANCE_METHODS)[number];
-
 type RouteContext = { params: Promise<{ id: string }> };
+
+const ACCEPTANCE_METHODS = ['phone', 'email', 'written', 'in_person'] as const;
+type AcceptanceMethod = (typeof ACCEPTANCE_METHODS)[number];
 
 type InternalEligibilityEvidence = {
   profileId: string;
@@ -183,12 +176,14 @@ async function loadInternalEligibility(
 
   let professionalAuthorisationId: string | null = null;
   if (record.vehicleProfessionalAuthorisationRequired) {
+    const today = new Date().toISOString().slice(0, 10);
     const [professional] = await db
       .select({ id: driverProfessionalAuthorisations.id, expiryDate: driverProfessionalAuthorisations.expiryDate })
       .from(driverProfessionalAuthorisations)
       .where(and(
         eq(driverProfessionalAuthorisations.driverProfileId, driver.profileId),
         eq(driverProfessionalAuthorisations.isVerified, true),
+        sql`(${driverProfessionalAuthorisations.validFrom} IS NULL OR ${driverProfessionalAuthorisations.validFrom} <= ${today}::date)`,
       ))
       .orderBy(desc(driverProfessionalAuthorisations.expiryDate))
       .limit(1);
@@ -198,7 +193,7 @@ async function loadInternalEligibility(
     if (!professional || !professionalExpiry || professionalExpiry < record.allocationEndAt) {
       return {
         evidence: null,
-        error: 'The current vehicle requires a verified professional driving authorisation valid through the trip end date.',
+        error: 'The current vehicle requires a verified professional driving authorisation valid now and through the trip end date.',
       };
     }
     professionalAuthorisationId = professional.id;
@@ -349,6 +344,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const now = new Date();
+    const today = now.toISOString().slice(0, 10);
     const acceptanceEvidence = JSON.stringify({
       source: internalDriver ? 'driver_console_amendment' : 'transport_office_external_amendment',
       amendmentId: pending.amendmentId,
@@ -397,6 +393,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
                   and dpa.driver_profile_id = dp.id
                   and dpa.is_verified = true
                   and dpa.expiry_date >= va.end_at::date
+                  and (dpa.valid_from is null or dpa.valid_from <= ${today}::date)
               )
             )
         )`
