@@ -80,9 +80,6 @@ async function fetchInspectionDetail(
     );
   }
 
-  // Scope the parent inspection before loading checklist items, defects, photos
-  // or generating signed file URLs. Drivers can view official inspections for
-  // their assigned trips but cannot use the official inspection-create routes.
   const [inspection] = await db
     .select({
       id: vehicleInspections.id,
@@ -245,6 +242,7 @@ export default async function InspectionDetailPage({ params }: PageProps) {
 
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
+  const canViewTrips = canPerformDashboardAction('/dashboard/trips', roleNames, 'view');
   const canViewFleet = canPerformDashboardAction('/dashboard/fleet', roleNames, 'view');
   const canViewDefects = canPerformDashboardAction('/dashboard/fleet/defects', roleNames, 'view');
 
@@ -300,7 +298,7 @@ export default async function InspectionDetailPage({ params }: PageProps) {
             Back to Inspections
           </Link>
         </Button>
-        {tripInfo && (
+        {tripInfo && canViewTrips && (
           <Button variant="secondary" size="sm" asChild>
             <Link href={`/dashboard/trips/${tripInfo.id}`}>
               <FileText className="h-4 w-4" />

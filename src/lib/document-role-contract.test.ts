@@ -136,4 +136,30 @@ describe('document and share-link role contracts', () => {
     expect(inspectionRegister.recordScope).toBe('assigned');
     expect(inspectionRegister.actions).toEqual(['view']);
   });
+
+  it('lets Inspector perform assigned inspections without granting the general Trips workspace', () => {
+    const inspectionCreate = resolveDashboardAccess(
+      '/dashboard/inspections/new',
+      [SystemRoles.INSPECTOR],
+      WorkspaceIds.INSPECTOR,
+    );
+    const inspectionRegister = resolveDashboardAccess(
+      '/dashboard/inspections',
+      [SystemRoles.INSPECTOR],
+      WorkspaceIds.INSPECTOR,
+    );
+    const trips = resolveDashboardAccess(
+      '/dashboard/trips',
+      [SystemRoles.INSPECTOR],
+      WorkspaceIds.INSPECTOR,
+    );
+
+    expect(inspectionCreate.allowed).toBe(true);
+    expect(inspectionCreate.recordScope).toBe('assigned');
+    expect(inspectionCreate.actions).toEqual(expect.arrayContaining(['view', 'create', 'update']));
+    expect(inspectionRegister.allowed).toBe(true);
+    expect(inspectionRegister.recordScope).toBe('assigned');
+    expect(trips.allowed).toBe(false);
+    expect(trips.actions).toEqual([]);
+  });
 });
