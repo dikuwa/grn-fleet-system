@@ -18,7 +18,14 @@ import {
 } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicleDefects, vehicles } from '@/db/schema/fleet';
+import {
+  driverLicences,
+  driverProfessionalAuthorisations,
+  driverProfiles,
+  employees,
+} from '@/db/schema/people';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { Permissions } from '@/lib/permissions';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -44,13 +51,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         driverAcknowledgedAt: trips.driverAcknowledgedAt,
         driverAcknowledgedByEmployeeId: trips.driverAcknowledgedByEmployeeId,
         requestStatus: transportRequests.status,
+        requestAssignedDriverEmployeeId: transportRequests.assignedDriverEmployeeId,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         allocationState: vehicleAllocations.state,
         allocationVersion: vehicleAllocations.version,
         authorityStatus: tripAuthorities.status,
         authorityBeginningOdometer: tripAuthorities.beginningOdometer,
+        authorityValidUntil: tripAuthorities.validUntil,
         vehicleOdometer: vehicles.currentOdometer,
         vehicleStatus: vehicles.status,
+        requiredLicenceClass: vehicles.requiredLicenceClass,
+        professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
       })
       .from(trips)
       .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
@@ -110,13 +121,82 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (trip.vehicleStatus !== 'available') {
       return NextResponse.json({ error: `Vehicle is not available for issue (${trip.vehicleStatus})` }, { status: 409 });
     }
-    if (!trip.driverEmployeeId || !trip.driverAcknowledgedAt || trip.driverAcknowledgedByEmployeeId !== trip.driverEmployeeId) {
-      return NextResponse.json({ error: 'The assigned driver must acknowledge the trip before issue' }, { status: 409 });
+    if (
+      !trip.driverEmployeeId ||
+      trip.requestAssignedDriverEmployeeId !== trip.driverEmployeeId ||
+      !trip.driverAcknowledgedAt ||
+      trip.driverAcknowledgedByEmployeeId !== trip.driverEmployeeId
+    ) {
+      return NextResponse.json({ error: 'The current assigned driver must acknowledge the trip before issue' }, { status: 409 });
     }
 
-    // Only the latest official departure inspection for this exact trip/vehicle
-    // may authorise physical issue. Use id as a deterministic tie-breaker for
-    // inspections created within the same database timestamp.
+    const [driverEvidence] = await db
+      .select({
+        employeeStatus: employees.employmentStatus,
+        profileId: driverProfiles.id,
+        driverStatus: driverProfiles.driverStatus,
+        licenceId: driverLicences.id,
+        licenceClass: driverLicences.licenceClass,
+        expiryDate: driverLicences.expiryDate,
+      })
+      .from(employees)
+      .innerJoin(driverProfiles, eq(driverProfiles.employeeId, employees.id))
+      .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
+      .where(and(
+        eq(employees.id, trip.driverEmployeeId),
+        eq(employees.tenantId, session.tenantId),
+        eq(employees.employmentStatus, 'active'),
+        eq(driverProfiles.driverStatus, 'authorised'),
+        eq(driverLicences.isActive, true),
+        eq(driverLicences.isVerified, true),
+        eq(driverLicences.verificationStatus, 'verified'),
+      ))
+      .orderBy(desc(driverLicences.version))
+      .limit(1);
+    const requiredThrough = trip.authorityValidUntil ?? new Date();
+    const licenceExpiry = driverEvidence?.expiryDate
+      ? new Date(`${driverEvidence.expiryDate}T23:59:59.999Z`)
+      : null;
+    if (!driverEvidence || !licenceExpiry || licenceExpiry < requiredThrough) {
+      return NextResponse.json(
+        { error: 'The assigned driver must have an active verified licence valid through the authorised trip period' },
+        { status: 409 },
+      );
+    }
+    if (
+      trip.requiredLicenceClass &&
+      !namibiaLicenceClassCovers(driverEvidence.licenceClass, trip.requiredLicenceClass)
+    ) {
+      return NextResponse.json(
+        { error: `Driver licence class ${driverEvidence.licenceClass} does not cover vehicle requirement ${trip.requiredLicenceClass}` },
+        { status: 409 },
+      );
+    }
+
+    let professionalAuthorisationId: string | null = null;
+    if (trip.professionalAuthorisationRequired) {
+      const requiredThroughDate = requiredThrough.toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
+      const [professionalAuthorisation] = await db
+        .select({ id: driverProfessionalAuthorisations.id })
+        .from(driverProfessionalAuthorisations)
+        .where(and(
+          eq(driverProfessionalAuthorisations.driverProfileId, driverEvidence.profileId),
+          eq(driverProfessionalAuthorisations.isVerified, true),
+          sql`${driverProfessionalAuthorisations.expiryDate} >= ${requiredThroughDate}::date`,
+          sql`(${driverProfessionalAuthorisations.validFrom} IS NULL OR ${driverProfessionalAuthorisations.validFrom} <= ${today}::date)`,
+        ))
+        .orderBy(desc(driverProfessionalAuthorisations.expiryDate))
+        .limit(1);
+      if (!professionalAuthorisation) {
+        return NextResponse.json(
+          { error: 'This vehicle requires verified professional driving authorisation valid through the trip period' },
+          { status: 409 },
+        );
+      }
+      professionalAuthorisationId = professionalAuthorisation.id;
+    }
+
     const [departureInspection] = await db
       .select({
         id: vehicleInspections.id,
@@ -187,11 +267,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const now = new Date();
     const issueId = randomUUID();
     const auditSequence = Date.now();
+    const requiredThroughDate = requiredThrough.toISOString().slice(0, 10);
+    const today = now.toISOString().slice(0, 10);
 
-    // Claim the exact allocation version first. Driver reassignment, vehicle
-    // replacement, confirmation and cancellation all mutate this same version,
-    // so competing lifecycle actions serialize on the allocation row and a
-    // stale issue attempt fails closed instead of committing mixed state.
     await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations
@@ -200,6 +278,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           AND state = 'confirmed'
           AND version = ${trip.allocationVersion}
           AND driver_employee_id = ${trip.driverEmployeeId}::uuid
+          AND vehicle_id = ${trip.vehicleId}::uuid
         RETURNING id
       ),
       trip_claim AS (
@@ -211,6 +290,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           AND issued_at IS NULL
           AND vehicle_id = ${trip.vehicleId}::uuid
           AND allocation_id = ${trip.allocationId}::uuid
+          AND driver_acknowledged_at IS NOT NULL
+          AND driver_acknowledged_by_employee_id = ${trip.driverEmployeeId}::uuid
           AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
             SELECT 1
@@ -218,6 +299,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             WHERE tr.id = trips.request_id
               AND tr.tenant_id = ${session.tenantId}::uuid
               AND tr.status = 'authorised'
+              AND tr.assigned_driver_employee_id = ${trip.driverEmployeeId}::uuid
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM employees e
+            INNER JOIN driver_profiles dp ON dp.employee_id = e.id
+            INNER JOIN driver_licences dl ON dl.driver_profile_id = dp.id
+            WHERE e.id = ${trip.driverEmployeeId}::uuid
+              AND e.tenant_id = ${session.tenantId}::uuid
+              AND e.employment_status = 'active'
+              AND dp.id = ${driverEvidence.profileId}::uuid
+              AND dp.driver_status = 'authorised'
+              AND dl.id = ${driverEvidence.licenceId}::uuid
+              AND dl.is_active = true
+              AND dl.is_verified = true
+              AND dl.verification_status = 'verified'
+              AND dl.licence_class = ${driverEvidence.licenceClass}
+              AND dl.expiry_date >= ${requiredThroughDate}::date
           )
           AND EXISTS (
             SELECT 1
@@ -250,6 +349,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             WHERE v.id = trips.vehicle_id
               AND v.tenant_id = ${session.tenantId}::uuid
               AND v.status = 'available'
+              AND (
+                v.required_licence_class IS NULL
+                OR CASE
+                  WHEN upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) IN ('EC', 'CE') THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C', 'BE', 'EB', 'C1E', 'CE1', 'CE', 'EC')
+                  WHEN upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) IN ('C1E', 'CE1') THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'BE', 'EB', 'C1E', 'CE1')
+                  WHEN upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) = 'C' THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C')
+                  WHEN upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) = 'C1' THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1')
+                  WHEN upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) IN ('BE', 'EB') THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'BE', 'EB')
+                  WHEN upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) = 'B' THEN upper(replace(v.required_licence_class, ' ', '')) = 'B'
+                  WHEN upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) = 'A' THEN upper(replace(v.required_licence_class, ' ', '')) IN ('A', 'A1')
+                  WHEN upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) = 'A1' THEN upper(replace(v.required_licence_class, ' ', '')) = 'A1'
+                  ELSE upper(replace(${driverEvidence.licenceClass}::text, ' ', '')) = upper(replace(v.required_licence_class, ' ', ''))
+                END
+              )
+              AND (
+                v.professional_authorisation_required = false
+                OR EXISTS (
+                  SELECT 1
+                  FROM driver_professional_authorisations dpa
+                  WHERE dpa.id = ${professionalAuthorisationId}::uuid
+                    AND dpa.driver_profile_id = ${driverEvidence.profileId}::uuid
+                    AND dpa.is_verified = true
+                    AND dpa.expiry_date >= ${requiredThroughDate}::date
+                    AND (dpa.valid_from IS NULL OR dpa.valid_from <= ${today}::date)
+                )
+              )
           )
           AND NOT EXISTS (
             SELECT 1
@@ -305,6 +430,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         SET status = 'vehicle_issued', updated_at = ${now}
         WHERE id = ${trip.requestId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
+          AND assigned_driver_employee_id = ${trip.driverEmployeeId}::uuid
           AND status = 'authorised'
           AND EXISTS (SELECT 1 FROM issue_insert)
         RETURNING id
@@ -312,7 +438,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       audit_insert AS (
         INSERT INTO audit_events (
           tenant_id, tenant_sequence, event_type, actor_user_id,
-          action, entity_type, entity_id, summary, source_channel
+          action, entity_type, entity_id, summary, after, source_channel
         )
         SELECT
           ${session.tenantId}::uuid,
@@ -323,6 +449,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           'trip',
           ${id}::uuid,
           ${`Vehicle issued: keys=true, fuelCard=${fuelCardIssued}, odometer=${issueOdometer}`},
+          jsonb_build_object(
+            'driverEmployeeId', ${trip.driverEmployeeId}::text,
+            'licenceId', ${driverEvidence.licenceId}::text,
+            'professionalAuthorisationId', ${professionalAuthorisationId}::text,
+            'issueOdometer', ${issueOdometer}::integer,
+            'keysIssued', true,
+            'fuelCardIssued', ${fuelCardIssued}::boolean
+          ),
           'web'
         FROM request_claim
         RETURNING id
@@ -353,7 +487,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     console.error('[trips/issue] POST failed:', error);
     if (String(error).includes('atomic_trip_issue_failed')) {
       return NextResponse.json(
-        { error: 'Trip or allocation state changed while the vehicle was being issued. Refresh and review the latest trip state.' },
+        { error: 'Trip, allocation, driver, vehicle, or compliance state changed while the vehicle was being issued. Refresh and review the latest trip state.' },
         { status: 409 },
       );
     }
