@@ -21,6 +21,7 @@ import {
   Gauge,
   Upload,
   Download,
+  Plus,
 } from 'lucide-react';
 import Link from 'next/link';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
@@ -254,6 +255,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
   const access = resolveDashboardAccess('/dashboard/fleet', roleNames);
   const canViewDefects = canAccessDashboardPath('/dashboard/fleet/defects', roleNames);
   const canImport = canPerformDashboardAction('/dashboard/fleet/import', roleNames, 'import');
+  const canCreate = canPerformDashboardAction('/dashboard/fleet/new', roleNames, 'create');
   const canExport = canPerformDashboardAction('/dashboard/fleet', roleNames, 'export');
   const lookupOnly = access.recordScope !== 'tenant';
   try {
@@ -292,6 +294,14 @@ export default async function FleetPage({ searchParams }: PageProps) {
             : 'Manage vehicles, view status, defects and maintenance'
         }
       >
+        {canCreate && (
+          <Button variant="primary" size="sm" asChild>
+            <Link href="/dashboard/fleet/new">
+              <Plus className="h-4 w-4" />
+              Add Vehicle
+            </Link>
+          </Button>
+        )}
         {canViewDefects && (
           <Button variant="secondary" size="sm" asChild>
             <Link href="/dashboard/fleet/defects">
@@ -304,7 +314,7 @@ export default async function FleetPage({ searchParams }: PageProps) {
           <Button variant="tertiary" size="sm" asChild>
             <Link href="/dashboard/fleet/import">
               <Upload className="h-4 w-4" />
-              Import
+              Import Vehicles
             </Link>
           </Button>
         )}

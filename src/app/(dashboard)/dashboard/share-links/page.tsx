@@ -27,6 +27,7 @@ import {
 import { formatDate } from '@/lib/utils';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
 import { useToast } from '@/lib/use-toast';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 interface ShareLinkRow {
   id: string;
@@ -51,6 +52,7 @@ export default function ShareLinksDashboardPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const { toast } = useToast();
+  const [revokeLinkId, setRevokeLinkId] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['share-links', statusFilter, searchQuery, page],
@@ -85,6 +87,7 @@ export default function ShareLinksDashboardPage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || 'Could not revoke the secure link');
       toast({ title: 'Share link revoked', variant: 'success' });
+      setRevokeLinkId(null);
       await refetch();
     } catch (revokeError) {
       toast({
@@ -129,6 +132,15 @@ export default function ShareLinksDashboardPage() {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={Boolean(revokeLinkId)}
+        onOpenChange={(open) => !open && setRevokeLinkId(null)}
+        title="Revoke secure share link"
+        description="This link will stop working immediately. Anyone using it will no longer be able to open the shared document."
+        confirmLabel="Revoke link"
+        variant="destructive"
+        onConfirm={() => revokeLinkId ? handleRevoke(revokeLinkId) : undefined}
+      />
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Share Links' }]} />
       <PageHeader
         title="Share Link Dashboard"
@@ -335,7 +347,12 @@ export default function ShareLinksDashboardPage() {
                       </>
                     )}
                     {isActive && canRevoke && (
-                      <Button variant="destructive" size="sm" onClick={() => handleRevoke(link.id)}>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="border-status-error-bg/70 text-status-error-text hover:bg-status-error-bg/20 hover:text-status-error-text"
+                        onClick={() => setRevokeLinkId(link.id)}
+                      >
                         <Trash2 className="h-3 w-3" /> Revoke
                       </Button>
                     )}

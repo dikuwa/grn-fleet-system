@@ -34,6 +34,8 @@ import {
   Wrench,
   History,
   ArrowRight,
+  Pencil,
+  ExternalLink,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LongValue } from '@/components/ui/long-value';
@@ -47,6 +49,8 @@ import {
   type DashboardRecordScope,
 } from '@/lib/dashboard-access';
 import { defectScopeCondition, maintenanceScopeCondition } from '@/lib/record-scope';
+import { VehicleDocumentUpload } from '@/components/fleet/vehicle-document-upload';
+import { VEHICLE_DOCUMENT_LABELS, vehicleDocumentExpiryState } from '@/lib/vehicle-documents';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -264,6 +268,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
     roleNames,
     'create',
   );
+  const canEditVehicle = canPerformDashboardAction('/dashboard/fleet', roleNames, 'update');
 
   const visibleTabs: VehicleDetailTabKey[] = [
     'documents',
@@ -303,6 +308,14 @@ export default async function VehicleDetailPage({ params }: PageProps) {
     );
   }
   const { vehicle } = data;
+  const latestDocumentIds = new Set<string>();
+  const documentTypesSeen = new Set<string>();
+  for (const document of data.documents) {
+    if (!documentTypesSeen.has(document.documentType)) {
+      documentTypesSeen.add(document.documentType);
+      latestDocumentIds.add(document.id);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -317,6 +330,14 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         title={`${vehicle.make} ${vehicle.model}`}
         description={`${vehicle.licenceNumber}${vehicle.vehicleRegisterNumber ? ` · ${vehicle.vehicleRegisterNumber}` : ''}`}
       >
+        {canEditVehicle && (
+          <Button variant="secondary" size="sm" asChild>
+            <Link href={`/dashboard/fleet/${id}/edit`}>
+              <Pencil className="h-4 w-4" />
+              Edit Vehicle
+            </Link>
+          </Button>
+        )}
         {canCreateMaintenance && (
           <Button variant="primary" size="sm" asChild>
             <Link href={`/dashboard/maintenance/new?vehicleId=${id}`}>
@@ -490,10 +511,9 @@ export default async function VehicleDetailPage({ params }: PageProps) {
 
       <TabsShell visibleTabs={visibleTabs}>
         <Card>
-          <CardHeader>
-            <CardTitle>
-              Documents ({data.documents.length + data.tripAuthorityDocs.length})
-            </CardTitle>
+          <CardHeader className="flex-row items-center justify-between gap-3">
+            <CardTitle>Documents ({data.documents.length + data.tripAuthorityDocs.length})</CardTitle>
+            {canEditVehicle && <VehicleDocumentUpload vehicleId={id} />}
           </CardHeader>
           <CardContent className="p-0">
             {data.tripAuthorityDocs.length > 0 && (
@@ -529,14 +549,15 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                       <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Reference</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Expiry</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-ink-500">Status</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-ink-500">File</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {data.documents.map((doc) => (
-                      <tr key={doc.id} className="hover:bg-canvas/50">
+                      <tr key={doc.id} className={`hover:bg-canvas/50 ${latestDocumentIds.has(doc.id) ? '' : 'opacity-75'}`}>
                         <td className="px-3 py-2">
                           <Badge variant="info" size="sm">
-                            {doc.documentType.replace(/_/g, ' ')}
+                            {VEHICLE_DOCUMENT_LABELS[doc.documentType] || doc.documentType.replace(/_/g, ' ')}
                           </Badge>
                         </td>
                         <td className="max-w-64 px-3 py-2 text-ink-700">
@@ -553,11 +574,18 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                           {doc.expiryDate ? formatDate(doc.expiryDate) : '—'}
                         </td>
                         <td className="px-3 py-2">
-                          {doc.isVerified ? (
-                            <StatusBadge status="success" label="Verified" />
-                          ) : (
-                            <StatusBadge status="pending" label="Unverified" />
-                          )}
+                          <div className="flex flex-wrap gap-1.5">
+                            <StatusBadge status={latestDocumentIds.has(doc.id) ? 'info' : 'default'} label={latestDocumentIds.has(doc.id) ? 'Current' : 'Previous'} />
+                            {vehicleDocumentExpiryState(doc.expiryDate) === 'expired' ? <StatusBadge status="error" label="Expired" /> : vehicleDocumentExpiryState(doc.expiryDate) === 'expiring_soon' ? <StatusBadge status="pending" label="Expiring Soon" /> : vehicleDocumentExpiryState(doc.expiryDate) === 'valid' ? <StatusBadge status="success" label="Valid" /> : null}
+                            {!doc.isVerified && <StatusBadge status="pending" label="Unverified" />}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {doc.fileKey ? (
+                            <Button variant="tertiary" size="sm" asChild>
+                              <a href={`/api/files?key=${encodeURIComponent(doc.fileKey)}`} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" /> Open</a>
+                            </Button>
+                          ) : <span className="text-ink-400 text-xs">No file</span>}
                         </td>
                       </tr>
                     ))}

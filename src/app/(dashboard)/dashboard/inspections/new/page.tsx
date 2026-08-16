@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element -- local object URLs are temporary inspection previews */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -13,6 +14,10 @@ import { Camera, CheckCircle2, ChevronLeft, ClipboardCheck, Loader2, Trash2, XCi
 import { useToast } from '@/lib/use-toast';
 import { saveDraft } from '@/lib/offline-drafts';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
+import {
+  InspectionTripCombobox,
+  type InspectionTripOption,
+} from '@/components/inspections/inspection-trip-combobox';
 
 type InspectionType = 'departure' | 'return';
 type Result = '' | 'pass' | 'fail' | 'not_applicable';
@@ -27,6 +32,12 @@ type ContextTrip = {
   licenceNumber: string;
   currentOdometer: number;
   driverKind: 'internal' | 'external';
+  driverName: string | null;
+  authorityNumber: string | null;
+  originName: string | null;
+  destinationName: string | null;
+  departureAt: string;
+  returnAt: string;
 };
 
 type ContextVehicle = {
@@ -99,6 +110,8 @@ export default function NewInspectionPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedType = params.get('type');
+    // Initial route parameters are an external navigation input.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (requestedType === 'departure' || requestedType === 'return') setType(requestedType);
     const requestedTrip = params.get('tripId');
     if (requestedTrip) setTripId(requestedTrip);
@@ -108,8 +121,6 @@ export default function NewInspectionPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setContextLoading(true);
-    setError(null);
     fetch(`/api/inspections/context?type=${type}`, { cache: 'no-store' })
       .then(async (response) => {
         const json = await response.json().catch(() => ({}));
@@ -132,6 +143,13 @@ export default function NewInspectionPage() {
         });
         setInspectorAcknowledged(false);
         setDriverAcknowledged(false);
+        const requestedTripId = new URLSearchParams(window.location.search).get('tripId') || '';
+        const requestedTrip = json.trips.find((trip) => trip.id === requestedTripId);
+        if (requestedTrip) {
+          setTripId(requestedTrip.id);
+          setVehicleId(requestedTrip.vehicleId);
+          setOdometerReading(String(requestedTrip.currentOdometer));
+        }
       })
       .catch((reason) => {
         if (!cancelled) {
@@ -148,13 +166,6 @@ export default function NewInspectionPage() {
     };
   }, [type]);
 
-  useEffect(() => {
-    const trip = context?.trips.find((candidate) => candidate.id === tripId);
-    if (!trip) return;
-    setVehicleId(trip.vehicleId);
-    setOdometerReading((current) => current || String(trip.currentOdometer));
-  }, [context, tripId]);
-
   useEffect(() => () => photos.forEach((photo) => URL.revokeObjectURL(photo.preview)), [photos]);
 
   const groupedItems = useMemo(() => {
@@ -170,6 +181,7 @@ export default function NewInspectionPage() {
   const assessedCount = checklist.length - unassessedCount;
   const requiredPhotoCount = context?.requiredPhotoCount ?? 0;
   const selectedTrip = context?.trips.find((trip) => trip.id === tripId) ?? null;
+  const inspectionLocked = !selectedTrip;
 
   function updateResult(id: string, result: Result) {
     setChecklist((items) => items.map((item) => (
@@ -179,6 +191,18 @@ export default function NewInspectionPage() {
 
   function updateComment(id: string, comment: string) {
     setChecklist((items) => items.map((item) => item.id === id ? { ...item, comment } : item));
+  }
+
+  function selectTrip(id: string) {
+    const trip = context?.trips.find((candidate) => candidate.id === id);
+    setTripId(id);
+    setVehicleId(trip?.vehicleId || '');
+    setOdometerReading(trip ? String(trip.currentOdometer) : '');
+    setFuelLevel('');
+    setNotes('');
+    setChecklist((items) => items.map((item) => ({ ...item, result: '', comment: '' })));
+    setInspectorAcknowledged(false);
+    setDriverAcknowledged(false);
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -309,20 +333,17 @@ export default function NewInspectionPage() {
                 <label className="mb-1.5 block text-xs font-medium text-ink-500">Inspection Type</label>
                 <div className="grid grid-cols-2 gap-2">
                   {(['departure', 'return'] as const).map((value) => (
-                    <button key={value} type="button" onClick={() => { setType(value); setTripId(''); setVehicleId(''); setOdometerReading(''); }} className={`focus-ring rounded-[8px] border px-3 py-2 text-sm font-medium capitalize transition-colors ${type === value ? 'border-brand-700 bg-brand-50 text-brand-700 dark:bg-brand-950/30' : 'border-border bg-surface text-ink-600 hover:bg-muted'}`}>{value}</button>
+                    <button key={value} type="button" onClick={() => { setContextLoading(true); setError(null); setType(value); setTripId(''); setVehicleId(''); setOdometerReading(''); }} className={`focus-ring rounded-[8px] border px-3 py-2 text-sm font-medium capitalize transition-colors ${type === value ? 'border-brand-700 bg-brand-50 text-brand-700 dark:bg-brand-950/30' : 'border-border bg-surface text-ink-600 hover:bg-muted'}`}>{value}</button>
                   ))}
                 </div>
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-ink-500">Eligible Trip <span className="text-status-error-text">*</span></label>
-                <StyledSelect value={tripId} onChange={(event) => setTripId(event.target.value)} required placeholder="Select an eligible trip…">
-                  {context.trips.map((trip) => <option key={trip.id} value={trip.id}>{trip.requestReference} — {trip.licenceNumber} — {trip.make} {trip.model} — {trip.driverKind === 'external' ? 'External driver' : 'Internal driver'}</option>)}
-                </StyledSelect>
-                {selectedTrip && (
-                  <p className="mt-1.5 text-xs text-ink-500">
-                    Driver type: <span className="font-medium text-ink-700">{selectedTrip.driverKind === 'external' ? 'External driver' : 'Internal driver'}</span>
-                  </p>
-                )}
+                <InspectionTripCombobox
+                  trips={context.trips as InspectionTripOption[]}
+                  value={tripId}
+                  onChange={selectTrip}
+                />
                 {context.trips.length === 0 && <p className="mt-1.5 text-xs text-ink-500">No trips currently satisfy the {type} inspection lifecycle.</p>}
               </div>
               <div>
@@ -333,20 +354,31 @@ export default function NewInspectionPage() {
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-ink-500">Odometer (km) <span className="text-status-error-text">*</span></label>
-                <input type="number" min="0" required value={odometerReading} onChange={(event) => setOdometerReading(event.target.value)} className="focus-ring h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950" />
+                <input type="number" min="0" required disabled={inspectionLocked} value={odometerReading} onChange={(event) => setOdometerReading(event.target.value)} className="focus-ring h-10 w-full rounded-[8px] border border-border bg-surface px-3 text-sm text-ink-950 disabled:cursor-not-allowed disabled:opacity-50" />
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-ink-500">Fuel Level</label>
-                <StyledSelect value={fuelLevel} onChange={(event) => setFuelLevel(event.target.value)} placeholder="Select level…">
+                <StyledSelect value={fuelLevel} disabled={inspectionLocked} onChange={(event) => setFuelLevel(event.target.value)} placeholder="Select level…">
                   <option value="full">Full</option><option value="three_quarters">¾</option><option value="half">½</option><option value="quarter">¼</option><option value="empty">Empty</option>
                 </StyledSelect>
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-ink-500">Notes</label>
-                <textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} className="focus-ring min-h-20 w-full resize-y rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950" placeholder="Additional observations…" />
+                <textarea rows={3} disabled={inspectionLocked} value={notes} onChange={(event) => setNotes(event.target.value)} className="focus-ring min-h-20 w-full resize-y rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 disabled:cursor-not-allowed disabled:opacity-50" placeholder="Additional observations…" />
               </div>
             </CardContent>
           </Card>
+
+          {selectedTrip && (
+            <Card>
+              <CardContent className="grid gap-3 pt-4 sm:grid-cols-2 lg:grid-cols-5">
+                <div><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Trip</p><p className="text-ink-950 mt-1 text-sm font-semibold">{selectedTrip.authorityNumber || selectedTrip.requestReference}</p></div>
+                <div className="min-w-0 sm:col-span-2"><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Route</p><p className="text-ink-950 mt-1 break-words text-sm">{[selectedTrip.originName, selectedTrip.destinationName].filter(Boolean).join(' → ') || 'Not recorded'}</p></div>
+                <div><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Vehicle</p><p className="text-ink-950 mt-1 text-sm">{selectedTrip.make} {selectedTrip.model} · {selectedTrip.licenceNumber}</p></div>
+                <div><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Driver / schedule</p><p className="text-ink-950 mt-1 text-sm">{selectedTrip.driverName || (selectedTrip.driverKind === 'external' ? 'External driver' : 'Not recorded')}</p><p className="text-ink-500 mt-0.5 text-xs tabular-nums">{new Date(selectedTrip.departureAt).toLocaleString('en-NA', { dateStyle: 'medium', timeStyle: 'short' })}</p></div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
@@ -358,9 +390,11 @@ export default function NewInspectionPage() {
                 </span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className={`space-y-6 ${inspectionLocked ? 'opacity-60' : ''}`} aria-disabled={inspectionLocked}>
               <div className="rounded-[8px] border border-border bg-muted/30 px-3 py-2 text-xs text-ink-600">
-                Assess every checklist item explicitly as Pass, Fail, or N/A. Items are intentionally left unselected when the form opens.
+                {inspectionLocked
+                  ? 'Select an eligible trip before starting this inspection.'
+                  : 'Assess every checklist item explicitly as Pass, Fail, or N/A. Items are intentionally left unselected when the form opens.'}
               </div>
               {Object.entries(groupedItems).map(([category, items]) => (
                 <section key={category}>
@@ -371,9 +405,9 @@ export default function NewInspectionPage() {
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0"><p className="text-sm font-medium text-ink-950">{item.label}</p><div className="mt-1 flex gap-1.5">{item.isCritical && <Badge variant="emergency" size="sm">Critical</Badge>}{item.requiresPhoto && <Badge variant="info" size="sm">Photo evidence</Badge>}{!item.result && <Badge variant="pending" size="sm">Assessment required</Badge>}</div></div>
                           <div className="flex flex-wrap gap-1.5">
-                            <button type="button" onClick={() => updateResult(item.id, 'pass')} className={`focus-ring inline-flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'pass' ? 'bg-status-success-bg text-status-success-text' : 'bg-muted text-ink-500'}`}><CheckCircle2 className="h-3.5 w-3.5" /> Pass</button>
-                            <button type="button" onClick={() => updateResult(item.id, 'fail')} className={`focus-ring inline-flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'fail' ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}><XCircle className="h-3.5 w-3.5" /> Fail</button>
-                            <button type="button" onClick={() => updateResult(item.id, 'not_applicable')} className={`focus-ring rounded-[6px] px-2.5 py-1.5 text-xs font-medium ${item.result === 'not_applicable' ? 'bg-muted text-ink-950 ring-1 ring-border' : 'bg-muted/60 text-ink-500'}`}>N/A</button>
+                            <button type="button" disabled={inspectionLocked} onClick={() => updateResult(item.id, 'pass')} className={`focus-ring inline-flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium disabled:cursor-not-allowed ${item.result === 'pass' ? 'bg-status-success-bg text-status-success-text' : 'bg-muted text-ink-500'}`}><CheckCircle2 className="h-3.5 w-3.5" /> Pass</button>
+                            <button type="button" disabled={inspectionLocked} onClick={() => updateResult(item.id, 'fail')} className={`focus-ring inline-flex items-center gap-1 rounded-[6px] px-2.5 py-1.5 text-xs font-medium disabled:cursor-not-allowed ${item.result === 'fail' ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}><XCircle className="h-3.5 w-3.5" /> Fail</button>
+                            <button type="button" disabled={inspectionLocked} onClick={() => updateResult(item.id, 'not_applicable')} className={`focus-ring rounded-[6px] px-2.5 py-1.5 text-xs font-medium disabled:cursor-not-allowed ${item.result === 'not_applicable' ? 'bg-muted text-ink-950 ring-1 ring-border' : 'bg-muted/60 text-ink-500'}`}>N/A</button>
                           </div>
                         </div>
                         {item.result === 'fail' && <input value={item.comment} onChange={(event) => updateComment(item.id, event.target.value)} required placeholder="Describe the defect…" className="focus-ring mt-3 h-9 w-full rounded-[6px] border border-border bg-surface px-2.5 text-xs text-ink-950" />}
@@ -390,15 +424,15 @@ export default function NewInspectionPage() {
             <CardContent className="space-y-3">
               {photos.length > 0 && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{photos.map((photo, index) => <div key={`${photo.file.name}-${index}`} className="group relative overflow-hidden rounded-[8px] border border-border"><img src={photo.preview} alt={`Inspection evidence ${index + 1}`} className="h-24 w-full object-cover" /><button type="button" aria-label={`Remove photo ${index + 1}`} onClick={() => setPhotos((items) => { const target = items[index]; if (target) URL.revokeObjectURL(target.preview); return items.filter((_, itemIndex) => itemIndex !== index); })} className="focus-ring absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white"><Trash2 className="h-3.5 w-3.5" /></button></div>)}</div>}
               <input ref={fileInputRef} type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={(event) => { const files = Array.from(event.target.files || []); setPhotos((items) => [...items, ...files.map((file) => ({ file, preview: URL.createObjectURL(file) }))]); if (fileInputRef.current) fileInputRef.current.value = ''; }} />
-              <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}><Camera className="h-4 w-4" /> {photos.length ? 'Add Photos' : 'Take / Upload Photos'}</Button><span className="text-xs text-ink-500">{photos.length} selected · minimum {requiredPhotoCount}</span></div>
+              <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="secondary" size="sm" disabled={inspectionLocked} onClick={() => fileInputRef.current?.click()}><Camera className="h-4 w-4" /> {photos.length ? 'Add Photos' : 'Take / Upload Photos'}</Button><span className="text-xs text-ink-500">{inspectionLocked ? 'Select an eligible trip before adding evidence.' : `${photos.length} selected · minimum ${requiredPhotoCount}`}</span></div>
             </CardContent>
           </Card>
 
           <Card>
             <CardContent className="space-y-3 pt-4">
               <p className="text-sm font-medium text-ink-950">Required acknowledgements</p>
-              <label className="flex items-start gap-2 text-sm text-ink-700"><input className="mt-1" type="checkbox" checked={inspectorAcknowledged} onChange={(event) => setInspectorAcknowledged(event.target.checked)} /><span>I confirm that I performed this inspection and the recorded results are accurate.</span></label>
-              <label className="flex items-start gap-2 text-sm text-ink-700"><input className="mt-1" type="checkbox" checked={driverAcknowledged} onChange={(event) => setDriverAcknowledged(event.target.checked)} /><span>The assigned driver is present and has reviewed the recorded vehicle condition. This is witnessed by the Inspector and is not an authenticated Driver signature.</span></label>
+              <label className={`flex items-start gap-2 text-sm text-ink-700 ${inspectionLocked ? 'opacity-50' : ''}`}><input className="mt-1" disabled={inspectionLocked} type="checkbox" checked={inspectorAcknowledged} onChange={(event) => setInspectorAcknowledged(event.target.checked)} /><span>I confirm that I performed this inspection and the recorded results are accurate.</span></label>
+              <label className={`flex items-start gap-2 text-sm text-ink-700 ${inspectionLocked ? 'opacity-50' : ''}`}><input className="mt-1" disabled={inspectionLocked} type="checkbox" checked={driverAcknowledged} onChange={(event) => setDriverAcknowledged(event.target.checked)} /><span>The assigned driver is present and has reviewed the recorded vehicle condition. This is witnessed by the Inspector and is not an authenticated Driver signature.</span></label>
             </CardContent>
           </Card>
 

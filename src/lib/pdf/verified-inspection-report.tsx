@@ -15,6 +15,7 @@ import {
 } from '@/db/schema/trips';
 import { tenantBranding, tenants } from '@/db/schema/tenants';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
+import { buildFleetPdfFilename } from './document-filename';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { InspectionReportDocument, type InspectionReportData } from './inspection-report';
 
@@ -217,5 +218,13 @@ export async function generateVerifiedInspectionReportPdf(
     { data },
   ) as React.ReactElement;
   const buffer = await renderPdfToBuffer(element);
-  return { buffer, filename: `inspection_report_${document.id.slice(0, 8)}.pdf` };
+  return {
+    buffer,
+    filename: buildFleetPdfFilename({
+      documentType: `${data.type}_inspection`,
+      date: data.inspectedAt || document.createdAt,
+      reference: data.vehicle.licenceNumber,
+      fallbackReference: document.id.slice(0, 8).toUpperCase(),
+    }),
+  };
 }

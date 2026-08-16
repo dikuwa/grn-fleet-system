@@ -55,10 +55,9 @@ export function PdfPreview({ documentId, documentType }: PdfPreviewProps) {
   };
 
   const handleDownload = async () => {
-    // Trigger a direct download by opening the API URL
+    // Let the canonical endpoint supply the central human-readable filename.
     const a = document.createElement('a');
     a.href = `/api/documents/${documentId}/pdf`;
-    a.download = `${documentType.replace(/_/g, '-')}-${documentId.slice(0, 8)}.pdf`;
     a.click();
   };
 

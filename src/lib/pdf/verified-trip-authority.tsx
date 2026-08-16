@@ -23,6 +23,7 @@ import {
 import { tenantBranding, tenants } from '@/db/schema/tenants';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
+import { buildFleetPdfFilename } from './document-filename';
 import { TripAuthorityDocument, type TripAuthorityData } from './trip-authority';
 
 export type TripAuthorityRenderSnapshot = Omit<
@@ -523,5 +524,13 @@ export async function generateVerifiedTripAuthorityPdf(
     { data },
   ) as React.ReactElement;
   const buffer = await renderPdfToBuffer(element);
-  return { buffer, filename: `trip_authority_${document.id.slice(0, 8)}.pdf` };
+  return {
+    buffer,
+    filename: buildFleetPdfFilename({
+      documentType: 'trip_authority',
+      date: data.issuedAt || document.createdAt,
+      reference: data.reference,
+      fallbackReference: document.id.slice(0, 8).toUpperCase(),
+    }),
+  };
 }

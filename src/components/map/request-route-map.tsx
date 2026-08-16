@@ -34,6 +34,7 @@ type GoogleBounds = {
   extend: (point: LatLngLiteral) => GoogleBounds;
   isEmpty: () => boolean;
 };
+type GooglePoint = { x: number; y: number };
 
 type GoogleMarker = {
   addListener: (eventName: string, handler: () => void) => unknown;
@@ -70,6 +71,7 @@ type GoogleMapsApi = {
   SymbolPath: {
     CIRCLE: number;
   };
+  Point: new (x: number, y: number) => GooglePoint;
   Marker: new (options: {
     map: GoogleMap;
     position: LatLngLiteral;
@@ -81,6 +83,7 @@ type GoogleMapsApi = {
       fillOpacity: number;
       strokeColor: string;
       strokeWeight: number;
+      anchor?: GooglePoint;
     };
     label?: { text: string; color: string; fontWeight: string; fontSize: string };
     zIndex?: number;
@@ -117,6 +120,7 @@ function waitForGoogleMaps(timeoutMs = 12_000): Promise<GoogleMapsApi> {
         maps?.Map &&
         maps.LatLngBounds &&
         maps.SymbolPath &&
+        maps.Point &&
         maps.Marker &&
         maps.Polyline &&
         maps.InfoWindow
@@ -144,6 +148,7 @@ function loadGoogleMaps(): Promise<GoogleMapsApi> {
     readyMaps?.Map &&
     readyMaps.LatLngBounds &&
     readyMaps.SymbolPath &&
+    readyMaps.Point &&
     readyMaps.Marker &&
     readyMaps.Polyline &&
     readyMaps.InfoWindow
@@ -240,9 +245,10 @@ function formatDuration(minutes: number | null): string {
 const ROUTE_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
 const NAMIBIA_CENTER = { lat: -22.5609, lng: 17.0658 };
 const ENDPOINT_COLORS = {
-  Origin: '#15803d',
+  Origin: '#2563eb',
   Destination: '#dc2626',
 } as const;
+const MAP_PIN_PATH = 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z';
 
 export default function RouteMap({ routes }: RouteMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -337,19 +343,16 @@ export default function RouteMap({ routes }: RouteMapProps) {
           kind: 'Origin' | 'Destination';
           name: string;
           coordinates: LatLngLiteral | null;
-          label: string;
         }> = [
           {
             kind: 'Origin',
             name: route.originName || 'Origin',
             coordinates: route.originCoordinates,
-            label: 'A',
           },
           {
             kind: 'Destination',
             name: route.destinationName || 'Destination',
             coordinates: route.destinationCoordinates,
-            label: 'B',
           },
         ];
 
@@ -360,18 +363,13 @@ export default function RouteMap({ routes }: RouteMapProps) {
             position: endpoint.coordinates,
             title: `${endpoint.kind}: ${endpoint.name}`,
             icon: {
-              path: maps.SymbolPath.CIRCLE,
-              scale: 13,
+              path: MAP_PIN_PATH,
+              scale: 1.35,
               fillColor: ENDPOINT_COLORS[endpoint.kind],
               fillOpacity: 1,
               strokeColor: '#ffffff',
-              strokeWeight: 3,
-            },
-            label: {
-              text: endpoint.label,
-              color: '#ffffff',
-              fontWeight: '700',
-              fontSize: '12px',
+              strokeWeight: 1.5,
+              anchor: new maps.Point(12, 22),
             },
             zIndex: endpoint.kind === 'Origin' ? 20 : 21,
           });

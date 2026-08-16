@@ -16,6 +16,7 @@ import {
   DocumentVerificationFooter,
   tenantPdfTheme,
 } from './document-system';
+import { buildFleetPdfFilename, referenceFromDocumentSnapshot } from './document-filename';
 
 function snapshotBranding(
   snapshot: Record<string, unknown>,
@@ -238,6 +239,11 @@ export async function generatePublicSharedDocumentPdf(input: {
   const buffer = await streamToBuffer(element);
   return {
     buffer,
-    filename: `${input.document.documentType}_${input.document.id.slice(0, 8)}_shared.pdf`,
+    filename: buildFleetPdfFilename({
+      documentType: input.document.documentType,
+      date: issuedAt,
+      reference: referenceFromDocumentSnapshot(snapshot, input.document.id.slice(0, 8).toUpperCase()),
+      fallbackReference: input.document.id.slice(0, 8).toUpperCase(),
+    }),
   };
 }

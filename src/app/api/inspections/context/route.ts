@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   inspectionTemplateItems,
@@ -9,6 +9,7 @@ import {
   vehicleAllocations,
 } from '@/db/schema/trips';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
+import { externalParties } from '@/db/schema/external-parties';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
@@ -85,7 +86,27 @@ export async function GET(request: NextRequest) {
         requestReference: transportRequests.reference,
         requestStatus: transportRequests.status,
         authorityStatus: tripAuthorities.status,
+        authorityNumber: tripAuthorities.authorityNumber,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        driverName: sql<string | null>`(
+          select trim(concat(coalesce(e.first_name, ''), ' ', coalesce(e.last_name, '')))
+          from employees e
+          where e.id = ${vehicleAllocations.driverEmployeeId}
+            and e.tenant_id = ${session.tenantId}
+          limit 1
+        )`,
+        originName: sql<string | null>`(
+          select rr.origin_name from request_routes rr
+          where rr.request_id = ${trips.requestId}
+          order by rr.created_at asc limit 1
+        )`,
+        destinationName: sql<string | null>`(
+          select rr.destination_name from request_routes rr
+          where rr.request_id = ${trips.requestId}
+          order by rr.created_at desc limit 1
+        )`,
+        departureAt: vehicleAllocations.startAt,
+        returnAt: vehicleAllocations.endAt,
         make: vehicles.make,
         model: vehicles.model,
         licenceNumber: vehicles.licenceNumber,
@@ -119,8 +140,19 @@ export async function GET(request: NextRequest) {
         ))
         .orderBy(trips.createdAt),
       db
-        .select({ tripId: externalDriverAssignments.tripId, issueId: externalDriverAssignments.issueId })
+        .select({
+          tripId: externalDriverAssignments.tripId,
+          issueId: externalDriverAssignments.issueId,
+          driverName: sql<string>`trim(concat(${externalParties.firstName}, ' ', ${externalParties.lastName}))`,
+        })
         .from(externalDriverAssignments)
+        .innerJoin(
+          externalParties,
+          and(
+            eq(externalParties.id, externalDriverAssignments.externalPartyId),
+            eq(externalParties.tenantId, session.tenantId),
+          ),
+        )
         .where(
           and(
             eq(externalDriverAssignments.tenantId, session.tenantId),
@@ -130,7 +162,7 @@ export async function GET(request: NextRequest) {
     ]);
 
     const acceptedExternalByTrip = new Map(
-      acceptedExternalRows.map((row) => [row.tripId, { issueId: row.issueId }]),
+      acceptedExternalRows.map((row) => [row.tripId, { issueId: row.issueId, driverName: row.driverName }]),
     );
 
     const eligibleTrips = tripRows
@@ -152,6 +184,9 @@ export async function GET(request: NextRequest) {
       .map((trip) => ({
         ...trip,
         driverKind: trip.driverEmployeeId ? ('internal' as const) : ('external' as const),
+        driverName: trip.driverEmployeeId
+          ? trip.driverName
+          : acceptedExternalByTrip.get(trip.id)?.driverName || null,
       }));
 
     const vehicleMap = new Map<string, {

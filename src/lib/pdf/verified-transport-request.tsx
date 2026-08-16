@@ -12,6 +12,7 @@ import { tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
+import { buildFleetPdfFilename } from './document-filename';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { TransportRequestDocument, type TransportRequestData } from './transport-request';
 
@@ -242,5 +243,13 @@ export async function generateVerifiedTransportRequestPdf(
     { data },
   ) as React.ReactElement;
   const buffer = await renderPdfToBuffer(element);
-  return { buffer, filename: `transport_request_${document.id.slice(0, 8)}.pdf` };
+  return {
+    buffer,
+    filename: buildFleetPdfFilename({
+      documentType: 'transport_request',
+      date: data.issuedAt || data.submittedAt || document.createdAt,
+      reference: data.reference,
+      fallbackReference: document.id.slice(0, 8).toUpperCase(),
+    }),
+  };
 }

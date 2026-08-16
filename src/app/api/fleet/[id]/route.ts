@@ -12,6 +12,7 @@ import { Permissions } from '@/lib/permissions';
 import { eq, and, ne } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
+import { recordAuditEvent } from '@/lib/audit-event';
 
 const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // stored value through a general vehicle-view endpoint shared with audit,
     // maintenance and inspection workspaces.
     const { fuelCardPin: _fuelCardPin, ...safeVehicle } = vehicle;
+    void _fuelCardPin;
     return NextResponse.json({ vehicle: safeVehicle });
   } catch (error) {
     console.error('[fleet/:id] GET failed:', error);
@@ -89,6 +91,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       .select({
         id: vehicles.id,
         licenceNumber: vehicles.licenceNumber,
+        vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
+        vin: vehicles.vin,
+        engineNumber: vehicles.engineNumber,
         status: vehicles.status,
         currentOdometer: vehicles.currentOdometer,
       })
@@ -274,11 +279,52 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       updateData.assignedOfficeId = body.assignedOfficeId || null;
     if (body.notes !== undefined) updateData.notes = body.notes || null;
 
-    const [vehicle] = await db
-      .update(vehicles)
-      .set(updateData)
-      .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
-      .returning();
+    const vehicle = await db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(vehicles)
+        .set(updateData)
+        .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
+        .returning();
+      if (!updated) return null;
+
+      const before = {
+        licenceNumber: existing.licenceNumber,
+        vehicleRegisterNumber: existing.vehicleRegisterNumber,
+        vin: existing.vin,
+        engineNumber: existing.engineNumber,
+        status: existing.status,
+      };
+      const after = {
+        licenceNumber: updated.licenceNumber,
+        vehicleRegisterNumber: updated.vehicleRegisterNumber,
+        vin: updated.vin,
+        engineNumber: updated.engineNumber,
+        status: updated.status,
+      };
+      const changed = (Object.keys(before) as Array<keyof typeof before>)
+        .filter((field) => before[field] !== after[field]);
+      if (changed.length) {
+        const labels: Record<keyof typeof before, string> = {
+          licenceNumber: 'registration',
+          vehicleRegisterNumber: 'register number',
+          vin: 'VIN/chassis',
+          engineNumber: 'engine number',
+          status: 'status',
+        };
+        await recordAuditEvent({
+          tenantId: session.tenantId,
+          actorUserId: session.user.id,
+          eventType: 'vehicle_identity_updated',
+          action: 'vehicle.update',
+          entityType: 'vehicle',
+          entityId: id,
+          before,
+          after,
+          summary: changed.map((field) => `${labels[field]} changed from ${before[field] || 'not recorded'} to ${after[field] || 'not recorded'}`).join('; '),
+        }, tx);
+      }
+      return updated;
+    });
 
     if (vehicle) vehicle.fuelCardPin = null;
     return NextResponse.json({ vehicle });

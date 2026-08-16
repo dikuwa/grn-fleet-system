@@ -40,6 +40,7 @@ import {
   type DashboardRecordScope,
 } from '@/lib/dashboard-access';
 import { inspectionScopeCondition } from '@/lib/record-scope';
+import { InspectionPhotoGallery } from '@/components/inspections/inspection-photo-gallery';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -565,8 +566,7 @@ export default async function InspectionDetailPage({ params }: PageProps) {
         </Card>
       )}
 
-      {photos.length > 0 && (
-        <Card>
+      <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Camera className="h-4 w-4 text-ink-500" />
@@ -574,36 +574,9 @@ export default async function InspectionDetailPage({ params }: PageProps) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {photos.map((photo) => (
-                <div key={photo.id} className="rounded-[8px] border border-border overflow-hidden">
-                  <a
-                    href={photo.signedUrl || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block aspect-square bg-muted flex items-center justify-center overflow-hidden"
-                  >
-                    {photo.signedUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- dynamic signed R2 URL, not optimisable by next/image
-                      <img
-                        src={photo.signedUrl}
-                        alt={photo.caption || 'Inspection photo'}
-                        className="h-full w-full object-cover hover:scale-105 transition-transform"
-                      />
-                    ) : (
-                      <Camera className="h-8 w-8 text-ink-300" />
-                    )}
-                  </a>
-                  <div className="p-2">
-                    <p className="text-xs text-ink-500 truncate">{photo.caption || 'No caption'}</p>
-                    <p className="text-xs text-ink-400 tabular-nums">{formatDate(photo.capturedAt)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <InspectionPhotoGallery photos={photos.map((photo) => ({ ...photo, capturedAt: photo.capturedAt.toISOString() }))} />
           </CardContent>
         </Card>
-      )}
 
       {inspection.notes && (
         <Card>

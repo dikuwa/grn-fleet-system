@@ -16,6 +16,7 @@ import { MaintenanceReportDocument, type MaintenanceReportData } from './mainten
 import { MvaReportDocument, type MvaReportData } from './mva-report';
 import { IncidentRecordDocument, type IncidentRecordData } from './operational-records';
 import { SnapshotDocument, type SnapshotDocumentData } from './snapshot-document';
+import { buildFleetPdfFilename, referenceFromDocumentSnapshot } from './document-filename';
 
 async function renderPdfToBuffer(element: React.ReactElement): Promise<Uint8Array> {
   const stream = await renderToStream(
@@ -337,5 +338,13 @@ export async function generateVerifiedSnapshotDocumentPdf(
   }
 
   const buffer = await renderPdfToBuffer(element);
-  return { buffer, filename: `${document.documentType}_${document.id.slice(0, 8)}.pdf` };
+  return {
+    buffer,
+    filename: buildFleetPdfFilename({
+      documentType: document.documentType,
+      date: generatedAt,
+      reference: referenceFromDocumentSnapshot(snapshot, document.id.slice(0, 8).toUpperCase()),
+      fallbackReference: document.id.slice(0, 8).toUpperCase(),
+    }),
+  };
 }

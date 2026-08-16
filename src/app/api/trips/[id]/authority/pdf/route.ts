@@ -30,6 +30,7 @@ import { TripAuthorityDocument, type TripAuthorityData } from '@/lib/pdf/trip-au
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
+import { buildFleetPdfFilename } from '@/lib/pdf/document-filename';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -437,7 +438,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       buffer.set(chunk, offset);
       offset += chunk.length;
     }
-    const filename = `${(authority.authority.authorityNumber || 'trip-authority').replace(/[^A-Za-z0-9-]/g, '-')}-v${authority.authority.version}.pdf`;
+    const filename = buildFleetPdfFilename({
+      documentType: 'trip_authority',
+      date: data.issuedAt || authority.authority.createdAt,
+      reference: authority.authority.authorityNumber,
+      fallbackReference: authority.authority.id.slice(0, 8).toUpperCase(),
+    });
     return new NextResponse(buffer as BodyInit, {
       headers: {
         'Content-Type': 'application/pdf',
