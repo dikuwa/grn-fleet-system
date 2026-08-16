@@ -83,8 +83,14 @@ export async function GET(
       .from(driverLicences)
       .innerJoin(driverProfiles, eq(driverLicences.driverProfileId, driverProfiles.id))
       .innerJoin(employees, eq(driverProfiles.employeeId, employees.id))
-      .leftJoin(departments, eq(employees.departmentId, departments.id))
-      .leftJoin(offices, eq(employees.officeId, offices.id))
+      .leftJoin(
+        departments,
+        and(eq(employees.departmentId, departments.id), eq(departments.tenantId, auth.session.tenantId)),
+      )
+      .leftJoin(
+        offices,
+        and(eq(employees.officeId, offices.id), eq(offices.tenantId, auth.session.tenantId)),
+      )
       .where(and(eq(driverLicences.id, id), eq(employees.tenantId, auth.session.tenantId)))
       .limit(1);
 
@@ -160,9 +166,19 @@ export async function GET(
 
     const currentVerified = previous[0] ?? null;
     const duplicateLicence = duplicateMatches[0] ?? null;
-    const currentVerifiedUrl = currentVerified?.frontImageKey
-      ? await getSignedFileUrl(currentVerified.frontImageKey, 3600).catch(() => null)
-      : null;
+    const [currentVerifiedFrontUrl, currentVerifiedBackUrl, currentVerifiedPdfUrl] = currentVerified
+      ? await Promise.all([
+          currentVerified.frontImageKey
+            ? getSignedFileUrl(currentVerified.frontImageKey, 3600).catch(() => null)
+            : null,
+          currentVerified.backImageKey
+            ? getSignedFileUrl(currentVerified.backImageKey, 3600).catch(() => null)
+            : null,
+          currentVerified.sourcePdfKey
+            ? getSignedFileUrl(currentVerified.sourcePdfKey, 3600).catch(() => null)
+            : null,
+        ])
+      : [null, null, null];
 
     const rawOcr = (licence.licence.rawOcrResult ?? {}) as {
       text?: string;
@@ -227,7 +243,9 @@ export async function GET(
         currentVerified: currentVerified
           ? {
               ...currentVerified,
-              frontUrl: currentVerifiedUrl,
+              frontUrl: currentVerifiedFrontUrl,
+              backUrl: currentVerifiedBackUrl,
+              pdfUrl: currentVerifiedPdfUrl,
             }
           : null,
         previousVersions: allVersions,

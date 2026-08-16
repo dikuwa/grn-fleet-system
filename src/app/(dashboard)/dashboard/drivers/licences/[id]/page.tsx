@@ -45,6 +45,7 @@ interface ReviewLicence {
   rejectionReason: string | null;
   notes: string | null;
   ocrConfidence: Record<string, number> | null;
+  ocrProvider: string | null;
   ocrText: string | null;
   extracted: Record<string, string | string[] | null> | null;
   createdAt: string;
@@ -58,6 +59,8 @@ interface CurrentVerified {
   issueDate: string;
   expiryDate: string;
   frontUrl: string | null;
+  backUrl: string | null;
+  pdfUrl: string | null;
 }
 
 interface DriverInfo {
@@ -125,6 +128,11 @@ function averageOcrConfidence(confidence: Record<string, number> | null): number
   if (!values.length) return null;
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
   return Math.round(average <= 1 ? average * 100 : average);
+}
+
+function displayOcrValue(value: string | string[] | null): string {
+  if (Array.isArray(value)) return value.filter(Boolean).join(', ') || '—';
+  return value?.trim() || '—';
 }
 
 function Detail({ label, value }: { label: string; value: React.ReactNode }) {
@@ -313,6 +321,9 @@ export default function LicenceReviewPage() {
   } = data;
   const isBlocked = ['verified', 'expired', 'superseded'].includes(licence.verificationStatus);
   const ocrConfidencePercent = averageOcrConfidence(licence.ocrConfidence);
+  const extractedOcrEntries = Object.entries(licence.extracted ?? {}).filter(([, value]) =>
+    Array.isArray(value) ? value.length > 0 : Boolean(value),
+  );
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -463,13 +474,45 @@ export default function LicenceReviewPage() {
               <ArrowLeftRight className="text-ink-400 h-4 w-4" aria-hidden="true" /> Current verified licence · v{currentVerified.version}
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
               <Detail label="Licence number" value={<span className="font-medium text-ink-950">{currentVerified.licenceNumber}</span>} />
               <Detail label="Class" value={<span className="font-medium text-ink-950">{currentVerified.licenceClass}</span>} />
               <Detail label="Issue date" value={currentVerified.issueDate} />
               <Detail label="Expiry date" value={currentVerified.expiryDate} />
             </div>
+            {(currentVerified.frontUrl || currentVerified.backUrl) && (
+              <div className="grid gap-3 border-t border-border pt-4 sm:grid-cols-2">
+                {[
+                  { url: currentVerified.frontUrl, label: 'Current verified front' },
+                  { url: currentVerified.backUrl, label: 'Current verified back' },
+                ].map((item) =>
+                  item.url ? (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => setZoomImage(item.url)}
+                      className="focus-ring group relative min-h-36 overflow-hidden rounded-[10px] border border-border bg-muted/20"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={item.url} alt={item.label} className="h-36 w-full object-contain p-2 transition-transform group-hover:scale-[1.01] motion-reduce:transition-none" />
+                      <span className="bg-ink-950/75 absolute right-2 bottom-2 rounded-[6px] px-2 py-1 text-[10px] font-medium text-white">view larger</span>
+                    </button>
+                  ) : (
+                    <div key={item.label} className="text-ink-400 flex min-h-36 items-center justify-center rounded-[10px] border border-dashed border-border bg-muted/20 text-xs">
+                      No {item.label.toLowerCase()} image
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+            {currentVerified.pdfUrl && (
+              <Button variant="secondary" size="sm" asChild>
+                <a href={currentVerified.pdfUrl} target="_blank" rel="noreferrer">
+                  <FileSearch className="h-4 w-4" /> Open current verified PDF
+                </a>
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
@@ -483,7 +526,9 @@ export default function LicenceReviewPage() {
         <CardContent className="space-y-5">
           <div className="border-border bg-muted/30 rounded-[8px] border p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="info" size="sm">OCR source: {licence.ocrConfidence ? 'tesseract.js' : 'manual'}</Badge>
+              <Badge variant="info" size="sm">
+                OCR source: {licence.ocrProvider || (licence.ocrConfidence ? 'tesseract.js' : 'manual')}
+              </Badge>
               {ocrConfidencePercent !== null && (
                 <Badge variant="default" size="sm">
                   Confidence: {ocrConfidencePercent}%
@@ -491,9 +536,33 @@ export default function LicenceReviewPage() {
               )}
             </div>
             <p className="text-ink-500 mt-2 text-xs leading-5">
-              OCR output is provisional until reviewed. Verified values are shown below.
+              OCR output is provisional until reviewed. Compare the extracted evidence with the original images and the current verified licence before approving.
             </p>
           </div>
+
+          {extractedOcrEntries.length > 0 && (
+            <div>
+              <p className="text-ink-500 mb-2 text-xs font-semibold">OCR-extracted evidence</p>
+              <div className="grid gap-x-6 gap-y-3 rounded-[8px] border border-border bg-muted/15 p-3 sm:grid-cols-2 xl:grid-cols-3">
+                {extractedOcrEntries.map(([field, value]) => (
+                  <Detail
+                    key={field}
+                    label={field.replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ')}
+                    value={displayOcrValue(value)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {licence.ocrText && (
+            <div>
+              <p className="text-ink-500 mb-2 text-xs font-semibold">Raw OCR evidence</p>
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-border bg-muted/20 p-3 font-mono text-[11px] leading-5 text-ink-700">
+                {licence.ocrText}
+              </pre>
+            </div>
+          )}
 
           {canReview ? (
             <div className="grid gap-4 sm:grid-cols-2">
