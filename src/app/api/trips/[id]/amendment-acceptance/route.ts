@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
+import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import {
@@ -12,6 +13,7 @@ import {
 } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { onTripIssued } from '@/lib/document-generator';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import {
   createScopedNotifications,
   resolveActiveRoleRecipients,
@@ -33,8 +35,11 @@ async function loadAcceptanceContext(tripId: string, tenantId: string) {
       tripStatus: trips.status,
       tripIssuedAt: trips.issuedAt,
       allocationId: vehicleAllocations.id,
+      allocationVersion: vehicleAllocations.version,
       allocationEndAt: vehicleAllocations.endAt,
       vehicleId: vehicleAllocations.vehicleId,
+      vehicleRequiredLicenceClass: vehicles.requiredLicenceClass,
+      vehicleProfessionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
       driverUserId: employees.userId,
       authorityId: tripAuthorities.id,
@@ -46,10 +51,15 @@ async function loadAcceptanceContext(tripId: string, tenantId: string) {
       externalLicenceId: externalDriverAssignments.licenceId,
       externalPartyStatus: externalParties.status,
       externalLicenceStatus: externalDriverLicences.verificationStatus,
+      externalLicenceClass: externalDriverLicences.licenceClass,
       externalLicenceExpiry: externalDriverLicences.expiryDate,
     })
     .from(trips)
     .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
+    .innerJoin(
+      vehicles,
+      and(eq(vehicles.id, vehicleAllocations.vehicleId), eq(vehicles.tenantId, tenantId)),
+    )
     .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
     .leftJoin(employees, eq(employees.id, vehicleAllocations.driverEmployeeId))
     .leftJoin(
@@ -84,6 +94,34 @@ async function loadAcceptanceContext(tripId: string, tenantId: string) {
   return record ?? null;
 }
 
+function externalEligibilityError(record: NonNullable<Awaited<ReturnType<typeof loadAcceptanceContext>>>) {
+  if (record.externalAssignmentState !== 'accepted') {
+    return 'The current external driver assignment is no longer accepted.';
+  }
+  if (record.externalPartyStatus !== 'active') {
+    return 'The external driver is no longer active.';
+  }
+  if (record.externalLicenceStatus !== 'verified') {
+    return 'The external driver licence is no longer verified.';
+  }
+  const expiryAt = record.externalLicenceExpiry
+    ? new Date(`${record.externalLicenceExpiry}T23:59:59.999Z`)
+    : null;
+  if (!expiryAt || !Number.isFinite(expiryAt.getTime()) || expiryAt < record.allocationEndAt) {
+    return 'The external driver licence no longer covers the full trip period.';
+  }
+  if (
+    record.vehicleRequiredLicenceClass &&
+    !namibiaLicenceClassCovers(record.externalLicenceClass, record.vehicleRequiredLicenceClass)
+  ) {
+    return `The external driver licence (${record.externalLicenceClass || 'unknown'}) does not cover the current vehicle class (${record.vehicleRequiredLicenceClass}).`;
+  }
+  if (record.vehicleProfessionalAuthorisationRequired) {
+    return 'The current vehicle requires professional driving authorisation, but verified external professional-authorisation evidence is not available for this assignment.';
+  }
+  return null;
+}
+
 /** Return whether the current authority has a vehicle amendment newer than its latest driver acceptance. */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
@@ -103,27 +141,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
       driverKind === 'internal' && Boolean(record.driverUserId) && record.driverUserId === session.user.id;
 
     let canRecordExternal = false;
-    let externalEligibilityError: string | null = null;
+    let eligibilityError: string | null = null;
     if (driverKind === 'external') {
-      const expiryAt = record.externalLicenceExpiry
-        ? new Date(`${record.externalLicenceExpiry}T23:59:59.999Z`)
-        : null;
-      const externallyEligible =
-        record.externalAssignmentState === 'accepted' &&
-        record.externalPartyStatus === 'active' &&
-        record.externalLicenceStatus === 'verified' &&
-        !!expiryAt &&
-        Number.isFinite(expiryAt.getTime()) &&
-        expiryAt >= record.allocationEndAt;
-
-      if (!externallyEligible) {
-        externalEligibilityError =
-          record.externalPartyStatus !== 'active'
-            ? 'The external driver is no longer active.'
-            : record.externalLicenceStatus !== 'verified'
-              ? 'The external driver licence is no longer verified.'
-              : 'The external driver licence no longer covers the full trip period.';
-      } else {
+      eligibilityError = externalEligibilityError(record);
+      if (!eligibilityError) {
         const [routeCheck, permissionCheck] = await Promise.all([
           requireDashboardAction(session, '/dashboard/allocations', 'update'),
           requirePermission(session, Permissions.ALLOCATION_MANAGE),
@@ -138,7 +159,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       driverKind,
       canSelfAcknowledge,
       canRecordExternal,
-      externalEligibilityError,
+      externalEligibilityError: eligibilityError,
       amendment: pending
         ? {
             id: pending.amendmentId,
@@ -210,26 +231,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
         );
       }
     } else {
-      if (!record.externalAssignmentId || record.externalAssignmentState !== 'accepted') {
-        return NextResponse.json(
-          { error: 'The current external driver assignment must already be accepted before a revised authority can be re-acknowledged.' },
-          { status: 409 },
-        );
+      if (!record.externalAssignmentId) {
+        return NextResponse.json({ error: 'No external driver assignment is attached to this trip.' }, { status: 409 });
       }
-      if (record.externalPartyStatus !== 'active' || record.externalLicenceStatus !== 'verified') {
-        return NextResponse.json(
-          { error: 'The external driver or assigned licence is no longer eligible for this trip.' },
-          { status: 409 },
-        );
-      }
-      const expiryAt = record.externalLicenceExpiry
-        ? new Date(`${record.externalLicenceExpiry}T23:59:59.999Z`)
-        : null;
-      if (!expiryAt || !Number.isFinite(expiryAt.getTime()) || expiryAt < record.allocationEndAt) {
-        return NextResponse.json(
-          { error: 'The external driver licence no longer covers the full trip period.' },
-          { status: 409 },
-        );
+      const eligibilityError = externalEligibilityError(record);
+      if (eligibilityError) {
+        return NextResponse.json({ error: eligibilityError }, { status: 409 });
       }
 
       const actionCheck = await requireDashboardAction(session, '/dashboard/allocations', 'update');
@@ -252,12 +259,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
       source: internalDriver ? 'driver_console_amendment' : 'transport_office_external_amendment',
       amendmentId: pending.amendmentId,
       authorityVersion: pending.authorityVersion,
+      allocationVersion: record.allocationVersion + 1,
+      acceptedVehicleId: record.vehicleId,
       acceptanceMethod,
       note,
       acceptedAt: now.toISOString(),
       recordedByUserId: session.user.id,
       externalDriverAssignmentId: record.externalAssignmentId ?? null,
     });
+
     const externalEligibilityCurrent = internalDriver
       ? sql`true`
       : sql`exists (
@@ -266,26 +276,58 @@ export async function POST(request: NextRequest, context: RouteContext) {
           inner join external_parties ep on ep.id = eda.external_party_id
           inner join external_driver_licences edl on edl.id = eda.licence_id
           inner join vehicle_allocations va on va.id = eda.allocation_id
+          inner join vehicles v on v.id = va.vehicle_id
           where eda.id = ${record.externalAssignmentId}::uuid
             and eda.tenant_id = ${tenantId}::uuid
             and eda.trip_id = ${tripId}::uuid
+            and eda.allocation_id = ${record.allocationId}::uuid
             and eda.state = 'accepted'
             and eda.issue_id is null
             and ep.tenant_id = ${tenantId}::uuid
             and ep.status = 'active'
             and edl.tenant_id = ${tenantId}::uuid
+            and edl.id = ${record.externalLicenceId}::uuid
             and edl.verification_status = 'verified'
+            and edl.licence_class = ${record.externalLicenceClass}
             and edl.expiry_date >= va.end_at::date
+            and va.vehicle_id = ${record.vehicleId}::uuid
+            and v.tenant_id = ${tenantId}::uuid
+            and v.professional_authorisation_required = false
         )`;
 
+    // Claim the exact allocation version before changing acceptance evidence.
+    // A second vehicle replacement, cancellation or physical issue must win or
+    // lose against this same lifecycle boundary instead of interleaving with it.
     await db.execute(sql`
-      WITH amendment_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${record.allocationId}::uuid
+          AND va.version = ${record.allocationVersion}
+          AND va.vehicle_id = ${record.vehicleId}::uuid
+          AND va.state IN ('provisional', 'confirmed')
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.id = ${tripId}::uuid
+              AND t.tenant_id = ${tenantId}::uuid
+              AND t.allocation_id = va.id
+              AND t.vehicle_id = va.vehicle_id
+              AND t.status = 'pending'
+              AND t.issued_at IS NULL
+          )
+          AND ${externalEligibilityCurrent}
+        RETURNING id
+      ),
+      amendment_claim AS (
         UPDATE trip_amendments am
         SET status = status
         WHERE am.id = ${pending.amendmentId}::uuid
           AND am.authority_id = ${record.authorityId}::uuid
           AND am.amendment_type = 'vehicle_replacement'
           AND am.status = 'approved'
+          AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
             SELECT 1
             FROM trip_authorities ta
@@ -294,7 +336,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND ta.accepted_at IS NOT NULL
               AND am.created_at > ta.accepted_at
           )
-          AND ${externalEligibilityCurrent}
         RETURNING id
       ),
       authority_claim AS (
@@ -308,6 +349,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         WHERE ta.id = ${record.authorityId}::uuid
           AND ta.tenant_id = ${tenantId}::uuid
           AND ta.trip_id = ${tripId}::uuid
+          AND ta.allocation_id = ${record.allocationId}::uuid
           AND ta.accepted_at IS NOT NULL
           AND ta.accepted_at < ${pending.createdAt}
           AND EXISTS (SELECT 1 FROM amendment_claim)
@@ -322,15 +364,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
           AND t.tenant_id = ${tenantId}::uuid
           AND t.status = 'pending'
           AND t.issued_at IS NULL
+          AND t.vehicle_id = ${record.vehicleId}::uuid
+          AND t.allocation_id = ${record.allocationId}::uuid
           AND EXISTS (SELECT 1 FROM authority_claim)
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM amendment_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM amendment_claim) = 1
          AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM trip_claim) = 1
         THEN '1'
         ELSE 'atomic_amendment_acknowledgement_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
           || (SELECT count(*) FROM amendment_claim)::text
           || (SELECT count(*) FROM authority_claim)::text
           || (SELECT count(*) FROM trip_claim)::text
@@ -351,6 +397,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       reason: pending.reason,
       before: {
         authorityVersion: pending.authorityVersion,
+        allocationVersion: record.allocationVersion,
+        vehicleId: record.vehicleId,
         acceptedAt: record.authorityAcceptedAt?.toISOString() ?? null,
         amendmentCreatedAt: pending.createdAt.toISOString(),
       },
