@@ -144,9 +144,7 @@ export const TransportRequestDocument: React.FC<{
       : null);
 
   const status = data.status || 'draft';
-
-  // Compute total traveller count
-  const travellerCount = data.travellerCount ?? (data.passengers ? data.passengers.length + 1 : 1);
+  const passengerCount = data.passengers?.length ?? 0;
 
   // Derive estimated costs from activities if available
   const totalRouteKm =
@@ -251,8 +249,8 @@ export const TransportRequestDocument: React.FC<{
               <Text style={{ color: '#4B5563', fontSize: 7 }}>No route details recorded</Text>
             )}
           </DocumentSection>
-          {/* Right: Passenger Manifest */}
-          <DocumentSection title={`Passengers (${travellerCount})`}>
+          {/* Right: Passenger Manifest — drivers/requester are documented in their own sections. */}
+          <DocumentSection title={`Passengers (${passengerCount})`}>
             <DocumentTable
               columns={[
                 { key: 'name', label: 'Name' },
@@ -260,27 +258,13 @@ export const TransportRequestDocument: React.FC<{
                 { key: 'dept', label: 'Dept / org' },
                 { key: 'type', label: 'Type' },
               ]}
-              rows={[
-                {
-                  name: data.requester?.name || 'Requester',
-                  id: data.requester?.employeeNumber || '—',
-                  dept: data.requester?.department || '—',
-                  type: 'Requester',
-                },
-                ...(data.drivers || []).map((driver) => ({
-                  name: driver.name,
-                  id: driver.employeeNumber || '—',
-                  dept: driver.department || '—',
-                  type: `Driver (${humanizeKey(driver.driverType)})`,
-                })),
-                ...(data.passengers || []).map((p) => ({
-                  name: p.name,
-                  id: p.employeeNumber || '—',
-                  dept: p.departmentOrOrganisation || '—',
-                  type: humanizeKey(p.travellerType),
-                })),
-              ]}
-              emptyLabel="No travellers recorded"
+              rows={(data.passengers || []).map((passenger) => ({
+                name: passenger.name,
+                id: passenger.employeeNumber || '—',
+                dept: passenger.departmentOrOrganisation || '—',
+                type: humanizeKey(passenger.travellerType),
+              }))}
+              emptyLabel="No passengers recorded"
             />
           </DocumentSection>
         </DocumentRow>
