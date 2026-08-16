@@ -3,6 +3,7 @@ import { and, eq, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { requestAttachments, transportRequests } from '@/db/schema/requests';
 import { getSessionWorkspace, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { canTenantAdminUseGenericFileKey } from '@/lib/file-access-policy';
 import { Permissions } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { isStorageConfigured } from '@/lib/storage';
@@ -80,6 +81,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    if (
+      workspace.activeWorkspace === WorkspaceIds.TENANT_ADMIN &&
+      !canTenantAdminUseGenericFileKey(key.slice(expectedPrefix.length))
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'Transport Operations evidence must be accessed from an authorised operational or audit workspace.',
+        },
+        { status: 403 },
+      );
+    }
+
     const { getSignedFileUrl, downloadFile } = await import('@/lib/storage');
 
     // Try signed URL first (preferred for larger files)
@@ -104,7 +118,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('[Files] GET failed:', error);
     return NextResponse.json(
-      { error: 'Failed to retrieve file: ' + (error instanceof Error ? error.message : String(error)) },
+      { error: 'File could not be retrieved.' },
       { status: 500 },
     );
   }
