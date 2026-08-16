@@ -55,7 +55,7 @@ export function VehicleCombobox({
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ search: debouncedSearch, limit: '20' });
       if (status) params.set('status', status);
-      const response = await fetch(`/api/fleet?${params}`, { signal, cache: 'no-store' });
+      const response = await fetch(`/api/fleet/search?${params}`, { signal, cache: 'no-store' });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'Unable to search vehicles');
       return ((Array.isArray(json) ? json : json.rows || []) as VehicleSearchOption[]).slice(0, 20);
