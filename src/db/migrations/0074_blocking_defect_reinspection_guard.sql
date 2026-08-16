@@ -32,8 +32,7 @@ BEGIN
       t.request_id,
       t.tenant_id,
       t.issued_at,
-      ta.id AS authority_id,
-      ta.status AS authority_status
+      ta.id AS authority_id
     FROM trips t
     INNER JOIN trip_authorities ta
       ON ta.trip_id = t.id
@@ -94,14 +93,6 @@ BEGIN
         AND status = 'vehicle_issued';
     END IF;
   END LOOP;
-
-  UPDATE vehicles
-  SET status = CASE
-        WHEN status IN ('available', 'provisional', 'allocated', 'issued') THEN 'maintenance'
-        ELSE status
-      END,
-      updated_at = CURRENT_TIMESTAMP
-  WHERE id = NEW.vehicle_id;
 
   RETURN NEW;
 END;
