@@ -20,6 +20,8 @@ import { vehicleAllocations, trips, tripIssues } from './trips';
  * External people never occupy employee driver foreign keys. The allocation
  * remains linked to the vehicle/trip while this record carries external
  * identity, verified licence snapshot and staff-recorded acceptance evidence.
+ * `completed` is terminal evidence that an accepted external assignment reached
+ * successful trip reconciliation; it must never be treated as a live assignment.
  */
 export const externalDriverAssignments = pgTable(
   'external_driver_assignments',
@@ -62,7 +64,7 @@ export const externalDriverAssignments = pgTable(
   (table) => [
     check(
       'chk_external_driver_assignment_state',
-      sql`${table.state} in ('pending_acceptance', 'accepted', 'cancelled')`,
+      sql`${table.state} in ('pending_acceptance', 'accepted', 'completed', 'cancelled')`,
     ),
     check(
       'chk_external_driver_acceptance_method',

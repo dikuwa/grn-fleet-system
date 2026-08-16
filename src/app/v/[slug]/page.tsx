@@ -1,13 +1,20 @@
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { AlertTriangle, CheckCircle2, CircleSlash2, ShieldCheck } from 'lucide-react';
+import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
+import { tripAmendments, tripAuthorities } from '@/db/schema/trips';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { TenantLogo } from '@/components/documents/tenant-logo';
 import { resolvePublicVerification } from '@/lib/document-verification';
-import { resolveTenantBranding } from '@/lib/tenant-branding';
+import {
+  resolveTenantBranding,
+  type ResolvedTenantBranding,
+} from '@/lib/tenant-branding';
+import { buildPublicDocumentSummary } from '@/lib/public-document-redaction';
 import {
   documentTypeLabel,
   formatDocumentStatus,
   formatHumanDateTime,
-  formatHumanValue,
 } from '@/lib/human-readable';
 
 export const dynamic = 'force-dynamic';
@@ -58,6 +65,93 @@ function getVerificationState(status: string) {
   };
 }
 
+function frozenVerificationBranding(
+  snapshot: Record<string, unknown>,
+  liveBranding: ResolvedTenantBranding | null,
+): ResolvedTenantBranding | null {
+  const brandingMeta = snapshot.brandingMeta as Partial<ResolvedTenantBranding> | undefined;
+  const identity = snapshot.documentIdentity as
+    | {
+        organisationName?: string;
+        logoUrl?: string;
+        primaryColor?: string;
+        accentColor?: string;
+        executiveSignatoryName?: string;
+        executiveSignatoryTitle?: string;
+        executiveSignatureUrl?: string;
+      }
+    | undefined;
+
+  if (!brandingMeta && !identity) return liveBranding;
+
+  const base = liveBranding || ({} as ResolvedTenantBranding);
+  return {
+    ...base,
+    ...brandingMeta,
+    organisationName:
+      brandingMeta?.organisationName || identity?.organisationName || liveBranding?.organisationName || 'Government Fleet',
+    logoUrl: identity?.logoUrl || liveBranding?.logoUrl,
+    primaryColor:
+      brandingMeta?.primaryColor || identity?.primaryColor || liveBranding?.primaryColor || '#1F2A44',
+    accentColor:
+      brandingMeta?.accentColor || identity?.accentColor || liveBranding?.accentColor || '#0F766E',
+    executiveSignatoryName:
+      brandingMeta?.executiveSignatoryName ||
+      identity?.executiveSignatoryName ||
+      liveBranding?.executiveSignatoryName,
+    executiveSignatoryTitle:
+      brandingMeta?.executiveSignatoryTitle ||
+      identity?.executiveSignatoryTitle ||
+      liveBranding?.executiveSignatoryTitle,
+    executiveSignatureUrl:
+      identity?.executiveSignatureUrl || liveBranding?.executiveSignatureUrl,
+  } as ResolvedTenantBranding;
+}
+
+function frozenIssueTimestamp(snapshot: Record<string, unknown>, legacyCreatedAt: Date) {
+  const identity = snapshot.documentIdentity;
+  if (identity && typeof identity === 'object' && !Array.isArray(identity)) {
+    const snapshottedAt = (identity as Record<string, unknown>).snapshottedAt;
+    if (typeof snapshottedAt === 'string' && snapshottedAt.trim()) return snapshottedAt;
+  }
+  return legacyCreatedAt;
+}
+
+async function hasPostIssueTripAuthorityAmendment(input: {
+  tenantId: string;
+  allocationId: string;
+  issuedAt: string | Date;
+}) {
+  const issuedAt = input.issuedAt instanceof Date ? input.issuedAt : new Date(input.issuedAt);
+  if (!Number.isFinite(issuedAt.getTime())) return false;
+
+  const db = getDb();
+  const [authority] = await db
+    .select({ id: tripAuthorities.id })
+    .from(tripAuthorities)
+    .where(
+      and(
+        eq(tripAuthorities.tenantId, input.tenantId),
+        eq(tripAuthorities.allocationId, input.allocationId),
+      ),
+    )
+    .limit(1);
+  if (!authority) return false;
+
+  const [amendment] = await db
+    .select({ id: tripAmendments.id })
+    .from(tripAmendments)
+    .where(
+      and(
+        eq(tripAmendments.authorityId, authority.id),
+        eq(tripAmendments.status, 'approved'),
+        sql`COALESCE(${tripAmendments.approvedAt}, ${tripAmendments.createdAt}) > ${issuedAt}`,
+      ),
+    )
+    .limit(1);
+  return Boolean(amendment);
+}
+
 export default async function ShortVerificationPage({
   params,
 }: {
@@ -79,30 +173,73 @@ export default async function ShortVerificationPage({
   }
 
   const document = result.document;
-  const branding = await resolveTenantBranding(document.tenantId);
   const snapshot = document.snapshotData as Record<string, unknown>;
+  const liveBranding = await resolveTenantBranding(document.tenantId);
+  const branding = frozenVerificationBranding(snapshot, liveBranding);
   const status = getVerificationState(document.status);
-  const reference = String(
-    snapshot.authorityNumber || snapshot.reference || `Version ${document.documentVersion}`,
+  const permanent = result.kind === 'permanent';
+  const frozenIssueAt = frozenIssueTimestamp(snapshot, document.createdAt);
+  const postIssueAuthorityAmendment =
+    document.documentType === 'trip_authority' && document.entityType === 'vehicle_allocation'
+      ? await hasPostIssueTripAuthorityAmendment({
+          tenantId: document.tenantId,
+          allocationId: document.entityId,
+          issuedAt: frozenIssueAt,
+        })
+      : false;
+
+  const currentVersion =
+    document.status === 'superseded'
+      ? (
+          await getDb()
+            .select({
+              id: generatedDocuments.id,
+              documentVersion: generatedDocuments.documentVersion,
+              verificationSlug: generatedDocuments.verificationSlug,
+            })
+            .from(generatedDocuments)
+            .where(
+              and(
+                eq(generatedDocuments.tenantId, document.tenantId),
+                eq(generatedDocuments.entityType, document.entityType),
+                eq(generatedDocuments.entityId, document.entityId),
+                eq(generatedDocuments.documentType, document.documentType),
+                eq(generatedDocuments.status, 'issued'),
+              ),
+            )
+            .orderBy(desc(generatedDocuments.documentVersion))
+            .limit(1)
+        )[0]
+      : null;
+
+  const shareSummary = permanent
+    ? null
+    : buildPublicDocumentSummary({
+        documentType: document.documentType,
+        documentVersion: document.documentVersion,
+        documentStatus: document.status,
+        snapshotData: snapshot,
+        profile: result.shareLink.redactionProfile,
+      });
+  const reference = shareSummary?.reference || String(
+    snapshot.authorityNumber || snapshot.reference || snapshot.requestReference || `Version ${document.documentVersion}`,
   );
-  const summary = [
+  const summary: Array<[string, string]> = [
     ['Document', documentTypeLabel(document.documentType)],
     ['Reference', reference],
     ['Status', formatDocumentStatus(document.status)],
     ['Version', `v${document.documentVersion}`],
-    ['Issue date', formatHumanDateTime(document.createdAt, branding?.locale)],
+    ['Issue date', formatHumanDateTime(frozenIssueAt, branding?.locale)],
     ['Issuing authority', branding?.organisationName || 'Government Fleet'],
   ];
-  for (const [label, key] of [
-    ['Vehicle', 'vehicle'],
-    ['Driver', 'driver'],
-    ['Valid from', 'validFrom'],
-    ['Valid until', 'validUntil'],
-  ]) {
-    if (snapshot[key] !== undefined) summary.push([label, formatHumanValue(snapshot[key], key)]);
+
+  if (shareSummary) {
+    for (const row of shareSummary.rows) {
+      if (['Reference', 'Status', 'Version'].includes(row.label)) continue;
+      summary.push([row.label, row.value]);
+    }
   }
 
-  const permanent = result.kind === 'permanent';
   const verificationCode = permanent
     ? result.verificationCode
     : result.shareLink.verificationCode || result.shareLink.shortSlug;
@@ -112,7 +249,7 @@ export default async function ShortVerificationPage({
     document.status !== 'draft';
   const downloadViewAvailable =
     !permanent &&
-    (!result.shareLink.maxViews || result.shareLink.currentViews + 1 < result.shareLink.maxViews);
+    (!result.shareLink.maxViews || result.shareLink.currentViews + 1 <= result.shareLink.maxViews);
   const canDownload = downloadAllowedByPolicy && downloadViewAvailable;
 
   return (
@@ -153,9 +290,34 @@ export default async function ShortVerificationPage({
             </p>
             <h1 className="text-ink-950 text-xl font-bold">{status.label}</h1>
             <p className="text-ink-700 mt-1 text-sm">{status.message}</p>
+            {currentVersion?.verificationSlug && (
+              <p className="text-ink-700 mt-2 text-sm">
+                Current official version:{' '}
+                <a
+                  href={`/v/${currentVersion.verificationSlug}`}
+                  className="focus-ring text-brand-800 font-semibold underline underline-offset-2"
+                >
+                  verify v{currentVersion.documentVersion}
+                </a>
+              </p>
+            )}
           </div>
         </div>
       </div>
+
+      {postIssueAuthorityAmendment && (
+        <div className="border-status-pending-bg bg-status-pending-bg mt-4 rounded-xl border p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="text-status-pending-text mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="text-ink-950 text-sm font-semibold">Subsequent operational amendments recorded</p>
+              <p className="text-ink-700 mt-1 text-sm">
+                This is the authentic Trip Authority issued for departure. The trip record contains one or more approved operational amendments recorded after this document was issued. The original issued authority remains unchanged as historical evidence.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="border-border bg-surface mt-4 overflow-hidden rounded-xl border shadow-sm">
         {summary.map(([label, value]) => (

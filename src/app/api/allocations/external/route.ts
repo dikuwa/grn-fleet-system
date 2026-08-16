@@ -11,6 +11,7 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { recordAuditEvent } from '@/lib/audit-event';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { onTripIssued } from '@/lib/document-generator';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
@@ -24,19 +25,26 @@ const ALLOCATABLE_STATUSES = [
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 const LIVE_EXTERNAL_ASSIGNMENT_STATES = ['pending_acceptance', 'accepted'] as const;
 
-function licenceClassCompatible(required: string | null, held: string | null) {
-  if (!required) return true;
-  const requiredCodes = required
-    .split(/[,+/\s]+/)
-    .map((code) => code.trim().toUpperCase())
-    .filter(Boolean);
-  const heldCodes = new Set(
-    String(held || '')
-      .split(/[,+/\s]+/)
-      .map((code) => code.trim().toUpperCase())
-      .filter(Boolean),
-  );
-  return requiredCodes.every((code) => heldCodes.has(code));
+function databaseErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
+
+function databaseErrorText(error: unknown): string {
+  if (!error || typeof error !== 'object') return String(error || '');
+  const record = error as { message?: unknown; cause?: unknown };
+  const parts = [typeof record.message === 'string' ? record.message : ''];
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { message?: unknown };
+    if (typeof cause.message === 'string') parts.push(cause.message);
+  }
+  return parts.filter(Boolean).join(' ');
 }
 
 export async function POST(request: NextRequest) {
@@ -146,7 +154,10 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
-    if (!licenceClassCompatible(vehicle.requiredLicenceClass, driverRecord.licence.licenceClass)) {
+    if (
+      vehicle.requiredLicenceClass &&
+      !namibiaLicenceClassCovers(driverRecord.licence.licenceClass, vehicle.requiredLicenceClass)
+    ) {
       return NextResponse.json(
         { error: 'External driver licence class is not compatible with this vehicle' },
         { status: 409 },
@@ -364,6 +375,28 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error('[allocations/external] POST failed:', error);
+    const code = databaseErrorCode(error);
+    const message = databaseErrorText(error);
+    if (
+      code === '23P01' ||
+      message.includes('allocation_vehicle_overlap') ||
+      message.includes('allocation_request_already_live') ||
+      message.includes('external_driver_assignment_overlap')
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'The vehicle, request, or external driver was allocated by another operation at the same time. Refresh and choose currently available resources.',
+        },
+        { status: 409 },
+      );
+    }
+    if (code === '23514' && message.includes('external_driver_assignment_')) {
+      return NextResponse.json(
+        { error: 'The external driver assignment no longer matches the current trip lifecycle. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'External driver allocation could not be created' }, { status: 500 });
   }
 }

@@ -12,6 +12,8 @@ import {
 import { StyledSelect } from '@/components/ui/styled-select';
 import { Link2, Copy, CheckCircle2 } from 'lucide-react';
 
+type ExternalRedactionProfile = 'external_standard' | 'external_minimal';
+
 interface Props {
   documentId: string;
   disabled?: boolean;
@@ -24,6 +26,8 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
   const [expiresInHours, setExpiresInHours] = useState(168); // 7 days
   const [maxViews, setMaxViews] = useState<number>(0);
   const [allowDownload, setAllowDownload] = useState(false);
+  const [redactionProfile, setRedactionProfile] =
+    useState<ExternalRedactionProfile>('external_standard');
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -40,6 +44,7 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
           expiresInHours,
           maxViews: maxViews > 0 ? maxViews : undefined,
           allowDownload,
+          redactionProfile,
         }),
       });
 
@@ -55,7 +60,7 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
     } finally {
       setIsCreating(false);
     }
-  }, [allowDownload, documentId, expiresInHours, maxViews]);
+  }, [allowDownload, documentId, expiresInHours, maxViews, redactionProfile]);
 
   const copyToClipboard = useCallback(async () => {
     if (!shareUrl) return;
@@ -64,7 +69,6 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback: select the text
       const input = document.querySelector('.share-url-input') as HTMLInputElement;
       if (input) input.select();
     }
@@ -103,6 +107,24 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
         {!shareUrl ? (
           <div className="space-y-4">
             <div className="space-y-2">
+              <label className="text-ink-500 block text-xs font-medium">Public disclosure</label>
+              <StyledSelect
+                value={redactionProfile}
+                onChange={(event) =>
+                  setRedactionProfile(event.target.value as ExternalRedactionProfile)
+                }
+              >
+                <option value="external_standard">External Standard</option>
+                <option value="external_minimal">External Minimal</option>
+              </StyledSelect>
+              <p className="text-ink-500 text-xs">
+                {redactionProfile === 'external_minimal'
+                  ? 'Shows document identity and verification only.'
+                  : 'Adds safe trip or request context while hiding personal identifiers, signatures, internal comments, passenger lists and fuel-card details.'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <label className="text-ink-500 block text-xs font-medium">Expires After</label>
               <StyledSelect
                 value={expiresInHours}
@@ -124,10 +146,10 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
               />
               <span>
                 <span className="text-ink-950 block text-sm font-medium">
-                  Allow verified PDF download
+                  Allow redacted PDF download
                 </span>
                 <span className="text-ink-500 block text-xs">
-                  Leave off when the recipient only needs authenticity verification.
+                  The downloadable copy follows the public disclosure profile selected above.
                 </span>
               </span>
             </label>
@@ -139,6 +161,7 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
               <input
                 type="number"
                 min={0}
+                max={100000}
                 value={maxViews}
                 onChange={(e) => setMaxViews(Number(e.target.value))}
                 className="border-border bg-surface text-ink-950 focus:ring-brand-600 h-10 w-full rounded-[8px] border px-3 text-sm focus:ring-2 focus:outline-none"
@@ -159,7 +182,7 @@ export function CreateShareLinkButton({ documentId, disabled = false }: Props) {
         ) : (
           <div className="space-y-4">
             <p className="text-ink-500 text-xs">
-              Share this link securely. Anyone with the link can view the document.
+              Share this link securely. Anyone with the link can see only the disclosure profile you selected.
             </p>
 
             <div className="border-border bg-muted/30 flex items-center gap-2 rounded-[8px] border p-2">

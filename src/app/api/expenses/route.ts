@@ -183,6 +183,12 @@ export async function POST(request: NextRequest) {
         .where(and(...tripConditions))
         .limit(1);
       if (!row) return NextResponse.json({ error: 'Trip not found or not assigned to you' }, { status: 404 });
+      if (row.status === 'closed') {
+        return NextResponse.json(
+          { error: 'This trip is already reconciled and closed. Trip-linked expenses can no longer be added.' },
+          { status: 409 },
+        );
+      }
       if (!permission.canManage && !['in_progress', 'return_due'].includes(row.status)) {
         return NextResponse.json({ error: 'Driver expenses are available only while the trip is active' }, { status: 409 });
       }
@@ -259,6 +265,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, data: expense }, { status: 201 });
   } catch (error) {
     console.error('[expenses] POST failed:', error);
+    if (String(error).includes('closed_trip_financial_immutable')) {
+      return NextResponse.json(
+        { error: 'This trip was closed while the expense was being recorded. Closed-trip financial data is immutable.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to record operational expense' }, { status: 500 });
   }
 }

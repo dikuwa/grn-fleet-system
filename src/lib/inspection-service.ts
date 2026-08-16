@@ -11,6 +11,7 @@ import {
   vehicleAllocations,
   vehicleInspections,
 } from '@/db/schema/trips';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import {
   maintenanceEvents,
   vehicleDefects,
@@ -23,6 +24,7 @@ import { auditEvents } from '@/db/schema/audit';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { onInspectionCompleted } from '@/lib/document-generator';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
+import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-acceptance';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 export class InspectionServiceError extends Error {
@@ -57,6 +59,17 @@ const fuelLevels = ['empty', 'quarter', 'half', 'three_quarters', 'full'];
 
 function fail(message: string, status = 400): never {
   throw new InspectionServiceError(message, status);
+}
+
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
 }
 
 export async function completeOfficialInspection(input: InspectionInput) {
@@ -112,6 +125,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
     driverEmployeeId: vehicleAllocations.driverEmployeeId,
     authorityId: tripAuthorities.id,
     authorityStatus: tripAuthorities.status,
+    authorityAcceptedAt: tripAuthorities.acceptedAt,
   }).from(trips)
     .innerJoin(
       transportRequests,
@@ -143,7 +157,28 @@ export async function completeOfficialInspection(input: InspectionInput) {
       eq(transportRequests.tenantId, tenantId),
     )).limit(1);
   if (!trip || trip.vehicleId !== input.vehicleId) fail('Trip and vehicle do not match', 404);
-  if (!trip.driverEmployeeId) fail('A valid driver must be assigned before inspection', 409);
+
+  const [externalDriver] = trip.driverEmployeeId
+    ? []
+    : await db
+        .select({
+          id: externalDriverAssignments.id,
+          state: externalDriverAssignments.state,
+          issueId: externalDriverAssignments.issueId,
+        })
+        .from(externalDriverAssignments)
+        .where(
+          and(
+            eq(externalDriverAssignments.tenantId, tenantId),
+            eq(externalDriverAssignments.tripId, input.tripId),
+            eq(externalDriverAssignments.state, 'accepted'),
+          ),
+        )
+        .orderBy(desc(externalDriverAssignments.assignedAt))
+        .limit(1);
+  if (!trip.driverEmployeeId && !externalDriver) {
+    fail('A valid internal or accepted external driver must be assigned before inspection', 409);
+  }
 
   if (input.type === 'departure') {
     if (trip.status !== 'pending' || !departureRequestStatuses.includes(trip.requestStatus)) {
@@ -151,6 +186,16 @@ export async function completeOfficialInspection(input: InspectionInput) {
     }
     if (!['driver_accepted', 'awaiting_pre_trip_inspection'].includes(trip.authorityStatus)) {
       fail('The assigned driver must accept the Trip Authority before inspection', 409);
+    }
+    const pendingAmendment = await findPendingAuthorityAmendmentAcceptance({
+      authorityId: trip.authorityId,
+      acceptedAt: trip.authorityAcceptedAt,
+    });
+    if (pendingAmendment) {
+      fail(
+        `A ${pendingAmendment.amendmentType.replaceAll('_', ' ')} amendment became effective after the driver accepted the Trip Authority. The revised authority must be acknowledged before departure inspection.`,
+        409,
+      );
     }
     const [blocking] = await db.select({ count: sql<number>`count(*)` }).from(vehicleDefects).where(and(
       eq(vehicleDefects.vehicleId, input.vehicleId),
@@ -164,6 +209,9 @@ export async function completeOfficialInspection(input: InspectionInput) {
     if (!returnTripStatuses.includes(trip.status)) fail('Return inspection is only available after trip execution', 409);
     if (!['returned', 'awaiting_arrival_inspection'].includes(trip.authorityStatus)) {
       fail('Trip Authority is not ready for arrival inspection', 409);
+    }
+    if (externalDriver && !externalDriver.issueId) {
+      fail('External-driver return inspection requires a completed physical vehicle issue record', 409);
     }
   }
 
@@ -232,165 +280,190 @@ export async function completeOfficialInspection(input: InspectionInput) {
   const inspectionId = randomUUID();
   const defectIds = new Map(failedItems.map((item) => [item.id, randomUUID()]));
   const sourceChannel = input.clientSyncId ? 'offline_sync' : 'web';
+  const driverWitnessReference = trip.driverEmployeeId
+    ? `driver:${trip.driverEmployeeId}`
+    : `external_assignment:${externalDriver!.id}`;
 
-  await runAtomicMutations((tx) => {
-    const queries: any[] = [
-      tx.insert(vehicleInspections).values({
-        id: inspectionId,
+  try {
+    await runAtomicMutations((tx) => {
+      const queries: any[] = [
+        tx.insert(vehicleInspections).values({
+          id: inspectionId,
+          tenantId,
+          vehicleId: input.vehicleId,
+          tripId: input.tripId,
+          templateId: template.id,
+          templateVersion: template.version,
+          type: input.type,
+          odometerReading: input.odometerReading,
+          fuelLevel: input.fuelLevel || null,
+          inspectorUserId: userId,
+          driverEmployeeId: trip.driverEmployeeId,
+          status,
+          overallPass,
+          signatureInspector: `acknowledged:${userId}:${now.toISOString()}`,
+          signatureDriver: `witnessed_by_inspector:${userId}:${driverWitnessReference}:${now.toISOString()}`,
+          notes: input.notes?.trim() || null,
+          clientSyncId: input.clientSyncId || null,
+        }),
+      ];
+
+      if (failedItems.length) {
+        queries.push(tx.insert(vehicleDefects).values(failedItems.map((item) => ({
+          id: defectIds.get(item.id)!,
+          vehicleId: input.vehicleId,
+          tripId: input.tripId,
+          inspectionId,
+          severity: item.isCritical ? 'critical' : 'major',
+          description: item.comment || `Inspection item failed: ${item.label}`,
+          isBlocking: item.isCritical,
+          reportedByUserId: userId,
+          assignedToUserId: maintenanceAssignee,
+        }))));
+      }
+
+      queries.push(tx.insert(inspectionItemResults).values(evaluatedItems.map((item) => ({
+        inspectionId,
+        templateItemId: item.id,
+        result: item.result,
+        comment: item.comment,
+        defectId: defectIds.get(item.id) ?? null,
+      }))));
+
+      if (criticalFailure) {
+        queries.push(tx.update(vehicles).set({ status: 'maintenance', updatedAt: now }).where(and(
+          eq(vehicles.id, input.vehicleId),
+          eq(vehicles.tenantId, tenantId),
+        )));
+        queries.push(tx.insert(maintenanceEvents).values({
+          vehicleId: input.vehicleId,
+          serviceDate: now.toISOString().slice(0, 10),
+          serviceOdometer: input.odometerReading,
+          serviceType: 'inspection',
+          description: `Critical ${input.type} inspection defect follow-up`,
+          notes: `Automatically escalated from inspection ${inspectionId}`,
+          createdByUserId: userId,
+          assignedToUserId: maintenanceAssignee,
+        }));
+        queries.push(tx.insert(vehicleStatusEvents).values({
+          vehicleId: input.vehicleId,
+          previousStatus: vehicle.status,
+          newStatus: 'maintenance',
+          reason: `Critical defect in ${input.type} inspection`,
+          changedByUserId: userId,
+          referenceEntityType: 'inspection',
+          referenceEntityId: inspectionId,
+        }));
+      }
+
+      if (input.type === 'departure') {
+        if (trip.authorityStatus === 'driver_accepted') {
+          queries.push(tx.update(tripAuthorities)
+            .set({ status: 'awaiting_pre_trip_inspection', updatedAt: now })
+            .where(and(
+              eq(tripAuthorities.id, trip.authorityId),
+              eq(tripAuthorities.tenantId, tenantId),
+              eq(tripAuthorities.status, 'driver_accepted'),
+            )));
+        }
+        if (overallPass) {
+          queries.push(tx.update(tripAuthorities)
+            .set({ status: 'ready_for_departure', beginningOdometer: input.odometerReading, updatedAt: now })
+            .where(and(
+              eq(tripAuthorities.id, trip.authorityId),
+              eq(tripAuthorities.tenantId, tenantId),
+              eq(tripAuthorities.status, 'awaiting_pre_trip_inspection'),
+            )));
+        }
+      } else {
+        queries.push(tx.update(trips)
+          .set({ status: 'closure_review', returnedAt: now, updatedAt: now })
+          .where(and(
+            eq(trips.id, input.tripId),
+            eq(trips.tenantId, tenantId),
+            inArray(trips.status, returnTripStatuses),
+          )));
+        if (trip.authorityStatus === 'returned') {
+          queries.push(tx.update(tripAuthorities)
+            .set({ status: 'awaiting_arrival_inspection', updatedAt: now })
+            .where(and(
+              eq(tripAuthorities.id, trip.authorityId),
+              eq(tripAuthorities.tenantId, tenantId),
+              eq(tripAuthorities.status, 'returned'),
+            )));
+        }
+        queries.push(tx.update(tripAuthorities)
+          .set({ status: 'awaiting_reconciliation', endingOdometer: input.odometerReading, updatedAt: now })
+          .where(and(
+            eq(tripAuthorities.id, trip.authorityId),
+            eq(tripAuthorities.tenantId, tenantId),
+            eq(tripAuthorities.status, 'awaiting_arrival_inspection'),
+          )));
+      }
+
+      if (photoKeys.length) {
+        queries.push(tx.insert(inspectionPhotos).values(photoKeys.map((fileKey) => ({
+          inspectionId,
+          fileKey,
+          stage: input.type,
+        }))));
+      }
+      queries.push(tx.insert(vehicleOdometerEvents).values({
+        vehicleId: input.vehicleId,
+        odometerValue: input.odometerReading,
+        source: 'inspection',
+        sourceEntityType: 'inspection',
+        sourceEntityId: inspectionId,
+        recordedByUserId: userId,
+      }));
+      queries.push(tx.update(vehicles)
+        .set({ currentOdometer: sql`greatest(${vehicles.currentOdometer}, ${input.odometerReading})`, updatedAt: now })
+        .where(and(eq(vehicles.id, input.vehicleId), eq(vehicles.tenantId, tenantId))));
+      queries.push(tx.insert(auditEvents).values({
         tenantId,
-        vehicleId: input.vehicleId,
-        tripId: input.tripId,
-        templateId: template.id,
-        templateVersion: template.version,
-        type: input.type,
-        odometerReading: input.odometerReading,
-        fuelLevel: input.fuelLevel || null,
-        inspectorUserId: userId,
-        driverEmployeeId: trip.driverEmployeeId,
-        status,
-        overallPass,
-        signatureInspector: `acknowledged:${userId}:${now.toISOString()}`,
-        signatureDriver: `witnessed_by_inspector:${userId}:driver:${trip.driverEmployeeId}:${now.toISOString()}`,
-        notes: input.notes?.trim() || null,
-        clientSyncId: input.clientSyncId || null,
-      }),
-    ];
-
-    // Defects must exist before checklist rows reference them through defect_id.
-    if (failedItems.length) {
-      queries.push(tx.insert(vehicleDefects).values(failedItems.map((item) => ({
-        id: defectIds.get(item.id)!,
-        vehicleId: input.vehicleId,
-        tripId: input.tripId,
-        inspectionId,
-        severity: item.isCritical ? 'critical' : 'major',
-        description: item.comment || `Inspection item failed: ${item.label}`,
-        isBlocking: item.isCritical,
-        reportedByUserId: userId,
-        assignedToUserId: maintenanceAssignee,
-      }))));
-    }
-
-    queries.push(tx.insert(inspectionItemResults).values(evaluatedItems.map((item) => ({
-      inspectionId,
-      templateItemId: item.id,
-      result: item.result,
-      comment: item.comment,
-      defectId: defectIds.get(item.id) ?? null,
-    }))));
-
-    if (criticalFailure) {
-      queries.push(tx.update(vehicles).set({ status: 'maintenance', updatedAt: now }).where(and(
-        eq(vehicles.id, input.vehicleId),
-        eq(vehicles.tenantId, tenantId),
-      )));
-      queries.push(tx.insert(maintenanceEvents).values({
-        vehicleId: input.vehicleId,
-        serviceDate: now.toISOString().slice(0, 10),
-        serviceOdometer: input.odometerReading,
-        serviceType: 'inspection',
-        description: `Critical ${input.type} inspection defect follow-up`,
-        notes: `Automatically escalated from inspection ${inspectionId}`,
-        createdByUserId: userId,
-        assignedToUserId: maintenanceAssignee,
+        tenantSequence: Date.now(),
+        eventType: 'inspection_completed',
+        actorUserId: userId,
+        action: 'complete',
+        entityType: 'inspection',
+        entityId: inspectionId,
+        correlationId: input.clientSyncId || inspectionId,
+        sourceChannel,
+        summary: `${input.type} inspection ${status}; ${failedItems.length} defect(s) recorded`,
+        after: {
+          tripId: input.tripId,
+          vehicleId: input.vehicleId,
+          templateId: template.id,
+          templateVersion: template.version,
+          overallPass,
+          criticalDefects: failedItems.filter((item) => item.isCritical).length,
+          driverKind: trip.driverEmployeeId ? 'internal' : 'external',
+          externalDriverAssignmentId: externalDriver?.id ?? null,
+          driverAcknowledgementMethod: 'inspector_witnessed',
+        },
       }));
-      queries.push(tx.insert(vehicleStatusEvents).values({
-        vehicleId: input.vehicleId,
-        previousStatus: vehicle.status,
-        newStatus: 'maintenance',
-        reason: `Critical defect in ${input.type} inspection`,
-        changedByUserId: userId,
-        referenceEntityType: 'inspection',
-        referenceEntityId: inspectionId,
-      }));
-    }
-
-    if (input.type === 'departure') {
-      if (trip.authorityStatus === 'driver_accepted') {
-        queries.push(tx.update(tripAuthorities)
-          .set({ status: 'awaiting_pre_trip_inspection', updatedAt: now })
-          .where(and(
-            eq(tripAuthorities.id, trip.authorityId),
-            eq(tripAuthorities.tenantId, tenantId),
-            eq(tripAuthorities.status, 'driver_accepted'),
-          )));
+      return queries;
+    });
+  } catch (error) {
+    const code = postgresErrorCode(error);
+    if (input.clientSyncId && (code === '23505' || code === '23514')) {
+      const [existing] = await db.select().from(vehicleInspections).where(and(
+        eq(vehicleInspections.tenantId, tenantId),
+        eq(vehicleInspections.clientSyncId, input.clientSyncId),
+      )).limit(1);
+      if (existing) {
+        return {
+          inspection: existing,
+          trip: null,
+          document: null,
+          overallPass: existing.overallPass,
+          status: existing.status,
+          idempotent: true,
+        };
       }
-      if (overallPass) {
-        queries.push(tx.update(tripAuthorities)
-          .set({ status: 'ready_for_departure', beginningOdometer: input.odometerReading, updatedAt: now })
-          .where(and(
-            eq(tripAuthorities.id, trip.authorityId),
-            eq(tripAuthorities.tenantId, tenantId),
-            eq(tripAuthorities.status, 'awaiting_pre_trip_inspection'),
-          )));
-      }
-    } else {
-      queries.push(tx.update(trips)
-        .set({ status: 'closure_review', returnedAt: now, updatedAt: now })
-        .where(and(
-          eq(trips.id, input.tripId),
-          eq(trips.tenantId, tenantId),
-          inArray(trips.status, returnTripStatuses),
-        )));
-      if (trip.authorityStatus === 'returned') {
-        queries.push(tx.update(tripAuthorities)
-          .set({ status: 'awaiting_arrival_inspection', updatedAt: now })
-          .where(and(
-            eq(tripAuthorities.id, trip.authorityId),
-            eq(tripAuthorities.tenantId, tenantId),
-            eq(tripAuthorities.status, 'returned'),
-          )));
-      }
-      queries.push(tx.update(tripAuthorities)
-        .set({ status: 'awaiting_reconciliation', endingOdometer: input.odometerReading, updatedAt: now })
-        .where(and(
-          eq(tripAuthorities.id, trip.authorityId),
-          eq(tripAuthorities.tenantId, tenantId),
-          eq(tripAuthorities.status, 'awaiting_arrival_inspection'),
-        )));
     }
-
-    if (photoKeys.length) {
-      queries.push(tx.insert(inspectionPhotos).values(photoKeys.map((fileKey) => ({
-        inspectionId,
-        fileKey,
-        stage: input.type,
-      }))));
-    }
-    queries.push(tx.insert(vehicleOdometerEvents).values({
-      vehicleId: input.vehicleId,
-      odometerValue: input.odometerReading,
-      source: 'inspection',
-      sourceEntityType: 'inspection',
-      sourceEntityId: inspectionId,
-      recordedByUserId: userId,
-    }));
-    queries.push(tx.update(vehicles)
-      .set({ currentOdometer: sql`greatest(${vehicles.currentOdometer}, ${input.odometerReading})`, updatedAt: now })
-      .where(and(eq(vehicles.id, input.vehicleId), eq(vehicles.tenantId, tenantId))));
-    queries.push(tx.insert(auditEvents).values({
-      tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'inspection_completed',
-      actorUserId: userId,
-      action: 'complete',
-      entityType: 'inspection',
-      entityId: inspectionId,
-      correlationId: input.clientSyncId || inspectionId,
-      sourceChannel,
-      summary: `${input.type} inspection ${status}; ${failedItems.length} defect(s) recorded`,
-      after: {
-        tripId: input.tripId,
-        vehicleId: input.vehicleId,
-        templateId: template.id,
-        templateVersion: template.version,
-        overallPass,
-        criticalDefects: failedItems.filter((item) => item.isCritical).length,
-        driverAcknowledgementMethod: 'inspector_witnessed',
-      },
-    }));
-    return queries;
-  });
+    throw error;
+  }
 
   const [inspection, updatedTrip] = await Promise.all([
     db.select().from(vehicleInspections).where(and(

@@ -3,10 +3,11 @@
  *
  * GET /api/allocations/[id]/replacement-candidates
  *
- * Returns tenant vehicles that may replace the current allocation vehicle.
- * Candidate availability mirrors the canonical replacement service exactly:
- * fleet status must be `available` and there must be no overlapping
- * provisional/confirmed allocation in the requested period.
+ * Returns tenant vehicles that are currently available candidates by fleet
+ * status and allocation-period overlap. This endpoint is deliberately only a
+ * discovery aid: the canonical replacement service remains authoritative for
+ * driver licence/class, professional-authorisation, trip phase, defects and
+ * all concurrency checks at the moment replacement is committed.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -71,6 +72,8 @@ export async function GET(
         vehicleRegisterNumber: vehicles.vehicleRegisterNumber,
         currentOdometer: vehicles.currentOdometer,
         status: vehicles.status,
+        requiredLicenceClass: vehicles.requiredLicenceClass,
+        professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
       })
       .from(vehicles)
       .where(eq(vehicles.tenantId, tenantId))
@@ -98,10 +101,23 @@ export async function GET(
       .map((vehicle) => ({
         ...vehicle,
         available: vehicle.status === 'available' && !overlappingVehicleIds.has(vehicle.id),
+        eligibilityNote:
+          vehicle.status !== 'available'
+            ? `Vehicle status is ${vehicle.status}.`
+            : overlappingVehicleIds.has(vehicle.id)
+              ? 'Vehicle has an overlapping live allocation.'
+              : vehicle.professionalAuthorisationRequired
+                ? 'Availability confirmed; final replacement still requires professional-authorisation eligibility.'
+                : vehicle.requiredLicenceClass
+                  ? `Availability confirmed; final replacement still verifies driver licence coverage for class ${vehicle.requiredLicenceClass}.`
+                  : 'Availability confirmed; final replacement still performs driver and lifecycle validation.',
       }))
       .sort((a, b) => (a.available === b.available ? 0 : a.available ? -1 : 1));
 
-    return NextResponse.json({ vehicles: result });
+    return NextResponse.json({
+      vehicles: result,
+      authoritativeEligibility: 'replacement_service',
+    });
   } catch (error) {
     console.error('[Replacement Candidates] GET failed:', error);
     return NextResponse.json(

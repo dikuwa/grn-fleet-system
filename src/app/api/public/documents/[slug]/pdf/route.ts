@@ -1,14 +1,11 @@
 import { NextResponse } from 'next/server';
 import { resolveShortSharedDocument } from '@/lib/share-token';
-import { generateVerifiedTripAuthorityPdf } from '@/lib/pdf/verified-trip-authority';
-import { generateVerifiedInspectionReportPdf } from '@/lib/pdf/verified-inspection-report';
-import { generateVerifiedTransportRequestPdf } from '@/lib/pdf/verified-transport-request';
-import { generateVerifiedSnapshotDocumentPdf } from '@/lib/pdf/verified-snapshot-documents';
+import { generatePublicSharedDocumentPdf } from '@/lib/pdf/public-shared-document';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
-export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const result = await resolveShortSharedDocument(slug);
   if (!result.document || !result.shareLink) {
@@ -26,14 +23,21 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
       { status: 403 },
     );
   }
-  const pdf = result.document.documentType === 'trip_authority'
-    ? await generateVerifiedTripAuthorityPdf(result.document.id)
-    : result.document.documentType === 'inspection_report'
-      ? await generateVerifiedInspectionReportPdf(result.document.id)
-      : result.document.documentType === 'transport_request'
-        ? await generateVerifiedTransportRequestPdf(result.document.id)
-        : await generateVerifiedSnapshotDocumentPdf(result.document.id);
-  if (!pdf) return NextResponse.json({ error: 'PDF is unavailable.' }, { status: 404 });
+
+  // A public URL is always a public disclosure boundary. Even a historical
+  // row labelled "internal" receives an allow-list-only shared PDF here; the
+  // complete official PDF remains available only from authenticated document
+  // routes with workspace/record authorization.
+  const requestUrl = new URL(request.url);
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    `${requestUrl.protocol}//${requestUrl.host}`;
+  const pdf = await generatePublicSharedDocumentPdf({
+    document: result.document,
+    shareLink: result.shareLink,
+    baseUrl,
+  });
+
   return new NextResponse(pdf.buffer as BodyInit, {
     headers: {
       'Content-Type': 'application/pdf',

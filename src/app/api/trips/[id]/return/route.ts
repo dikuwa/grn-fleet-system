@@ -57,6 +57,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         trip: trips,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         allocationState: vehicleAllocations.state,
+        allocationVersion: vehicleAllocations.version,
+        allocationVehicleId: vehicleAllocations.vehicleId,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
         beginningOdometer: tripAuthorities.beginningOdometer,
@@ -110,6 +112,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (trip.allocationState !== 'confirmed') {
       return NextResponse.json({ error: `Allocation is no longer active (${trip.allocationState})` }, { status: 409 });
     }
+    if (trip.allocationVehicleId !== trip.trip.vehicleId) {
+      return NextResponse.json({ error: 'The active allocation vehicle changed. Refresh the trip before recording return.' }, { status: 409 });
+    }
 
     const minimumOdometer = Math.max(trip.beginningOdometer ?? 0, trip.vehicleOdometer ?? 0);
     if (Number(body.endingOdometer) < minimumOdometer) {
@@ -126,17 +131,39 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const comments = body.comments?.trim() || null;
     const auditSequence = Date.now();
 
-    // "returned" is a logical transition point, but there is no external action
-    // between returned and awaiting_arrival_inspection. Commit the durable final
-    // state in one statement and advance the authority version by two to retain
-    // the two-step lifecycle history without exposing a partial intermediate state.
+    // Mid-trip vehicle replacement and trip return both mutate the active
+    // allocation. Claim the exact allocation version first so one lifecycle
+    // transition wins before the trip/authority/odometer evidence is frozen.
     await db.execute(sql`
-      WITH trip_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${trip.trip.allocationId}::uuid
+          AND va.state = 'confirmed'
+          AND va.version = ${trip.allocationVersion}
+          AND va.vehicle_id = ${trip.trip.vehicleId}::uuid
+          AND va.driver_employee_id = ${employee.id}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.id = ${id}::uuid
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.allocation_id = va.id
+              AND t.vehicle_id = va.vehicle_id
+              AND t.status IN ('in_progress', 'return_due')
+          )
+        RETURNING id
+      ),
+      trip_claim AS (
         UPDATE trips
         SET status = 'return_inspection', returned_at = ${now}, updated_at = ${now}
         WHERE id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
+          AND allocation_id = ${trip.trip.allocationId}::uuid
+          AND vehicle_id = ${trip.trip.vehicleId}::uuid
           AND status IN ('in_progress', 'return_due')
+          AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING id, request_id, vehicle_id
       ),
       authority_claim AS (
@@ -147,6 +174,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             updated_at = ${now}
         WHERE id = ${trip.authorityId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
+          AND allocation_id = ${trip.trip.allocationId}::uuid
           AND status IN ('in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported')
           AND EXISTS (SELECT 1 FROM trip_claim)
         RETURNING id
@@ -172,6 +200,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         SET current_odometer = GREATEST(current_odometer, ${endingOdometer}), updated_at = ${now}
         WHERE id = ${trip.trip.vehicleId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
+          AND current_odometer <= ${endingOdometer}
           AND EXISTS (SELECT 1 FROM odometer_insert)
         RETURNING id
       ),
@@ -192,6 +221,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           'Trip returned: awaiting arrival inspection',
           jsonb_build_object(
             'authorityId', ${trip.authorityId}::text,
+            'allocationVersion', ${trip.allocationVersion + 1}::integer,
+            'vehicleId', ${trip.trip.vehicleId}::text,
             'endingOdometer', ${endingOdometer}::integer,
             'fuelLevel', ${fuelLevel}::text,
             'returnLocation', ${returnLocation}::text,
@@ -203,13 +234,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM trip_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM odometer_insert) = 1
          AND (SELECT count(*) FROM vehicle_claim) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
         THEN '1'
-        ELSE 'atomic_trip_return_failed_' || (SELECT count(*) FROM trip_claim)::text
+        ELSE 'atomic_trip_return_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
+          || (SELECT count(*) FROM trip_claim)::text
+          || (SELECT count(*) FROM authority_claim)::text
+          || (SELECT count(*) FROM vehicle_claim)::text
       END AS integer) AS committed
     `);
 
@@ -230,7 +266,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (error) {
     console.error('[trips/return] POST failed:', error);
     return NextResponse.json(
-      { error: 'Trip state changed concurrently or the return could not be saved. Refresh and try again.' },
+      { error: 'Trip, allocation, vehicle, or odometer state changed while return was being recorded. Refresh and review the latest trip.' },
       { status: 409 },
     );
   }

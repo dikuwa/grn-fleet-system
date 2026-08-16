@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { reimbursements, fuelTransactions } from '@/db/schema/trips';
+import { reimbursements, fuelTransactions, trips } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
@@ -13,6 +13,8 @@ import {
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { generateDocument } from '@/lib/document-generator';
+import { enrichClosedTripFuelSummary } from '@/lib/trip-closure-document-enrichment';
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,9 +48,12 @@ export async function POST(request: NextRequest) {
         paymentMethod: fuelTransactions.paymentMethod,
         transactionAmount: fuelTransactions.amount,
         recordedByUserId: fuelTransactions.recordedByUserId,
+        tripId: fuelTransactions.tripId,
+        tripStatus: trips.status,
       })
       .from(fuelTransactions)
       .innerJoin(vehicles, eq(fuelTransactions.vehicleId, vehicles.id))
+      .leftJoin(trips, and(eq(trips.id, fuelTransactions.tripId), eq(trips.tenantId, session.tenantId)))
       .where(
         and(
           eq(fuelTransactions.id, transactionId),
@@ -175,6 +180,27 @@ export async function POST(request: NextRequest) {
 
     if (!reimbursement) {
       throw new Error('Reimbursement committed but could not be reloaded');
+    }
+
+    // A reimbursement claim may be discovered after the vehicle/trip has been
+    // operationally reconciled. Do not reopen or mutate the closed trip; instead
+    // refresh the pending Fuel Summary or create its next version so the claim
+    // count remains auditable without rewriting an issued historical document.
+    if (transaction.tripId && transaction.tripStatus === 'closed') {
+      try {
+        const document = await generateDocument({
+          documentType: 'fuel_summary',
+          entityType: 'trip',
+          entityId: transaction.tripId,
+          tenantId: session.tenantId,
+          generatedByUserId: session.user.id,
+        });
+        if (document) {
+          await enrichClosedTripFuelSummary(transaction.tripId, session.tenantId, document.id);
+        }
+      } catch (documentError) {
+        console.warn('[reimbursements] Fuel Summary refresh failed after committed claim:', documentError);
+      }
     }
 
     return NextResponse.json({ success: true, data: reimbursement }, { status: 201 });

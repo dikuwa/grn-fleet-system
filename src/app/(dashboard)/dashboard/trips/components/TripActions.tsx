@@ -3,9 +3,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowRightLeft, CheckSquare, Clock3, KeyRound, Repeat, XCircle } from 'lucide-react';
+import { ArrowRightLeft, CheckSquare, Clock3, KeyRound, Repeat, RotateCcw, XCircle } from 'lucide-react';
 import { VehicleReplacementDialog } from '@/components/allocations/VehicleReplacementDialog';
 import { DriverHandoverDialog } from './DriverHandoverDialog';
+import { ExternalTripStartDialog } from './ExternalTripStartDialog';
+import { ExternalTripReturnDialog } from './ExternalTripReturnDialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -22,6 +24,7 @@ interface TripActionsProps {
   tripId: string;
   allocationId: string;
   status: string;
+  /** Legacy server hint. Current issue state is resolved from readiness. */
   hasIssue?: boolean;
   hasAcknowledge?: boolean;
   /** Legacy server hint retained for prop compatibility; release actions use the authoritative readiness API. */
@@ -42,9 +45,15 @@ interface TripActionsProps {
 }
 
 type GateStatus = 'pass' | 'fail' | 'blocking' | 'pending';
+type DriverKind = 'internal' | 'external' | 'unassigned';
 
 interface ReadinessResponse {
-  gates?: Array<{ key: string; status: GateStatus }>;
+  driver?: {
+    kind: DriverKind;
+    accepted: boolean;
+    assignmentState?: string | null;
+  };
+  gates?: Array<{ key: string; status: GateStatus; label?: string; detail?: string }>;
 }
 
 export function TripActions({
@@ -66,21 +75,28 @@ export function TripActions({
   const [error, setError] = useState('');
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [handoverDialogOpen, setHandoverDialogOpen] = useState(false);
+  const [externalStartDialogOpen, setExternalStartDialogOpen] = useState(false);
+  const [externalReturnDialogOpen, setExternalReturnDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [departureInspectionStatus, setDepartureInspectionStatus] = useState<GateStatus | null>(null);
-  const [readinessLoading, setReadinessLoading] = useState(status === 'pending');
+  const [readinessLoading, setReadinessLoading] = useState(
+    status === 'pending' || status === 'in_progress',
+  );
+  const [driverKind, setDriverKind] = useState<DriverKind>('unassigned');
+  const [driverAccepted, setDriverAccepted] = useState(Boolean(hasAcknowledge));
+  const [vehicleIssued, setVehicleIssued] = useState(Boolean(hasIssue));
+  const [authorityAmendmentPending, setAuthorityAmendmentPending] = useState(false);
 
   const midTrip = status === 'in_progress';
-  // An internal trip cannot reach in_progress without the current employee driver
-  // acknowledging the authority. External-driver trips deliberately do not write
-  // the employee acknowledgement fields, so this also keeps the internal-only
-  // relief-driver handover control aligned with the API without weakening external
-  // driver separation. Vehicle replacement remains available for either driver type.
-  const canHandOverInternalDriver = canManage && midTrip && hasAcknowledge === true;
+  // Relief-driver handover is an internal-employee workflow. Require the
+  // readiness API to positively resolve an internal driver before exposing it;
+  // the default/unresolved state must never grant an employee-only action.
+  const canHandOverInternalDriver =
+    canManage && midTrip && driverKind === 'internal' && hasAcknowledge === true;
 
   const refreshReadiness = useCallback(async () => {
-    if (status !== 'pending') {
+    if (!['pending', 'in_progress'].includes(status)) {
       setReadinessLoading(false);
       return;
     }
@@ -91,14 +107,28 @@ export function TripActions({
       const json = (await response.json().catch(() => ({}))) as ReadinessResponse & { error?: string };
       if (!response.ok) throw new Error(json.error || 'Unable to check release readiness');
       const departureGate = json.gates?.find((gate) => gate.key === 'departure_inspection');
+      const acknowledgementGate = json.gates?.find((gate) => gate.key === 'driver_acknowledged');
+      const amendmentGate = json.gates?.find((gate) => gate.key === 'authority_amendment_acknowledged');
+      const vehicleIssuedGate = json.gates?.find((gate) => gate.key === 'vehicle_issued');
+      const fallbackAccepted = acknowledgementGate
+        ? acknowledgementGate.status === 'pass'
+        : Boolean(hasAcknowledge);
       setDepartureInspectionStatus(departureGate?.status ?? null);
+      setAuthorityAmendmentPending(Boolean(amendmentGate && amendmentGate.status !== 'pass'));
+      setDriverKind(json.driver?.kind ?? 'unassigned');
+      setDriverAccepted(json.driver?.accepted ?? fallbackAccepted);
+      setVehicleIssued(vehicleIssuedGate ? vehicleIssuedGate.status === 'pass' : Boolean(hasIssue));
     } catch (reason) {
       setDepartureInspectionStatus(null);
+      setAuthorityAmendmentPending(false);
+      setDriverKind('unassigned');
+      setDriverAccepted(Boolean(hasAcknowledge));
+      setVehicleIssued(Boolean(hasIssue));
       setError(reason instanceof Error ? reason.message : 'Unable to check release readiness');
     } finally {
       setReadinessLoading(false);
     }
-  }, [status, tripId]);
+  }, [status, tripId, hasAcknowledge, hasIssue]);
 
   useEffect(() => {
     void refreshReadiness();
@@ -111,6 +141,18 @@ export function TripActions({
   }, [refreshReadiness, router]);
 
   const handleHandoverSuccess = useCallback(() => {
+    void refreshReadiness();
+    router.refresh();
+  }, [refreshReadiness, router]);
+
+  const handleExternalStartSuccess = useCallback(() => {
+    setExternalStartDialogOpen(false);
+    void refreshReadiness();
+    router.refresh();
+  }, [refreshReadiness, router]);
+
+  const handleExternalReturnSuccess = useCallback(() => {
+    setExternalReturnDialogOpen(false);
     router.refresh();
   }, [router]);
 
@@ -125,13 +167,47 @@ export function TripActions({
       const readinessResponse = await fetch(`/api/trips/${tripId}/readiness`, { cache: 'no-store' });
       const readiness = (await readinessResponse.json().catch(() => ({}))) as ReadinessResponse & { error?: string };
       if (!readinessResponse.ok) throw new Error(readiness.error || 'Unable to check release readiness');
+
       const departureGate = readiness.gates?.find((gate) => gate.key === 'departure_inspection');
+      const acknowledgementGate = readiness.gates?.find((gate) => gate.key === 'driver_acknowledged');
+      const amendmentGate = readiness.gates?.find((gate) => gate.key === 'authority_amendment_acknowledged');
+      const authorityGate = readiness.gates?.find((gate) => gate.key === 'trip_authority');
+      const resolvedDriverKind = readiness.driver?.kind ?? 'unassigned';
+      const resolvedAccepted = readiness.driver?.accepted ?? acknowledgementGate?.status === 'pass';
       setDepartureInspectionStatus(departureGate?.status ?? null);
+      setAuthorityAmendmentPending(Boolean(amendmentGate && amendmentGate.status !== 'pass'));
+      setDriverKind(resolvedDriverKind);
+      setDriverAccepted(Boolean(resolvedAccepted));
+
+      if (amendmentGate && amendmentGate.status !== 'pass') {
+        throw new Error(
+          resolvedDriverKind === 'external'
+            ? 'The replacement vehicle changed the Trip Authority. Record the external driver acceptance of the revised authority before vehicle issue.'
+            : 'The replacement vehicle changed the Trip Authority. The assigned driver must accept the revised authority before vehicle issue.',
+        );
+      }
+      if (authorityGate?.status !== 'pass') {
+        throw new Error('The current Trip Authority must be formally issued before physical vehicle issue.');
+      }
+      if (!resolvedAccepted) {
+        throw new Error(
+          resolvedDriverKind === 'external'
+            ? 'External driver acceptance must be recorded before vehicle issue.'
+            : 'The assigned driver must acknowledge the trip before vehicle issue.',
+        );
+      }
       if (departureGate?.status !== 'pass') {
         throw new Error('The latest departure inspection for the current vehicle must pass before issue.');
       }
+      if (resolvedDriverKind === 'unassigned') {
+        throw new Error('A valid internal or external driver assignment is required before vehicle issue.');
+      }
 
-      const res = await fetch(`/api/trips/${tripId}/issue`, {
+      const issueEndpoint =
+        resolvedDriverKind === 'external'
+          ? `/api/trips/${tripId}/external-issue`
+          : `/api/trips/${tripId}/issue`;
+      const res = await fetch(issueEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -141,16 +217,28 @@ export function TripActions({
         }),
       });
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || 'Failed to issue vehicle');
       }
+      setVehicleIssued(true);
+      toast({
+        title: 'Vehicle issued',
+        description:
+          resolvedDriverKind === 'external'
+            ? 'Vehicle issue was recorded against the accepted external-driver assignment. Record the actual departure to start the trip.'
+            : 'Vehicle issue was recorded against the assigned employee driver.',
+        variant: 'success',
+      });
+      await refreshReadiness();
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to issue vehicle');
+      const message = err instanceof Error ? err.message : 'Failed to issue vehicle';
+      setError(message);
+      toast({ title: 'Vehicle issue failed', description: message, variant: 'error' });
     } finally {
       setIsWorking(false);
     }
-  }, [tripId, currentOdometer, router]);
+  }, [tripId, currentOdometer, refreshReadiness, router, toast]);
 
   const handleCancelTrip = useCallback(async () => {
     const reason = cancelReason.trim();
@@ -206,14 +294,37 @@ export function TripActions({
     />
   ) : null;
 
+  const externalStartDialog = canManage && driverKind === 'external' && vehicleIssued ? (
+    <ExternalTripStartDialog
+      open={externalStartDialogOpen}
+      onOpenChange={setExternalStartDialogOpen}
+      tripId={tripId}
+      minimumOdometer={currentOdometer}
+      onSuccess={handleExternalStartSuccess}
+    />
+  ) : null;
+
+  const externalReturnDialog = canManage && midTrip && driverKind === 'external' ? (
+    <ExternalTripReturnDialog
+      open={externalReturnDialogOpen}
+      onOpenChange={setExternalReturnDialogOpen}
+      tripId={tripId}
+      minimumOdometer={currentOdometer}
+      onSuccess={handleExternalReturnSuccess}
+    />
+  ) : null;
+
   const cancellationDialog = canManage ? (
-    <Dialog open={cancelDialogOpen} onOpenChange={(open) => {
-      setCancelDialogOpen(open);
-      if (!open) {
-        setCancelReason('');
-        setError('');
-      }
-    }}>
+    <Dialog
+      open={cancelDialogOpen}
+      onOpenChange={(open) => {
+        setCancelDialogOpen(open);
+        if (!open) {
+          setCancelReason('');
+          setError('');
+        }
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Cancel this trip?</DialogTitle>
@@ -231,11 +342,17 @@ export function TripActions({
             rows={4}
             maxLength={500}
           />
-          <p className="text-xs text-ink-500">Required · 10–500 characters</p>
-          {error && <p className="text-xs text-status-error-text" role="alert">{error}</p>}
+          <p className="text-ink-500 text-xs">Required · 10–500 characters</p>
+          {error && (
+            <p className="text-status-error-text text-xs" role="alert">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setCancelDialogOpen(false)} disabled={isWorking}>Keep trip</Button>
+          <Button variant="secondary" onClick={() => setCancelDialogOpen(false)} disabled={isWorking}>
+            Keep trip
+          </Button>
           <Button variant="destructive" onClick={() => void handleCancelTrip()} loading={isWorking}>
             <XCircle className="h-4 w-4" /> Cancel trip
           </Button>
@@ -246,51 +363,91 @@ export function TripActions({
 
   if (status === 'pending') {
     const inspectionPassed = departureInspectionStatus === 'pass';
-    const inspectionNeedsWork = departureInspectionStatus === 'pending' || departureInspectionStatus === 'blocking' || departureInspectionStatus === 'fail';
+    const inspectionNeedsWork =
+      departureInspectionStatus === 'pending' ||
+      departureInspectionStatus === 'blocking' ||
+      departureInspectionStatus === 'fail';
 
     return (
       <div className="flex flex-wrap items-center gap-2">
         {readinessLoading && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-ink-500">
+          <span className="text-ink-500 inline-flex items-center gap-1.5 text-xs">
             <Clock3 className="h-3.5 w-3.5" /> Checking release readiness…
           </span>
         )}
-        {!readinessLoading && canInspect && !hasAcknowledge && !inspectionPassed && (
-          <span
-            className="inline-flex items-center gap-1.5 rounded-[8px] border border-status-pending-bg/40 bg-status-pending-bg/10 px-2.5 py-1.5 text-xs text-status-pending-text"
-            title="The assigned driver must accept the Trip Authority before the official departure inspection can begin."
-          >
-            <Clock3 className="h-3.5 w-3.5" />
-            Waiting for driver acknowledgement
-          </span>
-        )}
-        {!readinessLoading && canInspect && hasAcknowledge && inspectionNeedsWork && (
-          <Button variant="secondary" size="sm" onClick={handleDepartureInspection}>
-            <CheckSquare className="h-4 w-4" /> {departureInspectionStatus === 'blocking' || departureInspectionStatus === 'fail' ? 'Repeat Departure Inspection' : 'Departure Inspection'}
+        {!readinessLoading && authorityAmendmentPending && !inspectionPassed && (
+          <Button variant="secondary" size="sm" asChild>
+            <Link href={`/dashboard/trips/${tripId}/authority`}>
+              <Clock3 className="h-4 w-4" />
+              {driverKind === 'external'
+                ? 'Record Revised Driver Acceptance'
+                : 'Review Revised Authority'}
+            </Link>
           </Button>
         )}
-        {canReplaceVehicle && allocationId && !hasIssue && (
+        {!readinessLoading && canInspect && !authorityAmendmentPending && !driverAccepted && !inspectionPassed && (
+          <span
+            className="border-status-pending-bg/40 bg-status-pending-bg/10 text-status-pending-text inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs"
+            title={
+              driverKind === 'external'
+                ? 'The external driver acceptance must be recorded before the official departure inspection can begin.'
+                : 'The assigned driver must accept the Trip Authority before the official departure inspection can begin.'
+            }
+          >
+            <Clock3 className="h-3.5 w-3.5" />
+            {driverKind === 'external'
+              ? 'Waiting for external driver acceptance'
+              : 'Waiting for driver acknowledgement'}
+          </span>
+        )}
+        {!readinessLoading && canInspect && !authorityAmendmentPending && driverAccepted && inspectionNeedsWork && (
+          <Button variant="secondary" size="sm" onClick={handleDepartureInspection}>
+            <CheckSquare className="h-4 w-4" />
+            {departureInspectionStatus === 'blocking' || departureInspectionStatus === 'fail'
+              ? 'Repeat Departure Inspection'
+              : 'Departure Inspection'}
+          </Button>
+        )}
+        {canReplaceVehicle && allocationId && !vehicleIssued && (
           <Button variant="secondary" size="sm" onClick={() => setReplaceDialogOpen(true)}>
             <Repeat className="h-4 w-4" /> Replace Vehicle
           </Button>
         )}
-        {!readinessLoading && canManage && hasAcknowledge && inspectionPassed && !hasIssue && (
+        {!readinessLoading && canManage && !authorityAmendmentPending && driverAccepted && inspectionPassed && !vehicleIssued && (
           <Button variant="secondary" size="sm" loading={isWorking} onClick={handleIssueVehicle}>
             <KeyRound className="h-4 w-4" /> Issue Vehicle
           </Button>
         )}
-        {canManage && !hasIssue && (
+        {canManage && !vehicleIssued && (
           <Button variant="secondary" size="sm" onClick={() => setCancelDialogOpen(true)}>
             <XCircle className="h-4 w-4" /> Cancel Trip
           </Button>
         )}
-        {hasIssue && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-status-success-text">
+        {!readinessLoading && vehicleIssued && driverKind === 'external' && canManage && (
+          <Button variant="primary" size="sm" onClick={() => setExternalStartDialogOpen(true)}>
+            <CheckSquare className="h-4 w-4" /> Record Departure
+          </Button>
+        )}
+        {!readinessLoading && vehicleIssued && driverKind === 'internal' && (
+          <span className="text-status-success-text inline-flex items-center gap-1.5 text-xs">
             <CheckSquare className="h-3.5 w-3.5" /> Vehicle issued — waiting for the driver to start the trip
           </span>
         )}
-        {error && !cancelDialogOpen && <p className="mt-1 w-full text-xs text-status-error-text">{error}</p>}
+        {!readinessLoading && vehicleIssued && driverKind === 'external' && !canManage && (
+          <span className="text-status-success-text inline-flex items-center gap-1.5 text-xs">
+            <CheckSquare className="h-3.5 w-3.5" /> Vehicle issued — Transport Office must record external-driver departure
+          </span>
+        )}
+        {!readinessLoading && vehicleIssued && driverKind === 'unassigned' && (
+          <span className="text-status-error-text inline-flex items-center gap-1.5 text-xs">
+            <XCircle className="h-3.5 w-3.5" /> Driver assignment could not be resolved — refresh before departure
+          </span>
+        )}
+        {error && !cancelDialogOpen && (
+          <p className="text-status-error-text mt-1 w-full text-xs">{error}</p>
+        )}
         {replacementDialog}
+        {externalStartDialog}
         {cancellationDialog}
       </div>
     );
@@ -300,19 +457,35 @@ export function TripActions({
     return (
       <div>
         <div className="flex flex-wrap gap-2">
-          {canHandOverInternalDriver && (
+          {readinessLoading && (
+            <span className="text-ink-500 inline-flex items-center gap-1.5 text-xs">
+              <Clock3 className="h-3.5 w-3.5" /> Resolving active driver…
+            </span>
+          )}
+          {!readinessLoading && canHandOverInternalDriver && (
             <Button variant="secondary" size="sm" onClick={() => setHandoverDialogOpen(true)}>
               <ArrowRightLeft className="h-4 w-4" /> Hand over Driver
             </Button>
           )}
-          {canReplaceVehicle && allocationId && (
+          {!readinessLoading && canManage && driverKind === 'external' && (
+            <Button variant="primary" size="sm" onClick={() => setExternalReturnDialogOpen(true)}>
+              <RotateCcw className="h-4 w-4" /> Record Return
+            </Button>
+          )}
+          {canReplaceVehicle && allocationId && driverKind !== 'unassigned' && (
             <Button variant="secondary" size="sm" onClick={() => setReplaceDialogOpen(true)}>
               <Repeat className="h-4 w-4" /> Replace Vehicle
             </Button>
           )}
+          {!readinessLoading && driverKind === 'external' && !canManage && (
+            <span className="text-ink-500 text-xs">
+              Transport Office records the external-driver vehicle return before arrival inspection.
+            </span>
+          )}
         </div>
-        {error && <p className="mt-1 text-xs text-status-error-text">{error}</p>}
+        {error && <p className="text-status-error-text mt-1 text-xs">{error}</p>}
         {handoverDialog}
+        {externalReturnDialog}
         {replacementDialog}
       </div>
     );
@@ -328,7 +501,7 @@ export function TripActions({
             </Link>
           </Button>
         ) : (
-          <span className="text-xs text-ink-500">Waiting for the authorised return inspection.</span>
+          <span className="text-ink-500 text-xs">Waiting for the authorised return inspection.</span>
         )}
       </div>
     );
@@ -342,7 +515,7 @@ export function TripActions({
         </Link>
       </Button>
     ) : (
-      <span className="text-xs text-ink-500">Awaiting Transport Office reconciliation.</span>
+      <span className="text-ink-500 text-xs">Awaiting Transport Office reconciliation.</span>
     );
   }
 

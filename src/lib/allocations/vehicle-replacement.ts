@@ -1,10 +1,20 @@
 import { randomUUID } from 'crypto';
 import { getDb } from '@/db';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
+import { externalDriverLicences } from '@/db/schema/external-parties';
+import {
+  driverLicences,
+  driverProfiles,
+  driverProfessionalAuthorisations,
+  employees,
+} from '@/db/schema/people';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
-import { and, eq, gt, inArray, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { AuthSession } from '@/lib/auth-helpers';
+import { onTripIssued } from '@/lib/document-generator';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 
 export interface ReplaceVehicleInput {
   allocationId: string;
@@ -21,11 +31,19 @@ export interface ReplaceVehicleResult {
   handoverOdometer?: number | null;
   outgoingVehicleDisposition?: 'available' | 'maintenance' | null;
   issueReset?: boolean;
+  authorityDocumentId?: string | null;
+  authorityRegenerationRequired?: boolean;
 }
 
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 const ACTIVE_TRIP_STATUSES = ['in_progress', 'return_due', 'return_inspection', 'closure_review'] as const;
 const OUTGOING_DISPOSITIONS = ['available', 'maintenance'] as const;
+
+function dateCoversPeriod(expiryDate: string | null | undefined, endAt: Date) {
+  if (!expiryDate) return false;
+  const expiry = new Date(`${expiryDate}T23:59:59.999Z`);
+  return Number.isFinite(expiry.getTime()) && expiry >= endAt;
+}
 
 export async function replaceVehicle(
   input: ReplaceVehicleInput,
@@ -58,6 +76,7 @@ export async function replaceVehicle(
       allocationState: vehicleAllocations.state,
       allocationVersion: vehicleAllocations.version,
       originalVehicleId: vehicleAllocations.vehicleId,
+      driverEmployeeId: vehicleAllocations.driverEmployeeId,
       startAt: vehicleAllocations.startAt,
       endAt: vehicleAllocations.endAt,
       replacedFromVehicleId: vehicleAllocations.replacedFromVehicleId,
@@ -107,7 +126,8 @@ export async function replaceVehicle(
       context.tripStatus as (typeof ACTIVE_TRIP_STATUSES)[number],
     ),
   );
-  const issuedPreStart = Boolean(context.issuedAt && context.tripStatus === 'pending');
+  const preDeparture = context.tripStatus === 'pending';
+  const issuedPreStart = Boolean(context.issuedAt && preDeparture);
 
   if (activeMidTrip && handoverOdometer == null) {
     throw new VehicleReplaceError('Odometer reading at handover is required during an active trip', 409);
@@ -153,6 +173,8 @@ export async function replaceVehicle(
       fuelType: vehicles.fuelType,
       seatedCapacity: vehicles.seatedCapacity,
       licenceExpiryDate: vehicles.licenceExpiryDate,
+      requiredLicenceClass: vehicles.requiredLicenceClass,
+      professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
     })
     .from(vehicles)
     .where(and(eq(vehicles.id, replacementVehicleId), eq(vehicles.tenantId, tenantId)))
@@ -160,6 +182,121 @@ export async function replaceVehicle(
   if (!replacement) throw new VehicleReplaceError('Replacement vehicle not found in this tenant', 404);
   if (replacement.status !== 'available') {
     throw new VehicleReplaceError(`Replacement vehicle is not available (status: ${replacement.status})`, 409);
+  }
+
+  if (context.driverEmployeeId) {
+    const [internalDriver] = await db
+      .select({
+        driverProfileId: driverProfiles.id,
+        driverStatus: driverProfiles.driverStatus,
+        employmentStatus: employees.employmentStatus,
+        licenceClass: driverLicences.licenceClass,
+        licenceExpiry: driverLicences.expiryDate,
+        licenceVerificationStatus: driverLicences.verificationStatus,
+      })
+      .from(driverProfiles)
+      .innerJoin(employees, eq(employees.id, driverProfiles.employeeId))
+      .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
+      .where(and(
+        eq(driverProfiles.employeeId, context.driverEmployeeId),
+        eq(employees.tenantId, tenantId),
+        eq(driverLicences.isActive, true),
+        eq(driverLicences.isVerified, true),
+      ))
+      .orderBy(desc(driverLicences.version))
+      .limit(1);
+
+    if (
+      !internalDriver ||
+      internalDriver.employmentStatus !== 'active' ||
+      internalDriver.driverStatus !== 'authorised' ||
+      internalDriver.licenceVerificationStatus !== 'verified' ||
+      !dateCoversPeriod(internalDriver.licenceExpiry, context.endAt)
+    ) {
+      throw new VehicleReplaceError(
+        'The assigned driver no longer has an active verified licence covering the full allocation period',
+        409,
+      );
+    }
+    if (
+      replacement.requiredLicenceClass &&
+      !namibiaLicenceClassCovers(internalDriver.licenceClass, replacement.requiredLicenceClass)
+    ) {
+      throw new VehicleReplaceError(
+        `The assigned driver's licence (${internalDriver.licenceClass}) does not cover the replacement vehicle class (${replacement.requiredLicenceClass})`,
+        409,
+      );
+    }
+    if (replacement.professionalAuthorisationRequired) {
+      const [professionalAuthorisation] = await db
+        .select({
+          id: driverProfessionalAuthorisations.id,
+          expiryDate: driverProfessionalAuthorisations.expiryDate,
+        })
+        .from(driverProfessionalAuthorisations)
+        .where(and(
+          eq(driverProfessionalAuthorisations.driverProfileId, internalDriver.driverProfileId),
+          eq(driverProfessionalAuthorisations.isVerified, true),
+        ))
+        .orderBy(desc(driverProfessionalAuthorisations.expiryDate))
+        .limit(1);
+      if (!professionalAuthorisation || !dateCoversPeriod(professionalAuthorisation.expiryDate, context.endAt)) {
+        throw new VehicleReplaceError(
+          'The replacement vehicle requires a verified professional driving authorisation valid through the allocation end date',
+          409,
+        );
+      }
+    }
+  } else {
+    const [externalDriver] = await db
+      .select({
+        state: externalDriverAssignments.state,
+        licenceClass: externalDriverLicences.licenceClass,
+        licenceExpiry: externalDriverLicences.expiryDate,
+        licenceVerificationStatus: externalDriverLicences.verificationStatus,
+      })
+      .from(externalDriverAssignments)
+      .innerJoin(externalDriverLicences, eq(externalDriverLicences.id, externalDriverAssignments.licenceId))
+      .where(and(
+        eq(externalDriverAssignments.allocationId, allocationId),
+        eq(externalDriverAssignments.tenantId, tenantId),
+        eq(externalDriverLicences.tenantId, tenantId),
+        inArray(externalDriverAssignments.state, ['pending_acceptance', 'accepted']),
+      ))
+      .orderBy(desc(externalDriverAssignments.assignedAt))
+      .limit(1);
+
+    if (externalDriver) {
+      if (
+        externalDriver.licenceVerificationStatus !== 'verified' ||
+        !dateCoversPeriod(externalDriver.licenceExpiry, context.endAt)
+      ) {
+        throw new VehicleReplaceError(
+          'The assigned external driver no longer has a verified licence covering the full allocation period',
+          409,
+        );
+      }
+      if (
+        replacement.requiredLicenceClass &&
+        !namibiaLicenceClassCovers(externalDriver.licenceClass, replacement.requiredLicenceClass)
+      ) {
+        throw new VehicleReplaceError(
+          `The external driver's licence (${externalDriver.licenceClass}) does not cover the replacement vehicle class (${replacement.requiredLicenceClass})`,
+          409,
+        );
+      }
+      if (replacement.professionalAuthorisationRequired) {
+        throw new VehicleReplaceError(
+          'The replacement vehicle requires professional driving authorisation, but verified external professional-authorisation evidence is not available for this assignment',
+          409,
+        );
+      }
+    } else if (activeMidTrip) {
+      throw new VehicleReplaceError(
+        'An active trip cannot change vehicles without a currently assigned eligible driver',
+        409,
+      );
+    }
   }
 
   const [conflict] = await db
@@ -269,9 +406,12 @@ export async function replaceVehicle(
           AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING id
       ),
-      issue_reset AS (
-        DELETE FROM trip_issues
+      external_issue_reset AS (
+        UPDATE external_driver_assignments
+        SET issue_id = NULL, updated_at = ${now}
         WHERE allocation_id = ${allocationId}::uuid
+          AND tenant_id = ${tenantId}::uuid
+          AND issue_id IS NOT NULL
           AND ${issuedPreStart}
           AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING id
@@ -289,7 +429,11 @@ export async function replaceVehicle(
       authority_update AS (
         UPDATE trip_authorities
         SET data = ${authorityDataJson}::jsonb,
-            status = CASE WHEN ${issuedPreStart} THEN 'awaiting_pre_trip_inspection' ELSE status END,
+            status = CASE
+              WHEN ${preDeparture} AND status IN ('awaiting_pre_trip_inspection', 'ready_for_departure')
+                THEN 'awaiting_pre_trip_inspection'
+              ELSE status
+            END,
             version = version + 1,
             document_version = document_version + 1,
             updated_at = ${now}
@@ -331,16 +475,6 @@ export async function replaceVehicle(
           ${cleanReason},
           ${session.user.id}
         FROM authority_update
-        RETURNING id
-      ),
-      documents_update AS (
-        UPDATE generated_documents
-        SET status = 'superseded', updated_at = ${now}
-        WHERE tenant_id = ${tenantId}::uuid
-          AND entity_type = 'trip'
-          AND entity_id = ${context.tripId}::uuid
-          AND status = 'issued'
-          AND EXISTS (SELECT 1 FROM version_insert)
         RETURNING id
       ),
       outgoing_vehicle_update AS (
@@ -452,6 +586,19 @@ export async function replaceVehicle(
     throw error;
   }
 
+  let authorityDocumentId: string | null = null;
+  let authorityRegenerationRequired = false;
+  if (preDeparture && context.authorityId) {
+    try {
+      const document = await onTripIssued(allocationId, tenantId, session.user.id);
+      authorityDocumentId = document?.id ?? null;
+      authorityRegenerationRequired = !document;
+    } catch (error) {
+      authorityRegenerationRequired = true;
+      console.warn('[vehicle-replacement] Trip Authority draft refresh failed after replacement:', error);
+    }
+  }
+
   return {
     success: true,
     replacementVehicleId,
@@ -459,6 +606,8 @@ export async function replaceVehicle(
     handoverOdometer: handoverOdometer ?? null,
     outgoingVehicleDisposition: disposition,
     issueReset: issuedPreStart,
+    authorityDocumentId,
+    authorityRegenerationRequired,
   };
 }
 

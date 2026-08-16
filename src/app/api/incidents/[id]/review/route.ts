@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tripIncidents, trips } from '@/db/schema/trips';
 import { vehicles, vehicleDefects, vehicleStatusEvents } from '@/db/schema/fleet';
@@ -7,9 +7,11 @@ import { auditEvents } from '@/db/schema/audit';
 import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
 const investigationStatuses = new Set(['pending', 'in_progress', 'awaiting_information', 'closed']);
 const activeTripStatuses = ['pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review'];
+const NON_REVIVABLE_VEHICLE_STATUSES = new Set(['written_off', 'decommissioned']);
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -73,6 +75,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           after: { investigationStatus, policeReportFiled: body.policeReportFiled, policeReference: body.policeReference },
         }),
       ]);
+      await refreshIncidentOperationalDocuments({
+        tenantId: auth.session.tenantId,
+        incidentId: id,
+        tripId: context.incident.tripId,
+        actorUserId: auth.session.user.id,
+      });
       return NextResponse.json({ success: true });
     }
 
@@ -143,6 +151,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           after: { investigationStatus: 'closed', status: 'resolved' },
         }),
       ]);
+      await refreshIncidentOperationalDocuments({
+        tenantId: auth.session.tenantId,
+        incidentId: id,
+        tripId: context.incident.tripId,
+        actorUserId: auth.session.user.id,
+      });
       return NextResponse.json({ success: true });
     }
 
@@ -150,39 +164,110 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (context.incident.technicalClearanceStatus !== 'cleared') {
         return NextResponse.json({ error: 'Technical clearance is required before returning the vehicle to service.' }, { status: 409 });
       }
-      const [blocking, activeTrip] = await Promise.all([
-        db.select({ id: vehicleDefects.id }).from(vehicleDefects).where(and(eq(vehicleDefects.vehicleId, context.vehicleId), eq(vehicleDefects.isBlocking, true), isNull(vehicleDefects.resolvedAt))).limit(1),
-        db.select({ id: trips.id }).from(trips).where(and(eq(trips.tenantId, auth.session.tenantId), eq(trips.vehicleId, context.vehicleId), inArray(trips.status, activeTripStatuses))).limit(1),
-      ]);
-      if (blocking.length) return NextResponse.json({ error: 'The vehicle still has an unresolved blocking defect.' }, { status: 409 });
-      if (activeTrip.length) return NextResponse.json({ error: 'The vehicle still belongs to an active trip and cannot be marked available yet.' }, { status: 409 });
+      if (NON_REVIVABLE_VEHICLE_STATUSES.has(context.vehicleStatus)) {
+        return NextResponse.json(
+          { error: `A vehicle in ${context.vehicleStatus.replaceAll('_', ' ')} status cannot be returned to service from incident review.` },
+          { status: 409 },
+        );
+      }
       if (context.vehicleStatus === 'available') return NextResponse.json({ success: true, alreadyAvailable: true });
 
-      await runAtomicMutations((tx) => [
-        tx.update(vehicles).set({ status: 'available', updatedAt: now, updatedBy: auth.session.user.id }).where(and(eq(vehicles.id, context.vehicleId), eq(vehicles.tenantId, auth.session.tenantId))),
-        tx.insert(vehicleStatusEvents).values({
-          vehicleId: context.vehicleId,
-          previousStatus: context.vehicleStatus,
-          newStatus: 'available',
-          reason: `Technical clearance completed for ${context.incident.officialNumber || id}`,
-          changedByUserId: auth.session.user.id,
-          referenceEntityType: 'trip_incident',
-          referenceEntityId: id,
-        }),
-        tx.insert(auditEvents).values({
-          ...commonAudit,
-          eventType: 'vehicle_returned_to_service',
-          action: 'vehicle.return_to_service',
-          summary: `${context.incident.officialNumber || id}: vehicle returned to available service`,
-          after: { vehicleId: context.vehicleId, previousStatus: context.vehicleStatus, newStatus: 'available' },
-        }),
-      ]);
+      await db.execute(sql`
+        WITH vehicle_claim AS (
+          UPDATE vehicles v
+          SET status = 'available',
+              updated_at = ${now},
+              updated_by = ${auth.session.user.id}
+          WHERE v.id = ${context.vehicleId}::uuid
+            AND v.tenant_id = ${auth.session.tenantId}::uuid
+            AND v.status = ${context.vehicleStatus}
+            AND v.status NOT IN ('written_off', 'decommissioned')
+            AND EXISTS (
+              SELECT 1
+              FROM trip_incidents ti
+              WHERE ti.id = ${id}::uuid
+                AND ti.tenant_id = ${auth.session.tenantId}::uuid
+                AND ti.trip_id = ${context.incident.tripId}::uuid
+                AND ti.technical_clearance_status = 'cleared'
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM vehicle_defects vd
+              WHERE vd.vehicle_id = v.id
+                AND vd.is_blocking = true
+                AND vd.resolved_at IS NULL
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM trips active_trip
+              WHERE active_trip.tenant_id = ${auth.session.tenantId}::uuid
+                AND active_trip.vehicle_id = v.id
+                AND active_trip.status IN ('pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review')
+            )
+          RETURNING id
+        ),
+        status_event AS (
+          INSERT INTO vehicle_status_events (
+            vehicle_id, previous_status, new_status, reason, changed_by_user_id,
+            reference_entity_type, reference_entity_id
+          )
+          SELECT
+            ${context.vehicleId}::uuid,
+            ${context.vehicleStatus},
+            'available',
+            ${`Technical clearance completed for ${context.incident.officialNumber || id}`},
+            ${auth.session.user.id},
+            'trip_incident',
+            ${id}::uuid
+          FROM vehicle_claim
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id,
+            action, entity_type, entity_id, summary, after, source_channel
+          )
+          SELECT
+            ${auth.session.tenantId}::uuid,
+            ${Date.now()},
+            'vehicle_returned_to_service',
+            ${auth.session.user.id},
+            'vehicle.return_to_service',
+            'trip_incident',
+            ${id}::uuid,
+            ${`${context.incident.officialNumber || id}: vehicle returned to available service`},
+            jsonb_build_object(
+              'vehicleId', ${context.vehicleId}::text,
+              'previousStatus', ${context.vehicleStatus},
+              'newStatus', 'available'
+            ),
+            'web'
+          FROM status_event
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM vehicle_claim) = 1
+           AND (SELECT count(*) FROM status_event) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN '1'
+          ELSE 'atomic_vehicle_return_to_service_failed'
+        END AS integer) AS committed
+      `);
       return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ error: 'Unsupported incident review action' }, { status: 400 });
   } catch (error) {
     console.error('[incidents/review] PATCH failed:', error);
+    if (String(error).includes('atomic_vehicle_return_to_service_failed')) {
+      return NextResponse.json(
+        {
+          error:
+            'The vehicle gained a blocking defect, active trip, or other restriction while return-to-service was being recorded. Refresh and review the latest vehicle state.',
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Incident review could not be updated' }, { status: 500 });
   }
 }

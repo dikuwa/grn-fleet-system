@@ -6,7 +6,10 @@ import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { tenants } from '@/db/schema/tenants';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
-import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
+import {
+  resolveTenantDocumentBranding,
+  type ResolvedTenantBranding,
+} from '@/lib/tenant-branding';
 import { FuelSummaryDocument, type FuelSummaryData } from './fuel-summary';
 import { TripCompletionDocument, type TripCompletionData } from './trip-completion';
 import { MaintenanceReportDocument, type MaintenanceReportData } from './maintenance-report';
@@ -40,6 +43,65 @@ function optionalBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function text(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  const result = String(value).trim();
+  return result || undefined;
+}
+
+function brandingFromSnapshot(
+  snapshot: Record<string, unknown>,
+  tenantId: string,
+): ResolvedTenantBranding | null {
+  const meta = snapshot.brandingMeta;
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null;
+  const brandingMeta = meta as Record<string, unknown>;
+  const identity =
+    snapshot.documentIdentity &&
+    typeof snapshot.documentIdentity === 'object' &&
+    !Array.isArray(snapshot.documentIdentity)
+      ? (snapshot.documentIdentity as Record<string, unknown>)
+      : {};
+
+  const organisationName =
+    text(brandingMeta.organisationName) || text(identity.organisationName) || 'Government Fleet';
+  const code = text(brandingMeta.code) || 'GRN';
+  const locale = text(brandingMeta.locale) || 'en-NA';
+  const timezone = text(brandingMeta.timezone) || 'Africa/Windhoek';
+  const logoUrl = text(identity.logoUrl);
+
+  return {
+    tenantId,
+    organisationName,
+    code,
+    locale,
+    timezone,
+    division: text(brandingMeta.division),
+    address: text(brandingMeta.address),
+    phone: text(brandingMeta.phone),
+    email: text(brandingMeta.email),
+    website: text(brandingMeta.website),
+    registrationNumber: text(brandingMeta.registrationNumber),
+    motto: text(brandingMeta.motto),
+    logoUrl,
+    documentLogoUrl: logoUrl,
+    // Do not fall back to a tenant's newer seal for a snapshotted document.
+    sealUrl: undefined,
+    primaryColor:
+      text(brandingMeta.primaryColor) || text(identity.primaryColor) || '#1F2A44',
+    accentColor:
+      text(brandingMeta.accentColor) || text(identity.accentColor) || '#0F766E',
+    documentFooter: text(brandingMeta.documentFooter),
+    executiveSignatoryName:
+      text(brandingMeta.executiveSignatoryName) || text(identity.executiveSignatoryName),
+    executiveSignatoryTitle:
+      text(brandingMeta.executiveSignatoryTitle) ||
+      text(identity.executiveSignatoryTitle) ||
+      'Chief Executive Officer',
+    executiveSignatureUrl: text(identity.executiveSignatureUrl),
+  };
+}
+
 /** Render stored-snapshot document families with the permanent document verification identity. */
 export async function generateVerifiedSnapshotDocumentPdf(
   documentId: string,
@@ -53,18 +115,37 @@ export async function generateVerifiedSnapshotDocumentPdf(
   if (!document || !document.snapshotData) return null;
 
   const snapshot = document.snapshotData as Record<string, unknown>;
-  const [tenant] = await db.select().from(tenants).where(eq(tenants.id, document.tenantId)).limit(1);
-  const branding = await resolveTenantDocumentBranding(document.tenantId);
-  const generatedAt = document.createdAt.toISOString();
+  const frozenBranding = brandingFromSnapshot(snapshot, document.tenantId);
+  const [[tenant], currentBranding] = await Promise.all([
+    db.select().from(tenants).where(eq(tenants.id, document.tenantId)).limit(1),
+    frozenBranding ? Promise.resolve(null) : resolveTenantDocumentBranding(document.tenantId),
+  ]);
+  const branding = frozenBranding || currentBranding;
+  const identity =
+    snapshot.documentIdentity &&
+    typeof snapshot.documentIdentity === 'object' &&
+    !Array.isArray(snapshot.documentIdentity)
+      ? (snapshot.documentIdentity as Record<string, unknown>)
+      : null;
+  const generatedAt =
+    document.status === 'draft'
+      ? document.updatedAt.toISOString()
+      : text(identity?.snapshottedAt) || document.updatedAt.toISOString();
+  const publiclyVerifiable = document.status !== 'draft' && Boolean(document.verificationSlug);
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${baseUrl}/v/${document.verificationSlug}`;
-  const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 });
+  const verificationUrl = publiclyVerifiable
+    ? `${baseUrl}/v/${document.verificationSlug}`
+    : undefined;
+  const qrCodeDataUrl = verificationUrl
+    ? await QRCode.toDataURL(verificationUrl, { width: 220, margin: 1 })
+    : undefined;
   const common = {
-    tenantName: tenant?.name,
+    tenantName:
+      branding?.organisationName || text(identity?.organisationName) || tenant?.name,
     branding,
     documentVersion: document.documentVersion,
     generatedAt,
-    verificationCode: document.verificationCode,
+    verificationCode: publiclyVerifiable ? document.verificationCode : undefined,
     verificationUrl,
     documentHash: abbreviatedDocumentHash(document.hash) || undefined,
     qrCodeDataUrl,

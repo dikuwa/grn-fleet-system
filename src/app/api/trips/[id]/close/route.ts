@@ -14,15 +14,39 @@ import {
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles, vehicleStatusEvents, vehicleDefects } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
-import { eq, and, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
 const CLOSURE_DECISIONS = ['closed', 'requires_correction', 'follow_up'] as const;
 type ClosureDecision = (typeof CLOSURE_DECISIONS)[number];
+const RESTRICTED_VEHICLE_STATUSES = new Set(['maintenance', 'out_of_service', 'written_off']);
+
+function errorText(error: unknown): string {
+  if (!error || typeof error !== 'object') return String(error || '');
+  const record = error as { message?: unknown; cause?: unknown };
+  const parts = [typeof record.message === 'string' ? record.message : ''];
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { message?: unknown };
+    if (typeof cause.message === 'string') parts.push(cause.message);
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -155,19 +179,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
     }
 
-    const [arrivalInspection] = await db.select({ id: vehicleInspections.id })
+    const [arrivalInspection] = await db.select({
+      id: vehicleInspections.id,
+      status: vehicleInspections.status,
+    })
       .from(vehicleInspections)
       .where(and(
         eq(vehicleInspections.tripId, id),
         eq(vehicleInspections.tenantId, tenantId),
         eq(vehicleInspections.vehicleId, trip.vehicleId),
         eq(vehicleInspections.type, 'return'),
-        inArray(vehicleInspections.status, ['completed', 'failed']),
       ))
+      .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
       .limit(1);
-    if (!arrivalInspection) {
+    if (!arrivalInspection || !['completed', 'failed'].includes(arrivalInspection.status)) {
       return NextResponse.json(
-        { error: 'A submitted arrival inspection for the currently allocated vehicle is required before reconciliation can close' },
+        {
+          error: arrivalInspection
+            ? `The latest arrival inspection is still ${arrivalInspection.status.replaceAll('_', ' ')}. Submit it before reconciliation can close.`
+            : 'A submitted arrival inspection for the currently allocated vehicle is required before reconciliation can close',
+        },
         { status: 409 },
       );
     }
@@ -273,94 +304,142 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Authorised kilometres must be a non-negative number' }, { status: 400 });
     }
 
-    const [blockingDefect] = await db
-      .select({ id: vehicleDefects.id })
-      .from(vehicleDefects)
-      .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
-      .where(and(
-        eq(vehicleDefects.vehicleId, trip.vehicleId),
-        eq(vehicles.tenantId, tenantId),
-        eq(vehicleDefects.isBlocking, true),
-        isNull(vehicleDefects.resolvedAt),
-      ))
-      .limit(1);
-    const resultingVehicleStatus = blockingDefect ? 'maintenance' : 'available';
+    const [[currentVehicle], [blockingDefect]] = await Promise.all([
+      db
+        .select({ status: vehicles.status })
+        .from(vehicles)
+        .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, tenantId)))
+        .limit(1),
+      db
+        .select({ id: vehicleDefects.id })
+        .from(vehicleDefects)
+        .innerJoin(vehicles, eq(vehicleDefects.vehicleId, vehicles.id))
+        .where(and(
+          eq(vehicleDefects.vehicleId, trip.vehicleId),
+          eq(vehicles.tenantId, tenantId),
+          eq(vehicleDefects.isBlocking, true),
+          isNull(vehicleDefects.resolvedAt),
+        ))
+        .limit(1),
+    ]);
+    if (!currentVehicle) {
+      return NextResponse.json({ error: 'Trip vehicle no longer exists in this tenant' }, { status: 409 });
+    }
+    const resultingVehicleStatus = blockingDefect
+      ? 'maintenance'
+      : RESTRICTED_VEHICLE_STATUSES.has(currentVehicle.status)
+        ? currentVehicle.status
+        : 'available';
+    const liveVehicleClosureStatus = sql<string>`case
+      when ${vehicles.status} in ('maintenance', 'out_of_service', 'written_off') then ${vehicles.status}
+      when exists (
+        select 1
+        from ${vehicleDefects} vd
+        where vd.vehicle_id = ${trip.vehicleId}::uuid
+          and vd.is_blocking = true
+          and vd.resolved_at is null
+      ) then 'maintenance'
+      else 'available'
+    end`;
 
     const closureId = randomUUID();
     const now = new Date();
-    await runAtomicMutations((tx) => [
-      tx.insert(tripClosures).values({
-        id: closureId,
-        tripId: id,
-        authorisedKilometres,
-        actualKilometres,
-        kilometreVariance,
-        vehicleOdometerReadings,
-        totalFuelLitres: totalFuelLitres ? String(totalFuelLitres) : null,
-        totalFuelCost: totalFuelCost ? String(totalFuelCost) : null,
-        reviewNotes: reviewNotes || null,
-        closedByUserId: userId,
-        decision,
-      }),
-      tx.update(tripAuthorities)
-        .set({ status: 'completed', version: sql`${tripAuthorities.version} + 1`, updatedAt: now })
-        .where(and(
-          eq(tripAuthorities.id, authority.id),
-          eq(tripAuthorities.tenantId, tenantId),
-          eq(tripAuthorities.status, 'awaiting_reconciliation'),
-        )),
-      tx.update(tripAuthorities)
-        .set({ status: 'closed', version: sql`${tripAuthorities.version} + 1`, updatedAt: now })
-        .where(and(
-          eq(tripAuthorities.id, authority.id),
-          eq(tripAuthorities.tenantId, tenantId),
-          eq(tripAuthorities.status, 'completed'),
-        )),
-      tx.update(trips)
-        .set({ status: 'closed', closedAt: now, updatedAt: now })
-        .where(and(
-          eq(trips.id, id),
-          eq(trips.tenantId, tenantId),
-          inArray(trips.status, ['return_inspection', 'closure_review']),
-        )),
-      tx.update(transportRequests)
-        .set({ status: 'closed', updatedAt: now })
-        .where(and(eq(transportRequests.id, trip.requestId), eq(transportRequests.tenantId, tenantId))),
-      tx.update(vehicleAllocations)
-        .set({ state: 'released', updatedAt: now })
-        .where(and(
-          eq(vehicleAllocations.id, trip.allocationId),
-          inArray(vehicleAllocations.state, ['provisional', 'confirmed']),
-          sql`exists (
-            select 1 from ${transportRequests} tr
-            where tr.id = ${vehicleAllocations.requestId}
-              and tr.tenant_id = ${tenantId}
-          )`,
-        )),
-      tx.update(vehicles)
-        .set({ status: resultingVehicleStatus, updatedAt: now })
-        .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, tenantId))),
-      tx.insert(vehicleStatusEvents).values({
-        vehicleId: trip.vehicleId,
-        previousStatus: 'allocated',
-        newStatus: resultingVehicleStatus,
-        reason: blockingDefect ? 'Trip closed with unresolved blocking defect' : `Trip closed: ${id.slice(0, 8)}...`,
-        changedByUserId: userId,
-        referenceEntityType: 'trip',
-        referenceEntityId: id,
-      }),
-      tx.insert(auditEvents).values({
-        tenantId,
-        tenantSequence: Date.now(),
-        eventType: 'trip_closed',
-        actorUserId: userId,
-        action: 'close',
-        entityType: 'trip',
-        entityId: id,
-        summary: `Trip closed: ${totalFuelLitres}L fuel used, ${totalFuelCost} total cost`,
-        sourceChannel: 'web',
-      }),
-    ]);
+    await runAtomicMutations((tx) => {
+      const mutations: Array<PromiseLike<unknown>> = [
+        tx.insert(tripClosures).values({
+          id: closureId,
+          tripId: id,
+          authorisedKilometres,
+          actualKilometres,
+          kilometreVariance,
+          vehicleOdometerReadings,
+          totalFuelLitres: totalFuelLitres ? String(totalFuelLitres) : null,
+          totalFuelCost: totalFuelCost ? String(totalFuelCost) : null,
+          reviewNotes: reviewNotes || null,
+          closedByUserId: userId,
+          decision,
+        }),
+        tx.update(tripAuthorities)
+          .set({ status: 'completed', version: sql`${tripAuthorities.version} + 1`, updatedAt: now })
+          .where(and(
+            eq(tripAuthorities.id, authority.id),
+            eq(tripAuthorities.tenantId, tenantId),
+            eq(tripAuthorities.status, 'awaiting_reconciliation'),
+          )),
+        tx.update(tripAuthorities)
+          .set({ status: 'closed', version: sql`${tripAuthorities.version} + 1`, updatedAt: now })
+          .where(and(
+            eq(tripAuthorities.id, authority.id),
+            eq(tripAuthorities.tenantId, tenantId),
+            eq(tripAuthorities.status, 'completed'),
+          )),
+        tx.update(trips)
+          .set({ status: 'closed', closedAt: now, updatedAt: now })
+          .where(and(
+            eq(trips.id, id),
+            eq(trips.tenantId, tenantId),
+            inArray(trips.status, ['return_inspection', 'closure_review']),
+          )),
+        tx.update(transportRequests)
+          .set({ status: 'closed', updatedAt: now })
+          .where(and(eq(transportRequests.id, trip.requestId), eq(transportRequests.tenantId, tenantId))),
+        tx.update(vehicleAllocations)
+          .set({ state: 'released', updatedAt: now })
+          .where(and(
+            eq(vehicleAllocations.id, trip.allocationId),
+            inArray(vehicleAllocations.state, ['provisional', 'confirmed']),
+            sql`exists (
+              select 1 from ${transportRequests} tr
+              where tr.id = ${vehicleAllocations.requestId}
+                and tr.tenant_id = ${tenantId}
+            )`,
+          )),
+        tx.update(externalDriverAssignments)
+          .set({ state: 'completed', updatedAt: now })
+          .where(and(
+            eq(externalDriverAssignments.tenantId, tenantId),
+            eq(externalDriverAssignments.tripId, id),
+            eq(externalDriverAssignments.allocationId, trip.allocationId),
+            eq(externalDriverAssignments.state, 'accepted'),
+          )),
+        tx.update(vehicles)
+          .set({ status: liveVehicleClosureStatus, updatedAt: now })
+          .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, tenantId))),
+        tx.insert(auditEvents).values({
+          tenantId,
+          tenantSequence: Date.now(),
+          eventType: 'trip_closed',
+          actorUserId: userId,
+          action: 'close',
+          entityType: 'trip',
+          entityId: id,
+          summary: `Trip closed: ${totalFuelLitres}L fuel used, ${totalFuelCost} total cost`,
+          sourceChannel: 'web',
+          after: {
+            vehicleStatusBefore: currentVehicle.status,
+            vehicleStatusAfter: resultingVehicleStatus,
+            vehicleRestrictionPreserved: currentVehicle.status === resultingVehicleStatus && RESTRICTED_VEHICLE_STATUSES.has(currentVehicle.status),
+          },
+        }),
+      ];
+
+      if (currentVehicle.status !== resultingVehicleStatus) {
+        mutations.push(
+          tx.insert(vehicleStatusEvents).values({
+            vehicleId: trip.vehicleId,
+            previousStatus: currentVehicle.status,
+            newStatus: resultingVehicleStatus,
+            reason: blockingDefect
+              ? 'Trip closed with unresolved blocking defect'
+              : `Trip closed: ${id.slice(0, 8)}...`,
+            changedByUserId: userId,
+            referenceEntityType: 'trip',
+            referenceEntityId: id,
+          }),
+        );
+      }
+      return mutations;
+    });
 
     const [[updatedTrip], [closure], [requestRecord]] = await Promise.all([
       db.select().from(trips).where(and(eq(trips.id, id), eq(trips.tenantId, tenantId))).limit(1),
@@ -397,12 +476,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
   } catch (error) {
     console.error('[trips/close] POST failed:', error);
-    if ((error as { code?: string })?.code === '23505') {
+    const code = postgresErrorCode(error);
+    const message = errorText(error);
+    if (code === '23505') {
       return NextResponse.json({ error: 'Trip is already closed' }, { status: 409 });
     }
-    if (String(error).includes('closure_decision_conflict')) {
+    if (message.includes('closure_decision_conflict')) {
       return NextResponse.json(
         { error: 'This closure decision is no longer current. Refresh and review the latest trip state.' },
+        { status: 409 },
+      );
+    }
+    if (message.includes('trip_closure_lifecycle_conflict')) {
+      return NextResponse.json(
+        {
+          error:
+            'The trip, inspection, financial, or safety state changed while closure was being processed. Refresh the closure review and resolve the latest blockers before closing.',
+        },
         { status: 409 },
       );
     }

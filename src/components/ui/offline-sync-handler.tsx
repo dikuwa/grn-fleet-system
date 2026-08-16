@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { syncPendingDrafts } from '@/lib/offline-sync';
+import { allowedOfflineDraftTypes } from '@/lib/offline-draft-policy';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 
 /**
@@ -10,11 +11,13 @@ import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
  *
  * Mount this once in your layout (next to <OfflineIndicator />).
  * It listens for the browser's `online` event and attempts to sync
- * all pending offline drafts. It also runs a periodic sync every 60s
- * so drafts submitted while offline eventually get pushed, and — most
- * importantly — it syncs immediately on mount once the user profile is
- * known, so a draft saved during a previous offline session is pushed
- * as soon as the app loads rather than waiting for the next event.
+ * pending offline drafts that the current role set is still authorised to
+ * create. It also runs a periodic sync every 60s and syncs immediately on
+ * mount once the user profile is known.
+ *
+ * Drafts that became read-only after a role/policy change are deliberately
+ * left in IndexedDB for the owner to inspect or discard; background reconnect
+ * must never submit them silently.
  *
  * Renders nothing — zero visual footprint.
  */
@@ -27,10 +30,17 @@ export function OfflineSyncHandler() {
 
   useEffect(() => {
     if (!profile) return;
-    const scope = { userId: profile.id, tenantId: profile.tenantId };
+
+    const roleNames = profile.roles.map((role) => role.roleName);
+    const draftTypes = allowedOfflineDraftTypes(roleNames);
+    const scope = {
+      userId: profile.id,
+      tenantId: profile.tenantId,
+      draftTypes,
+    };
 
     async function runSync(trigger: 'mount' | 'online' | 'interval') {
-      if (syncingRef.current) return;
+      if (syncingRef.current || draftTypes.length === 0) return;
       syncingRef.current = true;
 
       try {
@@ -46,23 +56,17 @@ export function OfflineSyncHandler() {
       }
     }
 
-    // Sync immediately once the profile is known (the browser is online at
-    // this point, otherwise the page could not have loaded). This catches
-    // drafts left over from a previous offline session deterministically.
     if (typeof navigator !== 'undefined' && navigator.onLine) {
       void runSync('mount');
     }
 
-    // Sync on connectivity restore
     const handleOnline = () => void runSync('online');
     window.addEventListener('online', handleOnline);
 
-    // Periodic sync every N seconds (so it catches drafts saved while
-    // the user was filling a form and then went back online)
-    const interval = setInterval(async () => {
+    const interval = setInterval(() => {
       if (!navigator.onLine) return;
       void runSync('interval');
-    }, 60_000); // Every 60 seconds
+    }, 60_000);
 
     return () => {
       window.removeEventListener('online', handleOnline);

@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { and, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { tripAuthorities, trips } from '@/db/schema/trips';
 import {
   requireDashboardAction,
   requirePermission,
@@ -9,12 +12,36 @@ import {
   completeOfficialInspection,
   InspectionServiceError,
 } from '@/lib/inspection-service';
+import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-acceptance';
+import { onTripIssued } from '@/lib/document-generator';
 import {
   createScopedNotifications,
   resolveActionNotifications,
   resolveActiveRoleRecipients,
 } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
+
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
+
+function errorText(error: unknown): string {
+  if (!error || typeof error !== 'object') return String(error || '');
+  const record = error as { message?: unknown; cause?: unknown };
+  const parts = [typeof record.message === 'string' ? record.message : ''];
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { message?: unknown };
+    if (typeof cause.message === 'string') parts.push(cause.message);
+  }
+  return parts.filter(Boolean).join(' ');
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,6 +74,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Any driver-material authority amendment invalidates the previous
+    // acceptance for departure. Keep the original acknowledgement immutable,
+    // but require acceptance of the current authority before a fresh official
+    // departure inspection can be submitted.
+    if (body.type === 'departure' && typeof body.tripId === 'string') {
+      const db = getDb();
+      const [authority] = await db
+        .select({ id: tripAuthorities.id, acceptedAt: tripAuthorities.acceptedAt })
+        .from(tripAuthorities)
+        .where(
+          and(
+            eq(tripAuthorities.tripId, body.tripId),
+            eq(tripAuthorities.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+      if (authority) {
+        const pendingAmendment = await findPendingAuthorityAmendmentAcceptance({
+          authorityId: authority.id,
+          acceptedAt: authority.acceptedAt,
+        });
+        if (pendingAmendment) {
+          return NextResponse.json(
+            {
+              error:
+                `A ${pendingAmendment.amendmentType.replaceAll('_', ' ')} amendment became effective after the driver accepted the Trip Authority. The revised authority must be acknowledged before departure inspection.`,
+              amendmentId: pendingAmendment.amendmentId,
+              amendmentType: pendingAmendment.amendmentType,
+              requiresAmendmentAcceptance: true,
+            },
+            { status: 409 },
+          );
+        }
+      }
+    }
+
     const result = await completeOfficialInspection({
       tenantId: session.tenantId,
       userId: session.user.id,
@@ -63,16 +126,29 @@ export async function POST(request: NextRequest) {
       clientSyncId: typeof body.clientSyncId === 'string' ? body.clientSyncId : null,
     });
 
-    // A passed departure inspection closes the inspection officer's action and
-    // hands the trip to Transport Administration for the separate physical
-    // issue step. Keep failed inspections actionable because the vehicle must
-    // be repaired/re-inspected before it can leave.
+    // A passed departure inspection makes formal Trip Authority issuance the
+    // next boundary. Refresh the still-draft authority snapshot now so its
+    // preview contains the completed current-vehicle inspection. Physical
+    // vehicle issue remains a separate later step and is still server-guarded
+    // on the latest formally issued Trip Authority.
     if (
       body.type === 'departure' &&
       result.overallPass === true &&
       result.idempotent !== true &&
       typeof body.tripId === 'string'
     ) {
+      const db = getDb();
+      const [trip] = await db
+        .select({ allocationId: trips.allocationId })
+        .from(trips)
+        .where(and(eq(trips.id, body.tripId), eq(trips.tenantId, session.tenantId)))
+        .limit(1);
+      if (trip?.allocationId) {
+        await onTripIssued(trip.allocationId, session.tenantId, session.user.id).catch((error) =>
+          console.warn('[inspections] Departure inspection committed but authority draft refresh failed:', error),
+        );
+      }
+
       await resolveActionNotifications({
         tenantId: session.tenantId,
         entityType: 'trip',
@@ -90,16 +166,16 @@ export async function POST(request: NextRequest) {
           tenantId: session.tenantId,
           recipientUserIds: transportRecipients,
           category: 'action_required',
-          eventType: 'vehicle_issue_ready',
-          title: 'Vehicle ready for physical issue',
-          body: 'The official departure inspection passed. Confirm keys, issue odometer and any fuel card handover before departure.',
+          eventType: 'trip_authority_issue_ready',
+          title: 'Trip Authority ready for formal issue',
+          body: 'The official departure inspection passed. Review and formally issue the latest Trip Authority before recording physical vehicle issue.',
           entityType: 'trip',
           entityId: body.tripId,
           actionUrl: `/dashboard/trips/${body.tripId}`,
           workspace: WorkspaceIds.TRANSPORT_ADMIN,
           priority: 'high',
         }).catch((error) =>
-          console.warn('[inspections] Transport issue-ready notification failed:', error),
+          console.warn('[inspections] Authority issue-ready notification failed:', error),
         );
       }
     }
@@ -108,6 +184,17 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof InspectionServiceError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    const code = postgresErrorCode(error);
+    const message = errorText(error);
+    if (code === '23514' && message.includes('inspection_lifecycle_conflict')) {
+      return NextResponse.json(
+        {
+          error:
+            'This inspection is no longer current because the trip or Trip Authority lifecycle changed while it was being submitted. Refresh the trip and use the latest authority and inspection state.',
+        },
+        { status: 409 },
+      );
     }
     console.error('[inspections] POST failed:', error);
     return NextResponse.json({ error: 'Failed to complete inspection' }, { status: 500 });

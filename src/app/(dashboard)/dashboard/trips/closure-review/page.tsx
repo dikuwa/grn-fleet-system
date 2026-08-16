@@ -12,6 +12,7 @@ import {
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
+import { externalParties } from '@/db/schema/external-parties';
 import { eq, and, desc, inArray, ne } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -48,9 +49,12 @@ interface ClosureTrip {
   requestPurpose: string | null;
   driverFirstName: string | null;
   driverLastName: string | null;
+  driverKind: 'internal' | 'external' | 'unassigned';
+  driverOrganisation: string | null;
   requesterFirstName: string | null;
   requesterLastName: string | null;
   hasReturnInspection: boolean;
+  latestReturnInspectionStatus: string | null;
   hasClosureRecord: boolean;
   reconciliationReady: boolean;
   reconciliationBlockers: string[];
@@ -82,6 +86,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       status: trips.status,
       returnedAt: trips.returnedAt,
       createdAt: trips.createdAt,
+      vehicleId: trips.vehicleId,
       make: vehicles.make,
       model: vehicles.model,
       licenceNumber: vehicles.licenceNumber,
@@ -90,6 +95,9 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       requesterFirstName: employees.firstName,
       requesterLastName: employees.lastName,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
+      externalDriverFirstName: externalParties.firstName,
+      externalDriverLastName: externalParties.lastName,
+      externalDriverOrganisation: externalParties.organisationName,
       authorityStatus: tripAuthorities.status,
     })
     .from(trips)
@@ -112,11 +120,19 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
         eq(employees.tenantId, tenantId),
       ),
     )
+    .leftJoin(
+      externalParties,
+      and(
+        eq(transportRequests.assignedDriverExternalPartyId, externalParties.id),
+        eq(externalParties.tenantId, tenantId),
+      ),
+    )
     .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
     .where(and(eq(trips.tenantId, tenantId), eq(trips.status, 'closure_review')))
     .orderBy(desc(trips.returnedAt));
 
   const tripIds = rows.map((row) => row.id);
+  const currentVehicleByTrip = new Map(rows.map((row) => [row.id, row.vehicleId]));
   const driverIds = Array.from(
     new Set(rows.map((row) => row.driverEmployeeId).filter((id): id is string => Boolean(id))),
   );
@@ -131,17 +147,31 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
   ] = await Promise.all([
     tripIds.length
       ? db
-          .select({ tripId: vehicleInspections.tripId })
+          .select({
+            id: vehicleInspections.id,
+            tripId: vehicleInspections.tripId,
+            vehicleId: vehicleInspections.vehicleId,
+            status: vehicleInspections.status,
+            createdAt: vehicleInspections.createdAt,
+          })
           .from(vehicleInspections)
           .where(
             and(
               eq(vehicleInspections.tenantId, tenantId),
               inArray(vehicleInspections.tripId, tripIds),
               eq(vehicleInspections.type, 'return'),
-              inArray(vehicleInspections.status, ['completed', 'failed']),
             ),
           )
-      : Promise.resolve([] as Array<{ tripId: string | null }>),
+          .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
+      : Promise.resolve(
+          [] as Array<{
+            id: string;
+            tripId: string | null;
+            vehicleId: string;
+            status: string;
+            createdAt: Date;
+          }>,
+        ),
     tripIds.length
       ? db
           .select({ tripId: tripClosures.tripId })
@@ -193,7 +223,16 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       : Promise.resolve([] as Array<{ tripId: string }>),
   ]);
 
-  const returnInspTripIds = new Set(inspRows.map((row) => row.tripId));
+  // Rows arrive newest-first. Keep only the newest return inspection for each
+  // trip's currently allocated vehicle; an older submitted inspection must not
+  // hide a newer reinspection that is still in progress.
+  const latestReturnInspectionByTrip = new Map<string, { status: string }>();
+  for (const inspection of inspRows) {
+    if (!inspection.tripId || latestReturnInspectionByTrip.has(inspection.tripId)) continue;
+    if (inspection.vehicleId !== currentVehicleByTrip.get(inspection.tripId)) continue;
+    latestReturnInspectionByTrip.set(inspection.tripId, { status: inspection.status });
+  }
+
   const closureTripIds = new Set(closureRows.map((row) => row.tripId));
   const unverifiedFuelTripIds = new Set(unverifiedFuelRows.map((row) => row.tripId));
   const unverifiedExpenseTripIds = new Set(unverifiedExpenseRows.map((row) => row.tripId));
@@ -201,11 +240,26 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
   const driverMap = new Map(driverRows.map((driver) => [driver.id, driver]));
 
   return rows.map((row) => {
-    const driver = row.driverEmployeeId ? driverMap.get(row.driverEmployeeId) : null;
-    const hasReturnInspection = returnInspTripIds.has(row.id);
+    const internalDriver = row.driverEmployeeId ? driverMap.get(row.driverEmployeeId) : null;
+    const hasExternalDriver = Boolean(row.externalDriverFirstName || row.externalDriverLastName);
+    const driverKind: ClosureTrip['driverKind'] = internalDriver
+      ? 'internal'
+      : hasExternalDriver
+        ? 'external'
+        : 'unassigned';
+    const latestReturnInspection = latestReturnInspectionByTrip.get(row.id) ?? null;
+    const hasReturnInspection = Boolean(
+      latestReturnInspection && ['completed', 'failed'].includes(latestReturnInspection.status),
+    );
     const reconciliationBlockers: string[] = [];
 
-    if (!hasReturnInspection) reconciliationBlockers.push('Return inspection required');
+    if (!latestReturnInspection) {
+      reconciliationBlockers.push('Return inspection required');
+    } else if (!hasReturnInspection) {
+      reconciliationBlockers.push(
+        `Latest return inspection is ${latestReturnInspection.status.replace(/_/g, ' ')}`,
+      );
+    }
     if (!['awaiting_reconciliation', 'completed'].includes(row.authorityStatus)) {
       reconciliationBlockers.push(
         `Trip Authority is ${row.authorityStatus.replace(/_/g, ' ')}`,
@@ -231,9 +285,12 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       requestPurpose: row.requestPurpose,
       requesterFirstName: row.requesterFirstName,
       requesterLastName: row.requesterLastName,
-      driverFirstName: driver?.firstName ?? null,
-      driverLastName: driver?.lastName ?? null,
+      driverFirstName: internalDriver?.firstName ?? row.externalDriverFirstName ?? null,
+      driverLastName: internalDriver?.lastName ?? row.externalDriverLastName ?? null,
+      driverKind,
+      driverOrganisation: driverKind === 'external' ? row.externalDriverOrganisation ?? null : null,
       hasReturnInspection,
+      latestReturnInspectionStatus: latestReturnInspection?.status ?? null,
       hasClosureRecord: closureTripIds.has(row.id),
       reconciliationReady: reconciliationBlockers.length === 0,
       reconciliationBlockers,
@@ -382,7 +439,7 @@ export default async function ClosureReviewPage() {
                           />
                           {!trip.hasReturnInspection && (
                             <Badge variant="emergency" size="sm">
-                              Missing Inspection
+                              {trip.latestReturnInspectionStatus ? 'Reinspection Pending' : 'Missing Inspection'}
                             </Badge>
                           )}
                           {trip.reconciliationReady ? (
@@ -411,7 +468,8 @@ export default async function ClosureReviewPage() {
                           {trip.driverFirstName && (
                             <span className="flex items-center gap-1">
                               <User className="h-3 w-3" />
-                              Driver: {trip.driverFirstName} {trip.driverLastName}
+                              {trip.driverKind === 'external' ? 'External driver' : 'Driver'}: {trip.driverFirstName} {trip.driverLastName}
+                              {trip.driverKind === 'external' && trip.driverOrganisation ? ` · ${trip.driverOrganisation}` : ''}
                             </span>
                           )}
                           {trip.requesterFirstName && (
@@ -432,7 +490,7 @@ export default async function ClosureReviewPage() {
                             </span>
                           )}
                         </div>
-                        {trip.hasReturnInspection && !trip.reconciliationReady && (
+                        {!trip.reconciliationReady && trip.reconciliationBlockers.length > 0 && (
                           <p className="mt-2 text-[11px] leading-4 text-status-pending-text">
                             {trip.reconciliationBlockers.join(' · ')}
                           </p>

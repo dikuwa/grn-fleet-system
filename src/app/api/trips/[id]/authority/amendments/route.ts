@@ -5,11 +5,14 @@ import { getDb } from '@/db';
 import {
   tripAmendments,
   tripAuthorities,
+  trips,
+  vehicleAllocations,
 } from '@/db/schema/trips';
 import { auditEvents } from '@/db/schema/audit';
 import { requireAnyPermission, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { onTripIssued } from '@/lib/document-generator';
 
 const supported = ['date_extension', 'route_change', 'purpose_clarification', 'special_authorisation'] as const;
 type AmendmentType = (typeof supported)[number];
@@ -25,6 +28,17 @@ function optionalDate(value: unknown): Date | null {
   if (value == null || value === '') return null;
   const parsed = new Date(String(value));
   return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
 }
 
 export async function POST(
@@ -124,13 +138,25 @@ export async function PATCH(
     }
 
     const db = getDb();
-    const [record] = await db.select({ amendment: tripAmendments, authority: tripAuthorities })
+    const [record] = await db.select({
+      amendment: tripAmendments,
+      authority: tripAuthorities,
+      allocationId: trips.allocationId,
+      tripStatus: trips.status,
+      tripIssuedAt: trips.issuedAt,
+      allocationState: vehicleAllocations.state,
+      allocationStartAt: vehicleAllocations.startAt,
+      allocationEndAt: vehicleAllocations.endAt,
+    })
       .from(tripAmendments)
       .innerJoin(tripAuthorities, eq(tripAuthorities.id, tripAmendments.authorityId))
+      .innerJoin(trips, eq(trips.id, tripAuthorities.tripId))
+      .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
       .where(and(
         eq(tripAmendments.id, body.amendmentId),
         eq(tripAuthorities.tripId, id),
         eq(tripAuthorities.tenantId, session.tenantId),
+        eq(trips.tenantId, session.tenantId),
       ))
       .limit(1);
     if (!record) return NextResponse.json({ error: 'Amendment not found' }, { status: 404 });
@@ -144,9 +170,6 @@ export async function PATCH(
     const decisionReason = comment || record.amendment.reason;
 
     if (body.action === 'reject') {
-      // Claim-and-audit in one statement so a concurrent approval/rejection
-      // cannot leave a second, false decision event after the pending row has
-      // already been consumed by another operator.
       await db.execute(sql`
         WITH amendment_claim AS (
           UPDATE trip_amendments
@@ -188,6 +211,22 @@ export async function PATCH(
       return NextResponse.json({ success: true });
     }
 
+    if (record.amendment.version !== record.authority.version + 1) {
+      return NextResponse.json(
+        { error: 'This amendment was prepared against an older Trip Authority version. Reject or resubmit it against the current authority.' },
+        { status: 409 },
+      );
+    }
+    if (record.tripStatus === 'pending' && record.tripIssuedAt) {
+      return NextResponse.json(
+        {
+          error:
+            'This vehicle has already been physically issued against the current Trip Authority. A material pre-departure authority amendment cannot be approved until Transport Administration reverses that custody handoff or cancels/replans the trip.',
+        },
+        { status: 409 },
+      );
+    }
+
     const values = record.amendment.newValue;
     const amendmentType = record.amendment.amendmentType;
     const validFrom = amendmentType === 'date_extension' ? optionalDate(values.validFrom) : null;
@@ -204,6 +243,18 @@ export async function PATCH(
       if (effectiveStart && effectiveEnd && effectiveEnd <= effectiveStart) {
         return NextResponse.json({ error: 'Amended authority end date must be after the start date' }, { status: 422 });
       }
+      if (effectiveStart && effectiveStart < record.allocationStartAt) {
+        return NextResponse.json(
+          { error: 'Trip Authority validity cannot begin before the reserved vehicle allocation. Update the allocation schedule first.' },
+          { status: 409 },
+        );
+      }
+      if (effectiveEnd && effectiveEnd > record.allocationEndAt) {
+        return NextResponse.json(
+          { error: 'Trip Authority validity cannot extend beyond the reserved vehicle/driver allocation. Extend the allocation schedule first so overlap and driver eligibility can be revalidated.' },
+          { status: 409 },
+        );
+      }
     }
 
     const origin = amendmentType === 'route_change' && values.origin ? String(values.origin) : null;
@@ -213,10 +264,6 @@ export async function PATCH(
     const specialConditions = amendmentType === 'special_authorisation' ? String(values.specialConditions || '') : null;
     const specialAuthorityGranted = amendmentType === 'special_authorisation' ? values.specialAuthorityGranted === true : null;
 
-    // One statement owns the full approval transition. The pending amendment is
-    // claimed first; every dependent write is chained to that claim. If the
-    // authority version changed concurrently, the final guard deliberately
-    // raises an error and PostgreSQL rolls the entire statement back.
     await db.execute(sql`
       WITH amendment_claim AS (
         UPDATE trip_amendments
@@ -226,12 +273,13 @@ export async function PATCH(
         WHERE id = ${body.amendmentId}::uuid
           AND authority_id = ${record.authority.id}::uuid
           AND status = 'pending'
+          AND version = ${record.authority.version + 1}
         RETURNING id
       ),
       authority_claim AS (
         UPDATE trip_authorities
-        SET version = ${record.amendment.version},
-            document_version = ${record.amendment.version},
+        SET version = version + 1,
+            document_version = document_version + 1,
             valid_from = CASE
               WHEN ${amendmentType} = 'date_extension' AND ${validFrom}::timestamptz IS NOT NULL THEN ${validFrom}
               ELSE valid_from
@@ -279,16 +327,6 @@ export async function PATCH(
         FROM authority_claim
         RETURNING id
       ),
-      documents_update AS (
-        UPDATE generated_documents
-        SET status = 'superseded', updated_at = ${now}
-        WHERE tenant_id = ${session.tenantId}::uuid
-          AND entity_type = 'trip'
-          AND entity_id = ${id}::uuid
-          AND status = 'issued'
-          AND EXISTS (SELECT 1 FROM version_insert)
-        RETURNING id
-      ),
       audit_insert AS (
         INSERT INTO audit_events (
           tenant_id, tenant_sequence, event_type, actor_user_id, action,
@@ -319,18 +357,23 @@ export async function PATCH(
       END AS integer) AS committed
     `);
 
+    if (record.tripStatus === 'pending' && !record.tripIssuedAt && ['provisional', 'confirmed'].includes(record.allocationState)) {
+      await onTripIssued(record.allocationId, session.tenantId, session.user.id).catch((error) =>
+        console.warn('[authority/amendments] Amendment committed but Trip Authority draft refresh failed:', error),
+      );
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[authority/amendments] PATCH failed:', error);
-    if ((error as { code?: string })?.code === '23505') {
+    const code = postgresErrorCode(error);
+    if (
+      code === '23505' ||
+      (code === '23514' && String(error).includes('authority_amendment_lifecycle_conflict')) ||
+      String(error).includes('atomic_authority_amendment_failed')
+    ) {
       return NextResponse.json(
-        { error: 'This Trip Authority changed while the amendment was being decided. Refresh and review the latest version.' },
-        { status: 409 },
-      );
-    }
-    if (String(error).includes('atomic_authority_amendment_failed')) {
-      return NextResponse.json(
-        { error: 'This Trip Authority changed while the amendment was being decided. Refresh and review the latest version.' },
+        { error: 'This Trip Authority, trip custody state, or amendment version changed while the decision was being recorded. Refresh and review the latest authority before trying again.' },
         { status: 409 },
       );
     }

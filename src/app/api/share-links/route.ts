@@ -3,13 +3,16 @@ import { getDb } from '@/db';
 import { shareLinks, generatedDocuments } from '@/db/schema/documents';
 import { eq, and, desc, count, gte, lt, ilike, sql } from 'drizzle-orm';
 import { generateShareToken, generateShortShareIdentity } from '@/lib/share-token';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import { auditEvents } from '@/db/schema/audit';
+
+const EXTERNAL_REDACTION_PROFILES = ['external_standard', 'external_minimal'] as const;
+type ExternalRedactionProfile = (typeof EXTERNAL_REDACTION_PROFILES)[number];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/share-links
- * List all active share links with document info and analytics.
+ * List all share links with document info and analytics.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -17,41 +20,78 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.FILE_VIEW);
-    if (permCheck instanceof NextResponse) return permCheck;
+    const accessCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'view',
+    );
+    if (accessCheck instanceof NextResponse) return accessCheck;
+    const revokeCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'delete',
+    );
+    const createCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'create',
+    );
+    const canRevoke = !(revokeCheck instanceof NextResponse);
+    const canDistribute = !(createCheck instanceof NextResponse);
 
     const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '25', 10);
+    const requestedPage = Number.parseInt(searchParams.get('page') || '1', 10);
+    const requestedLimit = Number.parseInt(searchParams.get('limit') || '25', 10);
+    const page = Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1;
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, requestedLimit))
+      : 25;
     const offset = (page - 1) * limit;
-    const status = searchParams.get('status') || ''; // active, expired, revoked, all
+    const status = searchParams.get('status') || '';
     const search = searchParams.get('q')?.trim() || '';
+    const documentId = searchParams.get('documentId')?.trim() || '';
+    if (documentId && !UUID_PATTERN.test(documentId)) {
+      return NextResponse.json({ error: 'Invalid document identifier.' }, { status: 400 });
+    }
 
     const db = getDb();
 
-    // Build conditions
-    const conditions = [eq(shareLinks.tenantId, session.tenantId)];
+    const conditions = [
+      eq(shareLinks.tenantId, session.tenantId),
+      eq(generatedDocuments.tenantId, session.tenantId),
+    ];
+    if (documentId) conditions.push(eq(shareLinks.documentId, documentId));
     if (status === 'active') {
       conditions.push(eq(shareLinks.isRevoked, false));
       conditions.push(gte(shareLinks.expiresAt, new Date()));
+      conditions.push(
+        sql<boolean>`(${shareLinks.maxViews} is null or ${shareLinks.currentViews} < ${shareLinks.maxViews})`,
+      );
     } else if (status === 'expired') {
       conditions.push(eq(shareLinks.isRevoked, false));
       conditions.push(lt(shareLinks.expiresAt, new Date()));
+    } else if (status === 'exhausted') {
+      conditions.push(eq(shareLinks.isRevoked, false));
+      conditions.push(gte(shareLinks.expiresAt, new Date()));
+      conditions.push(
+        sql<boolean>`${shareLinks.maxViews} is not null and ${shareLinks.currentViews} >= ${shareLinks.maxViews}`,
+      );
     } else if (status === 'revoked') conditions.push(eq(shareLinks.isRevoked, true));
     if (search) conditions.push(ilike(generatedDocuments.documentType, `%${search}%`));
 
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const whereClause = and(...conditions);
+    const documentJoin = and(
+      eq(shareLinks.documentId, generatedDocuments.id),
+      eq(generatedDocuments.tenantId, session.tenantId),
+    );
 
-    // Count total
     const [totalResult] = await db
       .select({ count: count() })
       .from(shareLinks)
-      .innerJoin(generatedDocuments, eq(shareLinks.documentId, generatedDocuments.id))
+      .innerJoin(generatedDocuments, documentJoin)
       .where(whereClause);
     const total = Number(totalResult?.count ?? 0);
 
-    // Fetch share links with document info. Never expose tokenHash: it is a
-    // server-side verification secret derivative and has no UI purpose.
     const [rows, [summary]] = await Promise.all([
       db
         .select({
@@ -60,6 +100,7 @@ export async function GET(request: NextRequest) {
           verificationCode: shareLinks.verificationCode,
           expiresAt: shareLinks.expiresAt,
           isExpired: sql<boolean>`${shareLinks.expiresAt} < now()`,
+          isExhausted: sql<boolean>`${shareLinks.maxViews} is not null and ${shareLinks.currentViews} >= ${shareLinks.maxViews}`,
           isRevoked: shareLinks.isRevoked,
           maxViews: shareLinks.maxViews,
           currentViews: shareLinks.currentViews,
@@ -73,14 +114,15 @@ export async function GET(request: NextRequest) {
           documentStatus: generatedDocuments.status,
         })
         .from(shareLinks)
-        .innerJoin(generatedDocuments, eq(shareLinks.documentId, generatedDocuments.id))
+        .innerJoin(generatedDocuments, documentJoin)
         .where(whereClause)
         .orderBy(desc(shareLinks.createdAt))
         .limit(limit)
         .offset(offset),
       db
         .select({
-          active: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} >= now())`,
+          active: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} >= now() and (${shareLinks.maxViews} is null or ${shareLinks.currentViews} < ${shareLinks.maxViews}))`,
+          exhausted: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} >= now() and ${shareLinks.maxViews} is not null and ${shareLinks.currentViews} >= ${shareLinks.maxViews})`,
           expired: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = false and ${shareLinks.expiresAt} < now())`,
           revoked: sql<number>`count(*) filter (where ${shareLinks.isRevoked} = true)`,
           views: sql<number>`coalesce(sum(${shareLinks.currentViews}), 0)`,
@@ -96,8 +138,10 @@ export async function GET(request: NextRequest) {
         total,
         page,
         totalPages: Math.ceil(total / limit),
+        capabilities: { canRevoke, canDistribute },
         summary: {
           active: Number(summary?.active ?? 0),
+          exhausted: Number(summary?.exhausted ?? 0),
           expired: Number(summary?.expired ?? 0),
           revoked: Number(summary?.revoked ?? 0),
           views: Number(summary?.views ?? 0),
@@ -106,10 +150,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('[Share Links] GET failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to list share links: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to list share links.' }, { status: 500 });
   }
 }
 
@@ -119,11 +160,14 @@ export async function POST(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
-    if (permCheck instanceof NextResponse) return permCheck;
+    const accessCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'create',
+    );
+    if (accessCheck instanceof NextResponse) return accessCheck;
 
     const userId = session.user.id;
-
     const body = await request.json();
     const {
       documentId,
@@ -136,6 +180,9 @@ export async function POST(request: NextRequest) {
 
     if (!documentId) {
       return NextResponse.json({ error: 'Missing required field: documentId' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(String(documentId))) {
+      return NextResponse.json({ error: 'Invalid document identifier.' }, { status: 400 });
     }
 
     const parsedExpiryHours = Number(expiresInHours);
@@ -160,16 +207,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const normalizedRedactionProfile = typeof redactionProfile === 'string' && redactionProfile.trim()
-      ? redactionProfile.trim()
-      : 'external_standard';
+    const requestedRedactionProfile =
+      typeof redactionProfile === 'string' && redactionProfile.trim()
+        ? redactionProfile.trim()
+        : 'external_standard';
+    if (!EXTERNAL_REDACTION_PROFILES.includes(requestedRedactionProfile as ExternalRedactionProfile)) {
+      return NextResponse.json(
+        {
+          error:
+            'Public share links support External Standard or External Minimal disclosure only.',
+        },
+        { status: 422 },
+      );
+    }
+    const normalizedRedactionProfile = requestedRedactionProfile as ExternalRedactionProfile;
     const normalizedAllowDownload = Boolean(allowDownload);
     const tenantId = session.tenantId;
     const expiresAt = new Date(Date.now() + normalizedExpiryHours * 60 * 60 * 1000);
 
     const db = getDb();
-
-    // Verify document exists and belongs to this tenant
     const [doc] = await db
       .select()
       .from(generatedDocuments)
@@ -184,9 +240,14 @@ export async function POST(request: NextRequest) {
     if (!doc) {
       return NextResponse.json({ error: 'Document not found in your tenant' }, { status: 404 });
     }
-    if (doc.status === 'draft') {
+    if (doc.status !== 'issued') {
       return NextResponse.json(
-        { error: 'Issue the document before creating a public verification link' },
+        {
+          error:
+            doc.status === 'draft'
+              ? 'Issue the document before creating a public verification link'
+              : `Only the current issued document can receive a new public verification link. Current status: ${doc.status}.`,
+        },
         { status: 409 },
       );
     }
@@ -212,7 +273,10 @@ export async function POST(request: NextRequest) {
           allowPreview?: boolean;
         };
         const expiryDifferenceMs = Math.abs(existing.expiresAt.getTime() - expiresAt.getTime());
+        const hasRemainingViews =
+          existing.maxViews === null || existing.currentViews < existing.maxViews;
         const settingsMatch =
+          hasRemainingViews &&
           existing.maxViews === parsedMaxViews &&
           existing.redactionProfile === normalizedRedactionProfile &&
           Boolean(existingPolicy.allowDownload) === normalizedAllowDownload &&
@@ -230,8 +294,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate secure token
-    const { token, tokenHash } = await generateShareToken(documentId, expiresAt);
+    const { tokenHash } = await generateShareToken(documentId, expiresAt);
     const snapshot = doc.snapshotData as Record<string, unknown>;
     const readablePrefix = String(
       snapshot.authorityNumber ||
@@ -240,7 +303,6 @@ export async function POST(request: NextRequest) {
     );
     const { shortSlug, verificationCode } = await generateShortShareIdentity(readablePrefix);
 
-    // Store share link
     const [link] = await db
       .insert(shareLinks)
       .values({
@@ -269,12 +331,12 @@ export async function POST(request: NextRequest) {
         expiresAt: expiresAt.toISOString(),
         maxViews: parsedMaxViews,
         allowDownload: normalizedAllowDownload,
+        redactionProfile: normalizedRedactionProfile,
       },
       summary: `Secure link created for ${doc.documentType}`,
       sourceChannel: 'web',
     });
 
-    // Build shareable URL
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const shareUrl = `${baseUrl}/v/${encodeURIComponent(shortSlug)}`;
     const { tokenHash: _tokenHash, ...safeLink } = link;
@@ -284,15 +346,11 @@ export async function POST(request: NextRequest) {
       data: {
         ...safeLink,
         shareUrl,
-        legacyShareUrl: `${baseUrl}/share/${encodeURIComponent(token)}`,
       },
     });
   } catch (error) {
     console.error('Share link creation failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to create share link: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to create share link.' }, { status: 500 });
   }
 }
 
@@ -302,14 +360,21 @@ export async function DELETE(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
-    if (permCheck instanceof NextResponse) return permCheck;
+    const accessCheck = await requireDashboardAction(
+      session,
+      '/dashboard/share-links',
+      'delete',
+    );
+    if (accessCheck instanceof NextResponse) return accessCheck;
 
     const { searchParams } = new URL(request.url);
     const linkId = searchParams.get('linkId');
 
     if (!linkId) {
       return NextResponse.json({ error: 'Missing required param: linkId' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(linkId)) {
+      return NextResponse.json({ error: 'Invalid share-link identifier.' }, { status: 400 });
     }
 
     const db = getDb();
@@ -334,12 +399,10 @@ export async function DELETE(request: NextRequest) {
       sourceChannel: 'web',
     });
 
-    return NextResponse.json({ success: true, data: revoked });
+    const { tokenHash: _tokenHash, ...safeRevoked } = revoked;
+    return NextResponse.json({ success: true, data: safeRevoked });
   } catch (error) {
     console.error('Share link revoke failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to revoke share link: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to revoke share link.' }, { status: 500 });
   }
 }

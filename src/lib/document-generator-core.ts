@@ -10,7 +10,7 @@
  */
 
 import { getDb } from '@/db';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { generatedDocuments } from '@/db/schema/documents';
 import {
   trips,
@@ -305,7 +305,6 @@ async function buildFuelSummarySnapshot(tripId: string) {
   const totalLitres = transactions.reduce((sum, t) => sum + Number(t.litres), 0);
   const totalCost = transactions.reduce((sum, t) => sum + Number(t.amount), 0);
 
-  // Find all reimbursements linked to this trip's transactions
   let pendingReimbursements = 0;
   if (transactions.length > 0) {
     const txIds = transactions.map((t) => t.id);
@@ -339,28 +338,24 @@ async function buildVehicleHistorySnapshot(vehicleId: string) {
   const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.id, vehicleId)).limit(1);
   if (!vehicle) return null;
 
-  // All maintenance events
   const maintenance = await db
     .select()
     .from(maintenanceEvents)
     .where(eq(maintenanceEvents.vehicleId, vehicleId))
     .orderBy(desc(maintenanceEvents.serviceDate));
 
-  // All fuel transactions
   const fuel = await db
     .select()
     .from(fuelTransactions)
     .where(eq(fuelTransactions.vehicleId, vehicleId))
     .orderBy(desc(fuelTransactions.createdAt));
 
-  // All inspections
   const inspections = await db
     .select()
     .from(vehicleInspections)
     .where(eq(vehicleInspections.vehicleId, vehicleId))
     .orderBy(desc(vehicleInspections.createdAt));
 
-  // All trips
   const tripData = await db
     .select({
       id: trips.id,
@@ -527,7 +522,6 @@ async function buildTripCompletionSnapshot(tripId: string) {
     .where(eq(vehicles.id, trip.vehicleId))
     .limit(1);
 
-  // Planned route distance from the linked request's mapped routes
   let routeKm: number | null = null;
   if (trip.requestId) {
     const routeRows = await db
@@ -647,7 +641,6 @@ async function buildTripIncidentSnapshot(incidentId: string) {
     policeReference: event.policeReference,
     emergencyServicesContacted: event.emergencyServicesContacted,
     detailsRequired: event.detailsRequired,
-    // MVA report fields
     accidentReportNumber: event.accidentReportNumber,
     investigationStatus: event.investigationStatus,
     investigationNotes: event.investigationNotes,
@@ -698,18 +691,16 @@ const DOCUMENT_BUILDERS: Partial<
 };
 
 /**
- * Generate a document snapshot for a given entity.
+ * Generate or refresh a source snapshot in DRAFT state.
  *
- * Example usage:
- * ```ts
- * await generateDocument({
- *   documentType: 'transport_request',
- *   entityType: 'transport_request',
- *   entityId: requestId,
- *   tenantId: session.tenantId,
- *   generatedByUserId: session.user.id,
- * });
- * ```
+ * A pending draft is mutable working state, not an official historical version.
+ * Re-running a lifecycle hook therefore refreshes that same draft in place. A
+ * new version number is allocated only after the latest version has left draft
+ * state (issued/superseded). This prevents retry storms from manufacturing v2,
+ * v3, v4 drafts while preserving immutable issued history.
+ *
+ * Formal issuance remains the only operation that freezes final render data and
+ * branding, supersedes the previous official version and writes the issue audit.
  */
 export async function generateDocument(
   payload: DocumentPayload,
@@ -728,7 +719,29 @@ export async function generateDocument(
     console.warn(`[DocGen] No data found for ${entityType}: ${entityId}`);
     return null;
   }
+
   const branding = await resolveTenantDocumentBranding(tenantId);
+  const db = getDb();
+
+  const [existing] = await db
+    .select()
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.tenantId, tenantId),
+        eq(generatedDocuments.entityType, entityType),
+        eq(generatedDocuments.entityId, entityId),
+        eq(generatedDocuments.documentType, documentType),
+      ),
+    )
+    .orderBy(desc(generatedDocuments.documentVersion))
+    .limit(1);
+
+  const targetVersion = existing?.status === 'draft'
+    ? existing.documentVersion
+    : existing
+      ? existing.documentVersion + 1
+      : 1;
   const snapshotData = {
     ...sourceSnapshot,
     documentIdentity: {
@@ -741,10 +754,38 @@ export async function generateDocument(
       executiveSignatureUrl: branding?.executiveSignatureUrl,
       snapshottedAt: new Date().toISOString(),
     },
+    brandingMeta: branding
+      ? {
+          tenantId: branding.tenantId,
+          organisationName: branding.organisationName,
+          code: branding.code,
+          locale: branding.locale,
+          timezone: branding.timezone,
+          division: branding.division,
+          address: branding.address,
+          phone: branding.phone,
+          email: branding.email,
+          website: branding.website,
+          registrationNumber: branding.registrationNumber,
+          motto: branding.motto,
+          primaryColor: branding.primaryColor,
+          accentColor: branding.accentColor,
+          documentFooter: branding.documentFooter,
+          executiveSignatoryName: branding.executiveSignatoryName,
+          executiveSignatoryTitle: branding.executiveSignatoryTitle,
+        }
+      : undefined,
   };
-  const snapshotHash = createHash('sha256').update(JSON.stringify(snapshotData)).digest('hex');
+  const snapshotHash = createHash('sha256')
+    .update(
+      JSON.stringify({
+        documentType,
+        version: targetVersion,
+        snapshot: snapshotData,
+      }),
+    )
+    .digest('hex');
 
-  // Validate snapshot against document type schema
   if (hasSchema(documentType)) {
     const validation = validateDocumentSnapshot(documentType, snapshotData);
     if (!validation.valid) {
@@ -752,52 +793,55 @@ export async function generateDocument(
         `[DocGen] Snapshot validation failed for ${documentType}:${entityId}`,
         validation.errors,
       );
-      // Non-blocking — store the document with a warning, but log the issue
     }
   }
 
-  const db = getDb();
-
-  // Check if a document already exists for this entity + type
-  const [existing] = await db
-    .select()
-    .from(generatedDocuments)
-    .where(
-      and(
-        eq(generatedDocuments.entityType, entityType),
-        eq(generatedDocuments.entityId, entityId),
-        eq(generatedDocuments.documentType, documentType),
-      ),
-    )
-    .orderBy(desc(generatedDocuments.documentVersion))
-    .limit(1);
-
-  const newVersion = existing ? existing.documentVersion + 1 : 1;
-
-  // If there's an existing issued document, supersede it first
-  if (existing && existing.status === 'issued') {
-    await db
+  if (existing?.status === 'draft') {
+    const [refreshed] = await db
       .update(generatedDocuments)
-      .set({ status: 'superseded', updatedAt: new Date() })
-      .where(eq(generatedDocuments.id, existing.id));
+      .set({
+        templateVersion,
+        snapshotData,
+        hash: snapshotHash,
+        generatedByUserId,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(generatedDocuments.id, existing.id),
+          eq(generatedDocuments.tenantId, tenantId),
+          eq(generatedDocuments.status, 'draft'),
+        ),
+      )
+      .returning();
+
+    if (refreshed) return refreshed;
+
+    // The draft may have been issued concurrently after it was read above.
+    // Re-enter once against the new latest state rather than overwriting an
+    // official document or returning stale working data.
+    return generateDocument(payload);
   }
 
+  const docId = randomUUID();
   const [doc] = await db
     .insert(generatedDocuments)
     .values({
+      id: docId,
       tenantId,
       documentType,
-      documentVersion: newVersion,
+      documentVersion: targetVersion,
       templateVersion,
       entityType,
       entityId,
       snapshotData,
       hash: snapshotHash,
-      status: newVersion > 1 ? 'issued' : 'draft', // Regenerations are auto-issued
+      status: 'draft',
       generatedByUserId,
     })
     .returning();
 
+  if (!doc) throw new Error('Generated document committed but could not be reloaded');
   return doc;
 }
 
@@ -805,9 +849,7 @@ export async function generateDocument(
 // Lifecycle triggers
 // ---------------------------------------------------------------------------
 
-/**
- * Called when a transport request is submitted (not draft).
- */
+/** Called when a transport request is submitted (not draft). */
 export async function onRequestSubmitted(requestId: string, tenantId: string, userId: string) {
   return generateDocument({
     documentType: 'transport_request',
@@ -818,9 +860,7 @@ export async function onRequestSubmitted(requestId: string, tenantId: string, us
   });
 }
 
-/**
- * Called when a trip is closed.
- */
+/** Called when a trip is closed. */
 export async function onTripClosed(tripId: string, tenantId: string, userId: string) {
   const results = await Promise.all([
     generateDocument({
@@ -842,9 +882,7 @@ export async function onTripClosed(tripId: string, tenantId: string, userId: str
   return results.filter(Boolean);
 }
 
-/**
- * Called when a trip is issued (vehicle + driver assigned).
- */
+/** Called when a trip is issued (vehicle + driver assigned). */
 export async function onTripIssued(allocationId: string, tenantId: string, userId: string) {
   return generateDocument({
     documentType: 'trip_authority',
@@ -855,9 +893,7 @@ export async function onTripIssued(allocationId: string, tenantId: string, userI
   });
 }
 
-/**
- * Called when an inspection is completed.
- */
+/** Called when an inspection is completed. */
 export async function onInspectionCompleted(
   inspectionId: string,
   tenantId: string,

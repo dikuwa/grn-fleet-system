@@ -169,17 +169,21 @@ const styles = StyleSheet.create({
     right: 40,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-end',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
     paddingTop: 6,
   },
   footerLeft: {
+    width: '78%',
     fontSize: 7,
     color: '#9CA3AF',
   },
   footerRight: {
+    width: '22%',
     fontSize: 7,
     color: '#9CA3AF',
+    textAlign: 'right',
   },
 });
 
@@ -191,7 +195,7 @@ export const EnhancedReportDocument: React.FC<{ data: EnhancedReportData }> = ({
   data,
 }) => {
   return (
-    <Document>
+    <Document title={data.title} author={data.tenantName || 'Government Fleet'}>
       <Page size="A4" style={styles.page} wrap>
         {/* Header */}
         <View style={styles.header}>
@@ -251,7 +255,7 @@ export const EnhancedReportDocument: React.FC<{ data: EnhancedReportData }> = ({
                 </Text>
               ) : (
                 <View wrap>
-                  <View style={styles.tableHeader}>
+                  <View style={styles.tableHeader} fixed>
                     {section.columns.map((col) => (
                       <Text key={col.key} style={[styles.tableHeaderCell, { width: colWidth }]}>
                         {col.label}
@@ -262,6 +266,7 @@ export const EnhancedReportDocument: React.FC<{ data: EnhancedReportData }> = ({
                     <View
                       key={i}
                       style={i % 2 === 0 ? styles.tableRow : styles.tableRowAlt}
+                      wrap={false}
                     >
                       {section.columns.map((col) => (
                         <Text key={col.key} style={[styles.tableCell, { width: colWidth }]}>
@@ -276,20 +281,17 @@ export const EnhancedReportDocument: React.FC<{ data: EnhancedReportData }> = ({
           );
         })}
 
-        {/* Footer with page numbering */}
-        <Text
-          style={styles.footer}
-          fixed
-          render={({ pageNumber, totalPages }) => (
-            <View style={styles.footer}>
-              <Text style={styles.footerLeft}>
-                {data.tenantDocumentFooter ||
-                  `${data.tenantName || 'Fleet Management System'} — Enhanced Analytics`}
-              </Text>
-              <Text style={styles.footerRight}>Page {pageNumber} of {totalPages}</Text>
-            </View>
-          )}
-        />
+        {/* Fixed footer: React-PDF render callbacks belong on Text, not on a Text that returns a View. */}
+        <View style={styles.footer} fixed>
+          <Text style={styles.footerLeft}>
+            {data.tenantDocumentFooter ||
+              `${data.tenantName || 'Fleet Management System'} — Enhanced Analytics`}
+          </Text>
+          <Text
+            style={styles.footerRight}
+            render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`}
+          />
+        </View>
       </Page>
     </Document>
   );
