@@ -411,7 +411,11 @@ export async function PATCH(request: NextRequest) {
       const verified = action === 'verify';
       const now = new Date();
       const linkedReceipts = await db
-        .select({ id: fuelReceipts.id, isVerified: fuelReceipts.isVerified })
+        .select({
+          id: fuelReceipts.id,
+          isVerified: fuelReceipts.isVerified,
+          ocrStatus: fuelReceipts.ocrStatus,
+        })
         .from(fuelReceipts)
         .where(
           and(
@@ -419,28 +423,35 @@ export async function PATCH(request: NextRequest) {
             eq(fuelReceipts.tenantId, session.tenantId),
           ),
         );
-      const pendingOtherReceipts = linkedReceipts.filter(
-        (linked) => linked.id !== receiptId && !linked.isVerified,
+      const otherReceipts = linkedReceipts.filter((linked) => linked.id !== receiptId);
+      const rejectedOtherReceipts = otherReceipts.filter(
+        (linked) => !linked.isVerified && linked.ocrStatus === 'rejected',
       );
-      const transactionVerified = verified && pendingOtherReceipts.length === 0;
-      const transactionState = verified
-        ? transactionVerified
+      const pendingOtherReceipts = otherReceipts.filter(
+        (linked) => !linked.isVerified && linked.ocrStatus !== 'rejected',
+      );
+      const transactionVerified =
+        verified && rejectedOtherReceipts.length === 0 && pendingOtherReceipts.length === 0;
+      const transactionState = !verified || rejectedOtherReceipts.length > 0
+        ? 'rejected'
+        : transactionVerified
           ? 'verified'
-          : 'flagged'
-        : 'rejected';
-      const transactionNote = verified
-        ? transactionVerified
-          ? null
-          : `Awaiting verification of ${pendingOtherReceipts.length} additional receipt${pendingOtherReceipts.length === 1 ? '' : 's'}`
-        : reason;
+          : 'flagged';
+      const transactionNote = !verified
+        ? reason
+        : rejectedOtherReceipts.length > 0
+          ? `${rejectedOtherReceipts.length} linked receipt${rejectedOtherReceipts.length === 1 ? ' remains' : 's remain'} rejected and require resolution`
+          : transactionVerified
+            ? null
+            : `Awaiting verification of ${pendingOtherReceipts.length} additional receipt${pendingOtherReceipts.length === 1 ? '' : 's'}`;
 
       await runAtomicMutations((executor) => [
         executor
           .update(fuelReceipts)
           .set({
             isVerified: verified,
-            verifiedByUserId: session.user.id,
-            verifiedAt: now,
+            verifiedByUserId: verified ? session.user.id : null,
+            verifiedAt: verified ? now : null,
             ocrStatus: verified ? 'verified' : 'rejected',
           })
           .where(eq(fuelReceipts.id, receiptId)),
@@ -448,7 +459,7 @@ export async function PATCH(request: NextRequest) {
           .update(fuelTransactions)
           .set({
             isVerified: transactionVerified,
-            verifiedByUserId: session.user.id,
+            verifiedByUserId: transactionVerified ? session.user.id : null,
             anomalyState: transactionState,
             anomalyNotes: transactionNote,
             updatedAt: now,
@@ -471,6 +482,7 @@ export async function PATCH(request: NextRequest) {
             status: verified ? 'verified' : 'rejected',
             transactionVerified,
             pendingLinkedReceipts: pendingOtherReceipts.length,
+            rejectedLinkedReceipts: rejectedOtherReceipts.length + (verified ? 0 : 1),
           },
           reason,
           sourceChannel: 'web',
