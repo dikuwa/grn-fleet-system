@@ -279,12 +279,10 @@ export function isPermissionAvailableInWorkspace(
       Permissions.DRIVER_ARCHIVE,
       Permissions.DRIVER_UPLOAD_LICENCE,
       Permissions.DRIVER_REVIEW_LICENCE,
-      Permissions.TRIP_INCIDENT_MANAGE,
-      Permissions.INCIDENT_COMPLETE_DETAILS,
-      Permissions.INCIDENT_INVESTIGATE,
-      Permissions.INCIDENT_CLOSE_INVESTIGATION,
-      Permissions.INCIDENT_TECHNICAL_CLEARANCE,
-      Permissions.INCIDENT_INSURANCE_UPDATE,
+      // Incident investigation and technical-clearance operations belong to
+      // the Transport Administrator workspace. Tenant Admin may retain legacy
+      // stored role grants, but the active-workspace policy must not expose
+      // those grants to permission-only incident APIs.
       Permissions.USER_VIEW,
       Permissions.USER_MANAGE_STATUS,
       Permissions.USER_INVITE,
