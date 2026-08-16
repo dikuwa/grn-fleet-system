@@ -13,6 +13,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
+  v_trip_id uuid;
   v_trip_status text;
   v_trip_issued_at timestamptz;
   v_authority_status text;
@@ -30,15 +31,39 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  SELECT t.status, t.issued_at, ta.status
-    INTO v_trip_status, v_trip_issued_at, v_authority_status
-  FROM trip_authorities ta
-  INNER JOIN trips t ON t.id = ta.trip_id
-  WHERE ta.id = NEW.authority_id
-  FOR UPDATE OF t, ta;
+  -- Resolve the immutable authority→trip relationship first, then acquire
+  -- lifecycle locks in trip→authority order. The official-inspection guard uses
+  -- the same order, avoiding an unnecessary opposite-lock deadlock class.
+  SELECT trip_id
+    INTO v_trip_id
+  FROM trip_authorities
+  WHERE id = NEW.authority_id;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'authority_amendment_lifecycle_conflict: authority or trip not found'
+    RAISE EXCEPTION 'authority_amendment_lifecycle_conflict: authority not found'
+      USING ERRCODE = '23514';
+  END IF;
+
+  SELECT status, issued_at
+    INTO v_trip_status, v_trip_issued_at
+  FROM trips
+  WHERE id = v_trip_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'authority_amendment_lifecycle_conflict: trip not found'
+      USING ERRCODE = '23514';
+  END IF;
+
+  SELECT status
+    INTO v_authority_status
+  FROM trip_authorities
+  WHERE id = NEW.authority_id
+    AND trip_id = v_trip_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'authority_amendment_lifecycle_conflict: authority changed while approval was being recorded'
       USING ERRCODE = '23514';
   END IF;
 
