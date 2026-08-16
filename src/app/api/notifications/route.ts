@@ -183,10 +183,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('Notifications API failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch notifications: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to fetch notifications' }, { status: 500 });
   }
 }
 
@@ -424,10 +421,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Notification creation failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to create notification: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to create notification' }, { status: 500 });
   }
 }
 
@@ -573,10 +567,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Notification delete failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete notifications: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to delete notifications' }, { status: 500 });
   }
 }
 
@@ -740,9 +731,6 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Notification update failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to update notifications: ' + String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to update notifications' }, { status: 500 });
   }
 }

@@ -60,6 +60,7 @@ type NotificationType =
   | 'escalation'
   | 'outcome';
 type NotificationFilter = 'all' | 'unread' | 'read';
+type NotificationPriority = 'emergency' | 'high' | 'normal' | 'low';
 
 interface Notification {
   id: string;
@@ -68,7 +69,7 @@ interface Notification {
   body: string;
   time: string;
   isRead: boolean;
-  priority: 'high' | 'normal' | 'low';
+  priority: NotificationPriority;
   entityType: string;
   actionUrl: string | null;
   status: string;
@@ -110,6 +111,16 @@ const notificationTone = (type: Notification['type']) => {
   if (type === 'action_required') return 'bg-status-info-bg text-status-info-text';
   return 'bg-muted text-ink-600';
 };
+
+function normalizePriority(priority: string): NotificationPriority {
+  if (priority === 'emergency' || priority === 'high' || priority === 'normal' || priority === 'low') {
+    return priority;
+  }
+  // Older callers used "urgent" for the same top-priority safety state. Treat
+  // it as emergency so existing records retain their intended prominence.
+  if (priority === 'urgent') return 'emergency';
+  return 'normal';
+}
 
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
@@ -153,9 +164,7 @@ export default function NotificationsPage() {
           minute: '2-digit',
         }),
         isRead: notification.isRead,
-        priority: ['high', 'normal', 'low'].includes(notification.priority)
-          ? (notification.priority as Notification['priority'])
-          : 'normal',
+        priority: normalizePriority(notification.priority),
         entityType: notification.entityType || 'request',
         actionUrl: notification.actionUrl,
         status: notification.status,
@@ -183,7 +192,12 @@ export default function NotificationsPage() {
             outcome: 3,
             awareness: 4,
           };
-          const priorityRank = { high: 0, normal: 1, low: 2 } as const;
+          const priorityRank: Record<NotificationPriority, number> = {
+            emergency: 0,
+            high: 1,
+            normal: 2,
+            low: 3,
+          };
           return (
             typeRank[a.type] - typeRank[b.type] ||
             priorityRank[a.priority] - priorityRank[b.priority] ||
@@ -380,6 +394,7 @@ export default function NotificationsPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className={`text-sm ${notification.isRead ? 'text-ink-800 font-medium' : 'text-ink-950 font-semibold'}`}>{notification.title}</h2>
                     {!notification.isRead && <span className="bg-brand-600 h-2 w-2 rounded-full" aria-label="Unread" />}
+                    {notification.priority === 'emergency' && <Badge variant="error" size="sm">Emergency</Badge>}
                     {notification.priority === 'high' && <Badge variant="warning" size="sm">High priority</Badge>}
                   </div>
                   <p className="text-ink-600 mt-1 text-sm leading-relaxed">{notification.body}</p>
