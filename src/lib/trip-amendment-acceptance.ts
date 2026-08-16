@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { tripAmendments } from '@/db/schema/trips';
+import { tripAmendments, tripAuthorities, trips } from '@/db/schema/trips';
 
 export const DRIVER_REACCEPTANCE_AMENDMENT_TYPES = [
   'vehicle_replacement',
@@ -30,9 +30,10 @@ export interface PendingAuthorityAmendmentAcceptance {
  * acknowledged again before departure. This includes vehicle replacement as
  * well as route, validity, purpose and special-authorisation changes.
  *
- * The original workflow acknowledgement remains immutable audit history. If
- * the authority has never been accepted, there is no re-acceptance to perform:
- * the normal first acknowledgement workflow covers the latest authority state.
+ * Re-acceptance is strictly a pre-departure control. Once the vehicle has been
+ * physically issued/departed, the original authority remains historical
+ * evidence and later amendments are retained in amendment/version history
+ * without reopening the departure-acceptance workflow.
  */
 export async function findPendingAuthorityAmendmentAcceptance(input: {
   authorityId: string;
@@ -53,11 +54,15 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
       newValue: tripAmendments.newValue,
     })
     .from(tripAmendments)
+    .innerJoin(tripAuthorities, eq(tripAuthorities.id, tripAmendments.authorityId))
+    .innerJoin(trips, eq(trips.id, tripAuthorities.tripId))
     .where(
       and(
         eq(tripAmendments.authorityId, input.authorityId),
         inArray(tripAmendments.amendmentType, [...DRIVER_REACCEPTANCE_AMENDMENT_TYPES]),
         eq(tripAmendments.status, 'approved'),
+        eq(trips.status, 'pending'),
+        isNull(trips.issuedAt),
       ),
     )
     .orderBy(desc(tripAmendments.version), desc(tripAmendments.createdAt), desc(tripAmendments.id))
