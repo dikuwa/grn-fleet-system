@@ -33,6 +33,7 @@ import { FilterToolbar } from '@/components/ui/filter-toolbar';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { numericCount } from '@/lib/statistics';
 import { maintenanceScopeCondition } from '@/lib/record-scope';
+import { daysUntilNamibiaDate } from '@/lib/maintenance-record-validation';
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -401,10 +402,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
                     )}
                     {event.nextServiceDate &&
                       (() => {
-                        const daysUntil = Math.ceil(
-                          (new Date(event.nextServiceDate).getTime() - Date.now()) /
-                            (1000 * 60 * 60 * 24),
-                        );
+                        const daysUntil = daysUntilNamibiaDate(event.nextServiceDate);
                         if (daysUntil < 0) {
                           return (
                             <Badge variant="error" size="sm">
