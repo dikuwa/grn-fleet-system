@@ -60,7 +60,6 @@ export const FuelReceiptDocument: React.FC<{ data: FuelReceiptData }> = ({ data 
         reference={data.receiptNumber}
         status={formatDocumentStatus(data.status)}
         issueDate={formatHumanDate(data.generatedAt, data.branding?.locale)}
-        qrCode={data.qrCodeDataUrl}
       />
       <DocumentSection title="A. Transaction Details">
         <DocumentFieldGrid
@@ -153,7 +152,6 @@ export const DriverLogsheetDocument: React.FC<{ data: DriverLogsheetData }> = ({
           branding={data.branding}
           title="Driver Logsheet Report"
           issueDate={formatHumanDate(data.generatedAt, data.branding?.locale)}
-          qrCode={data.qrCodeDataUrl}
         />
         <DocumentSection title="Logsheet Identity">
           <DocumentFieldGrid
@@ -246,7 +244,6 @@ export const IncidentRecordDocument: React.FC<{ data: IncidentRecordData }> = ({
         reference={data.reference}
         status={formatDocumentStatus(data.status)}
         issueDate={formatHumanDate(data.occurredAt, data.branding?.locale)}
-        qrCode={data.qrCodeDataUrl}
       />
       <DocumentRow>
         <DocumentSection title="A. Incident Summary">

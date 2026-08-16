@@ -79,7 +79,6 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           version={1}
           status={formatDocumentStatus(data.status)}
           issueDate={formatHumanDate(data.inspectedAt, branding?.locale)}
-          qrCode={data.qrCodeDataUrl}
         />
 
         {/* Row 1: Inspection summary | Vehicle info */}
