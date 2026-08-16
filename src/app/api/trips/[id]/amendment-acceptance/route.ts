@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { vehicles } from '@/db/schema/fleet';
-import { employees } from '@/db/schema/people';
+import {
+  driverLicences,
+  driverProfessionalAuthorisations,
+  driverProfiles,
+  employees,
+} from '@/db/schema/people';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import {
   requireDashboardAction,
@@ -26,6 +31,14 @@ const ACCEPTANCE_METHODS = ['in_person', 'phone', 'signed_paper', 'secure_link']
 type AcceptanceMethod = (typeof ACCEPTANCE_METHODS)[number];
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+type InternalEligibilityEvidence = {
+  profileId: string;
+  licenceId: string;
+  licenceClass: string;
+  licenceExpiry: string;
+  professionalAuthorisationId: string | null;
+};
 
 async function loadAcceptanceContext(tripId: string, tenantId: string) {
   const db = getDb();
@@ -122,7 +135,87 @@ function externalEligibilityError(record: NonNullable<Awaited<ReturnType<typeof 
   return null;
 }
 
-/** Return whether the current authority has a driver-material amendment newer than its latest acceptance. */
+async function loadInternalEligibility(
+  record: NonNullable<Awaited<ReturnType<typeof loadAcceptanceContext>>>,
+  tenantId: string,
+): Promise<{ evidence: InternalEligibilityEvidence | null; error: string | null }> {
+  if (!record.driverEmployeeId) return { evidence: null, error: 'No internal driver is assigned.' };
+  const db = getDb();
+  const [driver] = await db
+    .select({
+      profileId: driverProfiles.id,
+      driverStatus: driverProfiles.driverStatus,
+      employmentStatus: employees.employmentStatus,
+      licenceId: driverLicences.id,
+      licenceClass: driverLicences.licenceClass,
+      licenceExpiry: driverLicences.expiryDate,
+      licenceVerificationStatus: driverLicences.verificationStatus,
+    })
+    .from(driverProfiles)
+    .innerJoin(employees, eq(employees.id, driverProfiles.employeeId))
+    .innerJoin(driverLicences, eq(driverLicences.driverProfileId, driverProfiles.id))
+    .where(and(
+      eq(driverProfiles.employeeId, record.driverEmployeeId),
+      eq(employees.tenantId, tenantId),
+      eq(driverLicences.isActive, true),
+      eq(driverLicences.isVerified, true),
+      eq(driverLicences.verificationStatus, 'verified'),
+    ))
+    .orderBy(desc(driverLicences.version))
+    .limit(1);
+
+  if (!driver || driver.employmentStatus !== 'active' || driver.driverStatus !== 'authorised') {
+    return { evidence: null, error: 'The assigned driver is no longer active and authorised with a verified licence.' };
+  }
+  const expiry = new Date(`${driver.licenceExpiry}T23:59:59.999Z`);
+  if (!Number.isFinite(expiry.getTime()) || expiry < record.allocationEndAt) {
+    return { evidence: null, error: 'The assigned driver licence no longer covers the full trip period.' };
+  }
+  if (
+    record.vehicleRequiredLicenceClass &&
+    !namibiaLicenceClassCovers(driver.licenceClass, record.vehicleRequiredLicenceClass)
+  ) {
+    return {
+      evidence: null,
+      error: `The assigned driver licence (${driver.licenceClass}) does not cover the current vehicle class (${record.vehicleRequiredLicenceClass}).`,
+    };
+  }
+
+  let professionalAuthorisationId: string | null = null;
+  if (record.vehicleProfessionalAuthorisationRequired) {
+    const [professional] = await db
+      .select({ id: driverProfessionalAuthorisations.id, expiryDate: driverProfessionalAuthorisations.expiryDate })
+      .from(driverProfessionalAuthorisations)
+      .where(and(
+        eq(driverProfessionalAuthorisations.driverProfileId, driver.profileId),
+        eq(driverProfessionalAuthorisations.isVerified, true),
+      ))
+      .orderBy(desc(driverProfessionalAuthorisations.expiryDate))
+      .limit(1);
+    const professionalExpiry = professional?.expiryDate
+      ? new Date(`${professional.expiryDate}T23:59:59.999Z`)
+      : null;
+    if (!professional || !professionalExpiry || professionalExpiry < record.allocationEndAt) {
+      return {
+        evidence: null,
+        error: 'The current vehicle requires a verified professional driving authorisation valid through the trip end date.',
+      };
+    }
+    professionalAuthorisationId = professional.id;
+  }
+
+  return {
+    evidence: {
+      profileId: driver.profileId,
+      licenceId: driver.licenceId,
+      licenceClass: driver.licenceClass,
+      licenceExpiry: driver.licenceExpiry,
+      professionalAuthorisationId,
+    },
+    error: null,
+  };
+}
+
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const auth = await requireRequestAuth(request);
@@ -178,12 +271,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 }
 
-/**
- * Record acknowledgement of a material Trip Authority amendment without
- * rewriting the driver's original workflow acknowledgement. Internal drivers
- * acknowledge their own revised authority. External-driver re-acceptance is
- * recorded by Transport Administration with the confirmation method retained.
- */
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const auth = await requireRequestAuth(request);
@@ -220,6 +307,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const internalDriver = Boolean(record.driverEmployeeId);
     let acceptanceMethod: AcceptanceMethod | 'driver_console' = 'driver_console';
+    let internalEligibility: InternalEligibilityEvidence | null = null;
     const note = String(body.note || '').trim().slice(0, 1000) || null;
 
     if (internalDriver) {
@@ -231,6 +319,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
           { status: 403 },
         );
       }
+      const eligibility = await loadInternalEligibility(record, tenantId);
+      if (eligibility.error || !eligibility.evidence) {
+        return NextResponse.json({ error: eligibility.error || 'The assigned driver is no longer eligible.' }, { status: 409 });
+      }
+      internalEligibility = eligibility.evidence;
     } else {
       if (!record.externalAssignmentId) {
         return NextResponse.json({ error: 'No external driver assignment is attached to this trip.' }, { status: 409 });
@@ -268,10 +361,45 @@ export async function POST(request: NextRequest, context: RouteContext) {
       acceptedAt: now.toISOString(),
       recordedByUserId: session.user.id,
       externalDriverAssignmentId: record.externalAssignmentId ?? null,
+      internalLicenceId: internalEligibility?.licenceId ?? null,
+      internalProfessionalAuthorisationId: internalEligibility?.professionalAuthorisationId ?? null,
     });
 
-    const externalEligibilityCurrent = internalDriver
-      ? sql`true`
+    const driverEligibilityCurrent = internalDriver
+      ? sql`exists (
+          select 1
+          from employees e
+          inner join driver_profiles dp on dp.employee_id = e.id
+          inner join driver_licences dl on dl.driver_profile_id = dp.id
+          inner join vehicle_allocations va on va.id = ${record.allocationId}::uuid
+          inner join vehicles v on v.id = va.vehicle_id
+          where e.id = ${record.driverEmployeeId}::uuid
+            and e.tenant_id = ${tenantId}::uuid
+            and e.employment_status = 'active'
+            and dp.id = ${internalEligibility?.profileId}::uuid
+            and dp.driver_status = 'authorised'
+            and dl.id = ${internalEligibility?.licenceId}::uuid
+            and dl.is_active = true
+            and dl.is_verified = true
+            and dl.verification_status = 'verified'
+            and dl.licence_class = ${internalEligibility?.licenceClass}
+            and dl.expiry_date >= va.end_at::date
+            and va.vehicle_id = ${record.vehicleId}::uuid
+            and v.tenant_id = ${tenantId}::uuid
+            and v.required_licence_class is not distinct from ${record.vehicleRequiredLicenceClass}
+            and v.professional_authorisation_required = ${record.vehicleProfessionalAuthorisationRequired}
+            and (
+              v.professional_authorisation_required = false
+              or exists (
+                select 1
+                from driver_professional_authorisations dpa
+                where dpa.id = ${internalEligibility?.professionalAuthorisationId}::uuid
+                  and dpa.driver_profile_id = dp.id
+                  and dpa.is_verified = true
+                  and dpa.expiry_date >= va.end_at::date
+              )
+            )
+        )`
       : sql`exists (
           select 1
           from external_driver_assignments eda
@@ -294,6 +422,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             and edl.expiry_date >= va.end_at::date
             and va.vehicle_id = ${record.vehicleId}::uuid
             and v.tenant_id = ${tenantId}::uuid
+            and v.required_licence_class is not distinct from ${record.vehicleRequiredLicenceClass}
             and v.professional_authorisation_required = false
         )`;
 
@@ -316,7 +445,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND t.status = 'pending'
               AND t.issued_at IS NULL
           )
-          AND ${externalEligibilityCurrent}
+          AND ${driverEligibilityCurrent}
         RETURNING id
       ),
       amendment_claim AS (
