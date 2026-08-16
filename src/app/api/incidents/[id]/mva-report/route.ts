@@ -13,6 +13,7 @@ import {
   generateMvaReport,
 } from '@/lib/incidents/mva';
 import { generateDocumentPdf } from '@/lib/pdf/generate';
+import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { and, eq, desc } from 'drizzle-orm';
@@ -39,13 +40,16 @@ export async function GET(
       return NextResponse.json({ error: 'Incident not found' }, { status: 404 });
     }
 
-    // Find the existing accident_report document for this incident
+    // Find the existing accident_report document for this incident. Tenant
+    // isolation is necessary but not sufficient: direct MVA downloads must use
+    // the same generated-document relationship scope as the document viewer.
     const db = getDb();
     const [doc] = await db
       .select()
       .from(generatedDocuments)
       .where(
         and(
+          eq(generatedDocuments.tenantId, session.tenantId),
           eq(generatedDocuments.entityType, 'trip_incident'),
           eq(generatedDocuments.entityId, id),
           eq(generatedDocuments.documentType, 'accident_report'),
@@ -59,6 +63,11 @@ export async function GET(
         { error: 'MVA report has not been generated yet. Use POST to generate.' },
         { status: 404 },
       );
+    }
+
+    const canRead = await canSessionReadGeneratedDocument(session, doc);
+    if (!canRead) {
+      return NextResponse.json({ error: 'MVA report not found' }, { status: 404 });
     }
 
     const result = await generateDocumentPdf(doc.id);
