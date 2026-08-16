@@ -29,7 +29,7 @@ import { Permissions } from '@/lib/permissions';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
-import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
+import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-acceptance';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -41,6 +41,15 @@ interface ReadinessGate {
   status: 'pass' | 'fail' | 'blocking' | 'pending';
   detail: string;
   required: boolean;
+}
+
+function snapshotAuthorityVersion(snapshotData: unknown): number | null {
+  if (!snapshotData || typeof snapshotData !== 'object' || Array.isArray(snapshotData)) return null;
+  const renderData = (snapshotData as Record<string, unknown>).renderData;
+  if (!renderData || typeof renderData !== 'object' || Array.isArray(renderData)) return null;
+  const value = (renderData as Record<string, unknown>).documentVersion;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 export async function GET(
@@ -436,6 +445,7 @@ export async function GET(
           acceptedAt: tripAuthorities.acceptedAt,
           validFrom: tripAuthorities.validFrom,
           validUntil: tripAuthorities.validUntil,
+          documentVersion: tripAuthorities.documentVersion,
         })
         .from(tripAuthorities)
         .where(and(eq(tripAuthorities.tripId, id), eq(tripAuthorities.tenantId, tenantId)))
@@ -445,6 +455,7 @@ export async function GET(
           id: generatedDocuments.id,
           status: generatedDocuments.status,
           documentVersion: generatedDocuments.documentVersion,
+          snapshotData: generatedDocuments.snapshotData,
         })
         .from(generatedDocuments)
         .where(and(
@@ -458,7 +469,7 @@ export async function GET(
     ]);
 
     let driverAccepted = false;
-    let pendingReplacementAcceptance: Awaited<ReturnType<typeof findPendingVehicleReplacementAcceptance>> = null;
+    let pendingAmendment: Awaited<ReturnType<typeof findPendingAuthorityAmendmentAcceptance>> = null;
     if (authority) {
       if (driverKind === 'external') {
         driverAccepted =
@@ -473,20 +484,21 @@ export async function GET(
         driverAccepted = acceptedStatuses.has(authority.status);
       }
 
-      pendingReplacementAcceptance = await findPendingVehicleReplacementAcceptance({
+      pendingAmendment = await findPendingAuthorityAmendmentAcceptance({
         authorityId: authority.id,
         acceptedAt: authority.acceptedAt,
       });
-      if (pendingReplacementAcceptance) {
+      if (pendingAmendment) {
         driverAccepted = false;
+        const amendmentLabel = pendingAmendment.amendmentType.replaceAll('_', ' ');
         gates.push({
           key: 'authority_amendment_acknowledged',
           label: 'Revised Trip Authority acknowledged',
           status: 'pending',
           detail:
             driverKind === 'external'
-              ? 'The vehicle changed after the external driver accepted the authority. Transport Administration must record acceptance of the revised authority before inspection or issue.'
-              : 'The vehicle changed after the driver accepted the authority. The assigned driver must review and accept the revised authority before inspection or issue.',
+              ? `A ${amendmentLabel} amendment became effective after the external driver accepted the authority. Transport Administration must record acceptance of the revised authority before inspection or issue.`
+              : `A ${amendmentLabel} amendment became effective after the driver accepted the authority. The assigned driver must review and accept the revised authority before inspection or issue.`,
           required: true,
         });
       }
@@ -499,8 +511,8 @@ export async function GET(
           ? driverKind === 'external'
             ? 'Transport Administration has recorded current external-driver acceptance.'
             : 'Driver acceptance covers the current Trip Authority.'
-          : pendingReplacementAcceptance
-            ? 'The previous acceptance predates a material vehicle replacement.'
+          : pendingAmendment
+            ? `The previous acceptance predates the approved ${pendingAmendment.amendmentType.replaceAll('_', ' ')} amendment.`
             : driverKind === 'external'
               ? `External driver assignment is ${externalDriver?.assignmentState || 'not available'}.`
               : `Trip Authority status: ${authority.status.replace(/_/g, ' ')}.`,
@@ -555,8 +567,11 @@ export async function GET(
       required: true,
     });
 
+    const latestSnapshotAuthorityVersion = snapshotAuthorityVersion(latestAuthorityDocument?.snapshotData);
     const currentAuthorityIssued = Boolean(
-      authority && latestAuthorityDocument?.status === 'issued',
+      authority &&
+      latestAuthorityDocument?.status === 'issued' &&
+      latestSnapshotAuthorityVersion === authority.documentVersion,
     );
     const authorityIssuanceActionable = authority?.status === 'ready_for_departure';
     gates.push({
@@ -572,11 +587,13 @@ export async function GET(
       detail: !authority
         ? 'The canonical Trip Authority has not been created.'
         : currentAuthorityIssued
-          ? `Trip Authority v${latestAuthorityDocument?.documentVersion ?? authority.status} is formally issued (${authority.status.replace(/_/g, ' ')}).`
+          ? `The formally issued Trip Authority snapshot matches current authority document version ${authority.documentVersion}.`
           : authorityIssuanceActionable
             ? !latestAuthorityDocument
               ? 'The current vehicle passed departure inspection, but the Trip Authority document has not been generated.'
-              : `Trip Authority v${latestAuthorityDocument.documentVersion} is ${latestAuthorityDocument.status.replace(/_/g, ' ')} and must now be formally issued before physical vehicle issue.`
+              : latestAuthorityDocument.status === 'issued'
+                ? `The latest issued Trip Authority snapshot represents authority document version ${latestSnapshotAuthorityVersion ?? 'unknown'}, but the current authority is version ${authority.documentVersion}. Regenerate/review the current draft and formally issue it before physical vehicle issue.`
+                : `Trip Authority v${latestAuthorityDocument.documentVersion} is ${latestAuthorityDocument.status.replace(/_/g, ' ')} and must now be formally issued before physical vehicle issue.`
             : 'Formal Trip Authority issuance becomes actionable after current driver acceptance and a passed departure inspection.',
       required: true,
     });
@@ -624,6 +641,13 @@ export async function GET(
         accepted: driverAccepted,
         assignmentState: driverKind === 'external' ? externalDriver?.assignmentState ?? null : null,
       },
+      amendmentAcceptance: pendingAmendment
+        ? {
+            amendmentId: pendingAmendment.amendmentId,
+            amendmentType: pendingAmendment.amendmentType,
+            authorityVersion: pendingAmendment.authorityVersion,
+          }
+        : null,
       gates,
       summary: {
         total: gates.length,
