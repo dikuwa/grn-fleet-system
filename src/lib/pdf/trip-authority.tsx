@@ -145,6 +145,8 @@ const OFFICIAL_WARNINGS = [
   'This authority must be returned with the vehicle log statement on completion of the trip',
 ];
 
+const JOURNEY_LOG_ROWS = 10;
+
 function dateTime(date?: string, time?: string, locale = 'en-NA') {
   const displayDate = formatHumanDate(date, locale);
   return [displayDate, time].filter(Boolean).join(' ');
@@ -172,6 +174,37 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
     .filter(Boolean);
   const legs = data.journeyLegs || [];
   const passengers = data.passengers || [];
+  const recordedJourneyRows = legs.length
+    ? legs.map((leg, index) => ({
+        number: index + 1,
+        from: leg.origin,
+        to: leg.destination,
+        departure: dateTime(leg.departureDate, leg.departureTime, locale),
+        return: dateTime(leg.returnDate, leg.returnTime, locale),
+        km: leg.estimatedKm === undefined ? undefined : `${leg.estimatedKm.toLocaleString(locale)} km`,
+      }))
+    : [{
+        number: 1,
+        from: data.routeSummary,
+        to: undefined,
+        departure: formatHumanDate(data.startAt, locale),
+        return: formatHumanDate(data.endAt, locale),
+        km: data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : undefined,
+      }];
+  const journeyRows = [
+    ...recordedJourneyRows.slice(0, JOURNEY_LOG_ROWS),
+    ...Array.from(
+      { length: Math.max(0, JOURNEY_LOG_ROWS - recordedJourneyRows.length) },
+      (_, index) => ({
+        number: recordedJourneyRows.length + index + 1,
+        from: undefined,
+        to: undefined,
+        departure: undefined,
+        return: undefined,
+        km: undefined,
+      }),
+    ),
+  ];
 
   return (
     <Document
@@ -300,21 +333,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
               { key: 'return', label: 'Return', width: '23%' },
               { key: 'km', label: 'Km', width: '12%', align: 'right' },
             ]}
-            rows={legs.length ? legs.map((leg, index) => ({
-              number: index + 1,
-              from: leg.origin,
-              to: leg.destination,
-              departure: dateTime(leg.departureDate, leg.departureTime, locale),
-              return: dateTime(leg.returnDate, leg.returnTime, locale),
-              km: leg.estimatedKm === undefined ? undefined : `${leg.estimatedKm.toLocaleString(locale)} km`,
-            })) : [{
-              number: 1,
-              from: data.routeSummary,
-              to: undefined,
-              departure: formatHumanDate(data.startAt, locale),
-              return: formatHumanDate(data.endAt, locale),
-              km: data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : undefined,
-            }]}
+            rows={journeyRows}
           />
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 3 }}>
             <Text style={{ width: '28%', fontFamily: DOCUMENT_FONT_STACK }}>Total estimated distance</Text>
