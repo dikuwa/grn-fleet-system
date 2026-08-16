@@ -60,15 +60,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const [record] = await db
       .select({
         assignmentId: externalDriverAssignments.id,
+        externalPartyId: externalDriverAssignments.externalPartyId,
         assignmentState: externalDriverAssignments.state,
         assignmentIssueId: externalDriverAssignments.issueId,
         allocationId: vehicleAllocations.id,
         allocationState: vehicleAllocations.state,
+        allocationVersion: vehicleAllocations.version,
+        allocationVehicleId: vehicleAllocations.vehicleId,
         tripStatus: trips.status,
         tripIssuedAt: trips.issuedAt,
         tripStartedAt: trips.startedAt,
         requestId: trips.requestId,
         requestReference: transportRequests.reference,
+        requestExternalDriverPartyId: transportRequests.assignedDriverExternalPartyId,
         vehicleId: trips.vehicleId,
         vehicleOdometer: vehicles.currentOdometer,
         authorityId: tripAuthorities.id,
@@ -101,6 +105,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         { status: 409 },
       );
     }
+    if (record.requestExternalDriverPartyId !== record.externalPartyId) {
+      return NextResponse.json({ error: 'The accepted external driver is no longer the request’s assigned driver.' }, { status: 409 });
+    }
     if (!['in_progress', 'return_due'].includes(record.tripStatus)) {
       return NextResponse.json({ error: `Cannot return trip with status "${record.tripStatus}".` }, { status: 409 });
     }
@@ -116,6 +123,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     if (record.allocationState !== 'confirmed') {
       return NextResponse.json({ error: `Allocation is no longer active (${record.allocationState}).` }, { status: 409 });
+    }
+    if (record.allocationVehicleId !== record.vehicleId) {
+      return NextResponse.json({ error: 'The active allocation vehicle changed. Refresh before recording return.' }, { status: 409 });
     }
 
     const endingOdometer = Number(body.endingOdometer);
@@ -134,28 +144,54 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const auditSequence = Date.now();
 
     await db.execute(sql`
-      WITH trip_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${record.allocationId}::uuid
+          AND va.state = 'confirmed'
+          AND va.version = ${record.allocationVersion}
+          AND va.vehicle_id = ${record.vehicleId}::uuid
+          AND va.driver_employee_id IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.id = ${id}::uuid
+              AND t.tenant_id = ${tenantId}::uuid
+              AND t.allocation_id = va.id
+              AND t.vehicle_id = va.vehicle_id
+              AND t.status IN ('in_progress', 'return_due')
+          )
+        RETURNING id
+      ),
+      trip_claim AS (
         UPDATE trips
         SET status = 'return_inspection', returned_at = ${now}, updated_at = ${now}
         WHERE id = ${id}::uuid
           AND tenant_id = ${tenantId}::uuid
+          AND allocation_id = ${record.allocationId}::uuid
+          AND vehicle_id = ${record.vehicleId}::uuid
           AND status IN ('in_progress', 'return_due')
           AND started_at IS NOT NULL
           AND issued_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
             SELECT 1
             FROM external_driver_assignments eda
             WHERE eda.id = ${record.assignmentId}::uuid
               AND eda.tenant_id = ${tenantId}::uuid
               AND eda.trip_id = trips.id
+              AND eda.allocation_id = trips.allocation_id
+              AND eda.external_party_id = ${record.externalPartyId}::uuid
               AND eda.state = 'accepted'
-              AND eda.issue_id IS NOT NULL
+              AND eda.issue_id = ${record.assignmentIssueId}::uuid
           )
           AND EXISTS (
-            SELECT 1 FROM vehicle_allocations va
-            WHERE va.id = trips.allocation_id
-              AND va.state = 'confirmed'
-              AND va.driver_employee_id IS NULL
+            SELECT 1
+            FROM transport_requests tr
+            WHERE tr.id = trips.request_id
+              AND tr.tenant_id = ${tenantId}::uuid
+              AND tr.assigned_driver_external_party_id = ${record.externalPartyId}::uuid
           )
         RETURNING id, request_id, vehicle_id
       ),
@@ -167,6 +203,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             updated_at = ${now}
         WHERE id = ${record.authorityId}::uuid
           AND tenant_id = ${tenantId}::uuid
+          AND allocation_id = ${record.allocationId}::uuid
           AND status IN ('in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported')
           AND EXISTS (SELECT 1 FROM trip_claim)
         RETURNING id
@@ -192,6 +229,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         SET current_odometer = GREATEST(current_odometer, ${endingOdometer}), updated_at = ${now}
         WHERE id = ${record.vehicleId}::uuid
           AND tenant_id = ${tenantId}::uuid
+          AND current_odometer <= ${endingOdometer}
           AND EXISTS (SELECT 1 FROM odometer_insert)
         RETURNING id
       ),
@@ -211,7 +249,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
           ${`Transport Office recorded return of external-driver trip for ${record.requestReference}`},
           jsonb_build_object(
             'externalDriverAssignmentId', ${record.assignmentId}::text,
+            'externalDriverPartyId', ${record.externalPartyId}::text,
             'authorityId', ${record.authorityId}::text,
+            'allocationVersion', ${record.allocationVersion + 1}::integer,
+            'vehicleId', ${record.vehicleId}::text,
             'endingOdometer', ${endingOdometer}::integer,
             'fuelLevel', ${fuelLevel}::text,
             'returnLocation', ${returnLocation}::text,
@@ -223,13 +264,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM trip_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM odometer_insert) = 1
          AND (SELECT count(*) FROM vehicle_claim) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
         THEN '1'
-        ELSE 'atomic_external_trip_return_failed_' || (SELECT count(*) FROM trip_claim)::text
+        ELSE 'atomic_external_trip_return_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
+          || (SELECT count(*) FROM trip_claim)::text
+          || (SELECT count(*) FROM authority_claim)::text
+          || (SELECT count(*) FROM vehicle_claim)::text
       END AS integer) AS committed
     `);
 
@@ -250,7 +296,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     console.error('[trips/external-return] POST failed:', error);
     return NextResponse.json(
-      { error: 'Trip state changed concurrently or the external-driver return could not be recorded. Refresh and try again.' },
+      { error: 'Trip, allocation, external-driver, vehicle, or odometer state changed while return was being recorded. Refresh and review the latest trip.' },
       { status: 409 },
     );
   }
