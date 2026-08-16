@@ -16,6 +16,10 @@ import { WorkspaceIds } from '@/lib/workspaces';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
+import {
+  validateMaintenanceServiceDate,
+  validateNextServiceOdometer,
+} from '@/lib/maintenance-record-validation';
 
 const SERVICE_TYPES = new Set(['scheduled', 'repair', 'inspection']);
 
@@ -88,6 +92,10 @@ export async function POST(req: NextRequest) {
     if (!serviceDate || Number.isNaN(Date.parse(`${serviceDate}T00:00:00Z`))) {
       return NextResponse.json({ error: 'A valid service date is required' }, { status: 400 });
     }
+    const serviceDateError = validateMaintenanceServiceDate(serviceDate);
+    if (serviceDateError) {
+      return NextResponse.json({ error: serviceDateError }, { status: 400 });
+    }
     if (!SERVICE_TYPES.has(serviceType)) {
       return NextResponse.json({ error: 'Service type must be scheduled, repair, or inspection' }, { status: 400 });
     }
@@ -132,8 +140,13 @@ export async function POST(req: NextRequest) {
     if (serviceOdometer !== null && serviceOdometer < vehicle.currentOdometer) {
       return NextResponse.json({ error: `Service odometer cannot be below the current vehicle odometer (${vehicle.currentOdometer} km)` }, { status: 409 });
     }
-    if (nextServiceOdometer !== null && serviceOdometer !== null && nextServiceOdometer < serviceOdometer) {
-      return NextResponse.json({ error: 'Next service odometer cannot be below the service odometer' }, { status: 400 });
+    const nextServiceOdometerError = validateNextServiceOdometer({
+      nextServiceOdometer,
+      serviceOdometer,
+      currentVehicleOdometer: vehicle.currentOdometer,
+    });
+    if (nextServiceOdometerError) {
+      return NextResponse.json({ error: nextServiceOdometerError }, { status: 400 });
     }
 
     const eventId = randomUUID();
