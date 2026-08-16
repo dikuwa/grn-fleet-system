@@ -1,8 +1,8 @@
 import { getDb, isDbConnected } from '@/db';
-import { fuelTransactions, fuelReceipts, reimbursements } from '@/db/schema/trips';
+import { fuelTransactions, fuelReceipts, receiptFieldCorrections, reimbursements } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -44,12 +44,18 @@ async function fetchFuelDetail(id: string, tenantId: string, userId: string, rec
     .where(and(eq(fuelTransactions.id, id), fuelScopeCondition({ tenantId, userId, recordScope })))
     .then((r) => r[0] ?? null);
   if (!transaction) notFound();
+
   const [receipts, reimbursement] = await Promise.all([
     db.select().from(fuelReceipts).where(and(eq(fuelReceipts.transactionId, id), eq(fuelReceipts.tenantId, tenantId))),
     db.select({ id: reimbursements.id, amount: reimbursements.amount, state: reimbursements.state, paidAt: reimbursements.paidAt, notes: reimbursements.notes })
       .from(reimbursements).where(eq(reimbursements.transactionId, id)).then((r) => r[0] ?? null),
   ]);
-  return { transaction, receipts, reimbursement };
+  const corrections = receipts.length
+    ? await db.select().from(receiptFieldCorrections)
+        .where(inArray(receiptFieldCorrections.receiptId, receipts.map((receipt) => receipt.id)))
+        .orderBy(asc(receiptFieldCorrections.correctedAt))
+    : [];
+  return { transaction, receipts, corrections, reimbursement };
 }
 
 export default async function FuelDetailPage({ params }: PageProps) {
@@ -65,7 +71,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
   try { data = await fetchFuelDetail(id, session.tenantId, session.user.id, access.recordScope); }
   catch (error) { console.error('Fuel detail query failed:', error); return <div className="space-y-6"><Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Fuel', href: '/dashboard/fuel' }, { label: 'Transaction' }]} /><PageHeader title="Fuel Transaction" /><EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Transaction" /></div>; }
 
-  const { transaction: t, receipts, reimbursement } = data;
+  const { transaction: t, receipts, corrections, reimbursement } = data;
   const anomalyState = t.anomalyState ?? 'none';
   const permissions = await getSessionPermissions(session);
   const canVerify = access.actions.includes('update') && permissions.includes(Permissions.FUEL_VERIFY);
@@ -91,7 +97,7 @@ export default async function FuelDetailPage({ params }: PageProps) {
 
       {reimbursement && <Card><CardHeader><CardTitle>Reimbursement</CardTitle></CardHeader><CardContent className="space-y-3"><div className="flex items-center justify-between text-sm"><span className="text-ink-500">Amount</span><span className="font-medium tabular-nums text-ink-950">{formatCurrency(Number(reimbursement.amount))}</span></div><div className="flex items-center justify-between text-sm"><span className="text-ink-500">Status</span><Badge variant={reimbursement.state === 'paid' ? 'success' : reimbursement.state === 'rejected' ? 'error' : 'pending'} size="sm">{reimbursement.state}</Badge></div>{reimbursement.paidAt && <div className="flex items-center justify-between text-sm"><span className="text-ink-500">Paid</span><span className="text-ink-950">{formatDateTime(reimbursement.paidAt)}</span></div>}{reimbursement.notes && <div className="space-y-1"><p className="text-xs font-medium text-ink-500">Notes</p><p className="text-ink-700 text-sm">{reimbursement.notes}</p></div>}{access.recordScope === 'tenant' && <Button variant="secondary" size="sm" asChild><Link href={`/dashboard/reimbursements/${reimbursement.id}`}>Open reimbursement claim</Link></Button>}</CardContent></Card>}
 
-      <Card><CardHeader><CardTitle>Receipts ({receipts.length})</CardTitle></CardHeader><CardContent>{receipts.length === 0 ? <p className="text-sm text-ink-500">No receipt uploaded.</p> : <div className="space-y-3">{receipts.map((receipt) => <ReceiptCorrectionEditor key={receipt.id} receipt={{ id: receipt.id, originalFileName: receipt.originalFileName ?? null, createdAtLabel: formatDateTime(receipt.createdAt), isVerified: receipt.isVerified, ocrStatus: receipt.ocrStatus, extractionData: receipt.extractionData ?? null, fieldConfidence: receipt.fieldConfidence ?? null, extractionConfidence: receipt.extractionConfidence ?? null, rawOcrResponse: receipt.rawOcrResponse ?? null }} canEdit={canCorrectReceipt} canVerify={canVerify} />)}</div>}</CardContent></Card>
+      <Card><CardHeader><CardTitle>Receipts ({receipts.length})</CardTitle></CardHeader><CardContent>{receipts.length === 0 ? <p className="text-sm text-ink-500">No receipt uploaded.</p> : <div className="space-y-3">{receipts.map((receipt) => <ReceiptCorrectionEditor key={receipt.id} receipt={{ id: receipt.id, originalFileName: receipt.originalFileName ?? null, createdAtLabel: formatDateTime(receipt.createdAt), isVerified: receipt.isVerified, ocrStatus: receipt.ocrStatus, extractionData: receipt.extractionData ?? null, fieldConfidence: receipt.fieldConfidence ?? null, extractionConfidence: receipt.extractionConfidence ?? null, rawOcrResponse: receipt.rawOcrResponse ?? null, corrections: corrections.filter((correction) => correction.receiptId === receipt.id).map((correction) => ({ fieldName: correction.fieldName, extractedValue: correction.extractedValue, correctedValue: correction.correctedValue, correctedAtLabel: formatDateTime(correction.correctedAt) })) }} canEdit={canCorrectReceipt} canVerify={canVerify} />)}</div>}</CardContent></Card>
     </div>
   </div>;
 }
