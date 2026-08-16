@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tripAmendments, tripAuthorities, trips } from '@/db/schema/trips';
 
@@ -44,6 +44,7 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
   if (!input.acceptedAt) return null;
 
   const db = getDb();
+  const effectiveAt = sql<Date>`coalesce(${tripAmendments.approvedAt}, ${tripAmendments.createdAt})`;
   const [amendment] = await db
     .select({
       id: tripAmendments.id,
@@ -64,16 +65,16 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
         eq(tripAmendments.authorityId, input.authorityId),
         inArray(tripAmendments.amendmentType, [...DRIVER_REACCEPTANCE_AMENDMENT_TYPES]),
         eq(tripAmendments.status, 'approved'),
+        sql`${effectiveAt} > ${input.acceptedAt}`,
         eq(trips.status, 'pending'),
         isNull(trips.issuedAt),
       ),
     )
-    .orderBy(desc(tripAmendments.version), desc(tripAmendments.approvedAt), desc(tripAmendments.createdAt), desc(tripAmendments.id))
+    .orderBy(desc(effectiveAt), desc(tripAmendments.version), desc(tripAmendments.id))
     .limit(1);
 
   if (!amendment) return null;
-  const effectiveAt = amendment.approvedAt ?? amendment.createdAt;
-  if (effectiveAt <= input.acceptedAt) return null;
+  const amendmentEffectiveAt = amendment.approvedAt ?? amendment.createdAt;
 
   return {
     amendmentId: amendment.id,
@@ -81,7 +82,7 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
     authorityVersion: amendment.version,
     amendmentType: amendment.amendmentType as DriverReacceptanceAmendmentType,
     reason: amendment.reason,
-    createdAt: effectiveAt,
+    createdAt: amendmentEffectiveAt,
     originalValue: amendment.originalValue ?? null,
     newValue: amendment.newValue,
   };
