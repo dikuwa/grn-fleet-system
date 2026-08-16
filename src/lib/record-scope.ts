@@ -353,11 +353,22 @@ export function maintenanceScopeCondition(context: RecordScopeContext): SQL {
     where v.id = ${maintenanceEvents.vehicleId} and v.tenant_id = ${context.tenantId}
   )`;
   if (context.recordScope === 'tenant') return tenantVehicle;
-  return and(
-    tenantVehicle,
-    or(
-      eq(maintenanceEvents.assignedToUserId, context.userId),
-      eq(maintenanceEvents.createdByUserId, context.userId),
-    )!,
+
+  const userRelationship = or(
+    eq(maintenanceEvents.assignedToUserId, context.userId),
+    eq(maintenanceEvents.createdByUserId, context.userId),
   )!;
+
+  // Critical inspection follow-ups may be created while no Maintenance Officer
+  // is active, leaving assigned_to_user_id null. The assigned Maintenance queue
+  // must surface those orphaned rows so they can be triaged later, mirroring the
+  // unassigned-defect behavior above. Other scopes keep strict user relationships.
+  if (context.recordScope === 'assigned') {
+    return and(
+      tenantVehicle,
+      or(userRelationship, isNull(maintenanceEvents.assignedToUserId))!,
+    )!;
+  }
+
+  return and(tenantVehicle, userRelationship)!;
 }
