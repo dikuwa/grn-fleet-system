@@ -94,7 +94,7 @@ export default function NewMaintenancePage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to create maintenance event');
       toast({
-        title: 'Maintenance event created',
+        title: 'Maintenance record created',
         description: `${formData.serviceType} — ${formData.description} for ${selectedVehicle?.licenceNumber || formData.vehicleId}`,
         variant: 'success',
       });
@@ -115,9 +115,9 @@ export default function NewMaintenancePage() {
       <Breadcrumbs items={[
         { label: 'Dashboard', href: '/dashboard' },
         { label: 'Maintenance', href: '/dashboard/maintenance' },
-        { label: 'Schedule Maintenance' },
+        { label: 'Record Maintenance' },
       ]} />
-      <PageHeader title="Schedule Maintenance" description="Record a vehicle service or repair event">
+      <PageHeader title="Record Maintenance" description="Record a completed or current vehicle service or repair event">
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/maintenance"><ChevronLeft className="h-4 w-4" /> Back to Maintenance</Link>
         </Button>
