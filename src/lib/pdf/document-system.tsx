@@ -408,15 +408,22 @@ export function DocumentPage({
   children,
   status,
   official = false,
+  orientation = 'portrait',
   continuationLabel = 'Official document continuation',
 }: {
   children: React.ReactNode;
   status?: string;
   official?: boolean;
+  orientation?: 'portrait' | 'landscape';
   continuationLabel?: string;
 }) {
   return (
-    <Page size="A4" style={[documentStyles.page, official ? documentStyles.officialPage : {}]} wrap>
+    <Page
+      size="A4"
+      orientation={orientation}
+      style={[documentStyles.page, official ? documentStyles.officialPage : {}]}
+      wrap
+    >
       {status === 'draft' && (
         <Text style={documentStyles.watermark} fixed>
           DRAFT
@@ -457,9 +464,13 @@ export function DocumentHeader({
   coatOfArmsPath?: string;
   theme?: PdfTheme;
 }) {
-  const contact = [branding?.phone, branding?.email, branding?.website].filter(Boolean).join('  ·  ');
+  const contact = [branding?.phone, branding?.email, branding?.website]
+    .filter(Boolean)
+    .join('  ·  ');
   const tenantLogo = branding?.documentLogoUrl || branding?.logoUrl;
-  const identityMeta = [version ? `v${version}` : null, issueDate, status].filter(Boolean).join(' · ');
+  const identityMeta = [version ? `v${version}` : null, issueDate, status]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <View style={[documentStyles.header, { borderBottomColor: theme.primary }]}>
@@ -469,18 +480,28 @@ export function DocumentHeader({
       <View style={documentStyles.headerOrgZone}>
         <Text style={documentStyles.republic}>REPUBLIC OF NAMIBIA</Text>
         <Text style={[documentStyles.title, { color: theme.primary }]}>{title.toUpperCase()}</Text>
-        <Text style={documentStyles.tenantContext}>OFFICE / MINISTRY / DEPARTMENT / MUNICIPALITY</Text>
+        <Text style={documentStyles.tenantContext}>
+          OFFICE / MINISTRY / DEPARTMENT / MUNICIPALITY
+        </Text>
         <Text style={documentStyles.organisation}>
           {safePdfValue(branding?.organisationName, 'Government Fleet')}
         </Text>
-        {branding?.division ? <SafePdfText value={branding.division} style={documentStyles.orgDetail} /> : null}
-        {branding?.address ? <SafePdfText value={branding.address} style={documentStyles.orgDetail} /> : null}
+        {branding?.division ? (
+          <SafePdfText value={branding.division} style={documentStyles.orgDetail} />
+        ) : null}
+        {branding?.address ? (
+          <SafePdfText value={branding.address} style={documentStyles.orgDetail} />
+        ) : null}
         {contact ? <SafePdfText value={contact} style={documentStyles.orgDetail} /> : null}
       </View>
       <View style={documentStyles.headerTitleZone}>
         {tenantLogo ? <Image src={tenantLogo} style={documentStyles.tenantLogo} /> : null}
-        {showIdentity && reference ? <SafePdfText value={reference} style={documentStyles.reference} /> : null}
-        {showIdentity && identityMeta ? <SafePdfText value={identityMeta} style={documentStyles.meta} /> : null}
+        {showIdentity && reference ? (
+          <SafePdfText value={reference} style={documentStyles.reference} />
+        ) : null}
+        {showIdentity && identityMeta ? (
+          <SafePdfText value={identityMeta} style={documentStyles.meta} />
+        ) : null}
         {showIdentity && qrCode ? <Image src={qrCode} style={documentStyles.qrSmall} /> : null}
       </View>
     </View>
@@ -503,8 +524,15 @@ export function DocumentSection({
   breakBefore?: boolean;
 }) {
   return (
-    <View style={documentStyles.section} wrap={wrap} minPresenceAhead={minPresenceAhead} break={breakBefore}>
-      <Text style={[documentStyles.sectionTitle, { color: theme.primary, backgroundColor: theme.tint }]}>
+    <View
+      style={documentStyles.section}
+      wrap={wrap}
+      minPresenceAhead={minPresenceAhead}
+      break={breakBefore}
+    >
+      <Text
+        style={[documentStyles.sectionTitle, { color: theme.primary, backgroundColor: theme.tint }]}
+      >
         {title}
       </Text>
       <View style={documentStyles.sectionBody}>{children}</View>
@@ -526,7 +554,10 @@ export function DocumentFieldGrid({
   return (
     <View style={documentStyles.fieldGrid}>
       {fields.map((field, index) => (
-        <View key={`${field.label}-${index}`} style={[documentStyles.field, { width: `${100 / columns}%` }]}>
+        <View
+          key={`${field.label}-${index}`}
+          style={[documentStyles.field, { width: `${100 / columns}%` }]}
+        >
           <SafePdfText
             value={field.label}
             style={[
@@ -534,7 +565,10 @@ export function DocumentFieldGrid({
               { width: `${labelWidth}%`, ...(labelColor ? { color: labelColor } : {}) },
             ]}
           />
-          <SafePdfText value={field.value} style={[documentStyles.fieldValue, { width: `${100 - labelWidth}%` }]} />
+          <SafePdfText
+            value={field.value}
+            style={[documentStyles.fieldValue, { width: `${100 - labelWidth}%` }]}
+          />
         </View>
       ))}
     </View>
@@ -577,9 +611,17 @@ export function DocumentTable({
         ))}
       </View>
       {rows.map((row, index) => (
-        <View key={index} style={[documentStyles.tableRow, { borderBottomColor: theme.rule }]} wrap={false}>
+        <View
+          key={index}
+          style={[documentStyles.tableRow, { borderBottomColor: theme.rule }]}
+          wrap={false}
+        >
           {columns.map((column) => (
-            <SafePdfText key={column.key} value={row[column.key]} style={cellStyle(column, false)} />
+            <SafePdfText
+              key={column.key}
+              value={row[column.key]}
+              style={cellStyle(column, false)}
+            />
           ))}
         </View>
       ))}
@@ -603,14 +645,19 @@ export function DocumentSignature({
   const hasAppliedSignature = Boolean(signatureUrl || signedAt);
   return (
     <View style={documentStyles.signature}>
-      {statement ? <SafePdfText value={statement} style={documentStyles.signatureStatement} /> : null}
+      {statement ? (
+        <SafePdfText value={statement} style={documentStyles.signatureStatement} />
+      ) : null}
       {signatureUrl ? <Image src={signatureUrl} style={documentStyles.signatureImage} /> : null}
       <SafePdfText
         value={name}
         style={
           hasAppliedSignature
             ? documentStyles.signatureName
-            : [documentStyles.muted, { fontFamily: DOCUMENT_FONT_STACK, fontSize: 7.2, marginTop: 4 }]
+            : [
+                documentStyles.muted,
+                { fontFamily: DOCUMENT_FONT_STACK, fontSize: 7.2, marginTop: 4 },
+              ]
         }
       />
       <SafePdfText value={role} style={documentStyles.muted} />
@@ -660,7 +707,9 @@ export function DocumentExecutiveCertification({
 }) {
   return (
     <View style={{ marginTop: 7 }} wrap={false}>
-      <Text style={[documentStyles.sectionTitle, { color: theme.primary, backgroundColor: theme.tint }]}>
+      <Text
+        style={[documentStyles.sectionTitle, { color: theme.primary, backgroundColor: theme.tint }]}
+      >
         Executive certification
       </Text>
       <View style={documentStyles.sectionBody}>
@@ -710,11 +759,17 @@ export function DocumentVerificationBlock({
       </View>
       <View style={documentStyles.verifyDetailsCol}>
         <SafePdfText value="Verification code" style={documentStyles.verifyLabel} />
-        <SafePdfText value={verificationCode} style={[documentStyles.verifyTitle, { color: theme.primary }]} />
+        <SafePdfText
+          value={verificationCode}
+          style={[documentStyles.verifyTitle, { color: theme.primary }]}
+        />
       </View>
       <View style={documentStyles.verifyDetailsCol}>
         <SafePdfText value="Verify online" style={documentStyles.verifyLabel} />
-        <SafePdfText value={compactVerificationUrl(verificationUrl)} style={documentStyles.verifyValue} />
+        <SafePdfText
+          value={compactVerificationUrl(verificationUrl)}
+          style={documentStyles.verifyValue}
+        />
       </View>
       <View style={{ ...documentStyles.verifyDetailsCol, flex: 1.05 }}>
         <SafePdfText value="Fingerprint" style={documentStyles.verifyLabel} />
@@ -731,7 +786,6 @@ export function DocumentVerificationBlock({
 export function DocumentVerificationFooter({
   branding,
   verificationCode,
-  verificationUrl: _verificationUrl,
   documentHash,
   generatedAt,
   theme = tenantPdfTheme(branding),
@@ -755,7 +809,8 @@ export function DocumentVerificationFooter({
       ].filter(Boolean)
     : ['Internal record'];
   const footerParts = [
-    branding?.documentFooter || `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`,
+    branding?.documentFooter ||
+      `${branding?.organisationName || 'Government Fleet'} · Fleet Management Internal Record`,
     generatedTimestamp ? `Generated ${generatedTimestamp}` : null,
   ].filter(Boolean);
 

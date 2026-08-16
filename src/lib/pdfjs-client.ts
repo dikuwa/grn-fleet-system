@@ -1,9 +1,5 @@
 'use client';
 
-const PDFJS_VERSION = '6.1.200';
-const PDFJS_CDN = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.min.mjs`;
-const PDFJS_WORKER_CDN = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.mjs`;
-
 export interface PdfViewport {
   width: number;
   height: number;
@@ -31,32 +27,21 @@ export interface PdfDocumentProxy {
 }
 
 interface PdfJsModule {
-  GlobalWorkerOptions: { workerSrc: string };
   getDocument: (source: { data: Uint8Array }) => { promise: Promise<PdfDocumentProxy> };
 }
 
 let pdfJsPromise: Promise<PdfJsModule> | null = null;
 
 /**
- * Load the browser PDF renderer at runtime instead of delegating to Chrome's
- * protected PDF extension frame. The version is pinned so preview/print stay
- * deterministic. This keeps the app free of a second PDF package-manager tree
- * while we already use @react-pdf/renderer for document generation.
+ * Load the browser PDF renderer from the locally installed package instead of
+ * delegating to Chrome's protected PDF extension frame or a runtime CDN. The
+ * PDF.js webpack entry creates a module worker from the package build, allowing
+ * Next.js to emit and serve both assets from the application deployment.
  */
 export function loadPdfJs(): Promise<PdfJsModule> {
   if (!pdfJsPromise) {
-    // Keep the URL as a runtime import so Next/Turbopack does not try to bundle
-    // a remote module. jsDelivr serves the official npm pdfjs-dist build.
-    // eslint-disable-next-line no-new-func
-    const runtimeImport = new Function('moduleUrl', 'return import(moduleUrl)') as (
-      moduleUrl: string,
-    ) => Promise<PdfJsModule>;
-
-    pdfJsPromise = runtimeImport(PDFJS_CDN)
-      .then((pdfjs) => {
-        pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_CDN;
-        return pdfjs;
-      })
+    pdfJsPromise = import('pdfjs-dist/webpack.mjs')
+      .then((pdfjs) => pdfjs as unknown as PdfJsModule)
       .catch((error) => {
         pdfJsPromise = null;
         throw error;
@@ -74,7 +59,7 @@ export async function fetchPdfBytes(url: string, signal?: AbortSignal): Promise<
   });
 
   if (!response.ok) {
-    throw new Error('The official PDF could not be loaded.');
+    throw new Error(`The official PDF could not be loaded (HTTP ${response.status}).`);
   }
 
   const bytes = new Uint8Array(await response.arrayBuffer());

@@ -1,15 +1,19 @@
 'use client';
 
-import { fetchPdfBytes, loadPdfJs } from '@/lib/pdfjs-client';
+import { fetchPdfBytes } from '@/lib/pdfjs-client';
 
 /**
- * Print the canonical authenticated PDF without handing control to Chrome's
- * protected PDF extension frame. Each page is rasterised with PDF.js into a
- * same-origin print document, then the browser's native print dialog is opened.
+ * Print the canonical authenticated PDF itself. The protected response is
+ * fetched with the current session, exposed only through a temporary blob URL,
+ * and loaded into a hidden same-origin frame for the browser print dialog.
  */
 export async function printPdfFromUrl(url: string): Promise<void> {
-  const [bytes, pdfjs] = await Promise.all([fetchPdfBytes(url), loadPdfJs()]);
-  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const bytes = await fetchPdfBytes(url);
+  const pdfBuffer = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+  const objectUrl = URL.createObjectURL(new Blob([pdfBuffer], { type: 'application/pdf' }));
   const iframe = document.createElement('iframe');
 
   iframe.setAttribute('aria-hidden', 'true');
@@ -23,16 +27,6 @@ export async function printPdfFromUrl(url: string): Promise<void> {
   iframe.style.pointerEvents = 'none';
   iframe.style.border = '0';
 
-  document.body.appendChild(iframe);
-
-  const printDocument = iframe.contentDocument;
-  const printWindow = iframe.contentWindow;
-  if (!printDocument || !printWindow) {
-    iframe.remove();
-    await pdf.destroy?.();
-    throw new Error('The browser could not create a print document.');
-  }
-
   let cleaned = false;
   let cleanupTimer: number | null = null;
   const cleanup = () => {
@@ -40,76 +34,44 @@ export async function printPdfFromUrl(url: string): Promise<void> {
     cleaned = true;
     if (cleanupTimer !== null) window.clearTimeout(cleanupTimer);
     iframe.remove();
-    void pdf.destroy?.();
+    URL.revokeObjectURL(objectUrl);
   };
 
   try {
-    printDocument.open();
-    printDocument.write(`<!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>GovFleet official document</title>
-          <style>
-            @page { size: auto; margin: 0; }
-            * { box-sizing: border-box; }
-            html, body { margin: 0; padding: 0; background: #fff; }
-            body { width: 100%; }
-            .pdf-page { display: flex; width: 100%; align-items: flex-start; justify-content: center; break-after: page; page-break-after: always; background: #fff; }
-            .pdf-page:last-child { break-after: auto; page-break-after: auto; }
-            .pdf-page img { display: block; width: 100%; height: auto; object-fit: contain; }
-          </style>
-        </head>
-        <body></body>
-      </html>`);
-    printDocument.close();
+    await new Promise<void>((resolve, reject) => {
+      const loadTimer = window.setTimeout(
+        () => reject(new Error('The PDF took too long to prepare for printing.')),
+        15_000,
+      );
+      iframe.addEventListener(
+        'load',
+        () => {
+          window.clearTimeout(loadTimer);
+          resolve();
+        },
+        { once: true },
+      );
+      iframe.addEventListener(
+        'error',
+        () => {
+          window.clearTimeout(loadTimer);
+          reject(new Error('The browser could not load the PDF for printing.'));
+        },
+        { once: true },
+      );
+      iframe.src = objectUrl;
+      document.body.appendChild(iframe);
+    });
 
-    const body = printDocument.body;
-    if (!body) throw new Error('The browser could not prepare the print document.');
-
-    // Roughly 150 DPI for an A4 source: crisp enough for official text/QRs
-    // without the excessive memory cost of full 300 DPI rendering.
-    const printScale = 2.1;
-
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: printScale });
-      const canvas = printDocument.createElement('canvas');
-      const context = canvas.getContext('2d', { alpha: false });
-      if (!context) throw new Error(`Page ${pageNumber} could not be prepared for printing.`);
-
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvas.width, canvas.height);
-
-      await page.render({ canvas, canvasContext: context, viewport }).promise;
-
-      const image = printDocument.createElement('img');
-      image.alt = `Official document page ${pageNumber}`;
-      image.src = canvas.toDataURL('image/png', 1);
-
-      const pageWrapper = printDocument.createElement('section');
-      pageWrapper.className = 'pdf-page';
-      pageWrapper.appendChild(image);
-      body.appendChild(pageWrapper);
-
-      if (typeof image.decode === 'function') {
-        try {
-          await image.decode();
-        } catch {
-          // The data URL is already local and complete; decode support differs by browser.
-        }
-      }
-      page.cleanup?.();
-    }
+    const printWindow = iframe.contentWindow;
+    if (!printWindow) throw new Error('The browser could not create a PDF print window.');
 
     printWindow.addEventListener('afterprint', cleanup, { once: true });
     printWindow.focus();
     printWindow.print();
 
     // Safari and some Chromium versions do not reliably emit afterprint for a
-    // child frame. Keep the print document alive long enough for the dialog.
+    // child frame. Keep the blob alive long enough for the dialog.
     cleanupTimer = window.setTimeout(cleanup, 120_000);
   } catch (error) {
     cleanup();

@@ -19,6 +19,12 @@ describe('human-readable formatters', () => {
     expect(formatHumanValue(true)).toBe('Yes');
   });
 
+  it('formats Date objects as dates instead of generic object details', () => {
+    const result = formatHumanValue(new Date('2026-08-16T10:30:00+02:00'), 'started');
+    expect(result).toContain('2026');
+    expect(result).not.toBe('No details');
+  });
+
   it('formats unknown audit events safely', () => {
     expect(
       formatAuditEvent({

@@ -5,12 +5,17 @@ import { renderToFile } from '@react-pdf/renderer';
 import QRCode from 'qrcode';
 import { FuelSummaryDocument, type FuelSummaryData } from '../src/lib/pdf/fuel-summary';
 import { TripCompletionDocument, type TripCompletionData } from '../src/lib/pdf/trip-completion';
-import { MaintenanceReportDocument, type MaintenanceReportData } from '../src/lib/pdf/maintenance-report';
+import {
+  MaintenanceReportDocument,
+  type MaintenanceReportData,
+} from '../src/lib/pdf/maintenance-report';
 import { MvaReportDocument, type MvaReportData } from '../src/lib/pdf/mva-report';
 import type { ResolvedTenantBranding } from '../src/lib/tenant-branding';
 
 const root = process.cwd();
-const output = path.join(root, 'docs', 'official-document-system', 'artifacts');
+const output = process.env.OFFICIAL_DOCUMENT_QA_OUTPUT_DIR
+  ? path.resolve(process.env.OFFICIAL_DOCUMENT_QA_OUTPUT_DIR)
+  : path.join(root, 'docs', 'official-document-system', 'artifacts');
 await mkdir(output, { recursive: true });
 
 const asPdfDocument = (element: React.ReactElement) =>

@@ -24,7 +24,9 @@ import {
 import type { ResolvedTenantBranding } from '../src/lib/tenant-branding';
 
 const root = process.cwd();
-const output = path.join(root, 'docs', 'official-document-system', 'artifacts');
+const output = process.env.OFFICIAL_DOCUMENT_QA_OUTPUT_DIR
+  ? path.resolve(process.env.OFFICIAL_DOCUMENT_QA_OUTPUT_DIR)
+  : path.join(root, 'docs', 'official-document-system', 'artifacts');
 await mkdir(output, { recursive: true });
 
 const asPdfDocument = (element: React.ReactElement) =>
@@ -308,6 +310,7 @@ const report: ReportData = {
 const tripSummaryReport: ReportData = {
   branding,
   title: 'Trip Summary Report',
+  orientation: 'landscape',
   period: 'Last 30 Days',
   generatedAt: '2026-08-11T10:00:00+02:00',
   verificationCode: 'VER-8F34021',
@@ -320,20 +323,35 @@ const tripSummaryReport: ReportData = {
     { label: 'Total actual', value: '5,605 km' },
   ],
   columns: [
-    { key: 'authority', label: 'Authority', width: '20%' },
-    { key: 'status', label: 'Status', width: '15%' },
-    { key: 'vehicle', label: 'Vehicle', width: '17%' },
-    { key: 'route', label: 'Route', width: '28%' },
-    { key: 'distance', label: 'Actual distance', width: '20%' },
+    { key: 'authorityNumber', label: 'Trip Authority', width: '12%' },
+    { key: 'authorityStatus', label: 'Authority Status', width: '13%' },
+    { key: 'status', label: 'Status', width: '8%' },
+    { key: 'vehicle', label: 'Vehicle', width: '10%' },
+    { key: 'origin', label: 'Origin', width: '13%' },
+    { key: 'destination', label: 'Destination', width: '13%' },
+    { key: 'routeKm', label: 'Route (km)', width: '6%', align: 'right' },
+    { key: 'actualKm', label: 'Actual (km)', width: '6%', align: 'right' },
+    { key: 'started', label: 'Started', width: '9.5%' },
+    { key: 'returned', label: 'Returned', width: '9.5%' },
   ],
-  rows: Array.from({ length: 22 }, (_, index) => ({
-    authority: `TA-2026-KERC-${String(index + 1).padStart(5, '0')}`,
+  rows: Array.from({ length: 31 }, (_, index) => ({
+    authorityNumber: `TA-2026-KERC-${String(index + 1).padStart(7, '0')}`,
+    authorityStatus:
+      index % 3 === 0
+        ? 'Awaiting Driver Acceptance'
+        : index % 3 === 1
+          ? 'Awaiting Pre Trip Inspection'
+          : 'Issued',
     status: index % 3 === 0 ? 'driver_accepted' : index % 3 === 1 ? 'completed' : 'in_progress',
-    vehicle: `E2E-RF-${1786000000000 + index}`,
-    route: index % 2 ? 'Rundu → Windhoek → Rundu' : 'Rundu → Divundu → Rundu',
-    distance: `${540 + index * 8} km`,
+    vehicle: `E2E-${1786000000000 + index}`,
+    origin: index % 2 ? 'Rundu, Kavango East' : 'Windhoek, Khomas Region',
+    destination: index % 2 ? 'Windhoek, Khomas Region' : 'Rundu, Kavango East',
+    routeKm: 540 + index * 8,
+    actualKm: index % 4 === 0 ? 'Not recorded' : 532 + index * 8,
+    started: `11 Aug 2026 ${String(8 + (index % 10)).padStart(2, '0')}:25`,
+    returned: index % 4 === 0 ? 'Not recorded' : '12 Aug 2026 18:45',
   })),
-  totalRowCount: 22,
+  totalRowCount: 31,
 };
 
 const inspection: InspectionReportData = {

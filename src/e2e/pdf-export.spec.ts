@@ -11,7 +11,7 @@ async function signIn(page: Page) {
   });
   // Retry on rate limit (429) with backoff
   for (let attempt = 0; attempt < 5 && res.status() === 429; attempt++) {
-    await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
     res = await page.request.post(`${BASE}/api/auth/sign-in`, {
       data: { email, password },
     });
@@ -51,8 +51,13 @@ test.describe('PDF Export', () => {
     await expect(page.getByRole('heading', { name: 'Reports & Analytics' })).toBeVisible();
 
     // Should see export buttons
-    const exportBtn = page.locator('button:has-text("PDF"), button:has-text("Export"), a:has-text("PDF"), a:has-text("Export")').first();
+    const exportBtn = page
+      .locator(
+        'button:has-text("PDF"), button:has-text("Export"), a:has-text("PDF"), a:has-text("Export")',
+      )
+      .first();
     await expect(exportBtn).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Preview' })).toBeVisible();
   });
 
   test('2. PDF export API returns a PDF for fleet report', async ({ page, request }) => {
@@ -110,7 +115,10 @@ test.describe('PDF Export', () => {
     expect(Buffer.from(body.slice(0, 4)).toString()).toBe('%PDF');
   });
 
-  test('6. PDF export API returns a PDF for transport requests report', async ({ page, request }) => {
+  test('6. PDF export API returns a PDF for transport requests report', async ({
+    page,
+    request,
+  }) => {
     const cookieHeader = await getCookieHeader(page);
 
     const res = await request.get('/api/reports?type=requests&period=30d&export=pdf', {

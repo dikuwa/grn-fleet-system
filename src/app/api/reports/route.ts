@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { getDb } from '@/db';
-import { fuelTransactions, reimbursements, tripAuthorities, trips, tripClosures } from '@/db/schema/trips';
+import {
+  fuelTransactions,
+  reimbursements,
+  tripAuthorities,
+  trips,
+  tripClosures,
+} from '@/db/schema/trips';
 import { vehicles, maintenanceEvents } from '@/db/schema/fleet';
 import { transportRequests, requestRoutes } from '@/db/schema/requests';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
@@ -253,7 +259,12 @@ export async function GET(request: NextRequest) {
       const React = await import('react');
 
       let rows: Record<string, unknown>[] = [];
-      let columns: { key: string; label: string }[] = [];
+      let columns: {
+        key: string;
+        label: string;
+        width?: string | number;
+        align?: 'left' | 'center' | 'right';
+      }[] = [];
       let summary: { label: string; value: string }[] = [];
       let title = 'Report';
 
@@ -278,21 +289,22 @@ export async function GET(request: NextRequest) {
             { label: 'Transactions', value: String(fuelData.length) },
           ];
           break;
-        }      case 'trips': {
-        const tripData = await buildTripRows(db, tenantId, startDate);
-        rows = tripData;
-        columns = [
-          { key: 'authorityNumber', label: 'Trip Authority' },
-          { key: 'authorityStatus', label: 'Authority Status' },
-          { key: 'status', label: 'Status' },
-          { key: 'vehicle', label: 'Vehicle' },
-          { key: 'origin', label: 'Origin' },
-          { key: 'destination', label: 'Destination' },
-          { key: 'routeKm', label: 'Route (km)' },
-          { key: 'actualKm', label: 'Actual (km)' },
-          { key: 'started', label: 'Started' },
-          { key: 'returned', label: 'Returned' },
-        ];
+        }
+        case 'trips': {
+          const tripData = await buildTripRows(db, tenantId, startDate);
+          rows = tripData;
+          columns = [
+            { key: 'authorityNumber', label: 'Trip Authority', width: '12%' },
+            { key: 'authorityStatus', label: 'Authority Status', width: '13%' },
+            { key: 'status', label: 'Status', width: '8%' },
+            { key: 'vehicle', label: 'Vehicle', width: '10%' },
+            { key: 'origin', label: 'Origin', width: '13%' },
+            { key: 'destination', label: 'Destination', width: '13%' },
+            { key: 'routeKm', label: 'Route (km)', width: '6%', align: 'right' },
+            { key: 'actualKm', label: 'Actual (km)', width: '6%', align: 'right' },
+            { key: 'started', label: 'Started', width: '9.5%' },
+            { key: 'returned', label: 'Returned', width: '9.5%' },
+          ];
           title = 'Trip Summary Report';
           const totalRouteKm = tripData.reduce((s, r) => s + Number(r.routeKm || 0), 0);
           const totalActualKm = tripData.reduce((s, r) => s + Number(r.actualKm || 0), 0);
@@ -395,24 +407,28 @@ export async function GET(request: NextRequest) {
         .limit(1)) as unknown as { name: string }[];
 
       const generatedAt = new Date().toLocaleDateString('en-NA', {
-        weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
       });
       const reportPayload = {
-          title,
-          period:
-            period === '7d'
-              ? 'Last 7 Days'
-              : period === '30d'
-                ? 'Last 30 Days'
-                : period === '90d'
-                  ? 'Last Quarter'
-                  : 'Year to Date',
-          tenantName: tenant?.name || 'Fleet Management',
-          generatedAt,
-          summary,
-          columns,
-          rows,
-          totalRowCount: rows.length,
+        title,
+        period:
+          period === '7d'
+            ? 'Last 7 Days'
+            : period === '30d'
+              ? 'Last 30 Days'
+              : period === '90d'
+                ? 'Last Quarter'
+                : 'Year to Date',
+        tenantName: tenant?.name || 'Fleet Management',
+        generatedAt,
+        summary,
+        columns,
+        rows,
+        totalRowCount: rows.length,
+        orientation: reportType === 'trips' ? 'landscape' : 'portrait',
       };
       const documentHash = createHash('sha256').update(JSON.stringify(reportPayload)).digest('hex');
       const element = React.createElement(ReportDocument as never, {
@@ -771,8 +787,9 @@ export async function GET(request: NextRequest) {
         // Route distance (mapped km) from request routes created in the period
         const [routeDistance] = await db
           .select({
-            totalRouteKm:
-              sql`COALESCE(SUM(${requestRoutes.totalKilometres}), 0)`.as('total_route_km'),
+            totalRouteKm: sql`COALESCE(SUM(${requestRoutes.totalKilometres}), 0)`.as(
+              'total_route_km',
+            ),
             routeCount: count(),
           })
           .from(requestRoutes)
@@ -787,8 +804,9 @@ export async function GET(request: NextRequest) {
         // Actual km driven from trip closures in the period
         const [actualDistance] = await db
           .select({
-            totalActualKm:
-              sql`COALESCE(SUM(${tripClosures.actualKilometres}), 0)`.as('total_actual_km'),
+            totalActualKm: sql`COALESCE(SUM(${tripClosures.actualKilometres}), 0)`.as(
+              'total_actual_km',
+            ),
             closureCount: count(),
           })
           .from(tripClosures)

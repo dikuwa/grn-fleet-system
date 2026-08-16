@@ -76,6 +76,7 @@ export function isUuid(value: string): boolean {
 
 export function formatHumanValue(value: unknown, key = ''): string {
   if (value === null || value === undefined) return 'Not recorded';
+  if (value instanceof Date) return formatHumanDateTime(value);
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number') {
     if (/amount|cost|price|reimbursement/i.test(key)) return formatMoney(value);

@@ -13,7 +13,12 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { fetchPdfBytes, loadPdfJs, type PdfDocumentProxy, type PdfRenderTask } from '@/lib/pdfjs-client';
+import {
+  fetchPdfBytes,
+  loadPdfJs,
+  type PdfDocumentProxy,
+  type PdfRenderTask,
+} from '@/lib/pdfjs-client';
 
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 2.4;
@@ -74,7 +79,10 @@ function ViewerControls({
         <ChevronUp className="h-4 w-4" />
       </Button>
 
-      <div className="text-ink-600 min-w-11 px-1 text-center text-[11px] font-medium tabular-nums" aria-live="polite">
+      <div
+        className="text-ink-600 min-w-11 px-1 text-center text-[11px] font-medium tabular-nums"
+        aria-live="polite"
+      >
         {pageNumber}/{Math.max(pageCount, 1)}
       </div>
 
@@ -103,7 +111,10 @@ function ViewerControls({
         <ChevronsDown className="h-4 w-4" />
       </Button>
 
-      <div className={compact ? 'bg-border mx-1 h-6 w-px' : 'bg-border my-1 h-px w-7'} aria-hidden="true" />
+      <div
+        className={compact ? 'bg-border mx-1 h-6 w-px' : 'bg-border my-1 h-px w-7'}
+        aria-hidden="true"
+      />
 
       <Button
         type="button"
@@ -182,12 +193,15 @@ export function DocumentPdfPreview({
     const controller = new AbortController();
     let loadedPdf: PdfDocumentProxy | null = null;
 
-    setPdf(null);
-    setPageCount(0);
-    setPageNumber(1);
-    setZoom(1);
-    setError(null);
-    setLoading(true);
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      setPdf(null);
+      setPageCount(0);
+      setPageNumber(1);
+      setZoom(1);
+      setError(null);
+      setLoading(true);
+    });
 
     void Promise.all([fetchPdfBytes(url, controller.signal), loadPdfJs()])
       .then(async ([bytes, pdfjs]) => {
@@ -228,8 +242,10 @@ export function DocumentPdfPreview({
         if (cancelled || !canvasRef.current) return;
 
         const baseViewport = page.getViewport({ scale: 1 });
-        // 10% left + 10% right is intentionally reserved around the paper.
-        const fitWidth = Math.max(220, containerWidth * 0.8);
+        // Reserve only the space needed for the floating controls and a small
+        // paper gutter. Percentage padding made documents unnecessarily tiny
+        // inside wide preview dialogs.
+        const fitWidth = Math.max(220, containerWidth - 72);
         const fitScale = clamp(fitWidth / baseViewport.width, 0.35, 2.25);
         const cssScale = fitScale * zoom;
         const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
@@ -253,7 +269,8 @@ export function DocumentPdfPreview({
         return renderTask.promise.finally(() => page.cleanup?.());
       })
       .catch((reason) => {
-        if (cancelled || (reason instanceof Error && reason.name === 'RenderingCancelledException')) return;
+        if (cancelled || (reason instanceof Error && reason.name === 'RenderingCancelledException'))
+          return;
         console.error('PDF page render failed:', reason);
         setError('This PDF page could not be rendered. Download is still available.');
       })
@@ -278,12 +295,20 @@ export function DocumentPdfPreview({
 
   if (error) {
     return (
-      <div className={`bg-muted/30 flex h-full min-h-[320px] items-center justify-center p-6 ${className}`} role="alert">
+      <div
+        className={`bg-muted/30 flex h-full min-h-[320px] items-center justify-center p-6 ${className}`}
+        role="alert"
+      >
         <div className="max-w-sm text-center">
           <FileWarning className="text-status-error-text mx-auto h-8 w-8" aria-hidden="true" />
           <p className="text-ink-950 mt-3 text-sm font-medium">Preview unavailable</p>
           <p className="text-ink-500 mt-1 text-xs">{error}</p>
-          <Button variant="secondary" size="sm" className="mt-4" onClick={() => setReloadKey((value) => value + 1)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="mt-4"
+            onClick={() => setReloadKey((value) => value + 1)}
+          >
             Try again
           </Button>
         </div>
@@ -292,19 +317,32 @@ export function DocumentPdfPreview({
   }
 
   return (
-    <div ref={viewportRef} className={`bg-muted/40 relative h-full min-h-[320px] overflow-hidden ${className}`}>
+    <div
+      ref={viewportRef}
+      className={`bg-muted/40 relative h-full min-h-[320px] overflow-hidden ${className}`}
+    >
       <div
         ref={scrollerRef}
-        className="h-full overflow-auto overscroll-contain px-[10%] py-[5%] sm:pr-[13%]"
+        className="h-full overflow-auto overscroll-contain p-4 sm:pr-16"
         aria-label={title}
       >
         <div className="flex min-h-full min-w-max items-start justify-center">
           <div className="border-border relative overflow-hidden rounded-[3px] border bg-white shadow-md">
-            <canvas ref={canvasRef} className="block bg-white" aria-label={`${title}, page ${pageNumber} of ${Math.max(pageCount, 1)}`} />
+            <canvas
+              ref={canvasRef}
+              className="block bg-white"
+              aria-label={`${title}, page ${pageNumber} of ${Math.max(pageCount, 1)}`}
+            />
             {(loading || rendering) && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/75" role="status">
+              <div
+                className="absolute inset-0 flex items-center justify-center bg-white/75"
+                role="status"
+              >
                 <div className="text-ink-500 flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs shadow-sm">
-                  <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                  <Loader2
+                    className="h-4 w-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
                   {loading ? 'Loading document…' : 'Rendering page…'}
                 </div>
               </div>

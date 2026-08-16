@@ -3,7 +3,6 @@ import { Document, View } from '@react-pdf/renderer';
 import type { ResolvedTenantBranding } from '@/lib/tenant-branding';
 import { formatHumanValue } from '@/lib/human-readable';
 import {
-  DocumentExecutiveCertification,
   DocumentFieldGrid,
   DocumentHeader,
   DocumentPage,
@@ -18,6 +17,7 @@ export interface ReportColumn {
   key: string;
   label: string;
   width?: string | number;
+  align?: 'left' | 'center' | 'right';
 }
 
 export interface ReportData {
@@ -35,6 +35,7 @@ export interface ReportData {
   verificationUrl?: string;
   documentHash?: string;
   qrCodeDataUrl?: string;
+  orientation?: 'portrait' | 'landscape';
 }
 
 export const ReportDocument: React.FC<{ data: ReportData }> = ({ data }) => {
@@ -57,6 +58,7 @@ export const ReportDocument: React.FC<{ data: ReportData }> = ({ data }) => {
   return (
     <Document title={data.title} author={branding?.organisationName || 'Government Fleet'}>
       <DocumentPage
+        orientation={data.orientation}
         continuationLabel={`${branding?.organisationName || 'Government Fleet'} · ${data.title}`}
       >
         <DocumentHeader
@@ -105,11 +107,6 @@ export const ReportDocument: React.FC<{ data: ReportData }> = ({ data }) => {
           />
         </DocumentSection>
         <View wrap={false}>
-          <DocumentExecutiveCertification
-            branding={branding}
-            generatedAt={data.generatedAt}
-            theme={theme}
-          />
           <DocumentVerificationBlock
             branding={branding}
             verificationCode={data.verificationCode}
@@ -123,6 +120,8 @@ export const ReportDocument: React.FC<{ data: ReportData }> = ({ data }) => {
           branding={branding}
           verificationCode={data.verificationCode}
           verificationUrl={data.verificationUrl}
+          documentHash={data.documentHash}
+          generatedAt={data.generatedAt}
           theme={theme}
         />
       </DocumentPage>

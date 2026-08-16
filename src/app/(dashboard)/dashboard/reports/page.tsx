@@ -28,10 +28,21 @@ import {
   WifiOff,
   Loader2,
   Shield,
+  Eye,
+  X,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/lib/use-toast';
 import { printPdfFromUrl } from '@/lib/print-pdf';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { DocumentPdfPreview } from '@/app/(dashboard)/dashboard/documents/[id]/document-pdf-preview';
 
 type ReportType =
   'fuel' | 'fleet' | 'trips' | 'maintenance' | 'requests' | 'approvals' | 'enhanced';
@@ -205,6 +216,13 @@ async function fetchReportData(type: ReportType, period: TimeRange) {
   return null;
 }
 
+function reportExportUrl(type: ReportType, period: TimeRange, format: 'csv' | 'excel' | 'pdf') {
+  const periodParam = period === 'custom' ? '30d' : period;
+  return type === 'enhanced'
+    ? `/api/reports/enhanced?period=${periodParam}&export=${format}`
+    : `/api/reports?type=${type}&period=${periodParam}&export=${format}`;
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -215,6 +233,7 @@ export default function ReportsPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [reportData, setReportData] = useState<Record<string, unknown> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const fetchedRef = useRef<{ type: ReportType; range: TimeRange } | null>(null);
 
   useEffect(() => {
@@ -249,10 +268,7 @@ export default function ReportsPage() {
   const handleExport = useCallback(
     async (format: 'csv' | 'excel' | 'pdf') => {
       const periodParam = timeRange === 'custom' ? '30d' : timeRange;
-      const url =
-        selectedReport === 'enhanced'
-          ? `/api/reports/enhanced?period=${periodParam}&export=${format}`
-          : `/api/reports?type=${selectedReport}&period=${periodParam}&export=${format}`;
+      const url = reportExportUrl(selectedReport, timeRange, format);
       try {
         const res = await fetch(url);
         if (!res.ok) {
@@ -298,14 +314,11 @@ export default function ReportsPage() {
   );
 
   const activeReport = reportTypes.find((r) => r.value === selectedReport);
+  const activeTimeRange = timeRanges.find((range) => range.value === timeRange);
+  const pdfUrl = reportExportUrl(selectedReport, timeRange, 'pdf');
   const handlePrint = useCallback(async () => {
-    const periodParam = timeRange === 'custom' ? '30d' : timeRange;
-    const url =
-      selectedReport === 'enhanced'
-        ? `/api/reports/enhanced?period=${periodParam}&export=pdf`
-        : `/api/reports?type=${selectedReport}&period=${periodParam}&export=pdf`;
     try {
-      await printPdfFromUrl(url);
+      await printPdfFromUrl(reportExportUrl(selectedReport, timeRange, 'pdf'));
     } catch (error) {
       toast({
         title: 'Print Failed',
@@ -343,6 +356,10 @@ export default function ReportsPage() {
             <Button variant="secondary" size="sm" onClick={() => handleExport('excel')}>
               <Download className="h-4 w-4" />
               Export Excel
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
+              <Eye className="h-4 w-4" />
+              Preview
             </Button>
             <Button variant="secondary" size="sm" onClick={() => handleExport('pdf')}>
               <FileText className="h-4 w-4" />
@@ -508,6 +525,43 @@ export default function ReportsPage() {
           <ReportEnhanced data={reportData as Record<string, unknown> | null} />
         )}
       </main>
+
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="bg-surface flex h-[94dvh] w-[96vw] max-w-[1600px] flex-col overflow-hidden p-0 shadow-2xl sm:h-[90dvh] sm:w-[94vw] [&>button.absolute]:hidden">
+          <DialogHeader className="border-border bg-surface mb-0 flex min-h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-3 py-2 sm:px-5">
+            <div className="min-w-0">
+              <DialogTitle className="truncate text-sm sm:text-base">
+                {activeReport?.label || 'Report'} preview
+              </DialogTitle>
+              <DialogDescription className="truncate text-xs">
+                Official PDF · {activeTimeRange?.label || 'Selected period'}
+              </DialogDescription>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <Button variant="secondary" size="sm" onClick={() => void handleExport('pdf')}>
+                <Download className="h-4 w-4" />
+                <span className="hidden md:inline">Download</span>
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => void handlePrint()}>
+                <Printer className="h-4 w-4" />
+                <span className="hidden sm:inline">Print</span>
+              </Button>
+              <DialogClose asChild>
+                <Button variant="secondary" size="sm" aria-label="Close report preview">
+                  <X className="h-4 w-4" />
+                  <span className="hidden sm:inline">Close</span>
+                </Button>
+              </DialogClose>
+            </div>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <DocumentPdfPreview
+              url={pdfUrl}
+              title={`${activeReport?.label || 'Report'} PDF preview`}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
