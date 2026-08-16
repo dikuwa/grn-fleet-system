@@ -1,13 +1,13 @@
 import React from 'react';
 import QRCode from 'qrcode';
 import { renderToStream } from '@react-pdf/renderer';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalParties } from '@/db/schema/external-parties';
 import { vehicles } from '@/db/schema/fleet';
-import { employees } from '@/db/schema/people';
+import { departments, driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { requestGoodsEquipment, requestRoutes, transportRequests } from '@/db/schema/requests';
 import {
   inspectionItemResults,
@@ -15,6 +15,8 @@ import {
   tripAuthorities,
   tripAuthorityPassengers,
   tripAuthorisedDrivers,
+  tripIssues,
+  trips,
   vehicleAllocations,
   vehicleInspections,
 } from '@/db/schema/trips';
@@ -112,7 +114,7 @@ export async function buildTripAuthorityRenderSnapshot(
       .orderBy(desc(tripAuthorities.createdAt))
       .limit(1),
   ]);
-  if (!req || (options.requireAuthority && !authority)) return null;
+  if (!req || !vehicle || (options.requireAuthority && !authority)) return null;
 
   const resolvedBranding = await resolveTenantDocumentBranding(tenantId);
   const routes = await db.select().from(requestRoutes).where(eq(requestRoutes.requestId, req.id));
@@ -168,6 +170,8 @@ export async function buildTripAuthorityRenderSnapshot(
   let authoriser: TripAuthorityData['authoriser'] | undefined;
   let transportOfficer: TripAuthorityData['transportOfficer'] | undefined;
   let preDepartureInspection: TripAuthorityData['preDepartureInspection'] | undefined;
+  let departureInspectionStatus: string | undefined;
+  let departureInspectionDate: string | undefined;
   let fuelInformation: TripAuthorityData['fuelInformation'] | undefined;
 
   if (authority) {
@@ -178,6 +182,8 @@ export async function buildTripAuthorityRenderSnapshot(
     passengers = passengerRows.map((passenger) => ({
       name: passenger.fullName,
       employeeNumber: passenger.employeeNumber || undefined,
+      department: passenger.officeOrDepartment || undefined,
+      contactNumber: passenger.contactNumber || undefined,
       passengerType: passenger.passengerType,
       destination: passenger.destination || undefined,
       indemnityConfirmed: passenger.indemnityConfirmed,
@@ -187,13 +193,18 @@ export async function buildTripAuthorityRenderSnapshot(
       .select({
         driverType: tripAuthorisedDrivers.driverType,
         employeeNumber: tripAuthorisedDrivers.employeeNumber,
+        licenceNumberMasked: tripAuthorisedDrivers.licenceNumberMasked,
         firstName: employees.firstName,
         lastName: employees.lastName,
         jobTitle: employees.jobTitle,
         phone: employees.phone,
         nationalIdNumber: employees.nationalIdNumber,
+        departmentName: departments.name,
         licenceClass: tripAuthorisedDrivers.licenceClass,
         licenceExpiry: tripAuthorisedDrivers.licenceExpiry,
+        verifiedLicenceNumber: driverLicences.licenceNumber,
+        verifiedLicenceClass: driverLicences.licenceClass,
+        verifiedLicenceExpiry: driverLicences.expiryDate,
       })
       .from(tripAuthorisedDrivers)
       .innerJoin(
@@ -201,6 +212,20 @@ export async function buildTripAuthorityRenderSnapshot(
         and(
           eq(employees.id, tripAuthorisedDrivers.employeeId),
           eq(employees.tenantId, tenantId),
+        ),
+      )
+      .leftJoin(
+        departments,
+        and(eq(departments.id, employees.departmentId), eq(departments.tenantId, tenantId)),
+      )
+      .leftJoin(driverProfiles, eq(driverProfiles.employeeId, tripAuthorisedDrivers.employeeId))
+      .leftJoin(
+        driverLicences,
+        and(
+          eq(driverLicences.driverProfileId, driverProfiles.id),
+          eq(driverLicences.isActive, true),
+          eq(driverLicences.isVerified, true),
+          eq(driverLicences.verificationStatus, 'verified'),
         ),
       )
       .where(eq(tripAuthorisedDrivers.authorityId, authority.id));
@@ -212,9 +237,12 @@ export async function buildTripAuthorityRenderSnapshot(
         employeeNumber: primary.employeeNumber || undefined,
         idNumber: primary.nationalIdNumber || undefined,
         designation: primary.jobTitle || undefined,
+        department: primary.departmentName || undefined,
         contactNumber: primary.phone || undefined,
-        licenceClass: primary.licenceClass || undefined,
-        licenceExpiry: primary.licenceExpiry?.toLocaleDateString('en-NA'),
+        licenceNumber: primary.verifiedLicenceNumber || primary.licenceNumberMasked || undefined,
+        licenceClass: primary.verifiedLicenceClass || primary.licenceClass || undefined,
+        licenceExpiry:
+          primary.verifiedLicenceExpiry || primary.licenceExpiry?.toLocaleDateString('en-NA'),
         acceptedAt: authority.acceptedAt?.toLocaleString('en-NA'),
       };
     }
@@ -224,8 +252,11 @@ export async function buildTripAuthorityRenderSnapshot(
         name: `${row.firstName} ${row.lastName}`.trim(),
         employeeNumber: row.employeeNumber || undefined,
         idNumber: row.nationalIdNumber || undefined,
-        licenceClass: row.licenceClass || undefined,
-        licenceExpiry: row.licenceExpiry?.toLocaleDateString('en-NA'),
+        department: row.departmentName || undefined,
+        contactNumber: row.phone || undefined,
+        licenceNumber: row.verifiedLicenceNumber || row.licenceNumberMasked || undefined,
+        licenceClass: row.verifiedLicenceClass || row.licenceClass || undefined,
+        licenceExpiry: row.verifiedLicenceExpiry || row.licenceExpiry?.toLocaleDateString('en-NA'),
       }));
 
     if (!driver) {
@@ -250,11 +281,12 @@ export async function buildTripAuthorityRenderSnapshot(
           and(
             eq(externalDriverAssignments.tenantId, tenantId),
             eq(externalDriverAssignments.allocationId, allocationId),
+            ne(externalDriverAssignments.state, 'cancelled'),
           ),
         )
         .orderBy(desc(externalDriverAssignments.assignedAt))
         .limit(1);
-      if (external && external.assignment.state !== 'cancelled') {
+      if (external) {
         const licence = external.assignment.licenceSnapshot as Record<string, unknown>;
         driver = {
           name: `${external.firstName} ${external.lastName}`.trim(),
@@ -269,14 +301,33 @@ export async function buildTripAuthorityRenderSnapshot(
       }
     }
 
-    const [departureInspection] = authority.tripId
+    const [allocationTrip] = authority.tripId
+      ? await db
+          .select({ id: trips.id })
+          .from(trips)
+          .where(
+            and(
+              eq(trips.id, authority.tripId),
+              eq(trips.tenantId, tenantId),
+              eq(trips.allocationId, allocationId),
+            ),
+          )
+          .limit(1)
+      : await db
+          .select({ id: trips.id })
+          .from(trips)
+          .where(and(eq(trips.tenantId, tenantId), eq(trips.allocationId, allocationId)))
+          .orderBy(desc(trips.createdAt))
+          .limit(1);
+    const inspectionTripId = allocationTrip?.id;
+    const [departureInspection] = inspectionTripId
       ? await db
           .select()
           .from(vehicleInspections)
           .where(
             and(
               eq(vehicleInspections.tenantId, tenantId),
-              eq(vehicleInspections.tripId, authority.tripId),
+              eq(vehicleInspections.tripId, inspectionTripId),
               eq(vehicleInspections.vehicleId, alloc.vehicleId),
               eq(vehicleInspections.type, 'departure'),
             ),
@@ -285,6 +336,8 @@ export async function buildTripAuthorityRenderSnapshot(
           .limit(1)
       : [];
     if (departureInspection) {
+      departureInspectionStatus = departureInspection.status;
+      departureInspectionDate = departureInspection.createdAt.toISOString();
       const itemRows = await db
         .select({
           result: inspectionItemResults.result,
@@ -293,7 +346,12 @@ export async function buildTripAuthorityRenderSnapshot(
         })
         .from(inspectionItemResults)
         .innerJoin(inspectionTemplateItems, eq(inspectionTemplateItems.id, inspectionItemResults.templateItemId))
-        .where(eq(inspectionItemResults.inspectionId, departureInspection.id));
+        .where(
+          and(
+            eq(inspectionItemResults.inspectionId, departureInspection.id),
+            eq(inspectionTemplateItems.templateId, departureInspection.templateId),
+          ),
+        );
       preDepartureInspection = {
         status: departureInspection.status,
         odometer: departureInspection.odometerReading || undefined,
@@ -303,40 +361,67 @@ export async function buildTripAuthorityRenderSnapshot(
           comment: item.comment || undefined,
         })),
         notes: departureInspection.notes || undefined,
-        completedAt: departureInspection.createdAt.toLocaleString('en-NA'),
+        completedAt: departureInspection.createdAt.toISOString(),
       };
     }
 
-    const authoriserSnapshot = authority.authoriserSnapshot as { employeeId?: string } | null;
+    const authoriserSnapshot = authority.authoriserSnapshot as {
+      employeeId?: string;
+      capacity?: string;
+      isActing?: boolean;
+    } | null;
+    let authoriserEmployee:
+      | { firstName: string; lastName: string; jobTitle: string | null }
+      | undefined;
     if (authoriserSnapshot?.employeeId) {
-      const [employee] = await db
+      [authoriserEmployee] = await db
         .select({ firstName: employees.firstName, lastName: employees.lastName, jobTitle: employees.jobTitle })
         .from(employees)
         .where(and(eq(employees.id, authoriserSnapshot.employeeId), eq(employees.tenantId, tenantId)))
         .limit(1);
-      if (employee) {
-        authoriser = {
-          name: `${employee.firstName} ${employee.lastName}`.trim(),
-          designation: employee.jobTitle || 'Authorising Officer',
-          authorisedAt: authority.authorisedAt?.toLocaleString('en-NA'),
-        };
-      }
+    } else if (authority.authorisedByUserId) {
+      [authoriserEmployee] = await db
+        .select({ firstName: employees.firstName, lastName: employees.lastName, jobTitle: employees.jobTitle })
+        .from(employees)
+        .where(and(eq(employees.userId, authority.authorisedByUserId), eq(employees.tenantId, tenantId)))
+        .limit(1);
+    }
+    if (authoriserEmployee) {
+      authoriser = {
+        name: `${authoriserEmployee.firstName} ${authoriserEmployee.lastName}`.trim(),
+        designation: authoriserSnapshot?.capacity || authoriserEmployee.jobTitle || 'Authorising Officer',
+        authorisedAt: authority.authorisedAt?.toLocaleString('en-NA'),
+      };
     }
 
-    const [transportEmployee] = await db
-      .select({ firstName: employees.firstName, lastName: employees.lastName, jobTitle: employees.jobTitle })
-      .from(employees)
-      .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, alloc.allocatedByUserId)))
-      .limit(1);
+    const [physicalIssue] = inspectionTripId
+      ? await db
+          .select({
+            issuedByUserId: tripIssues.issuedByUserId,
+            issuedAt: tripIssues.issuedAt,
+          })
+          .from(tripIssues)
+          .where(and(eq(tripIssues.tripId, inspectionTripId), eq(tripIssues.allocationId, allocationId)))
+          .orderBy(desc(tripIssues.issuedAt))
+          .limit(1)
+      : [];
+    const transportOfficerUserId = physicalIssue?.issuedByUserId || alloc.allocatedByUserId;
+    const [transportEmployee] = transportOfficerUserId
+      ? await db
+          .select({ firstName: employees.firstName, lastName: employees.lastName, jobTitle: employees.jobTitle })
+          .from(employees)
+          .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, transportOfficerUserId)))
+          .limit(1)
+      : [];
     if (transportEmployee) {
       transportOfficer = {
         name: `${transportEmployee.firstName} ${transportEmployee.lastName}`.trim(),
         designation: transportEmployee.jobTitle || 'Transport Officer',
-        issuedAt: authority.issuedAt?.toLocaleString('en-NA'),
+        issuedAt: (physicalIssue?.issuedAt || alloc.createdAt).toLocaleString('en-NA'),
       };
     }
 
-    if (vehicle?.fuelCardNumber || vehicle?.fuelType) {
+    if (vehicle.fuelCardNumber || vehicle.fuelType) {
       fuelInformation = {
         fuelCardNumber: vehicle.fuelCardNumber || undefined,
         fuelType: vehicle.fuelType || undefined,
@@ -360,13 +445,15 @@ export async function buildTripAuthorityRenderSnapshot(
     totalKm,
     journeyLegs: journeyLegs.length ? journeyLegs : undefined,
     vehicle: {
-      licenceNumber: vehicle?.licenceNumber || 'Not recorded',
-      vehicleRegisterNumber: vehicle?.vehicleRegisterNumber || 'Not recorded',
-      make: vehicle?.make || '',
-      model: vehicle?.model || '',
-      colour: vehicle?.colour || undefined,
-      fuelType: vehicle?.fuelType || undefined,
-      currentOdometer: vehicle?.currentOdometer || undefined,
+      licenceNumber: vehicle.licenceNumber,
+      vehicleRegisterNumber: vehicle.vehicleRegisterNumber || 'Not recorded',
+      make: vehicle.make || '',
+      model: vehicle.model || '',
+      colour: vehicle.colour || undefined,
+      fuelType: vehicle.fuelType || undefined,
+      currentOdometer: vehicle.currentOdometer || undefined,
+      inspectionStatus: departureInspectionStatus,
+      inspectionDate: departureInspectionDate,
     },
     driver,
     passengers,
