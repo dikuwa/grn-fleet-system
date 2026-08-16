@@ -309,20 +309,33 @@ export async function generateVerifiedTripAuthorityPdf(
       };
     }
 
-    const authoriserSnapshot = authority.authoriserSnapshot as { employeeId?: string } | null;
+    const authoriserSnapshot = authority.authoriserSnapshot as {
+      employeeId?: string;
+      capacity?: string;
+      isActing?: boolean;
+    } | null;
+    let authoriserEmployee:
+      | { firstName: string; lastName: string; jobTitle: string | null }
+      | undefined;
     if (authoriserSnapshot?.employeeId) {
-      const [employee] = await db
+      [authoriserEmployee] = await db
         .select({ firstName: employees.firstName, lastName: employees.lastName, jobTitle: employees.jobTitle })
         .from(employees)
         .where(and(eq(employees.id, authoriserSnapshot.employeeId), eq(employees.tenantId, tenantId)))
         .limit(1);
-      if (employee) {
-        authoriser = {
-          name: `${employee.firstName} ${employee.lastName}`.trim(),
-          designation: employee.jobTitle || 'Authorising Officer',
-          authorisedAt: authority.authorisedAt?.toLocaleString('en-NA'),
-        };
-      }
+    } else if (authority.authorisedByUserId) {
+      [authoriserEmployee] = await db
+        .select({ firstName: employees.firstName, lastName: employees.lastName, jobTitle: employees.jobTitle })
+        .from(employees)
+        .where(and(eq(employees.userId, authority.authorisedByUserId), eq(employees.tenantId, tenantId)))
+        .limit(1);
+    }
+    if (authoriserEmployee) {
+      authoriser = {
+        name: `${authoriserEmployee.firstName} ${authoriserEmployee.lastName}`.trim(),
+        designation: authoriserSnapshot?.capacity || authoriserEmployee.jobTitle || 'Authorising Officer',
+        authorisedAt: authority.authorisedAt?.toLocaleString('en-NA'),
+      };
     }
 
     const [transportEmployee] = await db
