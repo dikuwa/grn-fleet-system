@@ -26,6 +26,35 @@ function optionalNonNegativeNumber(value: unknown, label: string) {
   return parsed;
 }
 
+function optionalNonNegativeInteger(value: unknown, label: string) {
+  const parsed = optionalNonNegativeNumber(value, label);
+  if (parsed === null) return null;
+  if (!Number.isInteger(parsed)) throw new Error(`${label} must be a non-negative whole number`);
+  return parsed;
+}
+
+function postgresErrorDetails(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return { code: null as string | null, message: String(error || '') };
+  }
+  const record = error as {
+    code?: unknown;
+    message?: unknown;
+    cause?: { code?: unknown; message?: unknown };
+  };
+  const code = typeof record.code === 'string'
+    ? record.code
+    : typeof record.cause?.code === 'string'
+      ? record.cause.code
+      : null;
+  const message = [
+    typeof record.message === 'string' ? record.message : '',
+    typeof record.cause?.message === 'string' ? record.cause.message : '',
+    String(error),
+  ].filter(Boolean).join(' ');
+  return { code, message };
+}
+
 /**
  * POST /api/maintenance
  * Record a maintenance-history event for a vehicle already within the active
@@ -74,8 +103,8 @@ export async function POST(req: NextRequest) {
     let nextServiceOdometer: number | null;
     let cost: number | null;
     try {
-      serviceOdometer = optionalNonNegativeNumber(body.serviceOdometer, 'Service odometer');
-      nextServiceOdometer = optionalNonNegativeNumber(body.nextServiceOdometer, 'Next service odometer');
+      serviceOdometer = optionalNonNegativeInteger(body.serviceOdometer, 'Service odometer');
+      nextServiceOdometer = optionalNonNegativeInteger(body.nextServiceOdometer, 'Next service odometer');
       cost = optionalNonNegativeNumber(body.cost, 'Cost');
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid numeric value' }, { status: 400 });
@@ -198,6 +227,16 @@ export async function POST(req: NextRequest) {
     const [event] = await db.select().from(maintenanceEvents).where(eq(maintenanceEvents.id, eventId)).limit(1);
     return NextResponse.json({ data: event }, { status: 201 });
   } catch (error) {
+    const { code, message } = postgresErrorDetails(error);
+    if (code === '23514' && message.includes('vehicle_odometer_regression')) {
+      return NextResponse.json(
+        {
+          error:
+            'The vehicle odometer advanced while this maintenance record was being saved. Refresh the vehicle and enter a reading at or above the latest recorded odometer.',
+        },
+        { status: 409 },
+      );
+    }
     console.error('[maintenance] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create maintenance event' }, { status: 500 });
   }
