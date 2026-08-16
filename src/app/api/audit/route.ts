@@ -33,6 +33,12 @@ export async function GET(request: NextRequest) {
     const dateFrom = searchParams.get('dateFrom');
     const dateTo = searchParams.get('dateTo');
     const exportFormat = searchParams.get('export');
+
+    if (exportFormat) {
+      const exportCheck = await requirePermission(session, Permissions.AUDIT_EXPORT);
+      if (exportCheck instanceof NextResponse) return exportCheck;
+    }
+
     const requestedLimit = parseInt(searchParams.get('limit') || '50', 10);
     const requestedOffset = parseInt(searchParams.get('offset') || '0', 10);
     const limit = exportFormat === 'csv' ? 5000 : Math.min(Math.max(requestedLimit, 1), 250);
