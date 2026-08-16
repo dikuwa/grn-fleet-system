@@ -5,6 +5,7 @@ import {
   trips,
   tripAuthorities,
   tripClosures,
+  fuelReceipts,
   fuelTransactions,
   tripExpenses,
   tripIncidents,
@@ -25,6 +26,18 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 const CLOSURE_DECISIONS = ['closed', 'requires_correction', 'follow_up'] as const;
 type ClosureDecision = (typeof CLOSURE_DECISIONS)[number];
 const RESTRICTED_VEHICLE_STATUSES = new Set(['maintenance', 'out_of_service', 'written_off']);
+
+type ReturnDeclaration = {
+  incidentDeclared?: boolean;
+  outstandingReceiptsDeclared?: boolean;
+  reconciledAt?: string | null;
+};
+
+function readReturnDeclaration(data: Record<string, unknown> | null | undefined): ReturnDeclaration | null {
+  const value = data?.returnDeclaration;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as ReturnDeclaration;
+}
 
 function errorText(error: unknown): string {
   if (!error || typeof error !== 'object') return String(error || '');
@@ -179,6 +192,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
     }
 
+    const returnDeclaration = readReturnDeclaration(authority.data);
+    const incidentDeclared = returnDeclaration?.incidentDeclared === true;
+    const receiptsDeclared = returnDeclaration?.outstandingReceiptsDeclared === true;
+    if ((incidentDeclared || receiptsDeclared) && !returnDeclaration?.reconciledAt) {
+      return NextResponse.json(
+        { error: 'Return declarations must be reconciled before this trip can be closed.' },
+        { status: 409 },
+      );
+    }
+
     const [arrivalInspection] = await db.select({
       id: vehicleInspections.id,
       status: vehicleInspections.status,
@@ -220,19 +243,62 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         eq(tripExpenses.tenantId, tenantId),
         ne(tripExpenses.verificationStatus, 'verified'),
       ));
-    const [unsafeIncident] = await db
-      .select({ id: tripIncidents.id })
-      .from(tripIncidents)
-      .where(and(
-        eq(tripIncidents.tripId, id),
-        eq(tripIncidents.tenantId, tenantId),
-        eq(tripIncidents.safeToContinue, false),
-        ne(tripIncidents.status, 'resolved'),
-      ))
-      .limit(1);
+    const [[unsafeIncident], [anyIncident], [fuelReceiptEvidence], [expenseReceiptEvidence]] = await Promise.all([
+      db
+        .select({ id: tripIncidents.id })
+        .from(tripIncidents)
+        .where(and(
+          eq(tripIncidents.tripId, id),
+          eq(tripIncidents.tenantId, tenantId),
+          eq(tripIncidents.safeToContinue, false),
+          ne(tripIncidents.status, 'resolved'),
+        ))
+        .limit(1),
+      db
+        .select({ id: tripIncidents.id })
+        .from(tripIncidents)
+        .where(and(eq(tripIncidents.tripId, id), eq(tripIncidents.tenantId, tenantId)))
+        .limit(1),
+      db
+        .select({ id: fuelReceipts.id })
+        .from(fuelReceipts)
+        .innerJoin(fuelTransactions, eq(fuelTransactions.id, fuelReceipts.transactionId))
+        .innerJoin(vehicles, eq(vehicles.id, fuelTransactions.vehicleId))
+        .where(
+          and(
+            eq(fuelTransactions.tripId, id),
+            eq(vehicles.tenantId, tenantId),
+            sql`(${fuelReceipts.tenantId} is null or ${fuelReceipts.tenantId} = ${tenantId}::uuid)`,
+          ),
+        )
+        .limit(1),
+      db
+        .select({ id: tripExpenses.id })
+        .from(tripExpenses)
+        .where(
+          and(
+            eq(tripExpenses.tripId, id),
+            eq(tripExpenses.tenantId, tenantId),
+            sql`${tripExpenses.receiptKey} is not null and length(trim(${tripExpenses.receiptKey})) > 0`,
+          ),
+        )
+        .limit(1),
+    ]);
 
     if (Number(outstandingFuel?.count ?? 0) > 0 || Number(outstandingExpenses?.count ?? 0) > 0) {
       return NextResponse.json({ error: 'All fuel and expense transactions must be verified before closure' }, { status: 409 });
+    }
+    if (incidentDeclared && !anyIncident) {
+      return NextResponse.json(
+        { error: 'An incident was declared at return, but no incident record exists for this trip.' },
+        { status: 409 },
+      );
+    }
+    if (receiptsDeclared && !fuelReceiptEvidence && !expenseReceiptEvidence) {
+      return NextResponse.json(
+        { error: 'Outstanding receipts were declared at return, but no receipt evidence exists for this trip.' },
+        { status: 409 },
+      );
     }
     if (unsafeIncident) {
       return NextResponse.json({ error: 'A safety-critical incident remains unresolved' }, { status: 409 });
@@ -491,7 +557,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json(
         {
           error:
-            'The trip, inspection, financial, or safety state changed while closure was being processed. Refresh the closure review and resolve the latest blockers before closing.',
+            'The trip, inspection, financial, safety, or return-declaration state changed while closure was being processed. Refresh the closure review and resolve the latest blockers before closing.',
         },
         { status: 409 },
       );
