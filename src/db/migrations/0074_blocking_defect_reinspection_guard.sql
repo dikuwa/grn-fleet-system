@@ -1,8 +1,8 @@
--- A new blocking safety defect discovered after a vehicle has already passed
--- departure inspection invalidates that release boundary. Resolving the defect
--- does not resurrect the old inspection: a fresh official departure inspection
--- must establish that the repaired/current vehicle is safe before a Trip
--- Authority can be formally issued or the vehicle physically released.
+-- A defect that becomes blocking after a vehicle has already passed departure
+-- inspection invalidates that release boundary. Resolving the defect does not
+-- resurrect the old inspection: a fresh official departure inspection must
+-- establish that the repaired/current vehicle is safe before a Trip Authority
+-- can be formally issued or the vehicle physically released.
 --
 -- The trigger deliberately serialises against the same canonical Trip Authority
 -- row locked by the physical-issue guard. If a defect wins the race, issue sees
@@ -26,6 +26,10 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- A ready_for_departure authority proves that the current vehicle previously
+  -- passed its official departure inspection. Therefore the moment any defect
+  -- first becomes blocking, that inspection is stale even if the defect row was
+  -- originally created earlier and only escalated to blocking now.
   FOR v_trip IN
     SELECT
       t.id AS trip_id,
@@ -50,7 +54,6 @@ BEGIN
           AND vi.type = 'departure'
           AND vi.status = 'completed'
           AND vi.overall_pass = TRUE
-          AND vi.created_at <= NEW.created_at
       )
     ORDER BY t.id
     FOR UPDATE OF t, ta
