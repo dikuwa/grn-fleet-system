@@ -10,6 +10,7 @@ import {
   Undo2,
   Clock3,
   ArrowRight,
+  ClipboardCheck,
 } from 'lucide-react';
 
 interface ClosureReviewActionsProps {
@@ -18,6 +19,7 @@ interface ClosureReviewActionsProps {
   hasReturnInspection: boolean;
   reconciliationReady: boolean;
   reconciliationBlockers: string[];
+  returnDeclarationNeedsReconciliation?: boolean;
 }
 
 type ClosureDecision = 'closed' | 'requires_correction' | 'follow_up';
@@ -28,6 +30,7 @@ export function ClosureReviewActions({
   hasReturnInspection,
   reconciliationReady,
   reconciliationBlockers,
+  returnDeclarationNeedsReconciliation = false,
 }: ClosureReviewActionsProps) {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -89,6 +92,30 @@ export function ClosureReviewActions({
     }
   };
 
+  const reconcileReturnDeclarations = async () => {
+    setIsSubmitting(true);
+    setActionResult(null);
+    try {
+      const res = await fetch(`/api/trips/${tripId}/return-declarations/reconcile`, {
+        method: 'POST',
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Failed to reconcile return declarations');
+      setActionResult({
+        success: true,
+        message: 'Return declarations reconciled. Refreshing closure checks…',
+      });
+      setTimeout(() => router.refresh(), 500);
+    } catch (err) {
+      setActionResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Failed to reconcile return declarations',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleReturnInspection = () => {
     router.push(`/dashboard/inspections/new?type=return&tripId=${tripId}`);
   };
@@ -105,16 +132,20 @@ export function ClosureReviewActions({
   const canReview = tripStatus === 'closure_review' && hasReturnInspection;
   const currentStep = !hasReturnInspection
     ? 'Complete arrival inspection'
-    : reconciliationReady
-      ? 'Reconciliation checks complete'
-      : reconciliationBlockers[0] || 'Resolve reconciliation requirements';
+    : returnDeclarationNeedsReconciliation
+      ? 'Reconcile return declarations'
+      : reconciliationReady
+        ? 'Reconciliation checks complete'
+        : reconciliationBlockers[0] || 'Resolve reconciliation requirements';
   const nextStep = !hasReturnInspection
     ? 'Review fuel, expenses and incidents'
-    : reconciliationReady
-      ? 'Close the trip'
-      : reconciliationBlockers.length > 1
-        ? 'Resolve the remaining reconciliation blockers'
-        : 'Close the trip';
+    : returnDeclarationNeedsReconciliation
+      ? 'Validate declared evidence'
+      : reconciliationReady
+        ? 'Close the trip'
+        : reconciliationBlockers.length > 1
+          ? 'Resolve the remaining reconciliation blockers'
+          : 'Close the trip';
 
   return (
     <div className="min-w-[240px] space-y-2" onClick={(event) => event.stopPropagation()}>
@@ -165,6 +196,24 @@ export function ClosureReviewActions({
       )}
 
       <div className="flex flex-wrap items-center gap-1.5">
+        {canReview && returnDeclarationNeedsReconciliation && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void reconcileReturnDeclarations();
+            }}
+            loading={isSubmitting}
+            disabled={isSubmitting}
+            className="h-7 px-2.5 text-[11px]"
+          >
+            <ClipboardCheck className="h-3 w-3" />
+            Reconcile declarations
+          </Button>
+        )}
+
         {canReview && (
           <>
             <Button
@@ -173,7 +222,7 @@ export function ClosureReviewActions({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                submitDecision('closed');
+                void submitDecision('closed');
               }}
               loading={isSubmitting}
               disabled={isSubmitting || !reconciliationReady}
@@ -193,7 +242,7 @@ export function ClosureReviewActions({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                submitDecision('requires_correction');
+                void submitDecision('requires_correction');
               }}
               disabled={isSubmitting || !reviewNotes.trim()}
               className="h-7 px-2.5 text-[11px]"
@@ -207,7 +256,7 @@ export function ClosureReviewActions({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                submitDecision('follow_up');
+                void submitDecision('follow_up');
               }}
               disabled={isSubmitting || !reviewNotes.trim()}
               className="h-7 px-2.5 text-[11px]"
