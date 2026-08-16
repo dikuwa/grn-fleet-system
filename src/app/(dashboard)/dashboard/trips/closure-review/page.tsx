@@ -37,6 +37,12 @@ import { statusConfig } from '@/lib/request-status';
 import Link from 'next/link';
 import { ClosureReviewActions } from './ClosureReviewActions';
 
+type ReturnDeclaration = {
+  incidentDeclared: boolean;
+  outstandingReceiptsDeclared: boolean;
+  reconciledAt: string | null;
+};
+
 interface ClosureTrip {
   id: string;
   status: string;
@@ -56,8 +62,21 @@ interface ClosureTrip {
   hasReturnInspection: boolean;
   latestReturnInspectionStatus: string | null;
   hasClosureRecord: boolean;
+  returnDeclaration: ReturnDeclaration | null;
+  returnDeclarationNeedsReconciliation: boolean;
   reconciliationReady: boolean;
   reconciliationBlockers: string[];
+}
+
+function readReturnDeclaration(data: Record<string, unknown> | null): ReturnDeclaration | null {
+  const raw = data?.returnDeclaration;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  return {
+    incidentDeclared: value.incidentDeclared === true,
+    outstandingReceiptsDeclared: value.outstandingReceiptsDeclared === true,
+    reconciledAt: typeof value.reconciledAt === 'string' && value.reconciledAt ? value.reconciledAt : null,
+  };
 }
 
 const TRIP_STATUS_LABELS: Record<string, string> = {
@@ -99,6 +118,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       externalDriverLastName: externalParties.lastName,
       externalDriverOrganisation: externalParties.organisationName,
       authorityStatus: tripAuthorities.status,
+      authorityData: tripAuthorities.data,
     })
     .from(trips)
     .innerJoin(
@@ -223,9 +243,6 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       : Promise.resolve([] as Array<{ tripId: string }>),
   ]);
 
-  // Rows arrive newest-first. Keep only the newest return inspection for each
-  // trip's currently allocated vehicle; an older submitted inspection must not
-  // hide a newer reinspection that is still in progress.
   const latestReturnInspectionByTrip = new Map<string, { status: string }>();
   for (const inspection of inspRows) {
     if (!inspection.tripId || latestReturnInspectionByTrip.has(inspection.tripId)) continue;
@@ -251,6 +268,13 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
     const hasReturnInspection = Boolean(
       latestReturnInspection && ['completed', 'failed'].includes(latestReturnInspection.status),
     );
+    const returnDeclaration = readReturnDeclaration(row.authorityData);
+    const hasPositiveReturnDeclaration = Boolean(
+      returnDeclaration?.incidentDeclared || returnDeclaration?.outstandingReceiptsDeclared,
+    );
+    const returnDeclarationNeedsReconciliation = Boolean(
+      hasPositiveReturnDeclaration && !returnDeclaration?.reconciledAt,
+    );
     const reconciliationBlockers: string[] = [];
 
     if (!latestReturnInspection) {
@@ -272,6 +296,9 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
     if (unsafeIncidentTripIds.has(row.id)) {
       reconciliationBlockers.push('Safety-critical incident unresolved');
     }
+    if (returnDeclarationNeedsReconciliation) {
+      reconciliationBlockers.push('Return declarations await reconciliation');
+    }
 
     return {
       id: row.id,
@@ -292,6 +319,8 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       hasReturnInspection,
       latestReturnInspectionStatus: latestReturnInspection?.status ?? null,
       hasClosureRecord: closureTripIds.has(row.id),
+      returnDeclaration,
+      returnDeclarationNeedsReconciliation,
       reconciliationReady: reconciliationBlockers.length === 0,
       reconciliationBlockers,
     };
@@ -442,6 +471,15 @@ export default async function ClosureReviewPage() {
                               {trip.latestReturnInspectionStatus ? 'Reinspection Pending' : 'Missing Inspection'}
                             </Badge>
                           )}
+                          {trip.returnDeclaration?.incidentDeclared && (
+                            <Badge variant="pending" size="sm">Incident declared</Badge>
+                          )}
+                          {trip.returnDeclaration?.outstandingReceiptsDeclared && (
+                            <Badge variant="pending" size="sm">Receipts declared</Badge>
+                          )}
+                          {trip.returnDeclaration?.reconciledAt && (
+                            <Badge variant="success" size="sm">Return declarations reconciled</Badge>
+                          )}
                           {trip.reconciliationReady ? (
                             <Badge variant="success" size="sm">
                               Reconciliation Ready
@@ -506,6 +544,7 @@ export default async function ClosureReviewPage() {
                         hasReturnInspection={trip.hasReturnInspection}
                         reconciliationReady={trip.reconciliationReady}
                         reconciliationBlockers={trip.reconciliationBlockers}
+                        returnDeclarationNeedsReconciliation={trip.returnDeclarationNeedsReconciliation}
                       />
                     )}
                     <Button variant="ghost" size="sm" asChild>
