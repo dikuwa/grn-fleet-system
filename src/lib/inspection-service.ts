@@ -24,6 +24,7 @@ import { auditEvents } from '@/db/schema/audit';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { onInspectionCompleted } from '@/lib/document-generator';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
+import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-acceptance';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 export class InspectionServiceError extends Error {
@@ -124,6 +125,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
     driverEmployeeId: vehicleAllocations.driverEmployeeId,
     authorityId: tripAuthorities.id,
     authorityStatus: tripAuthorities.status,
+    authorityAcceptedAt: tripAuthorities.acceptedAt,
   }).from(trips)
     .innerJoin(
       transportRequests,
@@ -184,6 +186,16 @@ export async function completeOfficialInspection(input: InspectionInput) {
     }
     if (!['driver_accepted', 'awaiting_pre_trip_inspection'].includes(trip.authorityStatus)) {
       fail('The assigned driver must accept the Trip Authority before inspection', 409);
+    }
+    const pendingAmendment = await findPendingAuthorityAmendmentAcceptance({
+      authorityId: trip.authorityId,
+      acceptedAt: trip.authorityAcceptedAt,
+    });
+    if (pendingAmendment) {
+      fail(
+        `A ${pendingAmendment.amendmentType.replaceAll('_', ' ')} amendment became effective after the driver accepted the Trip Authority. The revised authority must be acknowledged before departure inspection.`,
+        409,
+      );
     }
     const [blocking] = await db.select({ count: sql<number>`count(*)` }).from(vehicleDefects).where(and(
       eq(vehicleDefects.vehicleId, input.vehicleId),
