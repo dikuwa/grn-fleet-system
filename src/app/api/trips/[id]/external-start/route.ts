@@ -197,7 +197,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Departure is blocked by an unresolved safety-critical defect' }, { status: 409 });
     }
 
-    // Evaluate the newest inspection, not merely any historical passed row.
     const [inspection] = await db
       .select({
         id: vehicleInspections.id,
@@ -240,9 +239,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const beginningOdometer = Number(body.beginningOdometer);
     const auditSequence = Date.now();
 
-    // Claim the exact allocation version first so a vehicle replacement,
-    // cancellation or reassignment cannot cross the actual departure boundary
-    // using stale pre-departure assumptions.
     await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
@@ -298,6 +294,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND ep.status = 'active'
               AND edl.tenant_id = ${tenantId}::uuid
               AND edl.verification_status = 'verified'
+              AND edl.licence_class = ${record.licenceClass}
               AND edl.expiry_date >= COALESCE(
                 (SELECT ta.valid_until::date FROM trip_authorities ta WHERE ta.trip_id = trips.id AND ta.tenant_id = ${tenantId}::uuid),
                 CURRENT_DATE
@@ -328,23 +325,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND (
                 v.required_licence_class IS NULL
                 OR CASE
-                  WHEN upper(replace(edl.licence_class, ' ', '')) IN ('EC', 'CE') THEN
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) IN ('EC', 'CE') THEN
                     upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C', 'BE', 'EB', 'C1E', 'CE1', 'CE', 'EC')
-                  WHEN upper(replace(edl.licence_class, ' ', '')) IN ('C1E', 'CE1') THEN
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) IN ('C1E', 'CE1') THEN
                     upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'BE', 'EB', 'C1E', 'CE1')
-                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'C' THEN
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'C' THEN
                     upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C')
-                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'C1' THEN
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'C1' THEN
                     upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1')
-                  WHEN upper(replace(edl.licence_class, ' ', '')) IN ('BE', 'EB') THEN
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) IN ('BE', 'EB') THEN
                     upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'BE', 'EB')
-                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'B' THEN
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'B' THEN
                     upper(replace(v.required_licence_class, ' ', '')) = 'B'
-                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'A' THEN
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'A' THEN
                     upper(replace(v.required_licence_class, ' ', '')) IN ('A', 'A1')
-                  WHEN upper(replace(edl.licence_class, ' ', '')) = 'A1' THEN
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'A1' THEN
                     upper(replace(v.required_licence_class, ' ', '')) = 'A1'
-                  ELSE upper(replace(edl.licence_class, ' ', '')) = upper(replace(v.required_licence_class, ' ', ''))
+                  ELSE upper(replace(${record.licenceClass}::text, ' ', '')) = upper(replace(v.required_licence_class, ' ', ''))
                 END
               )
           )
