@@ -18,6 +18,8 @@ import { Permissions } from '@/lib/permissions';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 
+const ACTIVE_HANDOVER_STATUSES = ['in_progress', 'return_due'] as const;
+
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(request);
@@ -44,6 +46,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         handoverId: tripAuthorisedDrivers.id,
         authorityId: tripAuthorities.id,
         authorityVersion: tripAuthorities.version,
+        tripStatus: trips.status,
+        tripVehicleId: trips.vehicleId,
+        allocationId: vehicleAllocations.id,
+        allocationVersion: vehicleAllocations.version,
+        allocationVehicleId: vehicleAllocations.vehicleId,
+        allocationState: vehicleAllocations.state,
         currentDriverEmployeeId: vehicleAllocations.driverEmployeeId,
         reliefEmployeeId: employees.id,
         reliefUserId: employees.userId,
@@ -57,33 +65,69 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, trips.allocationId))
       .innerJoin(transportRequests, eq(transportRequests.id, trips.requestId))
       .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
-      .where(
-        and(
-          eq(trips.id, tripId),
-          eq(trips.tenantId, session.tenantId),
-          eq(transportRequests.tenantId, session.tenantId),
-          eq(tripAuthorities.tenantId, session.tenantId),
-          eq(employees.tenantId, session.tenantId),
-          eq(vehicleAllocations.state, 'confirmed'),
-          eq(tripAuthorisedDrivers.driverType, 'relief'),
-          isNull(tripAuthorisedDrivers.acknowledgedAt),
-        ),
-      )
+      .where(and(
+        eq(trips.id, tripId),
+        eq(trips.tenantId, session.tenantId),
+        eq(transportRequests.tenantId, session.tenantId),
+        eq(tripAuthorities.tenantId, session.tenantId),
+        eq(employees.tenantId, session.tenantId),
+        eq(vehicleAllocations.state, 'confirmed'),
+        eq(tripAuthorisedDrivers.driverType, 'relief'),
+        isNull(tripAuthorisedDrivers.acknowledgedAt),
+      ))
       .limit(1);
 
     if (!pending || !pending.currentDriverEmployeeId) {
       return NextResponse.json({ error: 'There is no pending relief-driver handover to cancel' }, { status: 404 });
     }
+    if (!ACTIVE_HANDOVER_STATUSES.includes(pending.tripStatus as (typeof ACTIVE_HANDOVER_STATUSES)[number])) {
+      return NextResponse.json({ error: 'The trip is no longer active for handover cancellation' }, { status: 409 });
+    }
+    if (
+      pending.allocationState !== 'confirmed' ||
+      pending.allocationVehicleId !== pending.tripVehicleId
+    ) {
+      return NextResponse.json({ error: 'The active trip allocation changed. Refresh before cancelling the handover.' }, { status: 409 });
+    }
 
     const now = new Date();
     await db.execute(sql`
-      WITH handover_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${pending.allocationId}::uuid
+          AND va.state = 'confirmed'
+          AND va.version = ${pending.allocationVersion}
+          AND va.vehicle_id = ${pending.tripVehicleId}::uuid
+          AND va.driver_employee_id = ${pending.currentDriverEmployeeId}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.id = ${tripId}::uuid
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.allocation_id = va.id
+              AND t.vehicle_id = va.vehicle_id
+              AND t.status IN ('in_progress', 'return_due')
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM trip_authorised_drivers pending_driver
+            WHERE pending_driver.id = ${pending.handoverId}::uuid
+              AND pending_driver.authority_id = ${pending.authorityId}::uuid
+              AND pending_driver.driver_type = 'relief'
+              AND pending_driver.acknowledged_at IS NULL
+          )
+        RETURNING id
+      ),
+      handover_claim AS (
         UPDATE trip_authorised_drivers
         SET driver_type = 'relief_cancelled'
         WHERE id = ${pending.handoverId}::uuid
           AND authority_id = ${pending.authorityId}::uuid
           AND driver_type = 'relief'
           AND acknowledged_at IS NULL
+          AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING id
       ),
       outgoing_segment_reset AS (
@@ -114,7 +158,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           id,
           'driver_handover_cancelled',
           jsonb_build_object('reliefDriverEmployeeId', ${pending.reliefEmployeeId}::text),
-          jsonb_build_object('state', 'cancelled'),
+          jsonb_build_object(
+            'state', 'cancelled',
+            'vehicleId', ${pending.tripVehicleId}::text,
+            'allocationVersion', ${pending.allocationVersion + 1}::integer
+          ),
           ${reason},
           'approved',
           ${session.user.id},
@@ -127,7 +175,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       audit_insert AS (
         INSERT INTO audit_events (
           tenant_id, tenant_sequence, event_type, actor_user_id, action,
-          entity_type, entity_id, summary, reason, source_channel
+          entity_type, entity_id, summary, reason, after, source_channel
         )
         SELECT
           ${session.tenantId}::uuid,
@@ -139,23 +187,34 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           ${tripId}::uuid,
           ${`Pending relief-driver handover cancelled for ${pending.requestReference}`},
           ${reason},
+          jsonb_build_object(
+            'reliefDriverEmployeeId', ${pending.reliefEmployeeId}::text,
+            'vehicleId', ${pending.tripVehicleId}::text,
+            'allocationVersion', ${pending.allocationVersion + 1}::integer
+          ),
           'web'
         FROM amendment_insert
         RETURNING id
       )
-      SELECT (SELECT count(*) FROM audit_insert) AS committed
+      SELECT CAST(CASE
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM handover_claim) = 1
+         AND (SELECT count(*) FROM authority_update) = 1
+         AND (SELECT count(*) FROM amendment_insert) = 1
+         AND (SELECT count(*) FROM audit_insert) = 1
+        THEN '1'
+        ELSE 'atomic_driver_handover_cancel_failed'
+      END AS integer) AS committed
     `);
 
     const [stillPending] = await db
       .select({ id: tripAuthorisedDrivers.id })
       .from(tripAuthorisedDrivers)
-      .where(
-        and(
-          eq(tripAuthorisedDrivers.id, pending.handoverId),
-          eq(tripAuthorisedDrivers.driverType, 'relief'),
-          isNull(tripAuthorisedDrivers.acknowledgedAt),
-        ),
-      )
+      .where(and(
+        eq(tripAuthorisedDrivers.id, pending.handoverId),
+        eq(tripAuthorisedDrivers.driverType, 'relief'),
+        isNull(tripAuthorisedDrivers.acknowledgedAt),
+      ))
       .limit(1);
     if (stillPending) {
       return NextResponse.json({ error: 'The handover changed while cancellation was being saved' }, { status: 409 });
@@ -183,6 +242,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
   } catch (error) {
     console.error('[trips/driver-handover/cancel] POST failed:', error);
+    if (String(error).includes('atomic_driver_handover_cancel_failed')) {
+      return NextResponse.json(
+        { error: 'The trip, allocation, vehicle, or handover changed while cancellation was being saved. Refresh and review the latest state.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Pending driver handover could not be cancelled' }, { status: 500 });
   }
 }
