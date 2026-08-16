@@ -297,9 +297,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
             and v.professional_authorisation_required = false
         )`;
 
-    // Claim the exact allocation version before changing acceptance evidence.
-    // Any replacement, cancellation or physical issue must serialize against
-    // this same boundary rather than interleaving with the acknowledgement.
     await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
@@ -336,7 +333,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             WHERE ta.id = am.authority_id
               AND ta.tenant_id = ${tenantId}::uuid
               AND ta.accepted_at IS NOT NULL
-              AND am.created_at > ta.accepted_at
+              AND COALESCE(am.approved_at, am.created_at) > ta.accepted_at
           )
         RETURNING id
       ),
