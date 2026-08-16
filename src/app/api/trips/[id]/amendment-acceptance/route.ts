@@ -12,11 +12,13 @@ import {
 } from '@/db/schema/people';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import {
+  getSessionRoleNames,
   requireDashboardAction,
   requirePermission,
   requireRequestAuth,
 } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { onTripIssued } from '@/lib/document-generator';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import {
@@ -24,6 +26,7 @@ import {
   resolveActiveRoleRecipients,
 } from '@/lib/notification-service';
 import { Permissions } from '@/lib/permissions';
+import { tripScopeCondition } from '@/lib/record-scope';
 import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-acceptance';
 import { SystemRoles } from '@/lib/workspaces';
 
@@ -222,6 +225,34 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
     const { id: tripId } = await context.params;
+
+    const routeCheck = await requireDashboardAction(session, '/dashboard/trips', 'view');
+    if (routeCheck instanceof NextResponse) return routeCheck;
+    const roleNames = await getSessionRoleNames(session);
+    const tripAccess = resolveDashboardAccess('/dashboard/trips', roleNames);
+    if (!tripAccess.allowed || !tripAccess.actions.includes('view')) {
+      return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
+    }
+
+    const db = getDb();
+    const [scopedTrip] = await db
+      .select({ id: trips.id })
+      .from(trips)
+      .where(
+        and(
+          eq(trips.id, tripId),
+          tripScopeCondition({
+            tenantId: session.tenantId,
+            userId: session.user.id,
+            recordScope: tripAccess.recordScope ?? 'assigned',
+          }),
+        ),
+      )
+      .limit(1);
+    if (!scopedTrip) {
+      return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
+    }
+
     const record = await loadAcceptanceContext(tripId, session.tenantId);
     if (!record) return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
 
