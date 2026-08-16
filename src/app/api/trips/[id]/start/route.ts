@@ -1,12 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, tripAuthorities, vehicleInspections, vehicleAllocations } from '@/db/schema/trips';
+import {
+  tripAuthorities,
+  tripIssues,
+  trips,
+  vehicleInspections,
+  vehicleAllocations,
+} from '@/db/schema/trips';
 import { vehicles, vehicleDefects } from '@/db/schema/fleet';
-import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
+import {
+  driverLicences,
+  driverProfessionalAuthorisations,
+  driverProfiles,
+  employees,
+} from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import { requireDashboardAction, requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripIssued } from '@/lib/document-generator';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
@@ -61,6 +73,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         trip: trips,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         allocationState: vehicleAllocations.state,
+        allocationVersion: vehicleAllocations.version,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
         validFrom: tripAuthorities.validFrom,
@@ -69,6 +82,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         requestStatus: transportRequests.status,
         vehicleStatus: vehicles.status,
         vehicleOdometer: vehicles.currentOdometer,
+        requiredLicenceClass: vehicles.requiredLicenceClass,
+        professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
       })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
@@ -141,8 +156,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const [licence] = await db
       .select({
+        licenceId: driverLicences.id,
+        licenceClass: driverLicences.licenceClass,
         expiryDate: driverLicences.expiryDate,
         verificationStatus: driverLicences.verificationStatus,
+        profileId: driverProfiles.id,
         driverStatus: driverProfiles.driverStatus,
       })
       .from(driverProfiles)
@@ -151,20 +169,59 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         and(
           eq(driverProfiles.employeeId, employee.id),
           eq(driverLicences.isActive, true),
+          eq(driverLicences.isVerified, true),
           eq(driverLicences.verificationStatus, 'verified'),
         ),
       )
-      .orderBy(desc(driverLicences.expiryDate))
+      .orderBy(desc(driverLicences.version))
       .limit(1);
     if (
       !licence ||
       licence.driverStatus !== 'authorised' ||
-      new Date(`${licence.expiryDate}T23:59:59Z`) < (trip.validUntil ?? now)
+      new Date(`${licence.expiryDate}T23:59:59.999Z`) < (trip.validUntil ?? now)
     ) {
       return NextResponse.json(
         { error: 'Driver licence must be active, verified and valid for the entire authorised trip period' },
         { status: 409 },
       );
+    }
+    if (
+      trip.requiredLicenceClass &&
+      !namibiaLicenceClassCovers(licence.licenceClass, trip.requiredLicenceClass)
+    ) {
+      return NextResponse.json(
+        {
+          error: `Driver licence class ${licence.licenceClass} does not cover the current vehicle requirement ${trip.requiredLicenceClass}`,
+        },
+        { status: 409 },
+      );
+    }
+
+    let professionalAuthorisationId: string | null = null;
+    if (trip.professionalAuthorisationRequired) {
+      const [professionalAuthorisation] = await db
+        .select({ id: driverProfessionalAuthorisations.id })
+        .from(driverProfessionalAuthorisations)
+        .where(
+          and(
+            eq(driverProfessionalAuthorisations.driverProfileId, licence.profileId),
+            eq(driverProfessionalAuthorisations.isVerified, true),
+            sql`${driverProfessionalAuthorisations.expiryDate} >= ${(trip.validUntil ?? now).toISOString().slice(0, 10)}`,
+            sql`(${driverProfessionalAuthorisations.validFrom} IS NULL OR ${driverProfessionalAuthorisations.validFrom} <= ${now.toISOString().slice(0, 10)})`,
+          ),
+        )
+        .orderBy(desc(driverProfessionalAuthorisations.expiryDate))
+        .limit(1);
+      if (!professionalAuthorisation) {
+        return NextResponse.json(
+          {
+            error:
+              'This vehicle requires verified professional driving authorisation valid for the authorised trip period.',
+          },
+          { status: 409 },
+        );
+      }
+      professionalAuthorisationId = professionalAuthorisation.id;
     }
 
     const [blockingDefect] = await db
@@ -184,28 +241,49 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Departure is blocked by an unresolved safety-critical defect' }, { status: 409 });
     }
 
-    const [inspection] = await db
-      .select({ id: vehicleInspections.id, odometerReading: vehicleInspections.odometerReading })
-      .from(vehicleInspections)
-      .where(
-        and(
-          eq(vehicleInspections.tenantId, session.tenantId),
-          eq(vehicleInspections.tripId, id),
-          eq(vehicleInspections.vehicleId, tripRecord.vehicleId),
-          eq(vehicleInspections.type, 'departure'),
-          eq(vehicleInspections.status, 'completed'),
-          eq(vehicleInspections.overallPass, true),
-        ),
-      )
-      .limit(1);
-    if (!inspection) {
+    const [[inspection], [issue]] = await Promise.all([
+      db
+        .select({
+          id: vehicleInspections.id,
+          odometerReading: vehicleInspections.odometerReading,
+          status: vehicleInspections.status,
+          overallPass: vehicleInspections.overallPass,
+        })
+        .from(vehicleInspections)
+        .where(
+          and(
+            eq(vehicleInspections.tenantId, session.tenantId),
+            eq(vehicleInspections.tripId, id),
+            eq(vehicleInspections.vehicleId, tripRecord.vehicleId),
+            eq(vehicleInspections.type, 'departure'),
+          ),
+        )
+        .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
+        .limit(1),
+      db
+        .select({ id: tripIssues.id, issueOdometer: tripIssues.issueOdometer })
+        .from(tripIssues)
+        .where(and(eq(tripIssues.tripId, id), eq(tripIssues.allocationId, tripRecord.allocationId)))
+        .orderBy(desc(tripIssues.issuedAt), desc(tripIssues.id))
+        .limit(1),
+    ]);
+    if (!inspection || inspection.status !== 'completed' || inspection.overallPass !== true) {
       return NextResponse.json(
-        { error: 'The currently allocated vehicle requires a passed pre-departure inspection' },
+        { error: 'The latest pre-departure inspection for the currently allocated vehicle must be completed and passed' },
         { status: 409 },
       );
     }
-    const minimumOdometer = Math.max(inspection.odometerReading ?? 0, trip.vehicleOdometer ?? 0);
-    if (Number(body.beginningOdometer) < minimumOdometer) {
+    if (!issue) {
+      return NextResponse.json({ error: 'The current physical vehicle issue record is missing' }, { status: 409 });
+    }
+
+    const beginningOdometer = Number(body.beginningOdometer);
+    const minimumOdometer = Math.max(
+      issue.issueOdometer ?? 0,
+      inspection.odometerReading ?? 0,
+      trip.vehicleOdometer ?? 0,
+    );
+    if (beginningOdometer < minimumOdometer) {
       return NextResponse.json(
         { error: `Beginning odometer cannot be lower than the current verified reading (${minimumOdometer})` },
         { status: 422 },
@@ -218,30 +296,165 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         : null;
     const fuelLevel = body.fuelLevel.trim();
     const auditSequence = Date.now();
+    const requiredThroughDate = (trip.validUntil ?? now).toISOString().slice(0, 10);
+    const today = now.toISOString().slice(0, 10);
 
+    // Allocation is the first lifecycle claim, matching replacement,
+    // cancellation and physical issue. This prevents a replacement from
+    // crossing the actual employee-driver departure boundary with stale state.
     await db.execute(sql`
-      WITH trip_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${tripRecord.allocationId}::uuid
+          AND va.state = 'confirmed'
+          AND va.version = ${trip.allocationVersion}
+          AND va.vehicle_id = ${tripRecord.vehicleId}::uuid
+          AND va.driver_employee_id = ${employee.id}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.id = ${id}::uuid
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.allocation_id = va.id
+              AND t.vehicle_id = va.vehicle_id
+              AND t.status = 'pending'
+              AND t.issued_at IS NOT NULL
+              AND t.driver_acknowledged_at IS NOT NULL
+              AND t.driver_acknowledged_by_employee_id = ${employee.id}::uuid
+          )
+        RETURNING id
+      ),
+      trip_claim AS (
         UPDATE trips
         SET status = 'in_progress', started_at = ${now}, updated_at = ${now}
         WHERE id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'pending'
           AND issued_at IS NOT NULL
+          AND allocation_id = ${tripRecord.allocationId}::uuid
+          AND vehicle_id = ${tripRecord.vehicleId}::uuid
           AND driver_acknowledged_at IS NOT NULL
           AND driver_acknowledged_by_employee_id = ${employee.id}::uuid
+          AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
             SELECT 1
-            FROM vehicle_allocations va
-            WHERE va.id = trips.allocation_id
-              AND va.state = 'confirmed'
-              AND va.driver_employee_id = ${employee.id}::uuid
+            FROM employees e
+            INNER JOIN driver_profiles dp ON dp.employee_id = e.id
+            INNER JOIN driver_licences dl ON dl.driver_profile_id = dp.id
+            WHERE e.id = ${employee.id}::uuid
+              AND e.tenant_id = ${session.tenantId}::uuid
+              AND e.employment_status = 'active'
+              AND dp.id = ${licence.profileId}::uuid
+              AND dp.driver_status = 'authorised'
+              AND dl.id = ${licence.licenceId}::uuid
+              AND dl.is_active = true
+              AND dl.is_verified = true
+              AND dl.verification_status = 'verified'
+              AND dl.licence_class = ${licence.licenceClass}
+              AND dl.expiry_date >= ${requiredThroughDate}::date
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM transport_requests tr
+            WHERE tr.id = trips.request_id
+              AND tr.tenant_id = ${session.tenantId}::uuid
+              AND tr.status = 'vehicle_issued'
+              AND tr.assigned_driver_employee_id = ${employee.id}::uuid
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM trip_authorities ta
+            WHERE ta.id = ${trip.authorityId}::uuid
+              AND ta.trip_id = trips.id
+              AND ta.tenant_id = ${session.tenantId}::uuid
+              AND ta.status = 'ready_for_departure'
+              AND (ta.valid_from IS NULL OR ta.valid_from <= ${now})
+              AND (ta.valid_until IS NULL OR ta.valid_until >= ${now})
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM vehicles v
+            WHERE v.id = trips.vehicle_id
+              AND v.tenant_id = ${session.tenantId}::uuid
+              AND v.status = 'available'
+              AND v.current_odometer <= ${beginningOdometer}
+              AND (
+                v.required_licence_class IS NULL
+                OR CASE
+                  WHEN upper(replace(${licence.licenceClass}::text, ' ', '')) IN ('EC', 'CE') THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C', 'BE', 'EB', 'C1E', 'CE1', 'CE', 'EC')
+                  WHEN upper(replace(${licence.licenceClass}::text, ' ', '')) IN ('C1E', 'CE1') THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'BE', 'EB', 'C1E', 'CE1')
+                  WHEN upper(replace(${licence.licenceClass}::text, ' ', '')) = 'C' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C')
+                  WHEN upper(replace(${licence.licenceClass}::text, ' ', '')) = 'C1' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1')
+                  WHEN upper(replace(${licence.licenceClass}::text, ' ', '')) IN ('BE', 'EB') THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'BE', 'EB')
+                  WHEN upper(replace(${licence.licenceClass}::text, ' ', '')) = 'B' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) = 'B'
+                  WHEN upper(replace(${licence.licenceClass}::text, ' ', '')) = 'A' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) IN ('A', 'A1')
+                  WHEN upper(replace(${licence.licenceClass}::text, ' ', '')) = 'A1' THEN
+                    upper(replace(v.required_licence_class, ' ', '')) = 'A1'
+                  ELSE upper(replace(${licence.licenceClass}::text, ' ', '')) = upper(replace(v.required_licence_class, ' ', ''))
+                END
+              )
+              AND (
+                v.professional_authorisation_required = false
+                OR EXISTS (
+                  SELECT 1
+                  FROM driver_professional_authorisations dpa
+                  WHERE dpa.id = ${professionalAuthorisationId}::uuid
+                    AND dpa.driver_profile_id = ${licence.profileId}::uuid
+                    AND dpa.is_verified = true
+                    AND dpa.expiry_date >= ${requiredThroughDate}::date
+                    AND (dpa.valid_from IS NULL OR dpa.valid_from <= ${today}::date)
+                )
+              )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM vehicle_defects vd
+            INNER JOIN vehicles dv ON dv.id = vd.vehicle_id
+            WHERE vd.vehicle_id = trips.vehicle_id
+              AND dv.tenant_id = ${session.tenantId}::uuid
+              AND vd.is_blocking = true
+              AND vd.resolved_at IS NULL
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM vehicle_inspections vi
+            WHERE vi.id = (
+              SELECT latest.id
+              FROM vehicle_inspections latest
+              WHERE latest.tenant_id = ${session.tenantId}::uuid
+                AND latest.trip_id = trips.id
+                AND latest.vehicle_id = trips.vehicle_id
+                AND latest.type = 'departure'
+              ORDER BY latest.created_at DESC, latest.id DESC
+              LIMIT 1
+            )
+              AND vi.status = 'completed'
+              AND vi.overall_pass = true
+              AND COALESCE(vi.odometer_reading, 0) <= ${beginningOdometer}
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM trip_issues ti
+            WHERE ti.id = ${issue.id}::uuid
+              AND ti.trip_id = trips.id
+              AND ti.allocation_id = trips.allocation_id
+              AND ti.issue_odometer <= ${beginningOdometer}
           )
         RETURNING id, request_id, vehicle_id
       ),
       authority_claim AS (
         UPDATE trip_authorities
         SET status = 'in_progress',
-            beginning_odometer = ${Number(body.beginningOdometer)},
+            beginning_odometer = ${beginningOdometer},
             version = version + 1,
             updated_at = ${now}
         WHERE id = ${trip.authorityId}::uuid
@@ -255,6 +468,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         SET status = 'in_progress', updated_at = ${now}
         WHERE id = ${tripRecord.requestId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
+          AND assigned_driver_employee_id = ${employee.id}::uuid
           AND status = 'vehicle_issued'
           AND EXISTS (SELECT 1 FROM authority_claim)
         RETURNING id
@@ -301,7 +515,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ${`Trip started: vehicle ${tripRecord.vehicleId.slice(0, 8)}`},
           jsonb_build_object(
             'authorityId', ${trip.authorityId}::text,
-            'beginningOdometer', ${Number(body.beginningOdometer)}::integer,
+            'allocationVersion', ${trip.allocationVersion + 1}::integer,
+            'licenceId', ${licence.licenceId}::text,
+            'professionalAuthorisationId', ${professionalAuthorisationId}::text,
+            'beginningOdometer', ${beginningOdometer}::integer,
             'fuelLevel', ${fuelLevel}::text,
             'passengersConfirmed', true,
             'location', CASE WHEN ${location}::text IS NULL THEN NULL ELSE ${location}::jsonb END
@@ -311,14 +528,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM trip_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM trip_claim) = 1
          AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM request_claim) = 1
          AND (SELECT count(*) FROM vehicle_claim) = 1
          AND (SELECT count(*) FROM status_event) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
         THEN '1'
-        ELSE 'atomic_trip_start_failed_' || (SELECT count(*) FROM trip_claim)::text
+        ELSE 'atomic_trip_start_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
+          || (SELECT count(*) FROM trip_claim)::text
+          || (SELECT count(*) FROM authority_claim)::text
+          || (SELECT count(*) FROM request_claim)::text
+          || (SELECT count(*) FROM vehicle_claim)::text
       END AS integer) AS committed
     `);
 
@@ -344,7 +567,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (error) {
     console.error('[trips/start] POST failed:', error);
     return NextResponse.json(
-      { error: 'Trip state changed concurrently or the trip could not be started. Refresh and try again.' },
+      { error: 'Trip, allocation, driver, vehicle, or inspection state changed while departure was being recorded. Refresh and review the latest state.' },
       { status: 409 },
     );
   }
