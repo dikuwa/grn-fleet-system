@@ -204,6 +204,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                 AND active_trip.vehicle_id = v.id
                 AND active_trip.status IN ('pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review')
             )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM trip_incidents pending_incident
+              INNER JOIN trips pending_trip ON pending_trip.id = pending_incident.trip_id
+              WHERE pending_trip.vehicle_id = v.id
+                AND pending_trip.tenant_id = ${auth.session.tenantId}::uuid
+                AND pending_incident.tenant_id = ${auth.session.tenantId}::uuid
+                AND pending_incident.vehicle_damage = true
+                AND pending_incident.status <> 'resolved'
+                AND pending_incident.technical_clearance_status <> 'cleared'
+            )
           RETURNING id
         ),
         status_event AS (
@@ -263,7 +274,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json(
         {
           error:
-            'The vehicle gained a blocking defect, active trip, or other restriction while return-to-service was being recorded. Refresh and review the latest vehicle state.',
+            'The vehicle gained a blocking defect, active trip, pending technical clearance, or other restriction while return-to-service was being recorded. Refresh and review the latest vehicle state.',
         },
         { status: 409 },
       );
