@@ -24,11 +24,17 @@ type AmendmentState = {
   externalEligibilityError?: string | null;
   amendment?: {
     id: string;
+    amendmentType?: string;
     authorityVersion: number;
     reason: string;
     createdAt: string;
   } | null;
 };
+
+function amendmentLabel(type?: string) {
+  if (!type) return 'material amendment';
+  return type.replaceAll('_', ' ');
+}
 
 export function AuthorityActions({
   tripId,
@@ -81,7 +87,7 @@ export function AuthorityActions({
       if (!response.ok) throw new Error(payload.error || 'Could not acknowledge revised authority');
       toast({
         title: 'Revised authority acknowledged',
-        description: 'The replacement vehicle can now proceed to its fresh departure inspection.',
+        description: 'The revised authority can now proceed to a fresh official departure inspection.',
         variant: 'success',
       });
       setExternalDialogOpen(false);
@@ -99,6 +105,8 @@ export function AuthorityActions({
       setWorking(false);
     }
   };
+
+  const pendingType = amendmentLabel(amendmentState?.amendment?.amendmentType);
 
   return (
     <>
@@ -155,7 +163,7 @@ export function AuthorityActions({
       {amendmentState?.pending && (
         <div className="border-status-pending-border bg-status-pending-bg text-status-pending-text mt-3 rounded-[8px] border px-3 py-2 text-xs print:hidden">
           <strong>Revised authority acceptance required.</strong>{' '}
-          The vehicle was replaced after the previous driver acceptance.
+          A {pendingType} became effective after the previous driver acceptance. The assigned driver must accept the current authority before a fresh departure inspection and final issue.
           {amendmentState.amendment?.reason ? ` Reason: ${amendmentState.amendment.reason}` : ''}
           {amendmentState.externalEligibilityError ? (
             <span className="mt-1 block font-semibold">
@@ -170,7 +178,7 @@ export function AuthorityActions({
           <DialogHeader>
             <DialogTitle>Record revised external-driver acceptance</DialogTitle>
             <DialogDescription>
-              Confirm how the currently assigned external driver accepted the replacement vehicle on the revised Trip Authority. The original acceptance remains in the audit history.
+              Confirm how the currently assigned external driver accepted the revised Trip Authority after the {pendingType}. The original acceptance remains immutable audit history.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
