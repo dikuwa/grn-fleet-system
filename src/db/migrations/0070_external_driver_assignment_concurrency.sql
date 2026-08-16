@@ -38,12 +38,15 @@ BEGIN
     v_trip_id,
     v_tenant_id
   FROM vehicle_allocations va
-  INNER JOIN transport_requests tr ON tr.id = va.request_id
+  INNER JOIN transport_requests tr
+    ON tr.id = va.request_id
   INNER JOIN trips t
     ON t.allocation_id = va.id
    AND t.request_id = va.request_id
+   AND t.tenant_id = tr.tenant_id
   WHERE va.id = NEW.allocation_id
     AND tr.id = NEW.request_id
+    AND tr.tenant_id = NEW.tenant_id
     AND t.id = NEW.trip_id
   LIMIT 1;
 
@@ -78,8 +81,13 @@ BEGIN
     ON existing_va.id = eda.allocation_id
   INNER JOIN transport_requests existing_tr
     ON existing_tr.id = eda.request_id
+  INNER JOIN trips existing_trip
+    ON existing_trip.id = eda.trip_id
+   AND existing_trip.allocation_id = existing_va.id
+   AND existing_trip.request_id = existing_tr.id
   WHERE eda.tenant_id = NEW.tenant_id
     AND existing_tr.tenant_id = NEW.tenant_id
+    AND existing_trip.tenant_id = NEW.tenant_id
     AND eda.external_party_id = NEW.external_party_id
     AND eda.state IN ('pending_acceptance', 'accepted')
     AND eda.id IS DISTINCT FROM NEW.id
