@@ -384,7 +384,7 @@ export const TransportRequestDocument: React.FC<{
            ROW 5: Approval Workflow
            ════════════════════════════════════════ */}
         {data.approvalWorkflow && data.approvalWorkflow.length > 0 && (
-          <DocumentSection title="Approval workflow" wrap={false}>
+          <DocumentSection title="Approval workflow">
             <DocumentTable
               columns={[
                 { key: 'stage', label: 'Stage' },
