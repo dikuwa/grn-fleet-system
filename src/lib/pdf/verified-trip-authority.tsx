@@ -15,6 +15,7 @@ import {
   tripAuthorities,
   tripAuthorityPassengers,
   tripAuthorisedDrivers,
+  trips,
   vehicleAllocations,
   vehicleInspections,
 } from '@/db/schema/trips';
@@ -259,18 +260,30 @@ export async function generateVerifiedTripAuthorityPdf(
       }
     }
 
-    const [departureInspection] = await db
-      .select()
-      .from(vehicleInspections)
-      .where(
-        and(
-          eq(vehicleInspections.tenantId, tenantId),
-          eq(vehicleInspections.vehicleId, alloc.vehicleId),
-          eq(vehicleInspections.type, 'departure'),
-        ),
-      )
-      .orderBy(desc(vehicleInspections.createdAt))
-      .limit(1);
+    const [allocationTrip] = authority.tripId
+      ? [{ id: authority.tripId }]
+      : await db
+          .select({ id: trips.id })
+          .from(trips)
+          .where(and(eq(trips.tenantId, tenantId), eq(trips.allocationId, allocationId)))
+          .orderBy(desc(trips.createdAt))
+          .limit(1);
+    const inspectionTripId = allocationTrip?.id;
+    const [departureInspection] = inspectionTripId
+      ? await db
+          .select()
+          .from(vehicleInspections)
+          .where(
+            and(
+              eq(vehicleInspections.tenantId, tenantId),
+              eq(vehicleInspections.vehicleId, alloc.vehicleId),
+              eq(vehicleInspections.tripId, inspectionTripId),
+              eq(vehicleInspections.type, 'departure'),
+            ),
+          )
+          .orderBy(desc(vehicleInspections.createdAt))
+          .limit(1)
+      : [];
     if (departureInspection) {
       departureInspectionStatus = departureInspection.status;
       departureInspectionDate = departureInspection.createdAt.toISOString();
