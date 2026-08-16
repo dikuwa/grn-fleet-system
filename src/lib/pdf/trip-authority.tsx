@@ -192,7 +192,7 @@ export const TripAuthorityDocument: React.FC<{ data: TripAuthorityData }> = ({ d
         km: data.totalKm ? `${data.totalKm.toLocaleString(locale)} km` : undefined,
       }];
   const journeyRows = [
-    ...recordedJourneyRows.slice(0, JOURNEY_LOG_ROWS),
+    ...recordedJourneyRows,
     ...Array.from(
       { length: Math.max(0, JOURNEY_LOG_ROWS - recordedJourneyRows.length) },
       (_, index) => ({
