@@ -116,7 +116,7 @@ export async function GET(
     }
 
     const blockingDefects = await db
-      .select({ description: vehicleDefects.description })
+      .select({ id: vehicleDefects.id })
       .from(vehicleDefects)
       .where(
         and(
@@ -129,13 +129,13 @@ export async function GET(
     if (blockingDefects.length > 0) {
       blockers.push({
         type: 'critical_defect',
-        detail: `${blockingDefects.length} blocking defect${blockingDefects.length > 1 ? 's' : ''} unresolved: ${blockingDefects.map((defect) => defect.description).join('; ')}`,
+        detail: `${blockingDefects.length} unresolved blocking defect${blockingDefects.length > 1 ? 's' : ''} prevent allocation.`,
         severity: 'error',
       });
     }
 
     const majorDefects = await db
-      .select({ description: vehicleDefects.description })
+      .select({ id: vehicleDefects.id })
       .from(vehicleDefects)
       .where(
         and(
@@ -189,10 +189,7 @@ export async function GET(
       }
 
       const [latestReminder] = await db
-        .select({
-          nextServiceDate: maintenanceEvents.nextServiceDate,
-          description: maintenanceEvents.description,
-        })
+        .select({ nextServiceDate: maintenanceEvents.nextServiceDate })
         .from(maintenanceEvents)
         .where(
           and(
@@ -211,7 +208,7 @@ export async function GET(
         const overdue = latestReminder.nextServiceDate < startParam;
         blockers.push({
           type: 'maintenance_block',
-          detail: `${overdue ? 'Next service reminder overdue since' : 'Next service reminder due'} ${latestReminder.nextServiceDate}${latestReminder.description ? `: ${latestReminder.description}` : ''}`,
+          detail: `${overdue ? 'Next service reminder overdue since' : 'Next service reminder due'} ${latestReminder.nextServiceDate}.`,
           severity: 'warning',
         });
       }
