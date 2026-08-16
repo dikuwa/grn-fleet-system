@@ -281,7 +281,7 @@ export async function buildTripAuthorityRenderSnapshot(
               eq(vehicleInspections.type, 'departure'),
             ),
           )
-          .orderBy(desc(vehicleInspections.createdAt))
+          .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
           .limit(1)
       : [];
     if (departureInspection) {
