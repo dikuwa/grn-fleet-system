@@ -72,6 +72,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         vehicleId: trips.vehicleId,
         vehicleStatus: vehicles.status,
         vehicleOdometer: vehicles.currentOdometer,
+        vehicleProfessionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
         authorityBeginningOdometer: tripAuthorities.beginningOdometer,
@@ -150,6 +151,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     if (record.vehicleStatus !== 'available') {
       return NextResponse.json({ error: `Vehicle is not available for issue (${record.vehicleStatus})` }, { status: 409 });
+    }
+    if (record.vehicleProfessionalAuthorisationRequired) {
+      return NextResponse.json(
+        {
+          error:
+            'This vehicle now requires professional driving authorisation. External issue is blocked until verified professional-authorisation evidence is supported for the assignment.',
+        },
+        { status: 409 },
+      );
     }
     if (record.partyStatus !== 'active' || record.licenceStatus !== 'verified') {
       return NextResponse.json({ error: 'External driver eligibility is no longer valid' }, { status: 409 });
@@ -299,6 +309,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             WHERE v.id = trips.vehicle_id
               AND v.tenant_id = ${tenantId}::uuid
               AND v.status = 'available'
+              AND v.professional_authorisation_required = false
           )
           AND NOT EXISTS (
             SELECT 1
