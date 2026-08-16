@@ -23,18 +23,11 @@ if (SIGNATURE_FONT === 'Allura') {
 /**
  * Official document family typography.
  *
- * Space Mono is the agreed primary face and Share Tech Mono is the bundled
- * fallback. Older installations may not yet contain SpaceMono-Regular.ttf, so
- * PDF rendering must degrade deterministically to Share Tech Mono rather than
- * reverting to the all-caps receipt face. Fake Receipt remains registered for
- * legacy/specialised documents that explicitly request it.
+ * Fake Receipt is the agreed primary face for the official document family,
+ * with Share Tech Mono as the deterministic fallback. Signatures remain Allura.
+ * Both document fonts are bundled locally so PDF generation never depends on a
+ * third-party font CDN and produces the same result in preview, print and export.
  */
-export const SPACE_MONO_FONT_PATH = path.join(
-  process.cwd(),
-  'public',
-  'official',
-  'SpaceMono-Regular.ttf',
-);
 export const FAKE_RECEIPT_FONT_PATH = path.join(
   process.cwd(),
   'public',
@@ -47,12 +40,11 @@ export const SHARE_TECH_MONO_FONT_PATH = path.join(
   'official',
   'ShareTechMono-Regular.ttf',
 );
-export const DOCUMENT_FONT = 'Space Mono';
+export const DOCUMENT_FONT = 'Fake Receipt';
 export const DOCUMENT_FONT_FALLBACK = 'Share Tech Mono';
-const spaceMonoPresent = existsSync(SPACE_MONO_FONT_PATH);
 const fakeReceiptPresent = existsSync(FAKE_RECEIPT_FONT_PATH);
 const shareTechMonoPresent = existsSync(SHARE_TECH_MONO_FONT_PATH);
-export const DOCUMENT_FONT_STACK: string[] = spaceMonoPresent
+export const DOCUMENT_FONT_STACK: string[] = fakeReceiptPresent
   ? shareTechMonoPresent
     ? [DOCUMENT_FONT, DOCUMENT_FONT_FALLBACK]
     : [DOCUMENT_FONT, 'Helvetica']
@@ -60,11 +52,8 @@ export const DOCUMENT_FONT_STACK: string[] = spaceMonoPresent
     ? [DOCUMENT_FONT_FALLBACK, 'Helvetica']
     : ['Helvetica'];
 
-if (spaceMonoPresent) {
-  Font.register({ family: DOCUMENT_FONT, src: SPACE_MONO_FONT_PATH });
-}
 if (fakeReceiptPresent) {
-  Font.register({ family: 'Fake Receipt', src: FAKE_RECEIPT_FONT_PATH });
+  Font.register({ family: DOCUMENT_FONT, src: FAKE_RECEIPT_FONT_PATH });
 }
 if (shareTechMonoPresent) {
   Font.register({ family: DOCUMENT_FONT_FALLBACK, src: SHARE_TECH_MONO_FONT_PATH });
