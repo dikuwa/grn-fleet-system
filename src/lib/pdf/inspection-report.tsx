@@ -17,7 +17,6 @@ import {
   DocumentTable,
   DocumentVerificationBlock,
   DocumentVerificationFooter,
-  DocumentExecutiveCertification,
   documentStyles,
 } from './document-system';
 
@@ -69,6 +68,7 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           documentFooter: data.tenantDocumentFooter,
         }
       : null);
+
   return (
     <Document title={`${humanizeKey(data.type)} Inspection Report`}>
       <DocumentPage status={data.status === 'draft' ? 'draft' : undefined}>
@@ -81,7 +81,6 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           issueDate={formatHumanDate(data.inspectedAt, branding?.locale)}
         />
 
-        {/* Row 1: Inspection summary | Vehicle info */}
         <DocumentRow>
           <DocumentSection title="Inspection summary">
             <DocumentFieldGrid
@@ -118,7 +117,6 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           </DocumentSection>
         </DocumentRow>
 
-        {/* Checklist table */}
         <DocumentSection title={`Checklist (${data.items?.length || 0})`}>
           <DocumentTable
             columns={[
@@ -138,7 +136,6 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           />
         </DocumentSection>
 
-        {/* Defects and signatures — conditional two-column layout */}
         {data.notes ? (
           <DocumentRow>
             <DocumentSection title="Defects and remarks" wrap={false}>
@@ -180,12 +177,6 @@ export const InspectionReportDocument: React.FC<{ data: InspectionReportData }> 
           </DocumentSection>
         )}
 
-        <DocumentExecutiveCertification
-          branding={branding}
-          generatedAt={data.inspectedAt}
-          statement="I certify that this inspection report is a true system record."
-        />
-        {/* Verification block */}
         <DocumentVerificationBlock
           branding={branding}
           verificationCode={data.verificationCode}
