@@ -542,9 +542,23 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
-    const code = (error as { code?: string })?.code;
+    const record = error as {
+      code?: string;
+      message?: string;
+      cause?: { code?: string; message?: string };
+    };
+    const code = record?.code ?? record?.cause?.code;
+    const message = [record?.message, record?.cause?.message, String(error)]
+      .filter((value): value is string => Boolean(value))
+      .join(' ');
     if (code === '23505') {
       return NextResponse.json({ error: 'This fuel entry was already submitted' }, { status: 409 });
+    }
+    if (code === '23514' && message.includes('closed_trip_financial_immutable')) {
+      return NextResponse.json(
+        { error: 'This trip is already closed. Fuel records linked to a closed trip are immutable.' },
+        { status: 409 },
+      );
     }
     console.error('[fuel] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create fuel transaction' }, { status: 500 });
