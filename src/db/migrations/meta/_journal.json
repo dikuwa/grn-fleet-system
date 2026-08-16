@@ -74,6 +74,7 @@
     { "idx": 69, "version": "7", "when": 1786831200000, "tag": "0069_latest_return_inspection_closure_guard", "breakpoints": true },
     { "idx": 70, "version": "7", "when": 1786834800000, "tag": "0070_external_driver_assignment_concurrency", "breakpoints": true },
     { "idx": 71, "version": "7", "when": 1786838400000, "tag": "0071_material_authority_amendment_inspection_guard", "breakpoints": true },
-    { "idx": 72, "version": "7", "when": 1786842000000, "tag": "0072_authority_amendment_physical_issue_guard", "breakpoints": true }
+    { "idx": 72, "version": "7", "when": 1786842000000, "tag": "0072_authority_amendment_physical_issue_guard", "breakpoints": true },
+    { "idx": 73, "version": "7", "when": 1786845600000, "tag": "0073_current_authority_document_issue_guard", "breakpoints": true }
   ]
 }
