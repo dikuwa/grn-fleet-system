@@ -79,6 +79,15 @@ const TENANT_WORKSPACES: readonly WorkspaceId[] = [
   W.TENANT_ADMIN,
   W.AUDIT,
 ];
+const REQUEST_CREATOR_WORKSPACES: readonly WorkspaceId[] = [
+  W.PERSONAL,
+  W.APPROVER,
+  W.DRIVER,
+  W.INSPECTOR,
+  W.MAINTENANCE,
+  W.TRANSPORT_ADMIN,
+  W.TENANT_ADMIN,
+];
 const ALL_WORKSPACES: readonly WorkspaceId[] = [...TENANT_WORKSPACES, W.PLATFORM_ADMIN];
 const VIEW: readonly DashboardAction[] = ['view'];
 const READ_EXPORT: readonly DashboardAction[] = ['view', 'export'];
@@ -168,12 +177,13 @@ export const routeRegistry: readonly RouteDefinition[] = [
     label: 'New Transport Request',
     icon: 'FilePlus2',
     section: 'My Transport',
-    workspaces: TENANT_WORKSPACES,
-    access: every(TENANT_WORKSPACES, ownManage(['view', 'create'])),
+    workspaces: REQUEST_CREATOR_WORKSPACES,
+    access: every(REQUEST_CREATOR_WORKSPACES, ownManage(['view', 'create'])),
     tenantScoped: true,
     personalRoute: true,
     order: 30,
     navigationVisible: true,
+    directUrlBehaviour: '404',
     notificationLinkEligible: false,
   },
   {
