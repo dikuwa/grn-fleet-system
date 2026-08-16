@@ -11,6 +11,7 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { recordAuditEvent } from '@/lib/audit-event';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { onTripIssued } from '@/lib/document-generator';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
@@ -23,21 +24,6 @@ const ALLOCATABLE_STATUSES = [
 ];
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 const LIVE_EXTERNAL_ASSIGNMENT_STATES = ['pending_acceptance', 'accepted'] as const;
-
-function licenceClassCompatible(required: string | null, held: string | null) {
-  if (!required) return true;
-  const requiredCodes = required
-    .split(/[,+/\s]+/)
-    .map((code) => code.trim().toUpperCase())
-    .filter(Boolean);
-  const heldCodes = new Set(
-    String(held || '')
-      .split(/[,+/\s]+/)
-      .map((code) => code.trim().toUpperCase())
-      .filter(Boolean),
-  );
-  return requiredCodes.every((code) => heldCodes.has(code));
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -146,7 +132,10 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
-    if (!licenceClassCompatible(vehicle.requiredLicenceClass, driverRecord.licence.licenceClass)) {
+    if (
+      vehicle.requiredLicenceClass &&
+      !namibiaLicenceClassCovers(driverRecord.licence.licenceClass, vehicle.requiredLicenceClass)
+    ) {
       return NextResponse.json(
         { error: 'External driver licence class is not compatible with this vehicle' },
         { status: 409 },
