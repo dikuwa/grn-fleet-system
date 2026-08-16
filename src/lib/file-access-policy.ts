@@ -1,5 +1,3 @@
-import { WorkspaceIds, type WorkspaceId } from '@/lib/workspaces';
-
 const TENANT_ADMIN_BLOCKED_OPERATIONAL_PREFIXES = [
   'inspections/',
   'receipts/',
@@ -8,24 +6,12 @@ const TENANT_ADMIN_BLOCKED_OPERATIONAL_PREFIXES = [
 ] as const;
 
 /**
- * The generic file endpoint is intentionally narrower than FILE_VIEW itself.
- * FILE_VIEW lets a workspace read files through domain-specific routes, where
- * record scope can be checked. Only tenant-wide operational/read-only
- * workspaces may treat an arbitrary tenant object key as sufficient here.
+ * Tenant Administration needs generic file access for governance records such
+ * as staff documents, imports, signatures and licence oversight, but it must
+ * not use FILE_VIEW as a back door into Transport Operations evidence.
  */
-export function canUseGenericTenantFileKey(
-  workspace: WorkspaceId,
-  tenantRelativeKey: string,
-): boolean {
-  if (workspace === WorkspaceIds.TRANSPORT_ADMIN || workspace === WorkspaceIds.AUDIT) {
-    return true;
-  }
-
-  if (workspace === WorkspaceIds.TENANT_ADMIN) {
-    return !TENANT_ADMIN_BLOCKED_OPERATIONAL_PREFIXES.some((prefix) =>
-      tenantRelativeKey.startsWith(prefix),
-    );
-  }
-
-  return false;
+export function canTenantAdminUseGenericFileKey(tenantRelativeKey: string): boolean {
+  return !TENANT_ADMIN_BLOCKED_OPERATIONAL_PREFIXES.some((prefix) =>
+    tenantRelativeKey.startsWith(prefix),
+  );
 }
