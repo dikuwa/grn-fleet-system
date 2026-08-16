@@ -232,9 +232,13 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // Require REPORT_VIEW permission
+    // Viewing report data and exporting it are separate capabilities.
     const permCheck = await requirePermission(session, Permissions.REPORT_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
+    if (exportFormat) {
+      const exportCheck = await requirePermission(session, Permissions.REPORT_EXPORT);
+      if (exportCheck instanceof NextResponse) return exportCheck;
+    }
 
     const tenantId = session.tenantId;
     const period = searchParams.get('period') || '30d';

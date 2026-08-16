@@ -27,7 +27,6 @@ describe('canonical workspace route policy', () => {
     [R.MAINTENANCE, W.MAINTENANCE],
     [R.TRANSPORT_ADMIN, W.TRANSPORT_ADMIN],
     [R.TENANT_ADMIN, W.TENANT_ADMIN],
-    [R.AUDITOR, W.AUDIT],
   ])('keeps universal tenant self-service routes for %s', (role, workspace) => {
     for (const path of [
       '/dashboard',
@@ -38,6 +37,18 @@ describe('canonical workspace route policy', () => {
     ]) {
       expect(canAccessDashboardPath(path, [role], workspace), path).toBe(true);
     }
+  });
+
+  it('keeps the Tenant Auditor on read-only shared self-service routes', () => {
+    for (const path of [
+      '/dashboard',
+      '/dashboard/profile',
+      '/dashboard/requests',
+      '/dashboard/notifications',
+    ]) {
+      expect(canAccessDashboardPath(path, [R.AUDITOR], W.AUDIT), path).toBe(true);
+    }
+    expect(canAccessDashboardPath('/dashboard/requests/new', [R.AUDITOR], W.AUDIT)).toBe(false);
   });
 
   it('isolates platform administration from every tenant workspace', () => {

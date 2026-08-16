@@ -591,6 +591,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const period = searchParams.get('period') || '30d';
     const exportFormat = searchParams.get('export'); // 'pdf' | 'csv' | 'excel'
+    if (exportFormat) {
+      const exportCheck = await requirePermission(session, Permissions.REPORT_EXPORT);
+      if (exportCheck instanceof NextResponse) return exportCheck;
+    }
     const { start, end } = getDateRange(period);
     const db = getDb();
     const tenantId = session.tenantId;
