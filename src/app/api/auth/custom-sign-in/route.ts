@@ -20,6 +20,8 @@ import { eq, or, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { rateLimit } from '@/lib/rate-limit';
 
+const SIGN_IN_SERVICE_UNAVAILABLE = 'Service temporarily unavailable. Please try again later.';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -202,10 +204,9 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (error) {
+    // Keep provider/database diagnostics server-side. Never expose raw database,
+    // quota, SQL, HTTP, stack-trace, or infrastructure details to the client.
     console.error('[Custom Sign-In] Failed:', error);
-    return NextResponse.json(
-      { error: 'Sign in failed: ' + (error instanceof Error ? error.message : String(error)) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: SIGN_IN_SERVICE_UNAVAILABLE }, { status: 503 });
   }
 }
