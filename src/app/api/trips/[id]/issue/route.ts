@@ -115,8 +115,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     // Only the latest official departure inspection for this exact trip/vehicle
-    // may authorise physical issue. An earlier pass must never override a later
-    // failed re-inspection.
+    // may authorise physical issue. Use id as a deterministic tie-breaker for
+    // inspections created within the same database timestamp.
     const [departureInspection] = await db
       .select({
         id: vehicleInspections.id,
@@ -131,7 +131,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         eq(vehicleInspections.vehicleId, trip.vehicleId),
         eq(vehicleInspections.type, 'departure'),
       ))
-      .orderBy(desc(vehicleInspections.createdAt))
+      .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
       .limit(1);
     if (!departureInspection || departureInspection.status !== 'completed' || departureInspection.overallPass !== true) {
       return NextResponse.json(
@@ -270,11 +270,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 AND latest.trip_id = trips.id
                 AND latest.vehicle_id = trips.vehicle_id
                 AND latest.type = 'departure'
-              ORDER BY latest.created_at DESC
+              ORDER BY latest.created_at DESC, latest.id DESC
               LIMIT 1
             )
               AND vi.status = 'completed'
               AND vi.overall_pass = true
+              AND COALESCE(vi.odometer_reading, 0) <= ${issueOdometer}
           )
         RETURNING id, request_id, allocation_id
       ),
