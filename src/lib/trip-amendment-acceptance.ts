@@ -78,13 +78,13 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
 }
 
 /**
- * Backwards-compatible vehicle-only helper retained for callers that genuinely
- * need to distinguish replacement amendments from other authority changes.
+ * Legacy compatibility export. Older callers were written when vehicle
+ * replacement was the only material amendment. Keep them safe by applying the
+ * full material-amendment rule until their names/UI copy are migrated.
  */
 export async function findPendingVehicleReplacementAcceptance(input: {
   authorityId: string;
   acceptedAt: Date | null;
 }): Promise<PendingAuthorityAmendmentAcceptance | null> {
-  const pending = await findPendingAuthorityAmendmentAcceptance(input);
-  return pending?.amendmentType === 'vehicle_replacement' ? pending : null;
+  return findPendingAuthorityAmendmentAcceptance(input);
 }
