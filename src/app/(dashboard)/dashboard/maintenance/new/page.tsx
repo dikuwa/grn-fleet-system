@@ -13,11 +13,13 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { VehicleCombobox, type VehicleSearchOption } from '@/components/ui/vehicle-combobox';
 import { useToast } from '@/lib/use-toast';
+import { currentNamibiaDate, validateMaintenanceServiceDate } from '@/lib/maintenance-record-validation';
 
 export default function NewMaintenancePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
+  const today = currentNamibiaDate();
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleSearchOption | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
@@ -71,6 +73,11 @@ export default function NewMaintenancePage() {
     event.preventDefault();
     if (!formData.vehicleId) {
       toast({ title: 'Vehicle required', description: 'Search for and select a vehicle before saving.', variant: 'error' });
+      return;
+    }
+    const serviceDateError = validateMaintenanceServiceDate(formData.serviceDate);
+    if (serviceDateError) {
+      toast({ title: 'Invalid service date', description: serviceDateError, variant: 'error' });
       return;
     }
     setIsSubmitting(true);
@@ -160,6 +167,7 @@ export default function NewMaintenancePage() {
                 label="Service Date"
                 value={formData.serviceDate}
                 onChange={(value) => updateForm({ serviceDate: value })}
+                max={today}
                 required
               />
               <div className="space-y-1.5">
