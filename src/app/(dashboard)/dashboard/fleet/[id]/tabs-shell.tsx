@@ -6,17 +6,26 @@ import { AlertTriangle, FileText, Gauge, History, Loader2, Wrench } from 'lucide
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
+export type VehicleDetailTabKey = 'documents' | 'defects' | 'maintenance' | 'odometer' | 'status';
+
 interface TabsShellProps {
   children: React.ReactNode;
+  visibleTabs?: VehicleDetailTabKey[];
 }
 
-const TABS = [
+const TABS: Array<{
+  key: VehicleDetailTabKey;
+  label: string;
+  icon: typeof FileText;
+}> = [
   { key: 'documents', label: 'Documents', icon: FileText },
   { key: 'defects', label: 'Defects', icon: AlertTriangle },
   { key: 'maintenance', label: 'Maintenance', icon: Wrench },
   { key: 'odometer', label: 'Odometer', icon: Gauge },
   { key: 'status', label: 'Status', icon: History },
-] as const;
+];
+
+const DEFAULT_VISIBLE_TABS = TABS.map((tab) => tab.key);
 
 type OdometerEvent = {
   id: string;
@@ -94,42 +103,56 @@ function OdometerTimeline({ vehicleId }: { vehicleId: string }) {
   );
 }
 
-export function TabsShell({ children }: TabsShellProps) {
+export function TabsShell({ children, visibleTabs = DEFAULT_VISIBLE_TABS }: TabsShellProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const requestedTab = searchParams.get('tab');
-  const initialIndex = Math.max(0, TABS.findIndex((tab) => tab.key === requestedTab));
-  const [activeTab, setActiveTab] = useState(initialIndex);
+  const requestedTab = searchParams.get('tab') as VehicleDetailTabKey | null;
+  const tabs = useMemo(
+    () => TABS.filter((tab) => visibleTabs.includes(tab.key)),
+    [visibleTabs],
+  );
+  const firstTabKey = tabs[0]?.key ?? 'odometer';
+  const requestedTabIsVisible = requestedTab ? tabs.some((tab) => tab.key === requestedTab) : false;
+  const [activeTab, setActiveTab] = useState<VehicleDetailTabKey>(
+    requestedTabIsVisible && requestedTab ? requestedTab : firstTabKey,
+  );
   const childrenArray = useMemo(() => (Array.isArray(children) ? children : [children]), [children]);
   const vehicleId = pathname.split('/').filter(Boolean).at(-1) || '';
 
   useEffect(() => {
-    const nextIndex = TABS.findIndex((tab) => tab.key === requestedTab);
-    if (nextIndex >= 0) setActiveTab(nextIndex);
-  }, [requestedTab]);
+    if (requestedTab && tabs.some((tab) => tab.key === requestedTab)) {
+      setActiveTab(requestedTab);
+      return;
+    }
+    if (!tabs.some((tab) => tab.key === activeTab)) setActiveTab(firstTabKey);
+  }, [activeTab, firstTabKey, requestedTab, tabs]);
 
-  const content = activeTab === 3
+  const contentByKey: Partial<Record<VehicleDetailTabKey, React.ReactNode>> = {
+    documents: childrenArray[0],
+    defects: childrenArray[1],
+    maintenance: childrenArray[2],
+    status: childrenArray[3],
+  };
+  const content = activeTab === 'odometer'
     ? <OdometerTimeline vehicleId={vehicleId} />
-    : activeTab === 4
-      ? childrenArray[3]
-      : childrenArray[activeTab];
+    : contentByKey[activeTab];
 
   return (
     <Card>
       <div className="border-border overflow-x-auto border-b">
         <div className="flex min-w-max" role="tablist" aria-label="Vehicle record sections">
-          {TABS.map((tab, i) => {
+          {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
                 key={tab.key}
                 type="button"
                 role="tab"
-                aria-selected={activeTab === i}
-                onClick={() => setActiveTab(i)}
+                aria-selected={activeTab === tab.key}
+                onClick={() => setActiveTab(tab.key)}
                 className={cn(
                   'focus-ring -mb-px flex min-h-11 cursor-pointer items-center gap-2 border-b-2 px-5 py-3 text-sm font-medium transition-colors motion-reduce:transition-none',
-                  activeTab === i ? 'border-brand-800 text-ink-950' : 'border-transparent text-ink-500 hover:bg-muted/40 hover:text-ink-700',
+                  activeTab === tab.key ? 'border-brand-800 text-ink-950' : 'border-transparent text-ink-500 hover:bg-muted/40 hover:text-ink-700',
                 )}
               >
                 <Icon className="h-4 w-4" aria-hidden="true" />
