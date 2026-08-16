@@ -155,6 +155,7 @@ export default async function DefectsPage({ searchParams }: PageProps) {
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/fleet/defects', roleNames);
   const canResolve = canPerformDashboardAction('/dashboard/fleet/defects', roleNames, 'update');
+  const canViewInspections = canPerformDashboardAction('/dashboard/inspections', roleNames, 'view');
   let result: Awaited<ReturnType<typeof fetchDefects>>;
   try {
     result = await fetchDefects(
@@ -219,7 +220,7 @@ export default async function DefectsPage({ searchParams }: PageProps) {
                     <div className="text-ink-500 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                       <span className="flex items-center gap-1"><Car className="h-3 w-3" aria-hidden="true" />{defect.vehicleMake} {defect.vehicleModel} ({defect.vehicleGrn})</span>
                       <span className="tabular-nums">{formatDate(defect.createdAt)}</span>
-                      {defect.inspectionId && <Link href={`/dashboard/inspections/${defect.inspectionId}`} className="text-brand-700 focus-ring inline-flex items-center gap-1 rounded hover:underline"><Eye className="h-3 w-3" aria-hidden="true" />View Inspection</Link>}
+                      {defect.inspectionId && canViewInspections && <Link href={`/dashboard/inspections/${defect.inspectionId}`} className="text-brand-700 focus-ring inline-flex items-center gap-1 rounded hover:underline"><Eye className="h-3 w-3" aria-hidden="true" />View Inspection</Link>}
                     </div>
                     {defect.resolutionNotes && <p className="text-ink-500 mt-2 text-xs">Resolution: {defect.resolutionNotes}</p>}
                   </div>
