@@ -1,9 +1,19 @@
+import type { ReactNode } from 'react';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { AlertTriangle, CheckCircle2, CircleSlash2, ShieldCheck } from 'lucide-react';
+import {
+  AlertTriangle,
+  CalendarDays,
+  CheckCircle2,
+  CircleSlash2,
+  Clock3,
+  Download,
+  FileText,
+  LockKeyhole,
+  ShieldCheck,
+} from 'lucide-react';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { tripAmendments, tripAuthorities } from '@/db/schema/trips';
-import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
 import { TenantLogo } from '@/components/documents/tenant-logo';
 import { resolvePublicVerification } from '@/lib/document-verification';
 import {
@@ -16,6 +26,7 @@ import {
   formatDocumentStatus,
   formatHumanDateTime,
 } from '@/lib/human-readable';
+import { VerificationCodeCopy } from './verification-code-copy';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,26 +53,54 @@ const INVALID_STATES: Record<string, { title: string; message: string }> = {
   },
 };
 
-function getVerificationState(status: string) {
+type VerificationState = {
+  label: string;
+  valid: boolean;
+  tone: 'success' | 'warning' | 'error';
+  message: string;
+  explanation: string;
+};
+
+function getVerificationState(status: string): VerificationState {
   if (status === 'draft') {
     return {
       label: 'Draft — not officially issued',
       valid: false,
+      tone: 'warning',
       message: 'This record exists but has not been officially issued.',
+      explanation:
+        'This record can be verified as a system record, but it is still a draft and should not be treated as an issued official document.',
     };
   }
-  if (['revoked', 'superseded', 'cancelled', 'rejected', 'expired'].includes(status)) {
+  if (status === 'superseded') {
     return {
-      label: formatDocumentStatus(status),
+      label: 'Superseded',
       valid: false,
-      message: `This document is authentic but its current status is ${formatDocumentStatus(status).toLowerCase()}.`,
+      tone: 'warning',
+      message: 'This document is authentic but its current status is superseded.',
+      explanation:
+        'This document is genuine and was issued by the stated authority. However, it has been superseded by a newer version. Always use the latest valid document for an active transaction.',
+    };
+  }
+  if (['revoked', 'cancelled', 'rejected', 'expired'].includes(status)) {
+    const formatted = formatDocumentStatus(status);
+    return {
+      label: formatted,
+      valid: false,
+      tone: status === 'expired' ? 'warning' : 'error',
+      message: `This document is authentic but its current status is ${formatted.toLowerCase()}.`,
+      explanation:
+        'The verification record confirms the document identity, but its current status means it must not be relied on as an active authority.',
     };
   }
   return {
     label: 'Verified and active',
     valid: true,
+    tone: 'success',
     message:
       'The document was issued by the organisation shown and its verification record is current.',
+    explanation:
+      'This document is genuine, its digital fingerprint matches the verification record, and the issuing authority currently recognises it as active.',
   };
 }
 
@@ -89,12 +128,21 @@ function frozenVerificationBranding(
     ...base,
     ...brandingMeta,
     organisationName:
-      brandingMeta?.organisationName || identity?.organisationName || liveBranding?.organisationName || 'Government Fleet',
+      brandingMeta?.organisationName ||
+      identity?.organisationName ||
+      liveBranding?.organisationName ||
+      'Government Fleet',
     logoUrl: identity?.logoUrl || liveBranding?.logoUrl,
     primaryColor:
-      brandingMeta?.primaryColor || identity?.primaryColor || liveBranding?.primaryColor || '#1F2A44',
+      brandingMeta?.primaryColor ||
+      identity?.primaryColor ||
+      liveBranding?.primaryColor ||
+      '#1F2A44',
     accentColor:
-      brandingMeta?.accentColor || identity?.accentColor || liveBranding?.accentColor || '#0F766E',
+      brandingMeta?.accentColor ||
+      identity?.accentColor ||
+      liveBranding?.accentColor ||
+      '#0F766E',
     executiveSignatoryName:
       brandingMeta?.executiveSignatoryName ||
       identity?.executiveSignatoryName ||
@@ -159,15 +207,17 @@ export default async function ShortVerificationPage({
 }) {
   const { slug } = await params;
   const result = await resolvePublicVerification(slug);
+
   if (result.kind === 'invalid') {
     const state = INVALID_STATES[result.error || 'not_found'] || INVALID_STATES.not_found;
     return (
       <VerificationShell>
-        <div className="border-status-error-border bg-status-error-bg rounded-xl border p-6 text-center">
-          <CircleSlash2 className="text-status-error-text mx-auto h-10 w-10" />
+        <OfficialTenantHeader />
+        <section className="border-status-error-border bg-status-error-bg mt-6 rounded-2xl border px-5 py-8 text-center sm:px-8">
+          <CircleSlash2 className="text-status-error-text mx-auto h-10 w-10" aria-hidden="true" />
           <h1 className="text-ink-950 mt-3 text-xl font-semibold">{state.title}</h1>
-          <p className="text-ink-600 mt-2 text-sm">{state.message}</p>
-        </div>
+          <p className="text-ink-600 mx-auto mt-2 max-w-lg text-sm leading-6">{state.message}</p>
+        </section>
       </VerificationShell>
     );
   }
@@ -221,9 +271,14 @@ export default async function ShortVerificationPage({
         snapshotData: snapshot,
         profile: result.shareLink.redactionProfile,
       });
-  const reference = shareSummary?.reference || String(
-    snapshot.authorityNumber || snapshot.reference || snapshot.requestReference || `Version ${document.documentVersion}`,
-  );
+  const reference =
+    shareSummary?.reference ||
+    String(
+      snapshot.authorityNumber ||
+        snapshot.reference ||
+        snapshot.requestReference ||
+        `Version ${document.documentVersion}`,
+    );
   const summary: Array<[string, string]> = [
     ['Document', documentTypeLabel(document.documentType)],
     ['Reference', reference],
@@ -254,134 +309,297 @@ export default async function ShortVerificationPage({
 
   return (
     <VerificationShell>
-      <header className="border-border mb-5 flex items-start justify-between gap-4 border-b pb-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <TenantLogo
-            src={branding?.logoUrl}
-            organisationName={branding?.organisationName || 'Government Fleet'}
-            code={branding?.code}
-          />
-          <div className="min-w-0">
-            <p className="text-ink-950 truncate text-sm font-bold">
-              {branding?.organisationName || 'Government Fleet'}
-            </p>
-            <p className="text-ink-500 text-xs">{branding?.division || 'Fleet Management'}</p>
-          </div>
-        </div>
-        <PublicThemeToggle />
-      </header>
+      <OfficialTenantHeader branding={branding} />
 
-      <div
-        className={`rounded-xl border p-5 ${
-          status.valid
-            ? 'border-status-success-border bg-status-success-bg'
-            : 'border-status-pending-bg bg-status-pending-bg'
-        }`}
-      >
-        <div className="flex items-start gap-3">
-          {status.valid ? (
-            <CheckCircle2 className="text-status-success-text h-9 w-9 shrink-0" />
-          ) : (
-            <AlertTriangle className="text-status-pending-text h-9 w-9 shrink-0" />
-          )}
-          <div>
-            <p className="text-ink-600 text-xs font-semibold tracking-wider uppercase">
-              Live verification result
-            </p>
-            <h1 className="text-ink-950 text-xl font-bold">{status.label}</h1>
-            <p className="text-ink-700 mt-1 text-sm">{status.message}</p>
-            {currentVersion?.verificationSlug && (
-              <p className="text-ink-700 mt-2 text-sm">
-                Current official version:{' '}
-                <a
-                  href={`/v/${currentVersion.verificationSlug}`}
-                  className="focus-ring text-brand-800 font-semibold underline underline-offset-2"
-                >
-                  verify v{currentVersion.documentVersion}
-                </a>
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
+      <VerificationHero status={status}>
+        {currentVersion?.verificationSlug ? (
+          <p className="text-ink-700 mt-3 text-sm">
+            Current official version:{' '}
+            <a
+              href={`/v/${currentVersion.verificationSlug}`}
+              className="focus-ring text-brand-800 font-semibold underline underline-offset-2"
+            >
+              verify v{currentVersion.documentVersion}
+            </a>
+          </p>
+        ) : null}
+      </VerificationHero>
 
-      {postIssueAuthorityAmendment && (
-        <div className="border-status-pending-bg bg-status-pending-bg mt-4 rounded-xl border p-4">
+      {postIssueAuthorityAmendment ? (
+        <section className="border-status-pending-border bg-status-pending-bg mt-5 rounded-xl border p-4">
           <div className="flex items-start gap-3">
-            <AlertTriangle className="text-status-pending-text mt-0.5 h-5 w-5 shrink-0" />
+            <AlertTriangle className="text-status-pending-text mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
             <div>
               <p className="text-ink-950 text-sm font-semibold">Subsequent operational amendments recorded</p>
-              <p className="text-ink-700 mt-1 text-sm">
+              <p className="text-ink-700 mt-1 text-sm leading-6">
                 This is the authentic Trip Authority issued for departure. The trip record contains one or more approved operational amendments recorded after this document was issued. The original issued authority remains unchanged as historical evidence.
               </p>
             </div>
           </div>
+        </section>
+      ) : null}
+
+      <section className="border-border bg-surface mt-5 overflow-hidden rounded-2xl border shadow-sm">
+        <div className="border-border flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+          <div className="flex items-center gap-3">
+            <FileText className="text-ink-500 h-5 w-5" aria-hidden="true" />
+            <h2 className="text-ink-950 text-base font-semibold">Document details</h2>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="border-status-success-border bg-status-success-bg text-status-success-text inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold">
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Authentic record
+            </span>
+            <span className="text-ink-500 inline-flex items-center gap-1.5 text-xs">
+              <Clock3 className="h-4 w-4" aria-hidden="true" />
+              Issued {formatHumanDateTime(frozenIssueAt, branding?.locale)}
+            </span>
+          </div>
         </div>
-      )}
 
-      <div className="border-border bg-surface mt-4 overflow-hidden rounded-xl border shadow-sm">
-        {summary.map(([label, value]) => (
-          <div
-            key={label}
-            className="border-border grid grid-cols-[7.5rem_1fr] gap-3 border-b px-4 py-3 last:border-0 sm:grid-cols-[10rem_1fr]"
-          >
-            <span className="text-ink-500 text-xs font-medium">{label}</span>
-            <span className="text-ink-950 text-sm font-medium break-words">{value}</span>
-          </div>
-        ))}
-      </div>
+        <div className="grid min-w-0 md:grid-cols-2">
+          {summary.map(([label, value], index) => (
+            <div
+              key={`${label}-${index}`}
+              className={`border-border min-w-0 px-5 py-4 sm:px-7 ${
+                index < summary.length - (summary.length % 2 === 0 ? 2 : 1) ? 'border-b' : ''
+              } ${index % 2 === 0 ? 'md:border-r' : ''} md:border-b`}
+            >
+              <div className="grid min-w-0 gap-1.5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+                <span className="text-ink-500 text-xs font-medium">{label}</span>
+                <span className="text-ink-950 min-w-0 text-sm font-medium break-words [overflow-wrap:anywhere]">
+                  {label === 'Status' ? (
+                    <span className={statusPillClass(status.tone)}>{value}</span>
+                  ) : (
+                    value
+                  )}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
-      <div className="border-border bg-surface mt-4 rounded-xl border p-4 text-sm">
-        <p className="text-ink-500 text-xs">
-          {permanent ? 'Permanent verification code' : 'Temporary share verification code'}
-        </p>
-        <p className="text-ink-950 mt-1 font-mono font-semibold tracking-wider">
-          {verificationCode}
-        </p>
-        {document.hash && (
-          <div className="mt-3">
-            <p className="text-ink-500 text-xs">Full document fingerprint (SHA-256)</p>
-            <p className="text-ink-700 mt-1 break-all font-mono text-[11px]">{document.hash}</p>
+      <section className="border-border bg-surface mt-5 overflow-hidden rounded-2xl border shadow-sm">
+        <div className="border-border flex items-center gap-3 border-b px-5 py-4 sm:px-7">
+          <ShieldCheck className="text-ink-500 h-5 w-5" aria-hidden="true" />
+          <h2 className="text-ink-950 text-base font-semibold">Verification &amp; security</h2>
+        </div>
+
+        <div className="grid min-w-0 gap-6 p-5 sm:p-7 lg:grid-cols-[minmax(0,1.15fr)_minmax(18rem,0.85fr)]">
+          <div className="min-w-0 space-y-5">
+            <div>
+              <p className="text-ink-500 text-xs">
+                {permanent ? 'Permanent verification code' : 'Temporary share verification code'}
+              </p>
+              <div className="border-border bg-page mt-2 flex w-full max-w-sm items-center gap-2 rounded-xl border px-4 py-2.5">
+                <code className="text-ink-950 min-w-0 flex-1 font-mono text-base font-bold tracking-[0.16em] break-all">
+                  {verificationCode}
+                </code>
+                <VerificationCodeCopy value={verificationCode} />
+              </div>
+            </div>
+
+            {document.hash ? (
+              <div className="min-w-0">
+                <p className="text-ink-500 text-xs">Full document fingerprint (SHA-256)</p>
+                <div className="border-border bg-page mt-2 rounded-xl border px-4 py-3">
+                  <code className="text-ink-700 block min-w-0 break-all font-mono text-[11px] leading-5">
+                    {document.hash}
+                  </code>
+                </div>
+              </div>
+            ) : null}
+
+            {permanent ? (
+              <div className="text-ink-600 flex items-start gap-2 text-xs leading-5">
+                <ShieldCheck className="text-brand-700 mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>
+                  This official verification identity does not expire. Document status may still change if the issuing organisation supersedes or cancels the record.
+                </p>
+              </div>
+            ) : (
+              <div className="text-ink-600 flex items-start gap-2 text-xs leading-5">
+                <CalendarDays className="text-ink-500 mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>
+                  Temporary link valid until{' '}
+                  <span className="text-ink-950 font-semibold">
+                    {formatHumanDateTime(result.shareLink.expiresAt, branding?.locale)}
+                  </span>
+                </p>
+              </div>
+            )}
           </div>
-        )}
-        {permanent ? (
-          <p className="text-ink-500 mt-3 text-xs">
-            This official verification identity does not expire. Document status may still change if the issuing organisation supersedes or cancels the record.
-          </p>
-        ) : (
-          <>
-            <p className="text-ink-500 mt-3 text-xs">
-              Temporary link valid until {formatHumanDateTime(result.shareLink.expiresAt, branding?.locale)}
-            </p>
-            {canDownload && (
+
+          <div className="border-brand-200 bg-brand-50/50 dark:border-brand-800/60 dark:bg-brand-950/20 flex min-w-0 flex-col justify-between rounded-2xl border p-5">
+            <div>
+              <div className="flex items-start gap-3">
+                <span className="bg-brand-100 text-brand-800 dark:bg-brand-900/50 dark:text-brand-200 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl">
+                  <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <h3 className="text-ink-950 text-sm font-semibold">Secure and tamper-evident</h3>
+                  <p className="text-ink-600 mt-2 text-sm leading-6">
+                    This document was issued digitally by {branding?.organisationName || 'the stated authority'} and can be verified using GovFleet secure verification.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {!permanent && canDownload ? (
               <a
                 href={`/api/public/documents/${result.shareLink.shortSlug}/pdf`}
-                className="focus-ring bg-brand-800 mt-3 inline-flex min-h-10 items-center rounded-lg px-4 text-sm font-medium text-white"
+                className="focus-ring bg-brand-800 hover:bg-brand-900 mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-white transition-colors sm:w-fit"
               >
+                <Download className="h-4 w-4" aria-hidden="true" />
                 Download verified PDF
               </a>
-            )}
-            {downloadAllowedByPolicy && !downloadViewAvailable && (
-              <p className="text-status-pending-text mt-3 text-xs">
+            ) : null}
+
+            {!permanent && downloadAllowedByPolicy && !downloadViewAvailable ? (
+              <p className="text-status-pending-text mt-4 text-xs leading-5">
                 This verification used the final permitted access for the temporary link, so a separate PDF download is no longer available.
               </p>
-            )}
-          </>
-        )}
-      </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="border-border border-t px-5 pb-5 sm:px-7 sm:pb-7">
+          <div className="border-status-success-border bg-status-success-bg mt-5 flex items-start gap-3 rounded-xl border p-4">
+            <ShieldCheck className="text-status-success-text mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="text-ink-950 text-sm font-semibold">What does this mean?</p>
+              <p className="text-ink-700 mt-1 text-xs leading-5 sm:text-sm">{status.explanation}</p>
+            </div>
+          </div>
+        </div>
+      </section>
     </VerificationShell>
   );
 }
 
-function VerificationShell({ children }: { children: React.ReactNode }) {
+function statusPillClass(tone: VerificationState['tone']) {
+  if (tone === 'success') {
+    return 'border-status-success-border bg-status-success-bg text-status-success-text inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold';
+  }
+  if (tone === 'error') {
+    return 'border-status-error-border bg-status-error-bg text-status-error-text inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold';
+  }
+  return 'border-status-pending-border bg-status-pending-bg text-status-pending-text inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold';
+}
+
+function VerificationHero({
+  status,
+  children,
+}: {
+  status: VerificationState;
+  children?: ReactNode;
+}) {
+  const toneClasses =
+    status.tone === 'success'
+      ? 'border-status-success-border bg-status-success-bg'
+      : status.tone === 'error'
+        ? 'border-status-error-border bg-status-error-bg'
+        : 'border-status-pending-border bg-status-pending-bg';
+  const iconClasses =
+    status.tone === 'success'
+      ? 'text-status-success-text bg-status-success-text/10'
+      : status.tone === 'error'
+        ? 'text-status-error-text bg-status-error-text/10'
+        : 'text-status-pending-text bg-status-pending-text/10';
+  const titleClasses =
+    status.tone === 'success'
+      ? 'text-status-success-text'
+      : status.tone === 'error'
+        ? 'text-status-error-text'
+        : 'text-status-pending-text';
+
   return (
-    <main className="bg-page min-h-screen px-4 py-8">
-      <div className="mx-auto max-w-xl">
-        {children}
-        <p className="text-ink-500 mt-6 flex items-center justify-center gap-2 text-center text-xs">
-          <ShieldCheck className="h-4 w-4" />
-          GovFleet secure document verification
+    <section className={`relative mt-6 overflow-hidden rounded-2xl border px-5 py-7 sm:px-7 sm:py-8 ${toneClasses}`}>
+      <ShieldCheck
+        className={`pointer-events-none absolute -right-4 top-1/2 h-32 w-32 -translate-y-1/2 opacity-[0.09] sm:right-3 sm:h-36 sm:w-36 ${titleClasses}`}
+        aria-hidden="true"
+      />
+      <div className="relative flex items-start gap-4">
+        <span className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full sm:h-14 sm:w-14 ${iconClasses}`}>
+          {status.tone === 'success' ? (
+            <CheckCircle2 className="h-7 w-7" aria-hidden="true" />
+          ) : (
+            <AlertTriangle className="h-7 w-7" aria-hidden="true" />
+          )}
+        </span>
+        <div className="min-w-0 max-w-2xl pr-6 sm:pr-24">
+          <p className="text-ink-600 text-xs font-semibold tracking-[0.16em] uppercase">Live verification result</p>
+          <h1 className={`mt-1 text-2xl font-bold sm:text-3xl ${titleClasses}`}>{status.label}</h1>
+          <p className="text-ink-700 mt-2 text-sm leading-6">{status.message}</p>
+          {children}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function OfficialTenantHeader({ branding }: { branding?: ResolvedTenantBranding | null }) {
+  const contactParts = [branding?.phone, branding?.email || branding?.website].filter(Boolean);
+
+  return (
+    <header className="border-border grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)_4.5rem] items-start gap-3 border-b pb-5 sm:grid-cols-[7rem_minmax(0,1fr)_7rem] sm:gap-5 sm:pb-6">
+      <div className="flex justify-center pt-1">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/official/namibia-coat-of-arms.png"
+          alt="Republic of Namibia coat of arms"
+          className="h-16 w-16 object-contain sm:h-24 sm:w-24"
+        />
+      </div>
+
+      <div className="min-w-0 text-center">
+        <p className="text-ink-600 text-[9px] font-semibold tracking-[0.16em] uppercase sm:text-[10px]">Republic of Namibia</p>
+        <p className="text-brand-800 mt-1 text-sm font-bold tracking-wide uppercase sm:text-base">Fleet Management System</p>
+        <p className="text-ink-500 mt-2 text-[9px] font-medium tracking-wide uppercase sm:text-[10px]">
+          {branding?.division || 'Official fleet document verification'}
         </p>
+        <p className="text-ink-950 mt-1 text-sm font-semibold leading-5 sm:text-base">
+          {branding?.organisationName || 'Government Fleet'}
+        </p>
+        {branding?.address ? (
+          <p className="text-ink-500 mt-1 text-[10px] leading-4 sm:text-xs">{branding.address}</p>
+        ) : null}
+        {contactParts.length ? (
+          <p className="text-ink-500 mt-1 break-words text-[9px] leading-4 sm:text-xs">
+            {contactParts.join('  ·  ')}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flex justify-center pt-1">
+        {branding?.logoUrl ? (
+          <TenantLogo
+            src={branding.logoUrl}
+            organisationName={branding.organisationName}
+            code={branding.code}
+            className="h-16 w-16 sm:h-24 sm:w-24"
+          />
+        ) : (
+          <span className="h-16 w-16 sm:h-24 sm:w-24" aria-hidden="true" />
+        )}
+      </div>
+    </header>
+  );
+}
+
+function VerificationShell({ children }: { children: ReactNode }) {
+  return (
+    <main className="bg-page min-h-screen px-3 py-6 sm:px-5 sm:py-8 lg:px-8">
+      <div className="mx-auto min-w-0 max-w-5xl">
+        {children}
+        <footer className="text-ink-500 mt-6 flex flex-col items-center justify-center gap-1 text-center text-xs">
+          <p className="flex items-center justify-center gap-2 font-medium">
+            <LockKeyhole className="h-4 w-4" aria-hidden="true" />
+            Powered by GovFleet Secure Verification
+          </p>
+          <p>Ensuring authenticity. Protecting integrity.</p>
+        </footer>
       </div>
     </main>
   );
