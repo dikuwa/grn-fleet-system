@@ -11,6 +11,7 @@ import {
 } from '@/lib/storage';
 import { UPLOAD_MAX_SIZE_BYTES, ALLOWED_IMAGE_TYPES, ALLOWED_DOCUMENT_TYPES } from '@/lib/constants';
 import { computeSha256FromBytes, buildDedupKey, findDuplicateKeys } from '@/lib/storage-dedup';
+import { isUploadCategoryAllowedInWorkspace } from '@/lib/upload-workspace-policy';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,18 +81,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Personal self-service is intentionally limited to user/request content.
-    // Operational namespaces such as inspections, receipts, vehicle evidence,
-    // imports, and trip incidents belong to their dedicated workspaces even
-    // when the same multi-role account also has FILE_UPLOAD elsewhere.
+    // Generic uploads are scoped by the active workspace as well as FILE_UPLOAD.
+    // This keeps legacy broad grants from writing operational evidence into a
+    // namespace that the current workspace does not operate.
     const workspace = await getSessionWorkspace(session);
-    if (
-      workspace.activeWorkspace === WorkspaceIds.PERSONAL &&
-      category !== 'document' &&
-      category !== 'avatar'
-    ) {
+    if (!isUploadCategoryAllowedInWorkspace(workspace.activeWorkspace, category)) {
       return NextResponse.json(
-        { error: 'This upload category is not available in Personal workspace.' },
+        { error: 'This upload category is not available in the active workspace.' },
         { status: 403 },
       );
     }
@@ -169,10 +165,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[Upload] Failed:', error);
-    return NextResponse.json(
-      { error: 'Upload failed: ' + (error instanceof Error ? error.message : String(error)) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Upload could not be completed.' }, { status: 500 });
   }
 }
 
@@ -219,9 +212,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, data: files });
   } catch (error) {
     console.error('[Upload:GET] Failed:', error);
-    return NextResponse.json(
-      { error: 'Failed to list files: ' + (error instanceof Error ? error.message : String(error)) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Failed to list tenant files.' }, { status: 500 });
   }
 }
