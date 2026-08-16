@@ -1,14 +1,14 @@
 import React from 'react';
 import QRCode from 'qrcode';
 import { renderToStream } from '@react-pdf/renderer';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalParties } from '@/db/schema/external-parties';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
-import { vehicleAllocations } from '@/db/schema/trips';
+import { tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
 import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { abbreviatedDocumentHash } from '@/lib/document-verification';
@@ -85,10 +85,11 @@ export async function buildTransportRequestRenderSnapshot(
         startAt: vehicleAllocations.startAt,
         state: vehicleAllocations.state,
         licenceNumber: vehicles.licenceNumber,
+        authorityNumber: tripAuthorities.authorityNumber,
         internalDriverName: sql<string>`concat_ws(' ', ${employees.firstName}, ${employees.lastName})`,
       })
       .from(vehicleAllocations)
-      .leftJoin(
+      .innerJoin(
         vehicles,
         and(
           eq(vehicles.id, vehicleAllocations.vehicleId),
@@ -102,8 +103,20 @@ export async function buildTransportRequestRenderSnapshot(
           eq(employees.tenantId, document.tenantId),
         ),
       )
-      .where(eq(vehicleAllocations.requestId, document.entityId))
-      .orderBy(desc(vehicleAllocations.createdAt))
+      .leftJoin(
+        tripAuthorities,
+        and(
+          eq(tripAuthorities.allocationId, vehicleAllocations.id),
+          eq(tripAuthorities.tenantId, document.tenantId),
+        ),
+      )
+      .where(
+        and(
+          eq(vehicleAllocations.requestId, document.entityId),
+          ne(vehicleAllocations.state, 'cancelled'),
+        ),
+      )
+      .orderBy(desc(vehicleAllocations.updatedAt), desc(vehicleAllocations.createdAt))
       .limit(1);
 
     if (allocation) {
@@ -123,6 +136,7 @@ export async function buildTransportRequestRenderSnapshot(
             and(
               eq(externalDriverAssignments.tenantId, document.tenantId),
               eq(externalDriverAssignments.allocationId, allocation.id),
+              ne(externalDriverAssignments.state, 'cancelled'),
             ),
           )
           .orderBy(desc(externalDriverAssignments.assignedAt))
@@ -132,7 +146,7 @@ export async function buildTransportRequestRenderSnapshot(
 
       outcome = {
         finalStatus: options.issuing || document.status === 'issued' ? 'Approved' : document.status,
-        linkedAuthorityReference: `TA-${allocation.id.slice(0, 8).toUpperCase()}`,
+        linkedAuthorityReference: allocation.authorityNumber || 'Not issued',
         allocatedVehicle: allocation.licenceNumber || 'Not recorded',
         allocatedDriver: allocatedDriver || 'Not recorded',
         allocationDate: allocation.startAt?.toISOString(),
@@ -147,6 +161,7 @@ export async function buildTransportRequestRenderSnapshot(
           and(
             eq(workflowInstances.requestId, document.entityId),
             eq(workflowActions.actionType, 'authorise'),
+            eq(workflowActions.result, 'authorised'),
           ),
         )
         .orderBy(desc(workflowActions.createdAt))
