@@ -270,6 +270,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: 'Unsupported incident review action' }, { status: 400 });
   } catch (error) {
     console.error('[incidents/review] PATCH failed:', error);
+    if (String(error).includes('incident_technical_clearance_blocked')) {
+      return NextResponse.json(
+        {
+          error:
+            'A blocking vehicle defect was recorded while technical clearance was being granted. Refresh the incident and resolve all blocking defects before clearing the vehicle.',
+        },
+        { status: 409 },
+      );
+    }
     if (String(error).includes('atomic_vehicle_return_to_service_failed')) {
       return NextResponse.json(
         {
