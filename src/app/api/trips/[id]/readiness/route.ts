@@ -10,7 +10,12 @@ import { generatedDocuments } from '@/db/schema/documents';
 import { trips, vehicleAllocations, vehicleInspections, tripAuthorities } from '@/db/schema/trips';
 import { vehicles, vehicleDefects, vehicleCategories } from '@/db/schema/fleet';
 import { workflowInstances, workflowActions, workflowSteps } from '@/db/schema/workflows';
-import { employees, driverProfiles, driverLicences } from '@/db/schema/people';
+import {
+  employees,
+  driverProfiles,
+  driverLicences,
+  driverProfessionalAuthorisations,
+} from '@/db/schema/people';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { eq, and, desc, isNull, sql, inArray } from 'drizzle-orm';
@@ -76,6 +81,7 @@ export async function GET(
         vehicleStatus: vehicles.status,
         vehicleLicenceExpiryDate: vehicles.licenceExpiryDate,
         requiredLicenceClass: vehicles.requiredLicenceClass,
+        professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
         vehicleCategoryName: vehicleCategories.name,
       })
       .from(trips)
@@ -254,6 +260,7 @@ export async function GET(
 
       const [profile] = await db
         .select({
+          profileId: driverProfiles.id,
           driverStatus: driverProfiles.driverStatus,
           licenceClass: driverLicences.licenceClass,
           expiryDate: driverLicences.expiryDate,
@@ -312,6 +319,33 @@ export async function GET(
           required: true,
         });
       }
+
+      if (trip.professionalAuthorisationRequired) {
+        const requiredThroughDate = requiredThrough.toISOString().slice(0, 10);
+        const today = new Date().toISOString().slice(0, 10);
+        const [professionalAuthorisation] = profile?.profileId
+          ? await db
+              .select({ id: driverProfessionalAuthorisations.id })
+              .from(driverProfessionalAuthorisations)
+              .where(and(
+                eq(driverProfessionalAuthorisations.driverProfileId, profile.profileId),
+                eq(driverProfessionalAuthorisations.isVerified, true),
+                sql`${driverProfessionalAuthorisations.expiryDate} >= ${requiredThroughDate}::date`,
+                sql`(${driverProfessionalAuthorisations.validFrom} IS NULL OR ${driverProfessionalAuthorisations.validFrom} <= ${today}::date)`,
+              ))
+              .orderBy(desc(driverProfessionalAuthorisations.expiryDate))
+              .limit(1)
+          : [];
+        gates.push({
+          key: 'driver_professional_authorisation',
+          label: 'Professional driving authorisation valid',
+          status: professionalAuthorisation ? 'pass' : 'blocking',
+          detail: professionalAuthorisation
+            ? 'Verified professional driving authorisation covers the trip period.'
+            : 'This vehicle requires verified professional driving authorisation covering the full trip period.',
+          required: true,
+        });
+      }
     } else if (driverKind === 'external' && externalDriver) {
       const externalActive = externalDriver.partyStatus === 'active';
       gates.push({
@@ -355,6 +389,17 @@ export async function GET(
           detail: covers
             ? `External driver licence (${externalDriver.licenceClass}) covers required class (${trip.requiredLicenceClass}) for ${trip.vehicleCategoryName || 'this vehicle'}.`
             : `External driver licence class "${externalDriver.licenceClass}" does not authorise required class "${trip.requiredLicenceClass}" for ${trip.vehicleCategoryName || 'this vehicle'}.`,
+          required: true,
+        });
+      }
+
+      if (trip.professionalAuthorisationRequired) {
+        gates.push({
+          key: 'driver_professional_authorisation',
+          label: 'Professional driving authorisation valid',
+          status: 'blocking',
+          detail:
+            'This vehicle requires professional driving authorisation, but verified external professional-authorisation evidence is not supported for the current assignment.',
           required: true,
         });
       }
@@ -413,6 +458,7 @@ export async function GET(
     ]);
 
     let driverAccepted = false;
+    let pendingReplacementAcceptance: Awaited<ReturnType<typeof findPendingVehicleReplacementAcceptance>> = null;
     if (authority) {
       if (driverKind === 'external') {
         driverAccepted =
@@ -427,7 +473,7 @@ export async function GET(
         driverAccepted = acceptedStatuses.has(authority.status);
       }
 
-      const pendingReplacementAcceptance = await findPendingVehicleReplacementAcceptance({
+      pendingReplacementAcceptance = await findPendingVehicleReplacementAcceptance({
         authorityId: authority.id,
         acceptedAt: authority.acceptedAt,
       });
@@ -491,7 +537,7 @@ export async function GET(
           eq(vehicleInspections.type, 'departure'),
         ),
       )
-      .orderBy(desc(vehicleInspections.createdAt))
+      .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
       .limit(1);
     const inspectionDone =
       departureInspection?.status === 'completed' || departureInspection?.status === 'failed';
