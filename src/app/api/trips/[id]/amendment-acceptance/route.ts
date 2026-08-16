@@ -19,7 +19,7 @@ import {
   resolveActiveRoleRecipients,
 } from '@/lib/notification-service';
 import { Permissions } from '@/lib/permissions';
-import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-acceptance';
+import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-acceptance';
 import { SystemRoles } from '@/lib/workspaces';
 
 const ACCEPTANCE_METHODS = ['in_person', 'phone', 'signed_paper', 'secure_link'] as const;
@@ -122,7 +122,7 @@ function externalEligibilityError(record: NonNullable<Awaited<ReturnType<typeof 
   return null;
 }
 
-/** Return whether the current authority has a vehicle amendment newer than its latest driver acceptance. */
+/** Return whether the current authority has a driver-material amendment newer than its latest acceptance. */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const auth = await requireRequestAuth(request);
@@ -132,7 +132,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const record = await loadAcceptanceContext(tripId, session.tenantId);
     if (!record) return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
 
-    const pending = await findPendingVehicleReplacementAcceptance({
+    const pending = await findPendingAuthorityAmendmentAcceptance({
       authorityId: record.authorityId,
       acceptedAt: record.authorityAcceptedAt,
     });
@@ -163,6 +163,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       amendment: pending
         ? {
             id: pending.amendmentId,
+            amendmentType: pending.amendmentType,
             authorityVersion: pending.authorityVersion,
             reason: pending.reason,
             createdAt: pending.createdAt.toISOString(),
@@ -206,13 +207,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
-    const pending = await findPendingVehicleReplacementAcceptance({
+    const pending = await findPendingAuthorityAmendmentAcceptance({
       authorityId: record.authorityId,
       acceptedAt: record.authorityAcceptedAt,
     });
     if (!pending) {
       return NextResponse.json(
-        { error: 'There is no newer vehicle-replacement amendment awaiting driver acknowledgement.' },
+        { error: 'There is no newer material Trip Authority amendment awaiting driver acknowledgement.' },
         { status: 409 },
       );
     }
@@ -258,6 +259,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const acceptanceEvidence = JSON.stringify({
       source: internalDriver ? 'driver_console_amendment' : 'transport_office_external_amendment',
       amendmentId: pending.amendmentId,
+      amendmentType: pending.amendmentType,
       authorityVersion: pending.authorityVersion,
       allocationVersion: record.allocationVersion + 1,
       acceptedVehicleId: record.vehicleId,
@@ -296,8 +298,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
         )`;
 
     // Claim the exact allocation version before changing acceptance evidence.
-    // A second vehicle replacement, cancellation or physical issue must win or
-    // lose against this same lifecycle boundary instead of interleaving with it.
+    // Any replacement, cancellation or physical issue must serialize against
+    // this same boundary rather than interleaving with the acknowledgement.
     await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
@@ -325,7 +327,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         SET status = status
         WHERE am.id = ${pending.amendmentId}::uuid
           AND am.authority_id = ${record.authorityId}::uuid
-          AND am.amendment_type = 'vehicle_replacement'
+          AND am.amendment_type = ${pending.amendmentType}
           AND am.status = 'approved'
           AND EXISTS (SELECT 1 FROM allocation_claim)
           AND EXISTS (
@@ -392,8 +394,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       entityType: 'trip_amendment',
       entityId: pending.amendmentId,
       summary: internalDriver
-        ? 'Assigned driver acknowledged the revised Trip Authority after vehicle replacement.'
-        : 'Transport Administration recorded external-driver acceptance of the revised Trip Authority.',
+        ? `Assigned driver acknowledged the revised Trip Authority (${pending.amendmentType.replaceAll('_', ' ')}).`
+        : `Transport Administration recorded external-driver acceptance of the revised Trip Authority (${pending.amendmentType.replaceAll('_', ' ')}).`,
       reason: pending.reason,
       before: {
         authorityVersion: pending.authorityVersion,
@@ -426,7 +428,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         category: 'action_required',
         eventType: 'departure_inspection_required',
         title: 'Revised authority ready for departure inspection',
-        body: 'The assigned driver has acknowledged the Trip Authority after the vehicle replacement. Complete a fresh official departure inspection for the current vehicle.',
+        body: `The assigned driver has acknowledged a ${pending.amendmentType.replaceAll('_', ' ')} amendment. Complete a fresh official departure inspection before final Trip Authority issue and physical vehicle issue.`,
         entityType: 'trip',
         entityId: tripId,
         actionUrl: `/dashboard/inspections/new?type=departure&tripId=${tripId}&vehicleId=${record.vehicleId}`,
@@ -440,6 +442,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({
       success: true,
       amendmentId: pending.amendmentId,
+      amendmentType: pending.amendmentType,
       authorityId: record.authorityId,
       authorityVersion: pending.authorityVersion,
       documentId,
