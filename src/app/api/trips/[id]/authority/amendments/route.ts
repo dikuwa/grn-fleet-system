@@ -30,6 +30,17 @@ function optionalDate(value: unknown): Date | null {
   return Number.isFinite(parsed.getTime()) ? parsed : null;
 }
 
+function postgresErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -206,6 +217,15 @@ export async function PATCH(
         { status: 409 },
       );
     }
+    if (record.tripStatus === 'pending' && record.tripIssuedAt) {
+      return NextResponse.json(
+        {
+          error:
+            'This vehicle has already been physically issued against the current Trip Authority. A material pre-departure authority amendment cannot be approved until Transport Administration reverses that custody handoff or cancels/replans the trip.',
+        },
+        { status: 409 },
+      );
+    }
 
     const values = record.amendment.newValue;
     const amendmentType = record.amendment.amendmentType;
@@ -346,15 +366,14 @@ export async function PATCH(
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[authority/amendments] PATCH failed:', error);
-    if ((error as { code?: string })?.code === '23505') {
+    const code = postgresErrorCode(error);
+    if (
+      code === '23505' ||
+      (code === '23514' && String(error).includes('authority_amendment_lifecycle_conflict')) ||
+      String(error).includes('atomic_authority_amendment_failed')
+    ) {
       return NextResponse.json(
-        { error: 'This Trip Authority changed while the amendment was being decided. Refresh and review the latest version.' },
-        { status: 409 },
-      );
-    }
-    if (String(error).includes('atomic_authority_amendment_failed')) {
-      return NextResponse.json(
-        { error: 'This Trip Authority changed while the amendment was being decided. Refresh and review the latest version.' },
+        { error: 'This Trip Authority, trip custody state, or amendment version changed while the decision was being recorded. Refresh and review the latest authority before trying again.' },
         { status: 409 },
       );
     }
