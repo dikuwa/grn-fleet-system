@@ -23,11 +23,18 @@ if (SIGNATURE_FONT === 'Allura') {
 /**
  * Official document family typography.
  *
- * Fake Receipt is the primary thermal-receipt face and Share Tech Mono is the
- * bundled fallback. Both fonts are resolved from local application assets so
- * official PDF generation remains deterministic and does not require network
- * access at render time.
+ * Space Mono is the agreed primary face and Share Tech Mono is the bundled
+ * fallback. Older installations may not yet contain SpaceMono-Regular.ttf, so
+ * PDF rendering must degrade deterministically to Share Tech Mono rather than
+ * reverting to the all-caps receipt face. Fake Receipt remains registered for
+ * legacy/specialised documents that explicitly request it.
  */
+export const SPACE_MONO_FONT_PATH = path.join(
+  process.cwd(),
+  'public',
+  'official',
+  'SpaceMono-Regular.ttf',
+);
 export const FAKE_RECEIPT_FONT_PATH = path.join(
   process.cwd(),
   'public',
@@ -40,11 +47,12 @@ export const SHARE_TECH_MONO_FONT_PATH = path.join(
   'official',
   'ShareTechMono-Regular.ttf',
 );
-export const DOCUMENT_FONT = 'Fake Receipt';
+export const DOCUMENT_FONT = 'Space Mono';
 export const DOCUMENT_FONT_FALLBACK = 'Share Tech Mono';
+const spaceMonoPresent = existsSync(SPACE_MONO_FONT_PATH);
 const fakeReceiptPresent = existsSync(FAKE_RECEIPT_FONT_PATH);
 const shareTechMonoPresent = existsSync(SHARE_TECH_MONO_FONT_PATH);
-export const DOCUMENT_FONT_STACK: string[] = fakeReceiptPresent
+export const DOCUMENT_FONT_STACK: string[] = spaceMonoPresent
   ? shareTechMonoPresent
     ? [DOCUMENT_FONT, DOCUMENT_FONT_FALLBACK]
     : [DOCUMENT_FONT, 'Helvetica']
@@ -52,8 +60,11 @@ export const DOCUMENT_FONT_STACK: string[] = fakeReceiptPresent
     ? [DOCUMENT_FONT_FALLBACK, 'Helvetica']
     : ['Helvetica'];
 
+if (spaceMonoPresent) {
+  Font.register({ family: DOCUMENT_FONT, src: SPACE_MONO_FONT_PATH });
+}
 if (fakeReceiptPresent) {
-  Font.register({ family: DOCUMENT_FONT, src: FAKE_RECEIPT_FONT_PATH });
+  Font.register({ family: 'Fake Receipt', src: FAKE_RECEIPT_FONT_PATH });
 }
 if (shareTechMonoPresent) {
   Font.register({ family: DOCUMENT_FONT_FALLBACK, src: SHARE_TECH_MONO_FONT_PATH });
@@ -87,10 +98,11 @@ function tintHex(value: string | undefined, strength = 0.955): string {
 export const officialRedTheme: PdfTheme = {
   primary: OFFICIAL_RED,
   accent: OFFICIAL_RED,
-  tint: '#FFF5F5',
+  // Official forms use red as an accent/rule, not as a card background.
+  tint: '#FFFFFF',
   ink: INK,
   muted: MUTED,
-  rule: '#F0C9CB',
+  rule: '#E7B4B8',
 };
 
 const defaultTenantTheme: PdfTheme = {
@@ -211,7 +223,7 @@ export const documentStyles = StyleSheet.create({
   },
   officialPage: {
     borderWidth: 0,
-    backgroundColor: '#FFFAFA',
+    backgroundColor: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
@@ -367,19 +379,19 @@ export const documentStyles = StyleSheet.create({
   footerCentre: { width: '41%', textAlign: 'center' },
   footerRight: { width: '15%', textAlign: 'right' },
   signatureRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
-  signature: { flex: 1, minHeight: 48, paddingTop: 2, paddingHorizontal: 2 },
+  signature: { flex: 1, minHeight: 58, paddingTop: 2, paddingHorizontal: 3 },
   signatureStatement: {
     fontSize: 5.35,
     textAlign: 'center',
-    minHeight: 16,
+    minHeight: 14,
     color: '#344054',
   },
-  signatureImage: { height: 22, maxWidth: 96, objectFit: 'contain', objectPosition: 'left' },
+  signatureImage: { height: 31, maxWidth: 108, objectFit: 'contain', objectPosition: 'left' },
   signatureName: {
-    fontSize: 14.5,
-    lineHeight: 1.05,
+    fontSize: 10.8,
+    lineHeight: 1.08,
     fontFamily: SIGNATURE_FONT,
-    marginTop: 2,
+    marginTop: 1.5,
   },
   warnings: { marginTop: 3, marginBottom: 2 },
   warning: {
