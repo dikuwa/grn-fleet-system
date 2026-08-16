@@ -46,7 +46,7 @@ export function DocumentViewerActions({
 
   return (
     <>
-      <div className="flex flex-col items-end gap-2">
+      <div className="flex flex-col items-start gap-2 sm:items-end">
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="secondary"
@@ -77,7 +77,10 @@ export function DocumentViewerActions({
           </Button>
         </div>
         {printError ? (
-          <p className="text-status-error-text max-w-md text-right text-xs" role="alert">
+          <p
+            className="text-status-error-text max-w-md text-left text-xs sm:text-right"
+            role="alert"
+          >
             {printError}
           </p>
         ) : null}
