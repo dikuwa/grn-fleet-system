@@ -14,10 +14,20 @@ import {
   vehicleInspections,
 } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+function snapshotAuthorityVersion(snapshotData: unknown): number | null {
+  if (!snapshotData || typeof snapshotData !== 'object' || Array.isArray(snapshotData)) return null;
+  const renderData = (snapshotData as Record<string, unknown>).renderData;
+  if (!renderData || typeof renderData !== 'object' || Array.isArray(renderData)) return null;
+  const raw = (renderData as Record<string, unknown>).documentVersion;
+  const parsed = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
@@ -58,6 +68,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         assignmentAcceptedAt: externalDriverAssignments.acceptedAt,
         licenceId: externalDriverAssignments.licenceId,
         licenceStatus: externalDriverLicences.verificationStatus,
+        licenceClass: externalDriverLicences.licenceClass,
         licenceExpiry: externalDriverLicences.expiryDate,
         partyStatus: externalParties.status,
         tripStatus: trips.status,
@@ -72,9 +83,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         vehicleId: trips.vehicleId,
         vehicleStatus: vehicles.status,
         vehicleOdometer: vehicles.currentOdometer,
+        vehicleRequiredLicenceClass: vehicles.requiredLicenceClass,
         vehicleProfessionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
+        authorityDocumentVersion: tripAuthorities.documentVersion,
         authorityBeginningOdometer: tripAuthorities.beginningOdometer,
         authorityValidUntil: tripAuthorities.validUntil,
       })
@@ -128,6 +141,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         id: generatedDocuments.id,
         status: generatedDocuments.status,
         documentVersion: generatedDocuments.documentVersion,
+        snapshotData: generatedDocuments.snapshotData,
       })
       .from(generatedDocuments)
       .where(and(
@@ -138,12 +152,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ))
       .orderBy(desc(generatedDocuments.documentVersion))
       .limit(1);
-    if (!latestAuthorityDocument || latestAuthorityDocument.status !== 'issued') {
+    const issuedSnapshotAuthorityVersion = snapshotAuthorityVersion(latestAuthorityDocument?.snapshotData);
+    if (
+      !latestAuthorityDocument ||
+      latestAuthorityDocument.status !== 'issued' ||
+      issuedSnapshotAuthorityVersion !== record.authorityDocumentVersion
+    ) {
       return NextResponse.json(
         {
-          error: latestAuthorityDocument
-            ? `The current Trip Authority (v${latestAuthorityDocument.documentVersion}) must be formally issued before physical vehicle issue.`
-            : 'The Trip Authority document must be generated and formally issued before physical vehicle issue.',
+          error: !latestAuthorityDocument
+            ? 'The Trip Authority document must be generated and formally issued before physical vehicle issue.'
+            : latestAuthorityDocument.status !== 'issued'
+              ? `The current Trip Authority (v${latestAuthorityDocument.documentVersion}) must be formally issued before physical vehicle issue.`
+              : `The issued Trip Authority snapshot represents authority version ${issuedSnapshotAuthorityVersion ?? 'unknown'}, but the current authority is version ${record.authorityDocumentVersion}. Regenerate and formally issue the current authority before physical vehicle issue.`,
         },
         { status: 409 },
       );
@@ -163,6 +184,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     if (record.partyStatus !== 'active' || record.licenceStatus !== 'verified') {
       return NextResponse.json({ error: 'External driver eligibility is no longer valid' }, { status: 409 });
+    }
+    if (
+      record.vehicleRequiredLicenceClass &&
+      !namibiaLicenceClassCovers(record.licenceClass, record.vehicleRequiredLicenceClass)
+    ) {
+      return NextResponse.json(
+        { error: `External driver licence class ${record.licenceClass} does not cover vehicle requirement ${record.vehicleRequiredLicenceClass}` },
+        { status: 409 },
+      );
     }
     const expiryAt = new Date(`${record.licenceExpiry}T23:59:59.999Z`);
     const requiredThrough = record.authorityValidUntil ?? new Date();
@@ -228,8 +258,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const now = new Date();
     const auditSequence = Date.now();
 
-    // Match the internal issue boundary: replacement, cancellation and any
-    // other allocation mutation must win or lose against this exact version.
     await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations
@@ -267,7 +295,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND ep.tenant_id = ${tenantId}::uuid
               AND ep.status = 'active'
               AND edl.tenant_id = ${tenantId}::uuid
+              AND edl.id = ${record.licenceId}::uuid
               AND edl.verification_status = 'verified'
+              AND edl.licence_class = ${record.licenceClass}
               AND edl.expiry_date >= COALESCE(
                 (SELECT ta.valid_until::date FROM trip_authorities ta WHERE ta.trip_id = trips.id AND ta.tenant_id = ${tenantId}::uuid),
                 CURRENT_DATE
@@ -285,6 +315,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             WHERE ta.trip_id = trips.id
               AND ta.tenant_id = ${tenantId}::uuid
               AND ta.status = 'ready_for_departure'
+              AND ta.document_version = ${record.authorityDocumentVersion}
           )
           AND EXISTS (
             SELECT 1
@@ -294,6 +325,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND gd.entity_id = trips.allocation_id
               AND gd.document_type = 'trip_authority'
               AND gd.status = 'issued'
+              AND (gd.snapshot_data #>> '{renderData,documentVersion}') ~ '^[0-9]+$'
+              AND (gd.snapshot_data #>> '{renderData,documentVersion}')::integer = ${record.authorityDocumentVersion}
               AND NOT EXISTS (
                 SELECT 1
                 FROM generated_documents newer
@@ -310,6 +343,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
               AND v.tenant_id = ${tenantId}::uuid
               AND v.status = 'available'
               AND v.professional_authorisation_required = false
+              AND (
+                v.required_licence_class IS NULL
+                OR CASE
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) IN ('EC', 'CE') THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C', 'BE', 'EB', 'C1E', 'CE1', 'CE', 'EC')
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) IN ('C1E', 'CE1') THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'BE', 'EB', 'C1E', 'CE1')
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'C' THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1', 'C')
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'C1' THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'C1')
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) IN ('BE', 'EB') THEN upper(replace(v.required_licence_class, ' ', '')) IN ('B', 'BE', 'EB')
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'B' THEN upper(replace(v.required_licence_class, ' ', '')) = 'B'
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'A' THEN upper(replace(v.required_licence_class, ' ', '')) IN ('A', 'A1')
+                  WHEN upper(replace(${record.licenceClass}::text, ' ', '')) = 'A1' THEN upper(replace(v.required_licence_class, ' ', '')) = 'A1'
+                  ELSE upper(replace(${record.licenceClass}::text, ' ', '')) = upper(replace(v.required_licence_class, ' ', ''))
+                END
+              )
           )
           AND NOT EXISTS (
             SELECT 1
@@ -398,6 +445,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           jsonb_build_object(
             'externalDriverAssignmentId', ${record.assignmentId}::text,
             'externalDriverPartyId', ${record.externalPartyId}::text,
+            'licenceId', ${record.licenceId}::text,
             'issueId', ${issueId}::text,
             'issueOdometer', ${issueOdometer}::integer,
             'keysIssued', true,
@@ -436,7 +484,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     console.error('[trips/external-issue] POST failed:', error);
     return NextResponse.json(
-      { error: 'Trip, allocation, driver, or vehicle state changed while physical issue was being recorded. Refresh and review the latest state.' },
+      { error: 'Trip, allocation, authority document, driver, or vehicle state changed while physical issue was being recorded. Refresh and review the latest state.' },
       { status: 409 },
     );
   }
