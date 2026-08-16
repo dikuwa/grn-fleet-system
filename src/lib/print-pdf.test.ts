@@ -42,9 +42,10 @@ describe('PDF printing', () => {
     vi.spyOn(document.body, 'appendChild').mockImplementation((node) => {
       const appended = appendChild(node);
       if (node instanceof HTMLIFrameElement && node.contentWindow) {
-        Object.defineProperty(node.contentWindow, 'print', { configurable: true, value: print });
-        Object.defineProperty(node.contentWindow, 'focus', { configurable: true, value: focus });
-        Object.defineProperty(node.contentWindow.HTMLCanvasElement.prototype, 'getContext', {
+        const frameWindow = node.contentWindow as Window & typeof globalThis;
+        Object.defineProperty(frameWindow, 'print', { configurable: true, value: print });
+        Object.defineProperty(frameWindow, 'focus', { configurable: true, value: focus });
+        Object.defineProperty(frameWindow.HTMLCanvasElement.prototype, 'getContext', {
           configurable: true,
           value: () => canvasContext,
         });
