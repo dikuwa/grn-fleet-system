@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2, Download, FileText, AlertCircle, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { printPdfFromUrl } from '@/lib/print-pdf';
 
 interface PdfPreviewProps {
   /** Document ID to fetch PDF for */
@@ -79,9 +78,15 @@ export function PdfPreview({ documentId, documentType }: PdfPreviewProps) {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => void printPdfFromUrl(`/api/documents/${documentId}/pdf`)}
+              asChild
             >
-              <Printer className="h-4 w-4" /> Print PDF
+              <a
+                href={`/api/documents/${documentId}/pdf?preview=1`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Printer className="h-4 w-4" /> Print PDF
+              </a>
             </Button>
           </>
         )}

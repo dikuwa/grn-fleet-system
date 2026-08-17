@@ -11,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { printPdfFromUrl } from '@/lib/print-pdf';
 import { DocumentPdfPreview } from './document-pdf-preview';
 
 /** Canonical document controls for preview, download and print. */
@@ -23,26 +22,9 @@ export function DocumentViewerActions({
   documentType: string;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [printError, setPrintError] = useState<string | null>(null);
-  const [printing, setPrinting] = useState(false);
   const pdfUrl = `/api/documents/${documentId}/pdf`;
   const previewUrl = `${pdfUrl}?preview=1`;
   const downloadName = `${documentType}-${documentId}.pdf`;
-
-  const printDocument = async () => {
-    setPrintError(null);
-    setPrinting(true);
-    try {
-      await printPdfFromUrl(previewUrl);
-    } catch (error) {
-      console.error('Document print failed:', error);
-      setPrintError(
-        error instanceof Error ? error.message : 'Could not prepare the PDF for printing.',
-      );
-    } finally {
-      setPrinting(false);
-    }
-  };
 
   return (
     <>
@@ -69,21 +51,14 @@ export function DocumentViewerActions({
           <Button
             variant="secondary"
             size="sm"
+            asChild
             className="text-status-pending-text hover:text-status-pending-text"
-            loading={printing}
-            onClick={() => void printDocument()}
           >
-            <Printer className="h-4 w-4" /> Print
+            <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+              <Printer className="h-4 w-4" /> Print
+            </a>
           </Button>
         </div>
-        {printError ? (
-          <p
-            className="text-status-error-text max-w-md text-left text-xs sm:text-right"
-            role="alert"
-          >
-            {printError}
-          </p>
-        ) : null}
       </div>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
@@ -113,11 +88,13 @@ export function DocumentViewerActions({
               <Button
                 variant="secondary"
                 size="sm"
+                asChild
                 className="text-status-pending-text hover:text-status-pending-text"
-                loading={printing}
-                onClick={() => void printDocument()}
               >
-                <Printer className="h-4 w-4" /> <span className="hidden sm:inline">Print</span>
+                <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+                  <Printer className="h-4 w-4" />{' '}
+                  <span className="hidden sm:inline">Print</span>
+                </a>
               </Button>
               <DialogClose asChild>
                 <Button
@@ -131,15 +108,6 @@ export function DocumentViewerActions({
               </DialogClose>
             </div>
           </DialogHeader>
-
-          {printError ? (
-            <div
-              className="border-status-error-text/20 bg-status-error-bg text-status-error-text shrink-0 border-b px-4 py-2 text-xs"
-              role="alert"
-            >
-              {printError}
-            </div>
-          ) : null}
 
           <div className="min-h-0 flex-1 overflow-hidden">
             <DocumentPdfPreview url={previewUrl} title="Official document PDF preview" />
