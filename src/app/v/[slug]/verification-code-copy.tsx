@@ -3,8 +3,10 @@
 import { Copy } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
-export function VerificationCodeCopy({ value }: { value: string }) {
+export function VerificationCodeCopy({ value }: { value: string | null | undefined }) {
   const { toast } = useToast();
+
+  if (!value) return null;
 
   async function copyCode() {
     try {
