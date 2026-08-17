@@ -4,7 +4,7 @@
  * useToast — compatibility adapter on top of react-hot-toast.
  *
  * Keeps the existing `{ toast, dismiss }` surface so all call sites continue
- * to work without changes.  Delegate every variant to react-hot-toast so the
+ * to work without changes. Delegate every variant to react-hot-toast so the
  * old manual DOM engine is no longer needed.
  *
  * Usage (unchanged from before):
@@ -18,7 +18,7 @@ import hotToast from 'react-hot-toast';
 export interface ToastOptions {
   title: string;
   description?: string;
-  variant?: 'default' | 'success' | 'error' | 'pending';
+  variant?: 'default' | 'success' | 'error' | 'pending' | 'warning';
   duration?: number;
 }
 
@@ -35,19 +35,26 @@ function buildContent(title: string, description?: string): React.ReactElement {
 }
 
 export function useToast() {
-  const toast = useCallback(({ title, description, variant = 'default', duration = 4000 }: ToastOptions) => {
-    const content = buildContent(title, description);
-    switch (variant) {
-      case 'success':
-        return hotToast.success(content, { duration });
-      case 'error':
-        return hotToast.error(content, { duration });
-      case 'pending':
-        return hotToast.loading(content, { duration });
-      default:
-        return hotToast(content, { duration });
-    }
-  }, []);
+  const toast = useCallback(
+    ({ title, description, variant = 'default', duration = 4000 }: ToastOptions) => {
+      const content = buildContent(title, description);
+      switch (variant) {
+        case 'success':
+          return hotToast.success(content, { duration });
+        case 'error':
+          return hotToast.error(content, { duration });
+        case 'pending':
+          return hotToast.loading(content, { duration });
+        // Warning is intentionally rendered through the standard themed toast
+        // channel. This keeps warnings non-destructive while allowing callers
+        // to express the correct semantic state without browser-native alerts.
+        case 'warning':
+        default:
+          return hotToast(content, { duration });
+      }
+    },
+    [],
+  );
 
   return useMemo(() => ({ toast, dismiss: hotToast.dismiss }), [toast]);
 }
