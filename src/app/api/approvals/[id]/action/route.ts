@@ -14,6 +14,7 @@ import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 import { processAuthorisationDecision } from '@/lib/authorisation-decision';
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
+import { evaluateTripReleaseGate } from '@/lib/trip-release-gate';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
   switch (actionType) {
@@ -147,6 +148,32 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
     }
 
+    // Final organisational authorisation is the transition where operational
+    // safety must be re-checked. Use the same release-gate service exposed to
+    // readiness UIs instead of adding another local set of licence/vehicle/
+    // schedule rules here.
+    if (stepActionType === 'authorise' && actionType === 'approved') {
+      const releaseGate = await evaluateTripReleaseGate({
+        tenantId: session.tenantId,
+        requestId: instance.requestId,
+        stage: 'authorisation',
+      });
+      if (!releaseGate.allowed) {
+        return NextResponse.json(
+          {
+            error: 'Final authorisation is blocked by operational release requirements.',
+            blockers: releaseGate.blockers,
+            checks: releaseGate.checks,
+            driverKind: releaseGate.driverKind,
+            actionUrl: releaseGate.tripId
+              ? `/dashboard/trips/${releaseGate.tripId}`
+              : `/dashboard/approvals/${id}/action`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const semanticResult: WorkflowActionResult =
       actionType === 'approved'
         ? semanticPositiveResult(stepActionType)
@@ -184,9 +211,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!result.ok) return result.error;
 
-    // Outbound email is deliberately post-commit and best-effort. Await it so
-    // serverless runtimes cannot terminate delivery after the response, while
-    // the helper itself still swallows mail failures for already-durable actions.
     await sendWorkflowOutcomeEmailBestEffort({
       requestId: instance.requestId,
       result: semanticResult,
