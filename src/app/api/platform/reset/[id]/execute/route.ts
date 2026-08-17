@@ -3,6 +3,10 @@ import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/reset-service';
 import { notifyResetRequesterOutcome } from '@/lib/platform/reset-notifications';
+import {
+  acquireResetExecutionClaim,
+  releaseResetExecutionClaim,
+} from '@/lib/reset-execution-guard';
 
 export const maxDuration = 300;
 
@@ -11,9 +15,14 @@ export const maxDuration = 300;
  *
  * Preconditions are enforced by the reset service: approved request, successful
  * fresh dry run, verified durable recovery point, unchanged plan fingerprint,
- * and exact `RESET <TENANT_CODE>` typed confirmation.
+ * and exact `RESET <TENANT_CODE>` typed confirmation. A short-lived execution
+ * claim closes the double-click/concurrent-request window before destructive
+ * work begins, and approved plans expire instead of remaining executable
+ * indefinitely.
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let claimId: string | null = null;
+  let resetRequestId = '';
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -22,9 +31,22 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
+    resetRequestId = id;
     const body = await request.json().catch(() => ({}));
     const confirmationPhrase =
       typeof body.confirmationPhrase === 'string' ? body.confirmationPhrase : '';
+
+    const claim = await acquireResetExecutionClaim({
+      resetRequestId: id,
+      actorUserId: session.user.id,
+    });
+    if (!claim.ok) {
+      return NextResponse.json(
+        { error: claim.message, code: claim.code, data: claim.data ?? null },
+        { status: claim.status },
+      );
+    }
+    claimId = claim.claimId;
 
     const result = await executeApprovedTenantOperationalReset({
       resetRequestId: id,
@@ -60,10 +82,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       { status: result.result === 'completed' ? 200 : 500 },
     );
   } catch (error) {
+    if (claimId && resetRequestId) {
+      await releaseResetExecutionClaim({ resetRequestId, claimId }).catch((releaseError) => {
+        console.error('[Platform Reset Execute] Could not release execution claim:', releaseError);
+      });
+    }
     console.error('[Platform Reset Execute] POST failed:', error);
     const message = error instanceof Error ? error.message : String(error);
     const isPrecondition =
-      /approve|dry run|recovery point|confirmation|changed|operational reset/i.test(message);
+      /approve|expired|dry run|recovery point|confirmation|changed|operational reset|execution claim/i.test(message);
     return NextResponse.json({ error: message }, { status: isPrecondition ? 409 : 500 });
   }
 }
