@@ -7,14 +7,30 @@ export type WorkflowPresetId = 'lean' | 'standard' | 'controlled';
 export type AssignmentStrategy =
   'requester_supervisor' | 'department_permission_pool' | 'permission_pool' | 'named_user';
 
+/**
+ * These stages are operational lifecycle controls, not ordinary tenant approval
+ * gates. They remain persisted in the existing workflow definition for runtime
+ * compatibility, but builders should present them as governed/locked stages.
+ */
+export const SYSTEM_LIFECYCLE_ACTIONS: GovernedWorkflowAction[] = [
+  'transport_review',
+  'acknowledge',
+];
+
+/** Approval/release gates a tenant may opt into without changing the system lifecycle. */
+export const TENANT_OPTIONAL_WORKFLOW_ACTIONS: GovernedWorkflowAction[] = [
+  'supervisor_approve',
+  'release',
+];
+
 export const WORKFLOW_ASSIGNMENT_STRATEGIES = [
-  { id: 'requester_supervisor', label: "Requester's recorded supervisor" },
+  { id: 'requester_supervisor', label: "Requester's supervisor" },
   {
     id: 'department_permission_pool',
-    label: "Eligible supervisors within the requester's department",
+    label: "Department approval pool",
   },
-  { id: 'permission_pool', label: 'Permission-based tenant pool' },
-  { id: 'named_user', label: 'Named eligible person' },
+  { id: 'permission_pool', label: 'Eligible tenant approval pool' },
+  { id: 'named_user', label: 'Specific eligible person' },
 ] as const;
 
 export const DEFAULT_ASSIGNMENT_FALLBACKS: AssignmentStrategy[] = [
@@ -31,6 +47,11 @@ export const GOVERNED_ACTION_ORDER: GovernedWorkflowAction[] = [
   'acknowledge',
 ];
 
+/**
+ * The current engine still requires transport review, final authorisation and
+ * driver acknowledgement. Keeping this contract avoids changing active request
+ * semantics while the UI distinguishes system lifecycle from tenant choices.
+ */
 export const MANDATORY_WORKFLOW_ACTIONS: GovernedWorkflowAction[] = [
   'transport_review',
   'authorise',
@@ -40,15 +61,14 @@ export const MANDATORY_WORKFLOW_ACTIONS: GovernedWorkflowAction[] = [
 export const WORKFLOW_PRESETS = [
   {
     id: 'lean' as const,
-    label: 'Lean',
-    description: 'Transport Review → Final Authorisation → Driver Acknowledgement',
+    label: 'Simple',
+    description: 'No department supervisor gate. Uses the governed transport lifecycle.',
     actions: ['transport_review', 'authorise', 'acknowledge'] as GovernedWorkflowAction[],
   },
   {
     id: 'standard' as const,
     label: 'Standard',
-    description:
-      'Supervisor Approval → Transport Review → Final Authorisation → Driver Acknowledgement',
+    description: 'Adds the requester’s supervisor before the governed transport lifecycle.',
     actions: [
       'supervisor_approve',
       'transport_review',
@@ -60,42 +80,58 @@ export const WORKFLOW_PRESETS = [
     id: 'controlled' as const,
     label: 'Controlled',
     description:
-      'Supervisor Approval → Transport Review → Administrative Release → Final Authorisation → Driver Acknowledgement',
+      'Adds supervisor approval and an administrative release gate around the governed transport lifecycle.',
     actions: GOVERNED_ACTION_ORDER,
   },
 ] as const;
+
+export function isSystemLifecycleAction(actionType: string): boolean {
+  return SYSTEM_LIFECYCLE_ACTIONS.includes(actionType as GovernedWorkflowAction);
+}
+
+export function isTenantOptionalWorkflowAction(actionType: string): boolean {
+  return TENANT_OPTIONAL_WORKFLOW_ACTIONS.includes(actionType as GovernedWorkflowAction);
+}
 
 export function governedStage(actionType: GovernedWorkflowAction, scope: string) {
   const national = scope === 'national';
   const stages = {
     supervisor_approve: {
       label: 'Supervisor Approval',
-      description: "The sponsor or requester's supervisor reviews the request.",
+      description: "Optional organisational gate resolved from the sponsor or requester's supervisor path.",
       requiredPermission: Permissions.REQUEST_APPROVE_SUPERVISOR,
+      stageKind: 'tenant_gate' as const,
     },
     transport_review: {
       label: 'Transport Review',
-      description: 'Transport Administration reviews feasibility and operational requirements.',
+      description:
+        'System lifecycle stage: Transport Administration validates feasibility, driver, vehicle and operational requirements.',
       requiredPermission: Permissions.REQUEST_REVIEW_TRANSPORT,
+      stageKind: 'system_lifecycle' as const,
     },
     release: {
       label: 'Administrative Release',
-      description: 'An authorised officer releases the request for final authorisation.',
+      description: 'Optional governed release gate used by organisations that require it.',
       requiredPermission: national
         ? Permissions.VEHICLE_RELEASE_NATIONAL
         : Permissions.VEHICLE_RELEASE_REGIONAL,
+      stageKind: 'tenant_gate' as const,
     },
     authorise: {
       label: 'Final Authorisation',
-      description: 'The designated authority gives final approval.',
+      description:
+        'Governed authority gate required by the current transport lifecycle. The responsible role/person may be resolved by tenant configuration.',
       requiredPermission: national
         ? Permissions.TRIP_AUTHORIZE_NATIONAL
         : Permissions.TRIP_AUTHORIZE_REGIONAL,
+      stageKind: 'governed_authority' as const,
     },
     acknowledge: {
       label: 'Driver Acknowledgement',
-      description: 'The allocated driver acknowledges the final trip and vehicle details.',
+      description:
+        'System lifecycle stage completed by the allocated driver from Driver Console after authorisation.',
       requiredPermission: Permissions.DRIVER_LOG_CREATE,
+      stageKind: 'system_lifecycle' as const,
     },
   } as const;
   return stages[actionType];
@@ -113,7 +149,7 @@ export function validateGovernedActions(
         : '',
   );
   if (actions.some((action) => !GOVERNED_ACTION_ORDER.includes(action as GovernedWorkflowAction))) {
-    return { ok: false, error: 'Only governed approval stages may be published.' };
+    return { ok: false, error: 'Only governed transport workflow stages may be published.' };
   }
   if (new Set(actions).size !== actions.length) {
     return { ok: false, error: 'A governed stage can only appear once.' };
