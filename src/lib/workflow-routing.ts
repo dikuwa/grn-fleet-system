@@ -1,3 +1,5 @@
+import { GOVERNED_ACTION_ORDER } from '@/lib/workflow-builder';
+
 export type PersistedRoutingStep = {
   id: string;
   stepOrder: number;
@@ -17,8 +19,9 @@ export type RoutingValidationResult =
 
 /**
  * Validate the complete ordered step list before a new workflow version is
- * published. Driver acknowledgement remains terminal because it depends on an
- * authorised trip and the final vehicle/driver allocation.
+ * published. The current engine is a governed state machine, so tenant routing
+ * may choose assignees and optional gates but cannot reorder lifecycle stages
+ * into a sequence the runtime cannot execute safely.
  */
 export function validateWorkflowRouting(
   persistedSteps: PersistedRoutingStep[],
@@ -70,6 +73,19 @@ export function validateWorkflowRouting(
   const ordered = [...steps].sort((left, right) => left.stepOrder - right.stepOrder);
   if (ordered.some((step, index) => step.stepOrder !== index + 1)) {
     return { ok: false, error: 'Workflow step order must be a continuous sequence starting at 1.' };
+  }
+
+  const actionOrder = ordered.map((step) => persistedById.get(step.id)?.actionType ?? '');
+  const canonical = GOVERNED_ACTION_ORDER.filter((action) => actionOrder.includes(action));
+  if (
+    actionOrder.length !== canonical.length ||
+    actionOrder.some((action, index) => canonical[index] !== action)
+  ) {
+    return {
+      ok: false,
+      error:
+        'Approval gates must remain in the governed transport lifecycle order. Change assignees or optional stages instead of reordering system stages.',
+    };
   }
 
   const acknowledgementSteps = ordered.filter(
