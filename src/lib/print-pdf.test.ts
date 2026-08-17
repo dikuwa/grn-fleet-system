@@ -66,4 +66,38 @@ describe('PDF printing', () => {
     );
     expect(close).toHaveBeenCalledOnce();
   });
+
+  it('opens the canonical PDF in the current tab when popups are blocked', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const click = vi.fn();
+    const currentTabLink = {
+      href: '',
+      target: '',
+      rel: '',
+      click,
+    } as unknown as HTMLAnchorElement;
+    vi.spyOn(document, 'createElement').mockReturnValue(currentTabLink);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Blob(['%PDF-1.7'], { type: 'application/pdf' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      }),
+    );
+    const revokeObjectUrl = vi.fn();
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn().mockReturnValue('blob:https://fleet.example/current-tab-pdf'),
+      revokeObjectURL: revokeObjectUrl,
+    });
+
+    await expect(
+      printPdfFromUrl('/api/documents/document-1/pdf?preview=1'),
+    ).resolves.toBeUndefined();
+
+    expect(document.createElement).toHaveBeenCalledWith('a');
+    expect(currentTabLink.href).toBe('blob:https://fleet.example/current-tab-pdf');
+    expect(currentTabLink.target).toBe('_self');
+    expect(currentTabLink.rel).toBe('noopener');
+    expect(click).toHaveBeenCalledOnce();
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
 });
