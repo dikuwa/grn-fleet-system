@@ -1,76 +1,69 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchPdfBytes, loadPdfJs } from './pdfjs-client';
 import { printPdfFromUrl } from './print-pdf';
-
-vi.mock('./pdfjs-client', () => ({
-  fetchPdfBytes: vi.fn(),
-  loadPdfJs: vi.fn(),
-}));
 
 describe('PDF printing', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it('prints rendered pages from a same-origin document without navigating the iframe', async () => {
+  it('opens the canonical PDF in the native viewer without invoking cross-origin print', async () => {
     vi.useFakeTimers();
-    const render = vi.fn().mockReturnValue({ promise: Promise.resolve() });
-    const cleanupPage = vi.fn();
-    const destroyPdf = vi.fn();
-    const getPage = vi.fn().mockResolvedValue({
-      getViewport: () => ({ width: 595, height: 842 }),
-      render,
-      cleanup: cleanupPage,
-    });
-
-    vi.mocked(fetchPdfBytes).mockResolvedValue(new Uint8Array([37, 80, 68, 70, 45]));
-    vi.mocked(loadPdfJs).mockResolvedValue({
-      getDocument: () => ({
-        promise: Promise.resolve({ numPages: 1, getPage, destroy: destroyPdf }),
-      }),
-    });
-
-    const canvasContext = {
-      fillStyle: '',
-      fillRect: vi.fn(),
-    } as unknown as CanvasRenderingContext2D;
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(canvasContext);
+    const replace = vi.fn();
     const print = vi.fn();
-    const focus = vi.fn();
-    const appendChild = document.body.appendChild.bind(document.body);
-    vi.spyOn(document.body, 'appendChild').mockImplementation((node) => {
-      const appended = appendChild(node);
-      if (node instanceof HTMLIFrameElement && node.contentWindow) {
-        const frameWindow = node.contentWindow as Window & typeof globalThis;
-        Object.defineProperty(frameWindow, 'print', { configurable: true, value: print });
-        Object.defineProperty(frameWindow, 'focus', { configurable: true, value: focus });
-        Object.defineProperty(frameWindow.HTMLCanvasElement.prototype, 'getContext', {
-          configurable: true,
-          value: () => canvasContext,
-        });
-      }
-      return appended;
-    });
+    const printWindow = {
+      closed: false,
+      close: vi.fn(),
+      print,
+      document: { title: '', body: { innerHTML: '' } },
+      location: { replace },
+    } as unknown as Window;
+    vi.spyOn(window, 'open').mockReturnValue(printWindow);
 
-    let printFrame: HTMLIFrameElement | null = null;
-    const createElement = document.createElement.bind(document);
-    vi.spyOn(document, 'createElement').mockImplementation((tagName, options) => {
-      const element = createElement(tagName, options);
-      if (tagName === 'iframe') printFrame = element as HTMLIFrameElement;
-      return element;
-    });
+    const pdfBlob = new Blob(['%PDF-1.7'], { type: 'application/pdf' });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(pdfBlob, {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      }),
+    );
+    const createObjectUrl = vi.fn().mockReturnValue('blob:https://fleet.example/canonical-pdf');
+    const revokeObjectUrl = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL: createObjectUrl, revokeObjectURL: revokeObjectUrl });
 
     await printPdfFromUrl('/api/documents/document-1/pdf?preview=1');
 
-    expect(printFrame).not.toBeNull();
-    expect(printFrame!.getAttribute('src')).toBeNull();
-    expect(getPage).toHaveBeenCalledWith(1);
-    expect(render).toHaveBeenCalledOnce();
-    expect(cleanupPage).toHaveBeenCalledOnce();
-    expect(print).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith('/api/documents/document-1/pdf?preview=1', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/pdf' },
+    });
+    expect(createObjectUrl).toHaveBeenCalledWith(expect.objectContaining({ type: 'application/pdf' }));
+    expect(replace).toHaveBeenCalledWith('blob:https://fleet.example/canonical-pdf');
+    expect(print).not.toHaveBeenCalled();
 
-    vi.runAllTimers();
-    expect(destroyPdf).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(5 * 60 * 1000);
+    expect(print).not.toHaveBeenCalled();
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:https://fleet.example/canonical-pdf');
+  });
+
+  it('closes the preparation window when the endpoint does not return a PDF', async () => {
+    const close = vi.fn();
+    vi.spyOn(window, 'open').mockReturnValue({
+      close,
+      document: { title: '', body: { innerHTML: '' } },
+    } as unknown as Window);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Not authorised', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      }),
+    );
+
+    await expect(printPdfFromUrl('/api/documents/document-1/pdf?preview=1')).rejects.toThrow(
+      'The server did not return a PDF.',
+    );
+    expect(close).toHaveBeenCalledOnce();
   });
 });

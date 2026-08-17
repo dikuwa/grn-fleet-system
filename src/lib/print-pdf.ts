@@ -20,7 +20,8 @@ export async function printPdfFromUrl(url: string): Promise<void> {
   printWindow.document.title = 'Preparing official document';
   printWindow.document.body.innerHTML = `
     <main style="font-family:system-ui,sans-serif;padding:24px;color:#172033;background:#fff">
-      <p>Preparing the official PDF for printing…</p>
+      <p>Opening the official PDF…</p>
+      <p>Use the browser PDF viewer's Print control for full-quality printing.</p>
     </main>
   `;
 
@@ -53,22 +54,12 @@ export async function printPdfFromUrl(url: string): Promise<void> {
     // printing screenshots of rendered pages.
     printWindow.location.replace(objectUrl);
 
-    // Native PDF viewers do not expose a reliable load event to the opener.
-    // Request print after the viewer has had time to initialise. If a browser
-    // blocks scripted printing, the original PDF remains open with its native
-    // Print control available, which is preferable to degrading document quality.
-    window.setTimeout(() => {
-      try {
-        if (printWindow.closed) {
-          revoke();
-          return;
-        }
-        printWindow.focus();
-        printWindow.print();
-      } catch {
-        // Intentional fallback: leave the native PDF viewer open.
-      }
-    }, 1200);
+    // Do not call printWindow.print() after this navigation. Chromium hands
+    // blob PDFs to its extension-backed viewer, whose window is cross-origin
+    // from the application. Calling Window#print across that boundary either
+    // throws a security error or prints the viewer surface as a rasterised web
+    // page. The native viewer remains open with its own Print control, which
+    // sends the canonical PDF bytes to the print pipeline without resampling.
 
     // Keep the object URL alive long enough for the viewer and print dialog to
     // finish reading the PDF. Browser/page teardown will also release it.
