@@ -84,13 +84,14 @@ export async function notifyResetRequesterOutcome(input: {
   const labels = {
     approved: {
       title: 'Your reset request was approved',
-      body: 'No tenant action is required. Platform Administration will verify the recovery point and execute the approved reset.',
-      type: 'awareness',
-      priority: 'normal',
+      body:
+        'Open Data Reset to review the approved scope. Operational and selective resets become executable by Tenant Administration once the recovery point is verified; protected clean slate remains Platform-executed.',
+      type: 'action_required',
+      priority: 'high',
     },
     in_progress: {
       title: 'Your approved reset is now in progress',
-      body: 'Platform Administration has verified the recovery point and started the reset. Avoid creating new records until completion.',
+      body: 'The verified reset plan is being executed. Avoid creating new records until completion.',
       type: 'awareness',
       priority: 'high',
     },
@@ -103,16 +104,17 @@ export async function notifyResetRequesterOutcome(input: {
       priority: 'normal',
     },
     completed: {
-      title: 'Your operational reset is complete',
-      body: 'Operational records were cleared successfully. Your users, roles, staff, vehicles, programmes, configuration and audit history were preserved.',
+      title: 'Your approved reset is complete',
+      body:
+        'The approved reset scope completed successfully and post-reset integrity checks passed. Protected audit and reset history remain available.',
       type: 'outcome',
       priority: 'high',
     },
     failed: {
-      title: 'Your operational reset needs attention',
+      title: 'Your reset needs attention',
       body:
         input.notes ||
-        'The reset did not complete. The recovery point remains available to the Platform Administrator.',
+        'The reset did not complete. The verified recovery point remains available to Platform Administration.',
       type: 'outcome',
       priority: 'high',
     },
@@ -133,7 +135,7 @@ export async function notifyResetRequesterOutcome(input: {
       entityId: input.requestId,
       actionUrl: `/dashboard/admin/data-reset?request=${input.requestId}`,
       workspace: WorkspaceIds.TENANT_ADMIN,
-      status: 'unread',
+      status: input.status === 'approved' ? 'action_required' : 'unread',
       priority: message.priority,
       dedupeKey: `tenant_reset_${input.status}:${input.requestId}:${input.requesterUserId}`,
     })

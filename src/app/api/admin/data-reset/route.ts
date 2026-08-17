@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
         reason: tenantResetRequests.reason,
         status: tenantResetRequests.status,
         requestedByUserId: tenantResetRequests.requestedByUserId,
+        confirmationPhrase: tenantResetRequests.confirmationPhrase,
         backupCreated: tenantResetRequests.backupCreated,
         backupRecordCount: tenantResetRequests.backupRecordCount,
         reviewedAt: tenantResetRequests.reviewedAt,
@@ -55,7 +56,25 @@ export async function GET(request: NextRequest) {
       .where(eq(tenantResetRequests.tenantId, auth.session.tenantId))
       .orderBy(desc(tenantResetRequests.createdAt));
 
-    return NextResponse.json({ success: true, data: { requests } });
+    return NextResponse.json({
+      success: true,
+      data: {
+        requests: requests.map((item) => {
+          const resetSpec = normalizeResetSpec(
+            (item.metadata as { resetSpec?: unknown } | null)?.resetSpec,
+            { target: 'tenant' },
+          );
+          const tenantExecutable =
+            item.status === 'approved' && item.backupCreated && resetSpec.preset !== 'clean_slate';
+          return {
+            ...item,
+            confirmationPhrase: tenantExecutable ? item.confirmationPhrase : null,
+            tenantExecutable,
+            platformExecutionRequired: resetSpec.preset === 'clean_slate',
+          };
+        }),
+      },
+    });
   } catch (error) {
     console.error('[Tenant Data Reset] GET failed:', error);
     return NextResponse.json(
@@ -77,7 +96,10 @@ export async function POST(request: NextRequest) {
     try {
       resetSpec = normalizeResetSpec(body.resetSpec, { target: 'tenant' });
     } catch (error) {
-      return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid reset selection' }, { status: 400 });
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Invalid reset selection' },
+        { status: 400 },
+      );
     }
     if (reason.length < 20) {
       return NextResponse.json(
@@ -149,7 +171,7 @@ export async function POST(request: NextRequest) {
         action: 'reset_request.submitted',
         entityType: 'reset_request',
         entityId: created.id,
-        summary: `${tenant.name} requested a platform-admin reset plan.`,
+        summary: `${tenant.name} requested a governed reset plan.`,
         after: { status: 'pending_review', scope: resetScopeForSpec(resetSpec), resetSpec, reason },
       }),
       notifyPlatformResetRequested({
