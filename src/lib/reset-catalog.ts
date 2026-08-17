@@ -37,11 +37,12 @@ export const RESET_CATEGORY_CATALOG: readonly ResetCategoryDefinition[] = [
     id: 'operations',
     label: 'Requests & operations',
     description:
-      'Requests, workflows, allocations, trips, logs, fuel, inspections, defects and related notifications.',
+      'Approvals, requests, goods and equipment, allocations, trips, logs, fuel, inspection records, defects, external assignments and operational notifications.',
     risk: 'standard',
     dependencies: [],
     supportsCutoff: true,
-    dashboardEffect: 'Requests and trips decrease.',
+    dashboardEffect:
+      'Approval, request, trip, allocation, log, fuel and inspection dashboards are cleared; live reports update from the remaining records.',
   },
   {
     id: 'documents',
@@ -51,7 +52,7 @@ export const RESET_CATEGORY_CATALOG: readonly ResetCategoryDefinition[] = [
     risk: 'elevated',
     dependencies: [],
     supportsCutoff: true,
-    dashboardEffect: 'Document and attachment history decreases.',
+    dashboardEffect: 'Generated reports, documents and shared links are cleared.',
   },
   {
     id: 'programmes',
@@ -77,7 +78,7 @@ export const RESET_CATEGORY_CATALOG: readonly ResetCategoryDefinition[] = [
     id: 'people',
     label: 'People & drivers',
     description:
-      'Staff, driver profiles, licences, employee documents, assignments and availability history.',
+      'Staff, external parties, driver profiles, all licence versions and images, employee documents, assignments and availability history.',
     risk: 'critical',
     dependencies: ['operations'],
     supportsCutoff: false,
@@ -107,7 +108,7 @@ export const RESET_CATEGORY_CATALOG: readonly ResetCategoryDefinition[] = [
     id: 'configuration',
     label: 'Workflow & tenant configuration',
     description:
-      'Workflow definitions, inspection templates, holidays, preferences and tenant numbering sequences.',
+      'Workflow definitions, inspection templates, holidays, preferences and tenant numbering sequences. Inspection records remain under Operations.',
     risk: 'critical',
     dependencies: ['operations'],
     supportsCutoff: false,

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   CheckCircle2,
   Clock3,
@@ -52,7 +53,8 @@ const STATUS: Record<string, { label: string; variant: BadgeProps['variant']; de
   approved: {
     label: 'Approved',
     variant: 'info',
-    detail: 'The Platform Administrator is preparing the dry run and recovery point.',
+    detail:
+      'No tenant action is required. Platform Administration will verify the recovery point and execute the reset.',
   },
   in_progress: {
     label: 'Reset in progress',
@@ -83,6 +85,8 @@ function formatDate(value: string | null) {
 }
 
 export default function TenantDataResetPage() {
+  const searchParams = useSearchParams();
+  const highlightedRequestId = searchParams.get('request');
   const { toast } = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [requests, setRequests] = useState<TenantResetRequest[]>([]);
@@ -118,6 +122,13 @@ export default function TenantDataResetPage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    if (loading || !highlightedRequestId) return;
+    document
+      .getElementById(`reset-request-${highlightedRequestId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightedRequestId, loading, requests]);
 
   const openRequest = useMemo(
     () =>
@@ -260,7 +271,7 @@ export default function TenantDataResetPage() {
                 <div className="space-y-1.5">
                   <Label htmlFor="reset-acknowledgement">
                     Type{' '}
-                    <span className="font-semibold text-status-error-text">
+                    <span className="text-status-error-text font-semibold">
                       &quot;{TENANT_RESET_REQUEST_PHRASE}&quot;
                     </span>
                   </Label>
@@ -313,7 +324,15 @@ export default function TenantDataResetPage() {
                     request.results?.dryRunSummary?.total ??
                     request.validationResults?.dryRunSummary?.total;
                   return (
-                    <article key={request.id} className="border-border rounded-[8px] border p-4">
+                    <article
+                      key={request.id}
+                      id={`reset-request-${request.id}`}
+                      className={`rounded-[8px] border p-4 transition-shadow ${
+                        highlightedRequestId === request.id
+                          ? 'border-primary-500 ring-primary-500/20 ring-4'
+                          : 'border-border'
+                      }`}
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Badge variant={status.variant}>{status.label}</Badge>
@@ -332,7 +351,8 @@ export default function TenantDataResetPage() {
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {request.metadata.resetSpec.categories.map((id) => (
                             <Badge key={id} variant="info" size="sm">
-                              {RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label ?? id}
+                              {RESET_CATEGORY_CATALOG.find((category) => category.id === id)
+                                ?.label ?? id}
                             </Badge>
                           ))}
                         </div>
@@ -341,6 +361,34 @@ export default function TenantDataResetPage() {
                         {status.detail}
                         {typeof impact === 'number' ? ` Impact: ${impact} operational rows.` : ''}
                       </p>
+                      {!['rejected', 'failed', 'cancelled'].includes(request.status) && (
+                        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {[
+                            ['Requested', true],
+                            ['Impact reviewed', Boolean(request.validationResults?.dryRunSummary)],
+                            [
+                              'Approved',
+                              Boolean(request.reviewedAt) &&
+                                ['approved', 'in_progress', 'completed'].includes(request.status),
+                            ],
+                            ['Recovery point verified', request.backupCreated],
+                            ['In progress', Boolean(request.startedAt)],
+                            ['Completed', request.status === 'completed'],
+                          ].map(([label, done]) => (
+                            <div
+                              key={String(label)}
+                              className={`flex items-center gap-1.5 text-xs ${done ? 'text-status-success-text' : 'text-ink-400'}`}
+                            >
+                              {done ? (
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              ) : (
+                                <Clock3 className="h-3.5 w-3.5" />
+                              )}
+                              <span>{String(label)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {(request.reviewNotes || request.failureReason) && (
                         <div className="bg-muted/60 mt-3 rounded-[8px] p-3">
                           <p className="text-ink-700 text-xs font-semibold">Platform response</p>

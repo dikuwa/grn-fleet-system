@@ -83,10 +83,7 @@ export interface ResetPlan {
 // Query helpers (driver-agnostic via db.execute + drizzle sql templates)
 // ---------------------------------------------------------------------------
 
-async function queryRows(
-  db: ResetDb,
-  query: SQL,
-): Promise<Array<Record<string, unknown>>> {
+async function queryRows(db: ResetDb, query: SQL): Promise<Array<Record<string, unknown>>> {
   const result = await db.execute(query);
   return result.rows ?? [];
 }
@@ -196,6 +193,12 @@ export function resolveStepCondition(
       if (parts.length === 0) return null;
       return sql`tenant_id = ${tenantId} AND (${sql.join(parts, sql` OR `)})`;
     }
+    case 'notification_deliveries':
+    case 'notification_reads':
+    case 'notification_dismissals': {
+      if (notificationIds.length === 0) return null;
+      return sql`notification_id = ANY(${sql.raw(uuidArrayLiteral(notificationIds))})`;
+    }
     // -- share links for removed documents
     case 'share_links': {
       if (documentIds.length === 0) return null;
@@ -260,7 +263,11 @@ export function resolveStepCondition(
 // Plan building
 // ---------------------------------------------------------------------------
 
-async function collectEntityIds(db: ResetDb, tenantId: string, cutoff?: Date | null): Promise<EntityIdSets> {
+async function collectEntityIds(
+  db: ResetDb,
+  tenantId: string,
+  cutoff?: Date | null,
+): Promise<EntityIdSets> {
   const requestIds = await collectIds(
     db,
     cutoff
@@ -389,7 +396,12 @@ async function collectStorageKeys(
   for (const step of steps) {
     if (!step.fileKeyColumns || step.fileKeyColumns.length === 0) continue;
     const condition = resolveStepCondition(
-      { table: step.table, label: step.label, scope: step.scope, fileKeyColumns: step.fileKeyColumns },
+      {
+        table: step.table,
+        label: step.label,
+        scope: step.scope,
+        fileKeyColumns: step.fileKeyColumns,
+      },
       ids,
       tenantId,
     );
@@ -397,8 +409,7 @@ async function collectStorageKeys(
     // Join the column *names* — sql.raw() returns a SQL object whose String()
     // is "[object Object]", so it must be applied to the final joined string.
     const selectColumns = step.fileKeyColumns.join(', ');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const query = sql`SELECT ${sql.raw(selectColumns)} FROM ${sql.raw(quoteTable(step.table))} WHERE ${condition}` as any;
+    const query: SQL = sql`SELECT ${sql.raw(selectColumns)} FROM ${sql.raw(quoteTable(step.table))} WHERE ${condition}`;
     const rows = await queryRows(db, query);
     for (const row of rows) {
       for (const col of step.fileKeyColumns) {
@@ -423,11 +434,7 @@ async function countTable(db: ResetDb, table: string): Promise<number> {
  * the rest of the schema does, so the preserved counts are accurate rather
  * than global.
  */
-function countPreservedTable(
-  db: ResetDb,
-  table: string,
-  tenantId: string,
-): Promise<number> {
+function countPreservedTable(db: ResetDb, table: string, tenantId: string): Promise<number> {
   switch (table) {
     case 'employee_number_counters':
       return queryCount(
@@ -526,7 +533,13 @@ function assertTenantId(tenantId: string): void {
 
 export async function buildResetPlan(
   db: ResetDb,
-  opts: { tenantId: string; mode: ResetMode; dryRun: boolean; timestamp: string; cutoff?: Date | null },
+  opts: {
+    tenantId: string;
+    mode: ResetMode;
+    dryRun: boolean;
+    timestamp: string;
+    cutoff?: Date | null;
+  },
 ): Promise<ResetPlan> {
   const { tenantId, mode, dryRun, timestamp } = opts;
   assertTenantId(tenantId);
@@ -646,6 +659,13 @@ export async function buildResetPlan(
     steps,
     fileKeys,
     review,
-    preserved: [...preserved, { table: 'transport_requests', label: 'Seeded operational requests (marker)', count: seededRequests }],
+    preserved: [
+      ...preserved,
+      {
+        table: 'transport_requests',
+        label: 'Seeded operational requests (marker)',
+        count: seededRequests,
+      },
+    ],
   };
 }

@@ -19,10 +19,7 @@ import {
   tenantExecutionResetPhrase,
 } from '@/lib/reset-workflow';
 import { normalizeResetSpec, type ResetSpec } from '@/lib/reset-catalog';
-import {
-  buildAdvancedResetPlan,
-  type AdvancedResetPlan,
-} from './advanced-reset-plan';
+import { buildAdvancedResetPlan, type AdvancedResetPlan } from './advanced-reset-plan';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
 export interface ResetPreview {
@@ -94,7 +91,13 @@ export async function previewTenantOperationalReset(
     : 0;
   const operationalFingerprint = resetPlanFingerprint(plan);
   const fingerprint = createHash('sha256')
-    .update(JSON.stringify({ operationalFingerprint, advancedFingerprint: advancedPlan.fingerprint, resetSpec }))
+    .update(
+      JSON.stringify({
+        operationalFingerprint,
+        advancedFingerprint: advancedPlan.fingerprint,
+        resetSpec,
+      }),
+    )
     .digest('hex');
   const preview: ResetPreview = {
     tenantId: plan.tenantId,
@@ -104,8 +107,12 @@ export async function previewTenantOperationalReset(
       ...summarizePlan(plan),
       requests: resetSpec.categories.includes('operations') ? plan.ids.requestIds.length : 0,
       trips: resetSpec.categories.includes('operations') ? plan.ids.tripIds.length : 0,
-      documents: (resetSpec.categories.includes('operations') ? plan.ids.generatedDocumentIds.length : 0) + (advancedPlan.categoryCounts.documents ?? 0),
-      notifications: resetSpec.categories.includes('operations') ? plan.ids.notificationIds.length : 0,
+      documents:
+        (resetSpec.categories.includes('operations') ? plan.ids.generatedDocumentIds.length : 0) +
+        (advancedPlan.categoryCounts.documents ?? 0),
+      notifications: resetSpec.categories.includes('operations')
+        ? plan.ids.notificationIds.length
+        : 0,
       total: operationalTotal + advancedPlan.total,
     },
     steps: [
@@ -157,7 +164,8 @@ async function executeResetPlanAtomically(
       }
     }
     for (const step of advancedPlan.steps) {
-      if (step.before) mutations.push(executor.delete(resetTable(step.table)).where(step.condition));
+      if (step.before)
+        mutations.push(executor.delete(resetTable(step.table)).where(step.condition));
     }
     return mutations;
   });
@@ -168,6 +176,12 @@ export async function executeApprovedTenantOperationalReset(input: {
   actorUserId: string;
   actorTenantId: string;
   confirmationPhrase: string;
+  onStarted?: (context: {
+    requestId: string;
+    tenantId: string;
+    requesterUserId: string;
+    tenantOrigin: boolean;
+  }) => Promise<void>;
 }) {
   const db = getDb();
   const [requestRow] = await db
@@ -219,10 +233,11 @@ export async function executeApprovedTenantOperationalReset(input: {
   // This also downloads and verifies the archive checksum/tenant identity before deletion begins.
   await readBackupPayload(backup.id);
 
-  const { preview: freshPreview, plan, advancedPlan } = await previewTenantOperationalReset(
-    resetRequest.tenantId,
-    resetSpec,
-  );
+  const {
+    preview: freshPreview,
+    plan,
+    advancedPlan,
+  } = await previewTenantOperationalReset(resetRequest.tenantId, resetSpec);
   if (
     freshPreview.fingerprint !== storedFingerprint ||
     freshPreview.dryRunSummary.total !== Number(storedSummary.total ?? -1)
@@ -260,6 +275,17 @@ export async function executeApprovedTenantOperationalReset(input: {
     })
     .where(eq(tenantResetRequests.id, resetRequest.id));
 
+  await input
+    .onStarted?.({
+      requestId: resetRequest.id,
+      tenantId: resetRequest.tenantId,
+      requesterUserId: resetRequest.requestedByUserId,
+      tenantOrigin: metadata.createdFrom === 'tenant_admin',
+    })
+    .catch((error) => {
+      console.error('[Tenant Reset] Could not send execution-start notification:', error);
+    });
+
   const startedAt = Date.now();
   const outcomes: Array<{
     table: string;
@@ -275,12 +301,14 @@ export async function executeApprovedTenantOperationalReset(input: {
       ...(resetSpec.categories.includes('operations') ? plan.steps : []),
       ...advancedPlan.steps,
     ];
-    completedSteps.forEach((step) => outcomes.push({
-      table: step.table,
-      label: step.label,
-      planned: step.before,
-      removed: step.before,
-    }));
+    completedSteps.forEach((step) =>
+      outcomes.push({
+        table: step.table,
+        label: step.label,
+        planned: step.before,
+        removed: step.before,
+      }),
+    );
   } catch (error) {
     failed = true;
     outcomes.push({

@@ -67,7 +67,8 @@ export default function ExternalTransportRequestPage() {
       const allJson = await allResponse.json().catch(() => ({}));
       const driversJson = await driversResponse.json().catch(() => ({}));
       if (!allResponse.ok) throw new Error(allJson.error || 'Could not load external parties');
-      if (!driversResponse.ok) throw new Error(driversJson.error || 'Could not load verified external drivers');
+      if (!driversResponse.ok)
+        throw new Error(driversJson.error || 'Could not load verified external drivers');
       setParties(Array.isArray(allJson.data) ? allJson.data : []);
       setDriverOptions(Array.isArray(driversJson.data) ? driversJson.data : []);
     } catch (loadError) {
@@ -78,7 +79,8 @@ export default function ExternalTransportRequestPage() {
   };
 
   useEffect(() => {
-    void loadParties();
+    const timer = window.setTimeout(() => void loadParties(), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const selectedRequester = useMemo(
@@ -89,7 +91,9 @@ export default function ExternalTransportRequestPage() {
   async function ensureRequester() {
     if (existingRequesterId) return existingRequesterId;
     if (!form.firstName.trim() || !form.lastName.trim() || !form.organisationName.trim()) {
-      throw new Error('Select an existing external requester or enter their name and organisation.');
+      throw new Error(
+        'Select an existing external requester or enter their name and organisation.',
+      );
     }
     const response = await fetch('/api/external-parties', {
       method: 'POST',
@@ -111,7 +115,9 @@ export default function ExternalTransportRequestPage() {
 
   async function submit() {
     if (!responsibleEmployee) {
-      setError('Select the internal employee responsible for routing and following up this external request.');
+      setError(
+        'Select the internal employee responsible for routing and following up this external request.',
+      );
       return;
     }
     if (!form.purpose.trim() || !form.origin.trim() || !form.destination.trim()) {
@@ -157,7 +163,10 @@ export default function ExternalTransportRequestPage() {
       router.push(`/dashboard/requests/external/${json.request.id}`);
       router.refresh();
     } catch (submitError) {
-      const message = submitError instanceof Error ? submitError.message : 'External request could not be submitted';
+      const message =
+        submitError instanceof Error
+          ? submitError.message
+          : 'External request could not be submitted';
       setError(message);
       toast({ title: 'Submission failed', description: message, variant: 'error' });
     } finally {
@@ -171,12 +180,12 @@ export default function ExternalTransportRequestPage() {
         items={[
           { label: 'Dashboard', href: '/dashboard' },
           { label: 'Requests', href: '/dashboard/requests' },
-          { label: 'External Request' },
+          { label: 'External Request Intake' },
         ]}
       />
       <PageHeader
-        title="External Transport Request"
-        description="Record a request for a person from another organisation without adding them to the tenant staff directory."
+        title="External Request Intake"
+        description="Assisted tenant intake for a genuine external requester, with a responsible internal sponsor and normal governed approval routing."
       >
         <Button variant="secondary" size="sm" asChild>
           <Link href="/dashboard/drivers/external">
@@ -186,26 +195,36 @@ export default function ExternalTransportRequestPage() {
       </PageHeader>
 
       <div className="bg-status-info-bg text-status-info-text rounded-[8px] px-4 py-3 text-sm">
-        External people remain separate from Staff Management. An internal responsible employee is required only to anchor the existing tenant approval route and operational follow-up.
+        External people remain separate from Staff Management. The internal sponsor supplies the
+        region, office, department and supervisor path used by the tenant approval route.
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
         <div className="space-y-5">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Building2 className="h-4 w-4" /> External requester</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-4 w-4" /> External requester
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <FieldWrapper label="Existing external party" description="Reuse a previously recorded person when available.">
+              <FieldWrapper
+                label="Existing external party"
+                description="Reuse a previously recorded person when available."
+              >
                 <StyledSelect
                   value={existingRequesterId}
                   onChange={(event) => setExistingRequesterId(event.target.value)}
-                  placeholder={loading ? 'Loading external parties…' : 'Create a new external requester'}
+                  placeholder={
+                    loading ? 'Loading external parties…' : 'Create a new external requester'
+                  }
                   disabled={loading}
                 >
                   <option value="">Create a new external requester</option>
                   {parties.map((party) => (
-                    <option key={party.id} value={party.id}>{party.fullName} · {party.organisationName}</option>
+                    <option key={party.id} value={party.id}>
+                      {party.fullName} · {party.organisationName}
+                    </option>
                   ))}
                 </StyledSelect>
               </FieldWrapper>
@@ -215,16 +234,39 @@ export default function ExternalTransportRequestPage() {
                   <p className="text-ink-950 font-medium">{selectedRequester.fullName}</p>
                   <p className="text-ink-500 mt-1">{selectedRequester.organisationName}</p>
                   {(selectedRequester.email || selectedRequester.phone) && (
-                    <p className="text-ink-500 mt-1 text-xs">{[selectedRequester.email, selectedRequester.phone].filter(Boolean).join(' · ')}</p>
+                    <p className="text-ink-500 mt-1 text-xs">
+                      {[selectedRequester.email, selectedRequester.phone]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
                   )}
                 </div>
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <FieldWrapper label="First name" required><Input value={form.firstName} onChange={(e) => setForm((s) => ({ ...s, firstName: e.target.value }))} /></FieldWrapper>
-                  <FieldWrapper label="Last name" required><Input value={form.lastName} onChange={(e) => setForm((s) => ({ ...s, lastName: e.target.value }))} /></FieldWrapper>
-                  <FieldWrapper label="Organisation" required className="sm:col-span-2"><Input value={form.organisationName} onChange={(e) => setForm((s) => ({ ...s, organisationName: e.target.value }))} placeholder="Ministry, municipality, contractor or partner" /></FieldWrapper>
+                  <FieldWrapper label="First name" required>
+                    <Input
+                      value={form.firstName}
+                      onChange={(e) => setForm((s) => ({ ...s, firstName: e.target.value }))}
+                    />
+                  </FieldWrapper>
+                  <FieldWrapper label="Last name" required>
+                    <Input
+                      value={form.lastName}
+                      onChange={(e) => setForm((s) => ({ ...s, lastName: e.target.value }))}
+                    />
+                  </FieldWrapper>
+                  <FieldWrapper label="Organisation" required className="sm:col-span-2">
+                    <Input
+                      value={form.organisationName}
+                      onChange={(e) => setForm((s) => ({ ...s, organisationName: e.target.value }))}
+                      placeholder="Ministry, municipality, contractor or partner"
+                    />
+                  </FieldWrapper>
                   <FieldWrapper label="Organisation type">
-                    <StyledSelect value={form.organisationType} onChange={(e) => setForm((s) => ({ ...s, organisationType: e.target.value }))}>
+                    <StyledSelect
+                      value={form.organisationType}
+                      onChange={(e) => setForm((s) => ({ ...s, organisationType: e.target.value }))}
+                    >
                       <option value="government">Government institution</option>
                       <option value="municipality">Municipality / council</option>
                       <option value="contractor">Contractor</option>
@@ -232,16 +274,32 @@ export default function ExternalTransportRequestPage() {
                       <option value="other">Other</option>
                     </StyledSelect>
                   </FieldWrapper>
-                  <FieldWrapper label="ID / passport reference"><Input value={form.idReference} onChange={(e) => setForm((s) => ({ ...s, idReference: e.target.value }))} /></FieldWrapper>
-                  <FieldWrapper label="Email"><Input type="email" value={form.email} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} /></FieldWrapper>
-                  <FieldWrapper label="Phone"><Input value={form.phone} onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value }))} /></FieldWrapper>
+                  <FieldWrapper label="ID / passport reference">
+                    <Input
+                      value={form.idReference}
+                      onChange={(e) => setForm((s) => ({ ...s, idReference: e.target.value }))}
+                    />
+                  </FieldWrapper>
+                  <FieldWrapper label="Email">
+                    <Input
+                      type="email"
+                      value={form.email}
+                      onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+                    />
+                  </FieldWrapper>
+                  <FieldWrapper label="Phone">
+                    <Input
+                      value={form.phone}
+                      onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value }))}
+                    />
+                  </FieldWrapper>
                 </div>
               )}
 
               <FieldWrapper
-                label="Responsible internal employee"
+                label="Responsible internal sponsor / employee"
                 required
-                description="This employee supplies the tenant region/office/department used by the existing approval route. The external requester remains the named requester."
+                description="This sponsor supplies the tenant region, office, department and recorded supervisor used by the approval route. The outsider remains the named requester."
               >
                 <EmployeeCombobox
                   kind="employee"
@@ -255,81 +313,170 @@ export default function ExternalTransportRequestPage() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Journey</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Journey</CardTitle>
+            </CardHeader>
             <CardContent className="space-y-4">
-              <FieldWrapper label="Purpose" required><Textarea rows={4} value={form.purpose} onChange={(e) => setForm((s) => ({ ...s, purpose: e.target.value }))} /></FieldWrapper>
+              <FieldWrapper label="Purpose" required>
+                <Textarea
+                  rows={4}
+                  value={form.purpose}
+                  onChange={(e) => setForm((s) => ({ ...s, purpose: e.target.value }))}
+                />
+              </FieldWrapper>
               <div className="grid gap-4 sm:grid-cols-2">
                 <FieldWrapper label="Scope" required>
-                  <StyledSelect value={form.scope} onChange={(e) => setForm((s) => ({ ...s, scope: e.target.value === 'national' ? 'national' : 'regional' }))}>
+                  <StyledSelect
+                    value={form.scope}
+                    onChange={(e) =>
+                      setForm((s) => ({
+                        ...s,
+                        scope: e.target.value === 'national' ? 'national' : 'regional',
+                      }))
+                    }
+                  >
                     <option value="regional">Regional</option>
                     <option value="national">National</option>
                   </StyledSelect>
                 </FieldWrapper>
                 <FieldWrapper label="Urgency">
-                  <StyledSelect value={form.urgency} onChange={(e) => setForm((s) => ({ ...s, urgency: e.target.value }))}>
+                  <StyledSelect
+                    value={form.urgency}
+                    onChange={(e) => setForm((s) => ({ ...s, urgency: e.target.value }))}
+                  >
                     <option value="normal">Normal</option>
                     <option value="urgent">Urgent</option>
                     <option value="emergency">Emergency</option>
                   </StyledSelect>
                 </FieldWrapper>
-                <FieldWrapper label="Departure" required><StyledDateInput type="datetime-local" value={form.departureAt} onChange={(e) => setForm((s) => ({ ...s, departureAt: e.target.value }))} /></FieldWrapper>
-                <FieldWrapper label="Return" required><StyledDateInput type="datetime-local" value={form.returnAt} onChange={(e) => setForm((s) => ({ ...s, returnAt: e.target.value }))} /></FieldWrapper>
+                <FieldWrapper label="Departure" required>
+                  <StyledDateInput
+                    type="datetime-local"
+                    value={form.departureAt}
+                    onChange={(e) => setForm((s) => ({ ...s, departureAt: e.target.value }))}
+                  />
+                </FieldWrapper>
+                <FieldWrapper label="Return" required>
+                  <StyledDateInput
+                    type="datetime-local"
+                    value={form.returnAt}
+                    onChange={(e) => setForm((s) => ({ ...s, returnAt: e.target.value }))}
+                  />
+                </FieldWrapper>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <FieldWrapper label="Origin" required>
-                  <PlacesAutocomplete value={form.origin} onTextChange={(origin) => setForm((s) => ({ ...s, origin }))} onSelect={(place) => setForm((s) => ({ ...s, origin: place.name }))} placeholder="Select origin" ariaLabel="External request origin" />
+                  <PlacesAutocomplete
+                    value={form.origin}
+                    onTextChange={(origin) => setForm((s) => ({ ...s, origin }))}
+                    onSelect={(place) => setForm((s) => ({ ...s, origin: place.name }))}
+                    placeholder="Select origin"
+                    ariaLabel="External request origin"
+                  />
                 </FieldWrapper>
                 <FieldWrapper label="Destination" required>
-                  <PlacesAutocomplete value={form.destination} onTextChange={(destination) => setForm((s) => ({ ...s, destination }))} onSelect={(place) => setForm((s) => ({ ...s, destination: place.name }))} placeholder="Select destination" ariaLabel="External request destination" />
+                  <PlacesAutocomplete
+                    value={form.destination}
+                    onTextChange={(destination) => setForm((s) => ({ ...s, destination }))}
+                    onSelect={(place) => setForm((s) => ({ ...s, destination: place.name }))}
+                    placeholder="Select destination"
+                    ariaLabel="External request destination"
+                  />
                 </FieldWrapper>
               </div>
-              <FieldWrapper label="Special requirements"><Textarea rows={3} value={form.specialRequirements} onChange={(e) => setForm((s) => ({ ...s, specialRequirements: e.target.value }))} /></FieldWrapper>
+              <FieldWrapper label="Special requirements">
+                <Textarea
+                  rows={3}
+                  value={form.specialRequirements}
+                  onChange={(e) => setForm((s) => ({ ...s, specialRequirements: e.target.value }))}
+                />
+              </FieldWrapper>
               <label className="text-ink-700 flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={form.requesterTravels} onChange={(e) => setForm((s) => ({ ...s, requesterTravels: e.target.checked }))} />
+                <input
+                  type="checkbox"
+                  checked={form.requesterTravels}
+                  onChange={(e) => setForm((s) => ({ ...s, requesterTravels: e.target.checked }))}
+                />
                 External requester is travelling as a passenger
               </label>
+              <p className="text-ink-500 text-xs">
+                A passenger does not need a driver licence. Licence evidence is required only when
+                the external person is nominated to drive.
+              </p>
             </CardContent>
           </Card>
         </div>
 
         <div className="space-y-5">
           <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><UserRound className="h-4 w-4" /> Driver preference</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <UserRound className="h-4 w-4" /> Driver preference
+              </CardTitle>
+            </CardHeader>
             <CardContent className="space-y-3">
               <FieldWrapper
                 label="Verified external driver (optional)"
                 description="Only external drivers whose licence evidence has been explicitly verified by Transport Administration are selectable. Final allocation will recheck compliance."
               >
-                <StyledSelect value={externalDriverId} onChange={(e) => setExternalDriverId(e.target.value)} placeholder="Transport Administration will assign driver">
+                <StyledSelect
+                  value={externalDriverId}
+                  onChange={(e) => setExternalDriverId(e.target.value)}
+                  placeholder="Transport Administration will assign driver"
+                >
                   <option value="">Transport Administration will assign driver</option>
                   {driverOptions.map((driver) => (
                     <option key={driver.id} value={driver.id}>
-                      {driver.fullName} · {driver.organisationName}{driver.latestLicence?.licenceClass ? ` · ${driver.latestLicence.licenceClass}` : ''}
+                      {driver.fullName} · {driver.organisationName}
+                      {driver.latestLicence?.licenceClass
+                        ? ` · ${driver.latestLicence.licenceClass}`
+                        : ''}
                     </option>
                   ))}
                 </StyledSelect>
               </FieldWrapper>
-              <p className="text-ink-500 text-xs">Need to add or verify an external driver's licence first?</p>
+              <p className="text-ink-500 text-xs">
+                Need to add or verify an external driver&apos;s licence first?
+              </p>
               <Button variant="secondary" size="sm" asChild>
-                <Link href="/dashboard/drivers/external"><ExternalLink className="h-4 w-4" /> Manage external drivers</Link>
+                <Link href="/dashboard/drivers/external">
+                  <ExternalLink className="h-4 w-4" /> Manage external drivers
+                </Link>
               </Button>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Submission boundary</CardTitle></CardHeader>
-            <CardContent className="space-y-2 text-sm text-ink-600">
+            <CardHeader>
+              <CardTitle>Submission boundary</CardTitle>
+            </CardHeader>
+            <CardContent className="text-ink-600 space-y-2 text-sm">
               <p>• The external requester is stored outside the employee/staff directory.</p>
-              <p>• This request enters the same configured approval workflow as internal requests.</p>
-              <p>• Nominating an external driver does not allocate or authorise them automatically.</p>
+              <p>
+                • This request enters the same configured approval workflow as internal requests.
+              </p>
+              <p>
+                • Nominating an external driver does not allocate or authorise them automatically.
+              </p>
               <p>• Licence verification is separate from final vehicle/driver allocation.</p>
             </CardContent>
           </Card>
 
-          {error && <div className="bg-status-error-bg text-status-error-text rounded-[8px] px-4 py-3 text-sm" role="alert">{error}</div>}
+          {error && (
+            <div
+              className="bg-status-error-bg text-status-error-text rounded-[8px] px-4 py-3 text-sm"
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
           <div className="flex flex-wrap justify-start gap-2">
-            <Button variant="secondary" asChild><Link href="/dashboard/requests">Cancel</Link></Button>
-            <Button loading={saving} disabled={loading} onClick={() => void submit()}>Submit external request</Button>
+            <Button variant="secondary" asChild>
+              <Link href="/dashboard/requests">Cancel</Link>
+            </Button>
+            <Button loading={saving} disabled={loading} onClick={() => void submit()}>
+              Submit external intake
+            </Button>
           </div>
         </div>
       </div>

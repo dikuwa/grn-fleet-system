@@ -8,6 +8,8 @@ export type SubmittedRoutingStep = {
   id: string;
   stepOrder: number;
   assignedUserId: string | null;
+  assignmentStrategy?: string;
+  fallbackStrategies?: string[];
 };
 
 export type RoutingValidationResult =
@@ -48,6 +50,11 @@ export function validateWorkflowRouting(
         typeof candidate.assignedUserId === 'string' && candidate.assignedUserId
           ? candidate.assignedUserId
           : null,
+      assignmentStrategy:
+        typeof candidate.assignmentStrategy === 'string' ? candidate.assignmentStrategy : undefined,
+      fallbackStrategies: Array.isArray(candidate.fallbackStrategies)
+        ? candidate.fallbackStrategies.filter((item): item is string => typeof item === 'string')
+        : undefined,
     });
   }
 

@@ -127,6 +127,8 @@ export const OPERATIONAL_DELETE_STEPS: DeleteStep[] = [
     scope: 'request',
     fileKeyColumns: ['file_key'],
   },
+  { table: 'request_goods_equipment', label: 'Request goods and equipment', scope: 'request' },
+  { table: 'external_request_drivers', label: 'External driver nominations', scope: 'request' },
   { table: 'request_routes', label: 'Request routes', scope: 'request' },
   { table: 'request_drivers', label: 'Request drivers', scope: 'request' },
   { table: 'request_passengers', label: 'Request passengers', scope: 'request' },
@@ -144,6 +146,7 @@ export const OPERATIONAL_DELETE_STEPS: DeleteStep[] = [
   // Authorities reference allocations + requests, so delete before both
   { table: 'trip_authorities', label: 'Trip authorities', scope: 'request' },
   // Allocation children
+  { table: 'external_driver_assignments', label: 'External driver assignments', scope: 'request' },
   { table: 'trip_issues', label: 'Vehicle issues', scope: 'allocation' },
   // Trip children
   { table: 'trip_progress_entries', label: 'Trip progress entries', scope: 'trip' },
@@ -194,6 +197,9 @@ export const OPERATIONAL_DELETE_STEPS: DeleteStep[] = [
   { table: 'vehicle_allocations', label: 'Vehicle allocations', scope: 'request' },
   { table: 'transport_requests', label: 'Transport requests', scope: 'tenant' },
   // Notifications caused only by removed operations
+  { table: 'notification_deliveries', label: 'Notification deliveries', scope: 'notification' },
+  { table: 'notification_reads', label: 'Notification reads', scope: 'notification' },
+  { table: 'notification_dismissals', label: 'Notification dismissals', scope: 'notification' },
   { table: 'notifications', label: 'Operational notifications', scope: 'notification' },
 ];
 
@@ -202,10 +208,26 @@ export const OPERATIONAL_DELETE_STEPS: DeleteStep[] = [
  * reset but may contain test records — reported under "Requires review".
  */
 export const REVIEW_ONLY_TABLES: Array<{ table: string; label: string; reason: string }> = [
-  { table: 'maintenance_events', label: 'Maintenance events', reason: 'No reliable seed marker; may be legitimate service history.' },
-  { table: 'import_batches', label: 'Import batches', reason: 'Operational history; preserving avoids ambiguity with real imports.' },
-  { table: 'programmes', label: 'Programmes', reason: 'Preserved as configuration/reference data; seeded ones flagged for review.' },
-  { table: 'vehicle_documents', label: 'Vehicle documents', reason: 'Vehicle master reference data.' },
+  {
+    table: 'maintenance_events',
+    label: 'Maintenance events',
+    reason: 'No reliable seed marker; may be legitimate service history.',
+  },
+  {
+    table: 'import_batches',
+    label: 'Import batches',
+    reason: 'Operational history; preserving avoids ambiguity with real imports.',
+  },
+  {
+    table: 'programmes',
+    label: 'Programmes',
+    reason: 'Preserved as configuration/reference data; seeded ones flagged for review.',
+  },
+  {
+    table: 'vehicle_documents',
+    label: 'Vehicle documents',
+    reason: 'Vehicle master reference data.',
+  },
   { table: 'tenant_holidays', label: 'Tenant holidays', reason: 'Configuration data.' },
 ];
 

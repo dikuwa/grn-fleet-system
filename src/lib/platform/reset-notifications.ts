@@ -78,15 +78,21 @@ export async function notifyResetRequesterOutcome(input: {
   requestId: string;
   tenantId: string;
   requesterUserId: string;
-  status: 'approved' | 'rejected' | 'completed' | 'failed';
+  status: 'approved' | 'in_progress' | 'rejected' | 'completed' | 'failed';
   notes?: string | null;
 }) {
   const labels = {
     approved: {
       title: 'Your reset request was approved',
-      body: 'The Platform Administrator is preparing a verified recovery point before execution.',
+      body: 'No tenant action is required. Platform Administration will verify the recovery point and execute the approved reset.',
       type: 'awareness',
       priority: 'normal',
+    },
+    in_progress: {
+      title: 'Your approved reset is now in progress',
+      body: 'Platform Administration has verified the recovery point and started the reset. Avoid creating new records until completion.',
+      type: 'awareness',
+      priority: 'high',
     },
     rejected: {
       title: 'Your reset request was declined',

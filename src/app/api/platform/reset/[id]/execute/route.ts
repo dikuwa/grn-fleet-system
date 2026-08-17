@@ -31,6 +31,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       actorUserId: session.user.id,
       actorTenantId: session.tenantId,
       confirmationPhrase,
+      onStarted: async (context) => {
+        if (!context.tenantOrigin) return;
+        await notifyResetRequesterOutcome({
+          requestId: context.requestId,
+          tenantId: context.tenantId,
+          requesterUserId: context.requesterUserId,
+          status: 'in_progress',
+        });
+      },
     });
 
     if (result.tenantOrigin) {

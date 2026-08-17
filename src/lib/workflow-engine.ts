@@ -49,6 +49,7 @@ import {
   resolvePermissionRecipients,
 } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
+import { normalizeAssignmentConfig, type AssignmentStrategy } from '@/lib/workflow-builder';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1034,11 +1035,16 @@ export class WorkflowEngine {
    */
   private scheduleStepTimers(
     instanceId: string,
-    step: { stepOrder: number; reminderAfterHours?: number | null; escalationAfterHours?: number | null },
+    step: {
+      stepOrder: number;
+      reminderAfterHours?: number | null;
+      escalationAfterHours?: number | null;
+    },
   ) {
     void (async () => {
       try {
-        const { scheduleStepReminder, scheduleStepEscalation } = await import('@/lib/inngest/client');
+        const { scheduleStepReminder, scheduleStepEscalation } =
+          await import('@/lib/inngest/client');
         await Promise.all([
           scheduleStepReminder(instanceId, step.stepOrder, step.reminderAfterHours ?? 2),
           scheduleStepEscalation(instanceId, step.stepOrder, step.escalationAfterHours ?? 4),
@@ -1126,7 +1132,11 @@ export class WorkflowEngine {
     instance: typeof workflowInstances.$inferSelect,
   ) {
     const requestRows = await this.db
-      .select({ tenantId: transportRequests.tenantId })
+      .select({
+        tenantId: transportRequests.tenantId,
+        requesterEmployeeId: transportRequests.requesterEmployeeId,
+        departmentId: transportRequests.departmentId,
+      })
       .from(transportRequests)
       .where(eq(transportRequests.id, instance.requestId))
       .limit(1);
@@ -1146,10 +1156,7 @@ export class WorkflowEngine {
         // Conflict-of-interest reassignment belongs to one request instance,
         // never to the shared workflow definition. The instance override wins
         // only for its current step and is cleared when the workflow advances.
-        if (
-          step.stepOrder === instance.currentStepOrder &&
-          instance.currentAssignedUserId
-        ) {
+        if (step.stepOrder === instance.currentStepOrder && instance.currentAssignedUserId) {
           return {
             ...step,
             assignedUserId: instance.currentAssignedUserId,
@@ -1161,6 +1168,8 @@ export class WorkflowEngine {
         }
 
         if (!step.requiredPermission) return step;
+        const assignmentConfig = normalizeAssignmentConfig(step.config, step.assignedUserId);
+
         const roleQuery = this.db.select({ roleId: roles.id }).from(roles);
         if (typeof (roleQuery as { innerJoin?: unknown }).innerJoin !== 'function') return step;
         const roleRows = await roleQuery
@@ -1177,26 +1186,156 @@ export class WorkflowEngine {
             : step.actionType === 'release'
               ? 'allocate'
               : 'approve';
-        for (const role of roleRows) {
-          const holder = await resolveRoleHolder({
-            tenantId: request.tenantId,
-            roleId: role.roleId,
-            requireCapability: capability,
-          });
-          if (holder?.userId) {
-            return {
-              ...step,
-              assignedUserId: holder.userId,
-              config: {
-                ...(step.config || {}),
-                resolvedRoleId: role.roleId,
-                resolvedEmployeeId: holder.employeeId,
-                resolvedCapacity: holder.capacity,
-                isActing: holder.isActing,
-                delegationId: 'delegationId' in holder ? holder.delegationId : null,
-              },
-            };
+        const strategies = [
+          assignmentConfig.assignmentStrategy,
+          ...assignmentConfig.fallbackStrategies,
+        ].filter((value, index, values) => values.indexOf(value) === index);
+
+        const resolved = async (strategy: AssignmentStrategy) => {
+          if (strategy === 'named_user') {
+            if (!step.assignedUserId) return null;
+            const [person] = await this.db
+              .select({
+                userId: employees.userId,
+                employeeId: employees.id,
+                employmentStatus: employees.employmentStatus,
+                availabilityStatus: employees.availabilityStatus,
+              })
+              .from(employees)
+              .where(
+                and(
+                  eq(employees.tenantId, request.tenantId),
+                  eq(employees.userId, step.assignedUserId),
+                ),
+              )
+              .limit(1);
+            if (
+              !person?.userId ||
+              person.employmentStatus !== 'active' ||
+              person.availabilityStatus === 'unavailable'
+            )
+              return null;
+            const [grant] = await this.db
+              .select({ userId: tenantMemberships.userId })
+              .from(tenantMemberships)
+              .innerJoin(
+                roleAssignments,
+                eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
+              )
+              .innerJoin(rolePermissions, eq(rolePermissions.roleId, roleAssignments.roleId))
+              .where(
+                and(
+                  eq(tenantMemberships.tenantId, request.tenantId),
+                  eq(tenantMemberships.userId, person.userId),
+                  eq(tenantMemberships.status, 'active'),
+                  eq(rolePermissions.permissionCode, step.requiredPermission!),
+                  lte(roleAssignments.startDate, new Date()),
+                  or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, new Date())),
+                ),
+              )
+              .limit(1);
+            return grant
+              ? { userId: person.userId, employeeId: person.employeeId, strategy }
+              : null;
           }
+          if (strategy === 'requester_supervisor') {
+            const [requester] = await this.db
+              .select({ supervisorEmployeeId: employees.supervisorEmployeeId })
+              .from(employees)
+              .where(
+                and(
+                  eq(employees.id, request.requesterEmployeeId),
+                  eq(employees.tenantId, request.tenantId),
+                ),
+              )
+              .limit(1);
+            if (!requester?.supervisorEmployeeId) return null;
+            const [supervisor] = await this.db
+              .select({
+                userId: employees.userId,
+                employeeId: employees.id,
+                employmentStatus: employees.employmentStatus,
+                availabilityStatus: employees.availabilityStatus,
+              })
+              .from(employees)
+              .where(
+                and(
+                  eq(employees.id, requester.supervisorEmployeeId),
+                  eq(employees.tenantId, request.tenantId),
+                ),
+              )
+              .limit(1);
+            if (
+              !supervisor?.userId ||
+              supervisor.employmentStatus !== 'active' ||
+              supervisor.availabilityStatus === 'unavailable'
+            )
+              return null;
+            const [grant] = await this.db
+              .select({ userId: tenantMemberships.userId })
+              .from(tenantMemberships)
+              .innerJoin(
+                roleAssignments,
+                eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
+              )
+              .innerJoin(rolePermissions, eq(rolePermissions.roleId, roleAssignments.roleId))
+              .where(
+                and(
+                  eq(tenantMemberships.tenantId, request.tenantId),
+                  eq(tenantMemberships.userId, supervisor.userId),
+                  eq(tenantMemberships.status, 'active'),
+                  eq(rolePermissions.permissionCode, step.requiredPermission!),
+                  lte(roleAssignments.startDate, new Date()),
+                  or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, new Date())),
+                ),
+              )
+              .limit(1);
+            return grant
+              ? { userId: supervisor.userId, employeeId: supervisor.employeeId, strategy }
+              : null;
+          }
+          for (const role of roleRows) {
+            const holder = await resolveRoleHolder({
+              tenantId: request.tenantId,
+              roleId: role.roleId,
+              requireCapability: capability,
+            });
+            if (!holder?.userId) continue;
+            if (strategy === 'department_permission_pool') {
+              const [employee] = await this.db
+                .select({ departmentId: employees.departmentId })
+                .from(employees)
+                .where(
+                  and(
+                    eq(employees.id, holder.employeeId),
+                    eq(employees.tenantId, request.tenantId),
+                  ),
+                )
+                .limit(1);
+              if (!request.departmentId || employee?.departmentId !== request.departmentId)
+                continue;
+            }
+            return { ...holder, strategy, roleId: role.roleId };
+          }
+          return null;
+        };
+
+        for (const strategy of strategies) {
+          const holder = await resolved(strategy);
+          if (!holder?.userId) continue;
+          return {
+            ...step,
+            assignedUserId: holder.userId,
+            config: {
+              ...assignmentConfig,
+              resolvedStrategy: strategy,
+              resolvedRoleId: 'roleId' in holder ? holder.roleId : null,
+              resolvedEmployeeId: holder.employeeId,
+              resolvedCapacity: 'capacity' in holder ? holder.capacity : null,
+              isActing: 'isActing' in holder ? holder.isActing : false,
+              delegationId: 'delegationId' in holder ? holder.delegationId : null,
+            },
+          };
         }
         return step;
       }),

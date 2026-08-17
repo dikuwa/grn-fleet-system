@@ -356,6 +356,16 @@ async function buildDefinitions(
   }
 
   if (selected.has('people')) {
+    const externalPartyIds = await ids(
+      db,
+      sql`SELECT id FROM external_parties WHERE tenant_id = ${tenantId}`,
+    );
+    const externalLicenceIds = externalPartyIds.length
+      ? await ids(
+          db,
+          sql`SELECT id FROM external_driver_licences WHERE ${anyUuid('external_party_id', externalPartyIds)}`,
+        )
+      : [];
     const employeeIds = await ids(db, sql`SELECT id FROM employees WHERE tenant_id = ${tenantId}`);
     const driverProfileIds = employeeIds.length
       ? await ids(
@@ -370,6 +380,19 @@ async function buildDefinitions(
         )
       : [];
     definitions.push(
+      {
+        table: 'external_driver_licences',
+        label: 'External driver licence versions',
+        category: 'people',
+        condition: anyUuid('id', externalLicenceIds),
+        fileKeyColumns: ['front_image_key', 'back_image_key'],
+      },
+      {
+        table: 'external_parties',
+        label: 'External parties',
+        category: 'people',
+        condition: anyUuid('id', externalPartyIds),
+      },
       {
         table: 'secure_request_sessions',
         label: 'Secure staff sessions',
