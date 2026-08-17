@@ -1,0 +1,119 @@
+.scope :global(main > div > header:first-child) {
+  grid-template-columns: 5.25rem minmax(0, 1fr) 5.25rem;
+  align-items: center;
+  gap: 0.85rem;
+  min-height: 8.75rem;
+  padding: 0.4rem 0.25rem 1.15rem;
+}
+
+.scope :global(main > div > header:first-child > div:first-child),
+.scope :global(main > div > header:first-child > div:last-child) {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 0;
+}
+
+.scope :global(main > div > header:first-child > div:first-child img) {
+  width: 4.65rem !important;
+  height: 4.65rem !important;
+  object-fit: contain;
+}
+
+.scope :global(main > div > header:first-child > div:last-child img),
+.scope :global(main > div > header:first-child > div:last-child span) {
+  width: 4.95rem !important;
+  height: 4.95rem !important;
+  object-fit: contain;
+}
+
+.scope :global(main > div > header:first-child > div:nth-child(2)) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(1)) {
+  margin: 0;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  line-height: 1.2;
+}
+
+.scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(2)) {
+  margin-top: 0.28rem;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.12;
+}
+
+.scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(3)) {
+  margin-top: 0.7rem;
+  font-size: 0.5rem;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  line-height: 1.25;
+}
+
+.scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(4)) {
+  margin-top: 0.34rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  line-height: 1.25;
+}
+
+.scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(n + 5)) {
+  margin-top: 0.2rem;
+  font-size: 0.6rem;
+  line-height: 1.3;
+}
+
+@media (min-width: 640px) {
+  .scope :global(main > div > header:first-child) {
+    grid-template-columns: 8.25rem minmax(0, 1fr) 8.25rem;
+    gap: 1.5rem;
+    min-height: 11.5rem;
+    padding: 0.6rem 0.75rem 1.35rem;
+  }
+
+  .scope :global(main > div > header:first-child > div:first-child img) {
+    width: 6.2rem !important;
+    height: 6.2rem !important;
+  }
+
+  .scope :global(main > div > header:first-child > div:last-child img),
+  .scope :global(main > div > header:first-child > div:last-child span) {
+    width: 6.65rem !important;
+    height: 6.65rem !important;
+  }
+
+  .scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(1)) {
+    font-size: 0.64rem;
+  }
+
+  .scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(2)) {
+    margin-top: 0.32rem;
+    font-size: 1.22rem;
+  }
+
+  .scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(3)) {
+    margin-top: 0.8rem;
+    font-size: 0.57rem;
+  }
+
+  .scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(4)) {
+    margin-top: 0.4rem;
+    font-size: 0.98rem;
+  }
+
+  .scope :global(main > div > header:first-child > div:nth-child(2) > p:nth-child(n + 5)) {
+    margin-top: 0.22rem;
+    font-size: 0.68rem;
+  }
+}
