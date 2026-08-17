@@ -2,11 +2,24 @@
 
 import { fetchPdfBytes, loadPdfJs } from '@/lib/pdfjs-client';
 
+const PDF_POINTS_PER_INCH = 72;
+
+function printDpiForPageCount(pageCount: number) {
+  if (pageCount <= 4) return 300;
+  if (pageCount <= 8) return 240;
+  return 200;
+}
+
 /**
  * Print the canonical authenticated PDF without navigating a frame into the
  * browser's cross-origin PDF extension. PDF.js renders each official page into
  * a same-origin print document, so calling print remains permitted in Chrome,
  * Safari and Firefox while the surrounding dashboard stays excluded.
+ *
+ * The print canvas is intentionally rendered at print-oriented resolution.
+ * Rendering at screen-ish resolution made small receipt/mono text and crests
+ * look soft and washed out in the browser print preview even though the source
+ * PDF itself was sharp.
  */
 export async function printPdfFromUrl(url: string): Promise<void> {
   const [bytes, pdfjs] = await Promise.all([fetchPdfBytes(url), loadPdfJs()]);
@@ -45,6 +58,12 @@ export async function printPdfFromUrl(url: string): Promise<void> {
   };
 
   try {
+    const firstPage = await pdf.getPage(1);
+    const baseViewport = firstPage.getViewport({ scale: 1 });
+    const landscape = baseViewport.width > baseViewport.height;
+    const pageSize = landscape ? 'A4 landscape' : 'A4 portrait';
+    const pageWidth = landscape ? '297mm' : '210mm';
+
     printDocument.open();
     printDocument.write(`<!doctype html>
       <html>
@@ -52,20 +71,39 @@ export async function printPdfFromUrl(url: string): Promise<void> {
           <meta charset="utf-8" />
           <title>GovFleet official document</title>
           <style>
-            @page { size: auto; margin: 0; }
-            * { box-sizing: border-box; }
-            html, body { margin: 0; padding: 0; background: #fff; }
+            @page { size: ${pageSize}; margin: 0; }
+            * {
+              box-sizing: border-box;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            html, body {
+              margin: 0;
+              padding: 0;
+              background: #fff;
+              color: #000;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
             .pdf-page {
               display: flex;
-              width: 100%;
+              width: ${pageWidth};
+              margin: 0 auto;
               align-items: flex-start;
               justify-content: center;
               break-after: page;
               page-break-after: always;
               background: #fff;
+              overflow: hidden;
             }
             .pdf-page:last-child { break-after: auto; page-break-after: auto; }
-            canvas { display: block; width: 100%; height: auto; }
+            canvas {
+              display: block;
+              width: ${pageWidth};
+              height: auto;
+              background: #fff;
+              image-rendering: auto;
+            }
           </style>
         </head>
         <body></body>
@@ -75,12 +113,11 @@ export async function printPdfFromUrl(url: string): Promise<void> {
     const body = printDocument.body;
     if (!body) throw new Error('The browser could not prepare the print document.');
 
-    // Approximately 150 DPI for an A4 source. This keeps official text and QR
-    // codes crisp without the memory cost of full 300 DPI canvases.
-    const printScale = 2.1;
+    const printDpi = printDpiForPageCount(pdf.numPages);
+    const printScale = printDpi / PDF_POINTS_PER_INCH;
 
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
+      const page = pageNumber === 1 ? firstPage : await pdf.getPage(pageNumber);
       const viewport = page.getViewport({ scale: printScale });
       const canvas = printDocument.createElement('canvas');
       const context = canvas.getContext('2d', { alpha: false });
