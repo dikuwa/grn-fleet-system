@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { workflowInstances } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicleAllocations } from '@/db/schema/trips';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
+import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import {
   WorkflowEngine,
@@ -134,24 +136,61 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         )
         .limit(1);
 
-      if (!operationalAllocation?.vehicleId || !operationalAllocation.driverEmployeeId) {
+      if (!operationalAllocation?.vehicleId) {
+        return NextResponse.json(
+          {
+            error: 'Transport Review cannot be completed until a confirmed vehicle allocation exists.',
+            actionUrl: `/dashboard/approvals/${id}/action`,
+          },
+          { status: 409 },
+        );
+      }
+
+      let eligibleDriverAssigned = Boolean(operationalAllocation.driverEmployeeId);
+      if (!eligibleDriverAssigned) {
+        const [externalDriver] = await db
+          .select({ id: externalDriverAssignments.id })
+          .from(externalDriverAssignments)
+          .innerJoin(
+            externalParties,
+            and(
+              eq(externalParties.id, externalDriverAssignments.externalPartyId),
+              eq(externalParties.tenantId, session.tenantId),
+              eq(externalParties.status, 'active'),
+            ),
+          )
+          .innerJoin(
+            externalDriverLicences,
+            and(
+              eq(externalDriverLicences.id, externalDriverAssignments.licenceId),
+              eq(externalDriverLicences.tenantId, session.tenantId),
+              eq(externalDriverLicences.verificationStatus, 'verified'),
+            ),
+          )
+          .where(
+            and(
+              eq(externalDriverAssignments.tenantId, session.tenantId),
+              eq(externalDriverAssignments.requestId, instance.requestId),
+              eq(externalDriverAssignments.allocationId, operationalAllocation.id),
+              inArray(externalDriverAssignments.state, ['pending_acceptance', 'accepted']),
+            ),
+          )
+          .limit(1);
+        eligibleDriverAssigned = Boolean(externalDriver);
+      }
+
+      if (!eligibleDriverAssigned) {
         return NextResponse.json(
           {
             error:
-              'Transport Review cannot be completed until a confirmed vehicle allocation and eligible driver are assigned.',
-            actionUrl: operationalAllocation?.id
-              ? `/dashboard/allocations/${operationalAllocation.id}`
-              : `/dashboard/approvals/${id}/action`,
+              'Transport Review cannot be completed until an eligible employee driver or verified external driver is assigned.',
+            actionUrl: `/dashboard/allocations/${operationalAllocation.id}`,
           },
           { status: 409 },
         );
       }
     }
 
-    // Final organisational authorisation is the transition where operational
-    // safety must be re-checked. Use the same release-gate service exposed to
-    // readiness UIs instead of adding another local set of licence/vehicle/
-    // schedule rules here.
     if (stepActionType === 'authorise' && actionType === 'approved') {
       const releaseGate = await evaluateTripReleaseGate({
         tenantId: session.tenantId,
