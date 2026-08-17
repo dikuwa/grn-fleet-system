@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { ChevronLeft } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import Link from 'next/link';
+import { VehicleCategoryPicker } from '@/components/fleet/vehicle-category-picker';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -459,15 +460,12 @@ export default function NewVehiclePage() {
             <h3 className="mb-4 text-sm font-semibold text-ink-950">Fleet Assignment</h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Fleet Category">
-                <StyledSelect
+                <VehicleCategoryPicker
+                  categories={categories}
                   value={form.categoryId}
-                  onChange={(e) => update({ categoryId: e.target.value })}
-                >
-                  <option value="">Select category…</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </StyledSelect>
+                  onChange={(categoryId) => update({ categoryId })}
+                  onCategoriesChange={setCategories}
+                />
               </Field>
               <Field label="Assigned Office">
                 <StyledSelect

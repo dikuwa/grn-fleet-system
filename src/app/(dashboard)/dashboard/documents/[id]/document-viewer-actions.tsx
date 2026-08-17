@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Download, Eye, Printer, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Download, Eye, Loader2, Printer, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -22,9 +22,25 @@ export function DocumentViewerActions({
   documentType: string;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'download' | 'preview' | 'print' | null>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
   const pdfUrl = `/api/documents/${documentId}/pdf`;
   const previewUrl = `${pdfUrl}?preview=1`;
+  const printUrl = `/dashboard/documents/${documentId}/print`;
   const downloadName = `${documentType}-${documentId}.pdf`;
+
+  const showTransientProgress = (action: 'download' | 'print') => {
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    setPendingAction(action);
+    feedbackTimerRef.current = window.setTimeout(() => setPendingAction(null), 1200);
+  };
+
+  useEffect(
+    () => () => {
+      if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    },
+    [],
+  );
 
   return (
     <>
@@ -36,17 +52,31 @@ export function DocumentViewerActions({
             asChild
             className="text-status-success-text hover:text-status-success-text"
           >
-            <a href={pdfUrl} download={downloadName}>
-              <Download className="h-4 w-4" /> Download PDF
+            <a
+              href={pdfUrl}
+              download={downloadName}
+              aria-busy={pendingAction === 'download' || undefined}
+              onClick={() => showTransientProgress('download')}
+            >
+              {pendingAction === 'download' ? (
+                <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}{' '}
+              Download PDF
             </a>
           </Button>
           <Button
             variant="secondary"
             size="sm"
             className="text-brand-700 hover:text-brand-700"
-            onClick={() => setPreviewOpen(true)}
+            loading={pendingAction === 'preview'}
+            onClick={() => {
+              setPendingAction('preview');
+              setPreviewOpen(true);
+            }}
           >
-            <Eye className="h-4 w-4" /> Preview
+            {pendingAction !== 'preview' ? <Eye className="h-4 w-4" /> : null} Preview
           </Button>
           <Button
             variant="secondary"
@@ -54,14 +84,31 @@ export function DocumentViewerActions({
             asChild
             className="text-status-pending-text hover:text-status-pending-text"
           >
-            <a href={previewUrl} target="_blank" rel="noopener noreferrer">
-              <Printer className="h-4 w-4" /> Print
+            <a
+              href={printUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-busy={pendingAction === 'print' || undefined}
+              onClick={() => showTransientProgress('print')}
+            >
+              {pendingAction === 'print' ? (
+                <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+              ) : (
+                <Printer className="h-4 w-4" />
+              )}{' '}
+              Print
             </a>
           </Button>
         </div>
       </div>
 
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+      <Dialog
+        open={previewOpen}
+        onOpenChange={(open) => {
+          setPreviewOpen(open);
+          if (!open) setPendingAction((action) => (action === 'preview' ? null : action));
+        }}
+      >
         <DialogContent
           className="bg-surface flex h-[96dvh] flex-col overflow-hidden p-0 shadow-2xl [&>button.absolute]:hidden"
           style={{ width: '96vw', maxWidth: '1800px' }}
@@ -80,8 +127,17 @@ export function DocumentViewerActions({
                 asChild
                 className="text-status-success-text hover:text-status-success-text"
               >
-                <a href={pdfUrl} download={downloadName}>
-                  <Download className="h-4 w-4" />{' '}
+                <a
+                  href={pdfUrl}
+                  download={downloadName}
+                  aria-busy={pendingAction === 'download' || undefined}
+                  onClick={() => showTransientProgress('download')}
+                >
+                  {pendingAction === 'download' ? (
+                    <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}{' '}
                   <span className="hidden md:inline">Download</span>
                 </a>
               </Button>
@@ -91,8 +147,18 @@ export function DocumentViewerActions({
                 asChild
                 className="text-status-pending-text hover:text-status-pending-text"
               >
-                <a href={previewUrl} target="_blank" rel="noopener noreferrer">
-                  <Printer className="h-4 w-4" />{' '}
+                <a
+                  href={printUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-busy={pendingAction === 'print' || undefined}
+                  onClick={() => showTransientProgress('print')}
+                >
+                  {pendingAction === 'print' ? (
+                    <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                  ) : (
+                    <Printer className="h-4 w-4" />
+                  )}{' '}
                   <span className="hidden sm:inline">Print</span>
                 </a>
               </Button>
@@ -110,7 +176,11 @@ export function DocumentViewerActions({
           </DialogHeader>
 
           <div className="min-h-0 flex-1 overflow-hidden">
-            <DocumentPdfPreview url={previewUrl} title="Official document PDF preview" />
+            <DocumentPdfPreview
+              url={previewUrl}
+              title="Official document PDF preview"
+              onReady={() => setPendingAction((action) => (action === 'preview' ? null : action))}
+            />
           </div>
         </DialogContent>
       </Dialog>

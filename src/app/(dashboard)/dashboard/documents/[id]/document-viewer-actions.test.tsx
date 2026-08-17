@@ -3,14 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { DocumentViewerActions } from './document-viewer-actions';
 
 describe('DocumentViewerActions', () => {
-  it('opens the inline canonical PDF in a separate tab for printing', () => {
+  it('opens the canonical PDF print launcher in a separate tab', () => {
     render(<DocumentViewerActions documentId="document-123" documentType="trip_authority" />);
 
     const printLink = screen.getByRole('link', { name: 'Print' });
-    expect(printLink).toHaveAttribute(
-      'href',
-      '/api/documents/document-123/pdf?preview=1',
-    );
+    expect(printLink).toHaveAttribute('href', '/dashboard/documents/document-123/print');
     expect(printLink).toHaveAttribute('target', '_blank');
     expect(printLink).toHaveAttribute('rel', expect.stringContaining('noopener'));
   });

@@ -92,7 +92,12 @@ export function ShareActions({
 
         const now = Date.now();
         const active = payload.data?.links?.find((link) => {
-          if (link.documentId !== documentId || !link.shortSlug || link.isRevoked || link.isExhausted) {
+          if (
+            link.documentId !== documentId ||
+            !link.shortSlug ||
+            link.isRevoked ||
+            link.isExhausted
+          ) {
             return false;
           }
           const expiresAt = link.expiresAt ? new Date(link.expiresAt).getTime() : 0;
@@ -102,7 +107,9 @@ export function ShareActions({
           return maxViews === null || currentViews < maxViews;
         });
         if (active?.shortSlug) {
-          setControlledShareUrl(`${window.location.origin}/v/${encodeURIComponent(active.shortSlug)}`);
+          setControlledShareUrl(
+            `${window.location.origin}/v/${encodeURIComponent(active.shortSlug)}`,
+          );
         }
       } catch (error) {
         if ((error as Error)?.name !== 'AbortError') {
@@ -229,7 +236,7 @@ export function ShareActions({
               </Button>
               <Button variant="secondary" asChild>
                 <a
-                  href={`/api/documents/${documentId}/pdf?preview=1`}
+                  href={`/dashboard/documents/${documentId}/print`}
                   target="_blank"
                   rel="noopener noreferrer"
                 >

@@ -234,6 +234,9 @@ export default function ReportsPage() {
   const [reportData, setReportData] = useState<Record<string, unknown> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<
+    'csv' | 'excel' | 'pdf' | 'preview' | 'print' | null
+  >(null);
   const fetchedRef = useRef<{ type: ReportType; range: TimeRange } | null>(null);
 
   useEffect(() => {
@@ -269,6 +272,7 @@ export default function ReportsPage() {
     async (format: 'csv' | 'excel' | 'pdf') => {
       const periodParam = timeRange === 'custom' ? '30d' : timeRange;
       const url = reportExportUrl(selectedReport, timeRange, format);
+      setPendingAction(format);
       try {
         const res = await fetch(url);
         if (!res.ok) {
@@ -308,6 +312,8 @@ export default function ReportsPage() {
           description: 'Could not generate the report. Please try again.',
           variant: 'error',
         });
+      } finally {
+        setPendingAction(null);
       }
     },
     [selectedReport, timeRange, toast],
@@ -317,6 +323,7 @@ export default function ReportsPage() {
   const activeTimeRange = timeRanges.find((range) => range.value === timeRange);
   const pdfUrl = reportExportUrl(selectedReport, timeRange, 'pdf');
   const handlePrint = useCallback(async () => {
+    setPendingAction('print');
     try {
       await printPdfFromUrl(reportExportUrl(selectedReport, timeRange, 'pdf'));
     } catch (error) {
@@ -325,6 +332,8 @@ export default function ReportsPage() {
         description: error instanceof Error ? error.message : 'Could not prepare the PDF.',
         variant: 'error',
       });
+    } finally {
+      window.setTimeout(() => setPendingAction(null), 900);
     }
   }, [selectedReport, timeRange, toast]);
 
@@ -349,24 +358,52 @@ export default function ReportsPage() {
               {reportData ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
               {reportData ? 'Live Data' : 'No Data'}
             </div>
-            <Button variant="secondary" size="sm" onClick={() => handleExport('csv')}>
-              <Download className="h-4 w-4" />
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={pendingAction === 'csv'}
+              onClick={() => handleExport('csv')}
+            >
+              {pendingAction !== 'csv' ? <Download className="h-4 w-4" /> : null}
               Export CSV
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => handleExport('excel')}>
-              <Download className="h-4 w-4" />
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={pendingAction === 'excel'}
+              onClick={() => handleExport('excel')}
+            >
+              {pendingAction !== 'excel' ? <Download className="h-4 w-4" /> : null}
               Export Excel
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
-              <Eye className="h-4 w-4" />
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={pendingAction === 'preview'}
+              onClick={() => {
+                setPendingAction('preview');
+                setPreviewOpen(true);
+              }}
+            >
+              {pendingAction !== 'preview' ? <Eye className="h-4 w-4" /> : null}
               Preview
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => handleExport('pdf')}>
-              <FileText className="h-4 w-4" />
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={pendingAction === 'pdf'}
+              onClick={() => handleExport('pdf')}
+            >
+              {pendingAction !== 'pdf' ? <FileText className="h-4 w-4" /> : null}
               Export PDF
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => void handlePrint()}>
-              <Printer className="h-4 w-4" />
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={pendingAction === 'print'}
+              onClick={() => void handlePrint()}
+            >
+              {pendingAction !== 'print' ? <Printer className="h-4 w-4" /> : null}
               Print
             </Button>
           </div>
@@ -526,7 +563,13 @@ export default function ReportsPage() {
         )}
       </main>
 
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+      <Dialog
+        open={previewOpen}
+        onOpenChange={(open) => {
+          setPreviewOpen(open);
+          if (!open) setPendingAction((action) => (action === 'preview' ? null : action));
+        }}
+      >
         <DialogContent
           className="bg-surface flex h-[96dvh] flex-col overflow-hidden p-0 shadow-2xl [&>button.absolute]:hidden"
           style={{ width: '96vw', maxWidth: '1800px' }}
@@ -545,18 +588,20 @@ export default function ReportsPage() {
                 variant="secondary"
                 size="sm"
                 className="text-status-success-text hover:text-status-success-text"
+                loading={pendingAction === 'pdf'}
                 onClick={() => void handleExport('pdf')}
               >
-                <Download className="h-4 w-4" />
+                {pendingAction !== 'pdf' ? <Download className="h-4 w-4" /> : null}
                 <span className="hidden md:inline">Download</span>
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
                 className="text-status-pending-text hover:text-status-pending-text"
+                loading={pendingAction === 'print'}
                 onClick={() => void handlePrint()}
               >
-                <Printer className="h-4 w-4" />
+                {pendingAction !== 'print' ? <Printer className="h-4 w-4" /> : null}
                 <span className="hidden sm:inline">Print</span>
               </Button>
               <DialogClose asChild>
@@ -576,6 +621,7 @@ export default function ReportsPage() {
             <DocumentPdfPreview
               url={pdfUrl}
               title={`${activeReport?.label || 'Report'} PDF preview`}
+              onReady={() => setPendingAction((action) => (action === 'preview' ? null : action))}
             />
           </div>
         </DialogContent>

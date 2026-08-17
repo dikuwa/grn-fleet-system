@@ -159,14 +159,17 @@ export function DocumentPdfPreview({
   url,
   title,
   className = '',
+  onReady,
 }: {
   url: string;
   title: string;
   className?: string;
+  onReady?: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const onReadyRef = useRef(onReady);
   const [pdf, setPdf] = useState<PdfDocumentProxy | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [pageNumber, setPageNumber] = useState(1);
@@ -176,6 +179,10 @@ export function DocumentPdfPreview({
   const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
 
   useEffect(() => {
     const node = viewportRef.current;
@@ -218,6 +225,7 @@ export function DocumentPdfPreview({
         if (controller.signal.aborted) return;
         console.error('Document PDF preview failed:', reason);
         setError('The in-app PDF preview could not be prepared. Download is still available.');
+        onReadyRef.current?.();
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -275,7 +283,10 @@ export function DocumentPdfPreview({
         setError('This PDF page could not be rendered. Download is still available.');
       })
       .finally(() => {
-        if (!cancelled) setRendering(false);
+        if (!cancelled) {
+          setRendering(false);
+          onReadyRef.current?.();
+        }
       });
 
     return () => {
@@ -323,32 +334,44 @@ export function DocumentPdfPreview({
     >
       <div
         ref={scrollerRef}
-        className="h-full overflow-auto overscroll-contain p-4 sm:pr-16"
+        className="document-scrollbar h-full overflow-auto overscroll-contain p-4 sm:pr-16"
         aria-label={title}
       >
-        <div className="flex min-h-full min-w-max items-start justify-center">
-          <div className="border-border relative overflow-hidden rounded-[3px] border bg-white shadow-md">
-            <canvas
-              ref={canvasRef}
-              className="block bg-white"
-              aria-label={`${title}, page ${pageNumber} of ${Math.max(pageCount, 1)}`}
-            />
-            {(loading || rendering) && (
-              <div
-                className="absolute inset-0 flex items-center justify-center bg-white/75"
-                role="status"
-              >
-                <div className="text-ink-500 flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs shadow-sm">
-                  <Loader2
-                    className="h-4 w-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                  {loading ? 'Loading document…' : 'Rendering page…'}
-                </div>
-              </div>
-            )}
+        {loading && !pdf ? (
+          <div className="flex min-h-full min-w-full items-center justify-center" role="status">
+            <div className="text-ink-500 flex items-center gap-2 text-sm">
+              <Loader2
+                className="h-5 w-5 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+              <span>Loading document…</span>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex min-h-full min-w-max items-start justify-center">
+            <div className="border-border relative overflow-hidden rounded-[3px] border bg-white shadow-sm">
+              <canvas
+                ref={canvasRef}
+                className="block bg-white"
+                aria-label={`${title}, page ${pageNumber} of ${Math.max(pageCount, 1)}`}
+              />
+              {rendering && (
+                <div
+                  className="absolute inset-0 flex items-center justify-center bg-white/75"
+                  role="status"
+                >
+                  <div className="text-ink-500 flex items-center gap-2 text-sm">
+                    <Loader2
+                      className="h-5 w-5 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                    <span>Rendering document…</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {pdf && pageCount > 0 ? (

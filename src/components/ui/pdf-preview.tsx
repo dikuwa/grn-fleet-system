@@ -22,6 +22,7 @@ export function PdfPreview({ documentId, documentType }: PdfPreviewProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<'download' | 'print' | null>(null);
 
   useEffect(
     () => () => {
@@ -58,34 +59,49 @@ export function PdfPreview({ documentId, documentType }: PdfPreviewProps) {
     const a = document.createElement('a');
     a.href = `/api/documents/${documentId}/pdf`;
     a.click();
+    window.setTimeout(() => setPendingAction(null), 1000);
   };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        {!pdfUrl && !isLoading && !error && (
-          <Button variant="secondary" size="sm" onClick={handlePreview}>
-            <FileText className="h-4 w-4" />
+        {!pdfUrl && !error && (
+          <Button variant="secondary" size="sm" loading={isLoading} onClick={handlePreview}>
+            {!isLoading ? <FileText className="h-4 w-4" /> : null}
             Generate Preview
           </Button>
         )}
         {pdfUrl && (
           <>
-            <Button variant="secondary" size="sm" onClick={handleDownload}>
-              <Download className="h-4 w-4" />
-              Download PDF
-            </Button>
             <Button
               variant="secondary"
               size="sm"
-              asChild
+              loading={pendingAction === 'download'}
+              onClick={() => {
+                setPendingAction('download');
+                void handleDownload();
+              }}
             >
+              {pendingAction !== 'download' ? <Download className="h-4 w-4" /> : null}
+              Download PDF
+            </Button>
+            <Button variant="secondary" size="sm" asChild>
               <a
-                href={`/api/documents/${documentId}/pdf?preview=1`}
+                href={`/dashboard/documents/${documentId}/print`}
                 target="_blank"
                 rel="noopener noreferrer"
+                aria-busy={pendingAction === 'print' || undefined}
+                onClick={() => {
+                  setPendingAction('print');
+                  window.setTimeout(() => setPendingAction(null), 1200);
+                }}
               >
-                <Printer className="h-4 w-4" /> Print PDF
+                {pendingAction === 'print' ? (
+                  <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <Printer className="h-4 w-4" />
+                )}{' '}
+                Print PDF
               </a>
             </Button>
           </>
@@ -93,10 +109,10 @@ export function PdfPreview({ documentId, documentType }: PdfPreviewProps) {
       </div>
 
       {isLoading && (
-        <div className="border-border bg-muted/30 flex items-center justify-center rounded-[10px] border py-12">
-          <div className="flex flex-col items-center gap-2">
-            <Loader2 className="text-brand-700 h-6 w-6 animate-spin" />
-            <p className="text-ink-500 text-xs">Generating PDF preview...</p>
+        <div className="flex min-h-[320px] items-center justify-center" role="status">
+          <div className="text-ink-500 flex items-center gap-2 text-sm">
+            <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" />
+            <span>Loading document…</span>
           </div>
         </div>
       )}

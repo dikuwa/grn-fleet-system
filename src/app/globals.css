@@ -312,6 +312,34 @@ body {
     background-color: var(--color-ink-400);
   }
 
+  /* Official-document viewport: subtle in both directions and inset from the
+     preview frame so the bars do not read as heavy document borders. */
+  .document-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--color-ink-400) 62%, transparent) transparent;
+  }
+  .document-scrollbar::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+  .document-scrollbar::-webkit-scrollbar-track {
+    margin: 12px;
+    background: transparent;
+  }
+  .document-scrollbar::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-ink-400) 62%, transparent);
+    background-clip: padding-box;
+  }
+  .document-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--color-ink-500) 78%, transparent);
+    background-clip: padding-box;
+  }
+  .document-scrollbar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
   /* Touch manipulation (disable double-tap zoom on mobile) */
   .touch-manipulation {
     touch-action: manipulation;
