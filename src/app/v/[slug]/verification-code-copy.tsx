@@ -6,11 +6,12 @@ import { useToast } from '@/lib/use-toast';
 export function VerificationCodeCopy({ value }: { value: string | null | undefined }) {
   const { toast } = useToast();
 
-  if (!value) return null;
-
   async function copyCode() {
+    const code = value;
+    if (!code) return;
+
     try {
-      await navigator.clipboard.writeText(value);
+      await navigator.clipboard.writeText(code);
       toast({
         title: 'Verification code copied',
         description: 'The secure verification code is ready to paste.',
@@ -24,6 +25,8 @@ export function VerificationCodeCopy({ value }: { value: string | null | undefin
       });
     }
   }
+
+  if (!value) return null;
 
   return (
     <button
