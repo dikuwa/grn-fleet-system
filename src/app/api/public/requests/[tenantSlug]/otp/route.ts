@@ -17,6 +17,7 @@ import {
   secureHash,
 } from '@/lib/secure-request';
 import { sendPlainEmail } from '@/lib/email';
+import { env, hasEnvVar } from '@/env';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 const genericMessage =
@@ -82,14 +83,11 @@ export async function POST(
     )
     .limit(1);
 
-  // Deliberately keep the public failure generic so staff-directory membership
-  // cannot be enumerated by anonymous callers.
-  if (!match) {
-    return NextResponse.json({ message: genericMessage });
-  }
+  if (!match) return NextResponse.json({ message: genericMessage });
 
   const otp = generateOtp();
   const verificationExpiresAt = new Date(Date.now() + 10 * 60_000);
+  const emailConfigured = hasEnvVar('RESEND_API_KEY') && Boolean(env.RESEND_API_KEY);
   const [verification] = await db
     .insert(secureRequestVerifications)
     .values({
@@ -97,29 +95,32 @@ export async function POST(
       employeeId: match.employeeId,
       identityHash,
       otpHash: secureHash(otp),
-      channel: 'email',
+      channel: emailConfigured && match.email ? 'email' : 'directory',
       destinationMasked: match.email ? maskDestination(match.email) : 'staff directory',
       expiresAt: verificationExpiresAt,
       requestIpHash: secureHash(ip),
     })
     .returning();
 
-  // Email is the preferred free/low-cost possession check whenever a sender is
-  // configured. No SMS dependency is required. If email delivery is not
-  // configured yet, fall back to a stronger three-field staff-directory match
-  // (employee number + surname + registered email/mobile) and issue a short
-  // request-only session. This fallback can later be disabled tenant-by-tenant
-  // when an email/SMS provider is available, without changing the request flow.
-  let sent = { success: false as boolean };
-  if (match.email) {
-    sent = await sendPlainEmail(
+  // Prefer possession verification whenever a configured email provider can
+  // reach the employee. A provider outage must NOT silently weaken verification
+  // to the directory fallback. The fallback exists only for installations that
+  // have not configured messaging yet (or employees without a deliverable email).
+  if (emailConfigured && match.email) {
+    const sent = await sendPlainEmail(
       match.email,
       `${match.tenantName} transport request verification code`,
       `Hello ${match.firstName},\n\nYour GRN Fleet transport request verification code is ${otp}.\n\nIt expires in 10 minutes. Do not share this code.`,
     );
-  }
 
-  if (sent.success) {
+    if (!sent.success) {
+      console.error('[Secure Request] Configured email verification failed:', sent.error);
+      return NextResponse.json(
+        { error: 'Verification delivery is temporarily unavailable. Please try again later.' },
+        { status: 503 },
+      );
+    }
+
     await recordAuditEvent({
       tenantId: match.tenantId,
       actorUserId: `secure-request:${match.employeeId}`,
@@ -130,7 +131,7 @@ export async function POST(
       sourceChannel: 'secure_staff_link',
       after: {
         channel: 'email',
-        destination: maskDestination(match.email!),
+        destination: maskDestination(match.email),
         expiresAt: verificationExpiresAt,
       },
     });
@@ -139,7 +140,7 @@ export async function POST(
       message: genericMessage,
       mode: 'otp',
       verificationId: verification.id,
-      destination: maskDestination(match.email!),
+      destination: maskDestination(match.email),
     });
   }
 
