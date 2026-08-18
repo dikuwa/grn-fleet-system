@@ -109,11 +109,9 @@ export async function assessTenantOperationalReadiness(
     {
       id: 'workspace-setup',
       label: 'Workspace setup submitted',
-      description: 'Organisation structure and initial tenant configuration have been saved for review.',
+      description: 'Tenant Administrator must complete Organisation, Offices and initial configuration, then submit the workspace for platform review.',
       severity: 'blocker',
       ready: setup?.isReady === true,
-      actionHref: '/dashboard/setup',
-      actionLabel: 'Open workspace setup',
     },
     {
       id: 'tenant-admin',
@@ -127,18 +125,16 @@ export async function assessTenantOperationalReadiness(
     {
       id: 'office',
       label: 'Operational office or depot',
-      description: 'At least one active office, depot or operational location is required.',
+      description: 'Tenant Administrator must configure at least one active office, depot or operational location.',
       severity: 'blocker',
       ready: Number(officeTotal?.total ?? 0) > 0,
     },
     {
       id: 'workflow',
       label: 'Approval workflow configured',
-      description: 'At least one active transport-request workflow with approval steps is required before real requests can be processed.',
+      description: 'Tenant Administrator must configure at least one active transport-request workflow with approval steps before real requests can be processed.',
       severity: 'blocker',
       ready: activeWorkflowWithSteps,
-      actionHref: '/dashboard/admin/workflows',
-      actionLabel: 'Configure workflow',
     },
     {
       id: 'subscription',
@@ -153,8 +149,6 @@ export async function assessTenantOperationalReadiness(
       description: 'Recommended for routing, reporting and staff organisation, but not required for every tenant type.',
       severity: 'warning',
       ready: Number(departmentTotal?.total ?? 0) > 0,
-      actionHref: '/dashboard/organisation',
-      actionLabel: 'Manage organisation',
     },
   ];
 
