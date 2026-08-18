@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { workflowInstances } from '@/db/schema/workflows';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicleAllocations } from '@/db/schema/trips';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
+import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
 import {
   WorkflowEngine,
@@ -14,6 +16,7 @@ import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 import { processAuthorisationDecision } from '@/lib/authorisation-decision';
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
+import { evaluateTripReleaseGate } from '@/lib/trip-release-gate';
 
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
   switch (actionType) {
@@ -133,13 +136,76 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         )
         .limit(1);
 
-      if (!operationalAllocation?.vehicleId || !operationalAllocation.driverEmployeeId) {
+      if (!operationalAllocation?.vehicleId) {
+        return NextResponse.json(
+          {
+            error: 'Transport Review cannot be completed until a confirmed vehicle allocation exists.',
+            actionUrl: `/dashboard/approvals/${id}/action`,
+          },
+          { status: 409 },
+        );
+      }
+
+      let eligibleDriverAssigned = Boolean(operationalAllocation.driverEmployeeId);
+      if (!eligibleDriverAssigned) {
+        const [externalDriver] = await db
+          .select({ id: externalDriverAssignments.id })
+          .from(externalDriverAssignments)
+          .innerJoin(
+            externalParties,
+            and(
+              eq(externalParties.id, externalDriverAssignments.externalPartyId),
+              eq(externalParties.tenantId, session.tenantId),
+              eq(externalParties.status, 'active'),
+            ),
+          )
+          .innerJoin(
+            externalDriverLicences,
+            and(
+              eq(externalDriverLicences.id, externalDriverAssignments.licenceId),
+              eq(externalDriverLicences.tenantId, session.tenantId),
+              eq(externalDriverLicences.verificationStatus, 'verified'),
+            ),
+          )
+          .where(
+            and(
+              eq(externalDriverAssignments.tenantId, session.tenantId),
+              eq(externalDriverAssignments.requestId, instance.requestId),
+              eq(externalDriverAssignments.allocationId, operationalAllocation.id),
+              inArray(externalDriverAssignments.state, ['pending_acceptance', 'accepted']),
+            ),
+          )
+          .limit(1);
+        eligibleDriverAssigned = Boolean(externalDriver);
+      }
+
+      if (!eligibleDriverAssigned) {
         return NextResponse.json(
           {
             error:
-              'Transport Review cannot be completed until a confirmed vehicle allocation and eligible driver are assigned.',
-            actionUrl: operationalAllocation?.id
-              ? `/dashboard/allocations/${operationalAllocation.id}`
+              'Transport Review cannot be completed until an eligible employee driver or verified external driver is assigned.',
+            actionUrl: `/dashboard/allocations/${operationalAllocation.id}`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (stepActionType === 'authorise' && actionType === 'approved') {
+      const releaseGate = await evaluateTripReleaseGate({
+        tenantId: session.tenantId,
+        requestId: instance.requestId,
+        stage: 'authorisation',
+      });
+      if (!releaseGate.allowed) {
+        return NextResponse.json(
+          {
+            error: 'Final authorisation is blocked by operational release requirements.',
+            blockers: releaseGate.blockers,
+            checks: releaseGate.checks,
+            driverKind: releaseGate.driverKind,
+            actionUrl: releaseGate.tripId
+              ? `/dashboard/trips/${releaseGate.tripId}`
               : `/dashboard/approvals/${id}/action`,
           },
           { status: 409 },
@@ -184,9 +250,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!result.ok) return result.error;
 
-    // Outbound email is deliberately post-commit and best-effort. Await it so
-    // serverless runtimes cannot terminate delivery after the response, while
-    // the helper itself still swallows mail failures for already-durable actions.
     await sendWorkflowOutcomeEmailBestEffort({
       requestId: instance.requestId,
       result: semanticResult,

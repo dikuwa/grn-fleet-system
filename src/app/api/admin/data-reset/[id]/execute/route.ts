@@ -8,6 +8,10 @@ import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/res
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { notifyResetRequesterOutcome } from '@/lib/platform/reset-notifications';
 import { recordAuditEvent } from '@/lib/audit-event';
+import {
+  acquireResetExecutionClaim,
+  releaseResetExecutionClaim,
+} from '@/lib/reset-execution-guard';
 
 export const maxDuration = 300;
 
@@ -22,6 +26,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  let claimId: string | null = null;
+  let resetRequestId = '';
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -30,6 +36,7 @@ export async function POST(
     if (permission instanceof NextResponse) return permission;
 
     const { id } = await params;
+    resetRequestId = id;
     const body = await request.json().catch(() => ({}));
     const confirmationPhrase =
       typeof body.confirmationPhrase === 'string' ? body.confirmationPhrase : '';
@@ -82,6 +89,19 @@ export async function POST(
       );
     }
 
+    const claim = await acquireResetExecutionClaim({
+      resetRequestId: id,
+      tenantId: session.tenantId,
+      actorUserId: session.user.id,
+    });
+    if (!claim.ok) {
+      return NextResponse.json(
+        { error: claim.message, code: claim.code, data: claim.data ?? null },
+        { status: claim.status },
+      );
+    }
+    claimId = claim.claimId;
+
     await recordAuditEvent({
       tenantId: session.tenantId,
       actorUserId: session.user.id,
@@ -89,7 +109,11 @@ export async function POST(
       entityType: 'reset_request',
       entityId: id,
       summary: 'Tenant Administrator activated a Platform-approved reset plan.',
-      after: { preset: resetSpec.preset, categories: resetSpec.categories },
+      after: {
+        preset: resetSpec.preset,
+        categories: resetSpec.categories,
+        approvalExpiresAt: claim.approvalExpiresAt,
+      },
     });
 
     const result = await executeApprovedTenantOperationalReset({
@@ -109,8 +133,6 @@ export async function POST(
     });
 
     if (result.tenantId !== session.tenantId) {
-      // Defense in depth. The tenant-scoped query above should make this
-      // impossible, but never return a cross-tenant execution result.
       return NextResponse.json({ error: 'Reset request not found.' }, { status: 404 });
     }
 
@@ -132,10 +154,15 @@ export async function POST(
       { status: result.result === 'completed' ? 200 : 500 },
     );
   } catch (error) {
+    if (claimId && resetRequestId) {
+      await releaseResetExecutionClaim({ resetRequestId, claimId }).catch((releaseError) => {
+        console.error('[Tenant Data Reset Execute] Could not release execution claim:', releaseError);
+      });
+    }
     console.error('[Tenant Data Reset Execute] POST failed:', error);
     const message = error instanceof Error ? error.message : String(error);
     const isPrecondition =
-      /approve|dry run|recovery point|confirmation|changed|operational reset|ready/i.test(message);
+      /approve|expired|dry run|recovery point|confirmation|changed|operational reset|ready|execution claim/i.test(message);
     return NextResponse.json({ error: message }, { status: isPrecondition ? 409 : 500 });
   }
 }

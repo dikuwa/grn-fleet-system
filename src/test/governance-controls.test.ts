@@ -10,6 +10,9 @@ const persistedSteps = [
   { id: 'driver', stepOrder: 5, actionType: 'acknowledge' },
 ];
 
+const GOVERNED_ORDER_ERROR =
+  'Approval gates must remain in the governed transport lifecycle order. Change assignees or optional stages instead of reordering system stages.';
+
 describe('platform role boundary', () => {
   it('classifies every platform-managed role and no tenant role', () => {
     expect(PlatformSystemRoles).toEqual([
@@ -25,7 +28,30 @@ describe('platform role boundary', () => {
 });
 
 describe('workflow routing publication validation', () => {
-  it('accepts a complete reordered approval flow with acknowledgement last', () => {
+  it('accepts assignment changes while preserving the governed transport lifecycle order', () => {
+    const result = validateWorkflowRouting(persistedSteps, [
+      { id: 'supervisor', stepOrder: 1, assignedUserId: 'supervisor-user' },
+      { id: 'transport', stepOrder: 2, assignedUserId: null },
+      { id: 'release', stepOrder: 3, assignedUserId: 'release-user' },
+      { id: 'authorise', stepOrder: 4, assignedUserId: null },
+      { id: 'driver', stepOrder: 5, assignedUserId: null },
+    ]);
+
+    expect(result).toMatchObject({ ok: true, orderChanged: false });
+    if (result.ok) {
+      expect(result.steps.map((step) => step.id)).toEqual([
+        'supervisor',
+        'transport',
+        'release',
+        'authorise',
+        'driver',
+      ]);
+      expect(result.steps[0]?.assignedUserId).toBe('supervisor-user');
+      expect(result.steps[2]?.assignedUserId).toBe('release-user');
+    }
+  });
+
+  it('rejects reordering governed operational lifecycle stages', () => {
     const result = validateWorkflowRouting(persistedSteps, [
       { id: 'transport', stepOrder: 1, assignedUserId: null },
       { id: 'supervisor', stepOrder: 2, assignedUserId: 'supervisor-user' },
@@ -34,18 +60,10 @@ describe('workflow routing publication validation', () => {
       { id: 'driver', stepOrder: 5, assignedUserId: null },
     ]);
 
-    expect(result).toMatchObject({ ok: true, orderChanged: true });
-    if (result.ok)
-      expect(result.steps.map((step) => step.id)).toEqual([
-        'transport',
-        'supervisor',
-        'release',
-        'authorise',
-        'driver',
-      ]);
+    expect(result).toEqual({ ok: false, error: GOVERNED_ORDER_ERROR });
   });
 
-  it('rejects moving driver acknowledgement away from the terminal step', () => {
+  it('rejects moving driver acknowledgement into the middle of the governed lifecycle', () => {
     const result = validateWorkflowRouting(persistedSteps, [
       { id: 'supervisor', stepOrder: 1, assignedUserId: null },
       { id: 'driver', stepOrder: 2, assignedUserId: null },
@@ -54,10 +72,7 @@ describe('workflow routing publication validation', () => {
       { id: 'authorise', stepOrder: 5, assignedUserId: null },
     ]);
 
-    expect(result).toEqual({
-      ok: false,
-      error: 'Driver Acknowledgement must remain the final workflow step.',
-    });
+    expect(result).toEqual({ ok: false, error: GOVERNED_ORDER_ERROR });
   });
 
   it('rejects duplicate, missing, or non-contiguous step submissions', () => {
