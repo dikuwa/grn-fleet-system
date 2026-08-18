@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Clock3, ExternalLink, Loader2, MonitorPlay, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Clock3, ExternalLink, Loader2, MonitorPlay, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,10 +41,10 @@ export default function PlatformLiveDemoPage() {
     try {
       const response = await fetch('/api/platform/demo-requests/live', { cache: 'no-store' });
       const json = await response.json();
-      if (!response.ok) throw new Error(json.error || 'Could not load demo sandboxes');
+      if (!response.ok) throw new Error(json.error || 'Could not load live demo');
       setRows(json.data || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load demo sandboxes');
+      setError(err instanceof Error ? err.message : 'Could not load live demo');
     } finally {
       setLoading(false);
     }
@@ -53,6 +53,33 @@ export default function PlatformLiveDemoPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function createLiveDemo() {
+    setBusy('create');
+    try {
+      const response = await fetch('/api/platform/demo-requests/live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create' }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'Live demo could not be created');
+      toast({
+        title: json.data?.reused ? 'Live demo ready' : 'Live demo created',
+        description: 'A system-owned 30-day sandbox is published with synthetic personas and fleet data.',
+        variant: 'success',
+      });
+      await load();
+    } catch (err) {
+      toast({
+        title: 'Live demo creation failed',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        variant: 'error',
+      });
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function publish(row: SandboxRow, enabled: boolean) {
     setBusy(row.id);
@@ -67,8 +94,8 @@ export default function PlatformLiveDemoPage() {
       toast({
         title: enabled ? 'Live demo published' : 'Live demo unpublished',
         description: enabled
-          ? 'Synthetic demo personas and fleet data are ready at /demo.'
-          : 'The sandbox is no longer available from the public live demo.',
+          ? 'The public /demo route is ready.'
+          : 'Anonymous access has been removed from the sandbox.',
         variant: 'success',
       });
       await load();
@@ -84,6 +111,9 @@ export default function PlatformLiveDemoPage() {
   }
 
   const active = rows.find((row) => row.isPublicLiveDemo);
+  const hasReusableActiveSandbox = rows.some(
+    (row) => row.status === 'active' && row.isActive && new Date(row.expiresAt) > new Date(),
+  );
 
   return (
     <div className="space-y-6">
@@ -96,8 +126,13 @@ export default function PlatformLiveDemoPage() {
       />
       <PageHeader
         title="Live Demo"
-        description="Publish one isolated demo sandbox for anonymous product exploration. Public sessions expire automatically and never outlive the sandbox."
+        description="Run one system-owned public demo sandbox. It is isolated from prospects, expires automatically, and uses synthetic data only."
       >
+        {!hasReusableActiveSandbox && (
+          <Button size="sm" onClick={() => void createLiveDemo()} loading={busy === 'create'}>
+            <Plus className="h-4 w-4" /> Create Live Demo
+          </Button>
+        )}
         <Button variant="secondary" size="sm" onClick={() => void load()} loading={loading}>
           <RefreshCw className="h-4 w-4" /> Refresh
         </Button>
@@ -132,9 +167,16 @@ export default function PlatformLiveDemoPage() {
               </Button>
             </div>
           ) : (
-            <div className="flex items-start gap-3 text-sm text-ink-500">
-              <MonitorPlay className="mt-0.5 h-5 w-5 shrink-0 text-brand-700" />
-              <p>No sandbox is currently public. Select an active, unexpired sandbox below.</p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3 text-sm text-ink-500">
+                <MonitorPlay className="mt-0.5 h-5 w-5 shrink-0 text-brand-700" />
+                <p>{hasReusableActiveSandbox ? 'The live demo sandbox exists but is not public.' : 'Create a dedicated live demo sandbox to enable /demo.'}</p>
+              </div>
+              {!hasReusableActiveSandbox && (
+                <Button onClick={() => void createLiveDemo()} loading={busy === 'create'}>
+                  Create Live Demo
+                </Button>
+              )}
             </div>
           )}
         </CardContent>
@@ -146,7 +188,7 @@ export default function PlatformLiveDemoPage() {
           <div>
             <p className="text-sm font-semibold text-ink-950">Safe public access</p>
             <p className="mt-1 text-sm leading-relaxed text-ink-500">
-              Publishing creates controlled Transport Officer, Requester, Approver and Driver personas using synthetic data. Tenant Administrator remains available only in private prospect sandboxes.
+              Public demo sandboxes are system-owned, never prospect sandboxes. They create restricted Transport Officer, Requester, Approver and Driver personas. Tenant Administrator remains private.
             </p>
           </div>
         </div>
@@ -154,21 +196,21 @@ export default function PlatformLiveDemoPage() {
 
       {loading ? (
         <div className="flex min-h-40 items-center justify-center text-sm text-ink-500">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading sandboxes…
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading live demo…
         </div>
       ) : error ? (
         <EmptyState
           icon={<MonitorPlay className="h-6 w-6" />}
-          title="Could not load sandboxes"
+          title="Could not load live demo"
           description={error}
           action={{ label: 'Retry', onClick: load }}
         />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={<MonitorPlay className="h-6 w-6" />}
-          title="No demo sandboxes yet"
-          description="Qualify a demo request and create an isolated sandbox first."
-          action={{ label: 'View demo requests', href: '/dashboard/platform/demo-requests' }}
+          title="No live demo sandbox yet"
+          description="Create one system-owned sandbox. It will expire automatically after 30 days."
+          action={{ label: 'Create Live Demo', onClick: createLiveDemo }}
         />
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
@@ -199,7 +241,7 @@ export default function PlatformLiveDemoPage() {
                     onClick={() => void publish(row, !row.isPublicLiveDemo)}
                   >
                     {busy === row.id && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {row.isPublicLiveDemo ? 'Unpublish' : eligible ? 'Use as Live Demo' : 'Not eligible'}
+                    {row.isPublicLiveDemo ? 'Unpublish' : eligible ? 'Publish Live Demo' : 'Expired'}
                   </Button>
                 </CardContent>
               </Card>
