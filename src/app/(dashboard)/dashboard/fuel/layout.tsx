@@ -16,10 +16,14 @@ export default async function FuelLayout({ children }: { children: React.ReactNo
     permissions.includes(Permissions.FUEL_MANAGE) || permissions.includes(Permissions.FUEL_VERIFY);
   const canOpenExpenses =
     permissions.includes(Permissions.FUEL_MANAGE) || permissions.includes(Permissions.TRIP_MANAGE);
+  const canOpenFleetPayments =
+    canOpenExpenses ||
+    permissions.includes(Permissions.TENANT_MANAGE) ||
+    permissions.includes(Permissions.FUEL_VERIFY);
 
   return (
     <div className="space-y-4">
-      {(canOpenReceiptRegister || canOpenExpenses) && (
+      {(canOpenReceiptRegister || canOpenExpenses || canOpenFleetPayments) && (
         <nav
           aria-label="Fuel records navigation"
           className="flex flex-wrap items-center gap-1 rounded-[8px] border border-border bg-surface p-1"
@@ -44,6 +48,14 @@ export default async function FuelLayout({ children }: { children: React.ReactNo
               className="focus-ring min-h-9 rounded-[6px] px-3 py-2 text-xs font-medium text-ink-700 hover:bg-muted"
             >
               Operational Expenses
+            </Link>
+          )}
+          {canOpenFleetPayments && (
+            <Link
+              href="/dashboard/fuel/fleet-payments"
+              className="focus-ring min-h-9 rounded-[6px] px-3 py-2 text-xs font-medium text-ink-700 hover:bg-muted"
+            >
+              Fleet Payments
             </Link>
           )}
         </nav>

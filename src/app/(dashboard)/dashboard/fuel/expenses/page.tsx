@@ -9,7 +9,7 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToast } from '@/lib/use-toast';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
-import { Camera, Loader2, Plus, Receipt, RefreshCw, Search, X } from 'lucide-react';
+import { Camera, CreditCard, Loader2, Plus, Receipt, RefreshCw, Search, X } from 'lucide-react';
 
 const CATEGORY_LABELS: Record<string, string> = {
   fuel: 'Fuel',
@@ -25,6 +25,15 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
+const PAYMENT_LABELS: Record<string, string> = {
+  fleet_payment: 'Fleet payment',
+  cash: 'Cash',
+  eft: 'EFT / bank transfer',
+  personal_reimbursement: 'Personal reimbursement',
+  other: 'Other',
+  unspecified: 'Not specified',
+};
+
 type ExpenseRow = {
   id: string;
   tripId: string | null;
@@ -37,6 +46,10 @@ type ExpenseRow = {
   currency: string;
   odometerReading: number | null;
   receiptKey: string | null;
+  paymentMethod: string;
+  paymentInstrumentId: string | null;
+  paymentProviderName: string | null;
+  paymentInstrumentMasked: string | null;
   verificationStatus: string;
   notes: string | null;
   vehicleLicence: string;
@@ -44,6 +57,16 @@ type ExpenseRow = {
   vehicleMake: string;
   vehicleModel: string;
   tripReference: string | null;
+};
+
+type FleetPayment = {
+  providerId: string;
+  providerName: string;
+  providerType: string;
+  instrumentId: string;
+  instrumentType: string;
+  maskedIdentifier: string;
+  displayName: string | null;
 };
 
 type VehicleOption = { id: string; licenceNumber: string; make: string; model: string };
@@ -67,6 +90,7 @@ const EMPTY_FORM = {
   amount: '',
   currency: 'NAD',
   odometerReading: '',
+  paymentMethod: 'fleet_payment',
   notes: '',
 };
 
@@ -85,6 +109,8 @@ export default function OperationalExpensesPage() {
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleOption | null>(null);
   const [trips, setTrips] = useState<TripOption[]>([]);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [fleetPayment, setFleetPayment] = useState<FleetPayment | null>(null);
+  const [fleetPaymentLoading, setFleetPaymentLoading] = useState(false);
 
   const availableTrips = useMemo(
     () => trips.filter((trip) => !form.vehicleId || trip.vehicleId === form.vehicleId),
@@ -147,17 +173,55 @@ export default function OperationalExpensesPage() {
     return () => window.clearTimeout(timer);
   }, [showForm, vehicleSearch]);
 
+  useEffect(() => {
+    if (!showForm || !form.vehicleId) {
+      setFleetPayment(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setFleetPaymentLoading(true);
+        try {
+          const params = form.tripId
+            ? new URLSearchParams({ tripId: form.tripId })
+            : new URLSearchParams({ vehicleId: form.vehicleId });
+          const response = await fetch(`/api/fleet-payments/resolve?${params}`, { cache: 'no-store' });
+          const json = await response.json();
+          if (!cancelled) setFleetPayment(response.ok ? json.data || null : null);
+        } catch {
+          if (!cancelled) setFleetPayment(null);
+        } finally {
+          if (!cancelled) setFleetPaymentLoading(false);
+        }
+      })();
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [showForm, form.vehicleId, form.tripId]);
+
   function resetForm() {
     setForm(EMPTY_FORM);
     setVehicleSearch('');
     setSelectedVehicle(null);
     setReceiptFile(null);
+    setFleetPayment(null);
   }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!form.vehicleId) {
       toast({ title: 'Vehicle required', description: 'Select the vehicle this expense belongs to.', variant: 'error' });
+      return;
+    }
+    if (form.paymentMethod === 'fleet_payment' && !fleetPayment) {
+      toast({
+        title: 'Fleet payment not available',
+        description: 'This vehicle has no active fleet card/tag. Choose Cash, EFT, reimbursement or Other, or register the instrument first.',
+        variant: 'error',
+      });
       return;
     }
     setSaving(true);
@@ -179,6 +243,7 @@ export default function OperationalExpensesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          paymentInstrumentId: form.paymentMethod === 'fleet_payment' ? fleetPayment?.instrumentId : undefined,
           tripId: form.tripId || undefined,
           receiptKey,
           clientSyncId: crypto.randomUUID(),
@@ -189,9 +254,12 @@ export default function OperationalExpensesPage() {
 
       toast({
         title: 'Operational expense recorded',
-        description: form.tripId
-          ? 'The cost is linked to the selected trip and vehicle.'
-          : 'The cost is linked to the vehicle without creating a fake trip.',
+        description:
+          form.paymentMethod === 'fleet_payment' && fleetPayment
+            ? `Recorded against ${fleetPayment.providerName} ${fleetPayment.maskedIdentifier}.`
+            : form.tripId
+              ? 'The cost is linked to the selected trip and vehicle.'
+              : 'The cost is linked to the vehicle without creating a fake trip.',
         variant: 'success',
       });
       resetForm();
@@ -248,6 +316,7 @@ export default function OperationalExpensesPage() {
                 onChange={(event) => {
                   setVehicleSearch(event.target.value);
                   setSelectedVehicle(null);
+                  setFleetPayment(null);
                   setForm((value) => ({ ...value, vehicleId: '', tripId: '' }));
                 }}
                 onFocus={() => vehicleOptions.length && setVehicleOpen(true)}
@@ -306,6 +375,38 @@ export default function OperationalExpensesPage() {
             <div className="space-y-1.5"><Label>Currency</Label><Input value={form.currency} maxLength={3} onChange={(event) => setForm((value) => ({ ...value, currency: event.target.value.toUpperCase() }))} /></div>
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label required>Payment method</Label>
+              <StyledSelect
+                value={form.paymentMethod}
+                onChange={(event) => setForm((value) => ({ ...value, paymentMethod: event.target.value }))}
+              >
+                <option value="fleet_payment">Fleet payment card / tag</option>
+                <option value="cash">Cash</option>
+                <option value="eft">EFT / bank transfer</option>
+                <option value="personal_reimbursement">Personal reimbursement</option>
+                <option value="other">Other</option>
+              </StyledSelect>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Assigned fleet payment</Label>
+              <div className="flex min-h-10 items-center gap-2 rounded-[8px] border border-border bg-canvas px-3 py-2 text-sm">
+                <CreditCard className="h-4 w-4 shrink-0 text-brand-700" />
+                {!form.vehicleId ? (
+                  <span className="text-ink-500">Select a vehicle first</span>
+                ) : fleetPaymentLoading ? (
+                  <span className="flex items-center gap-2 text-ink-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…</span>
+                ) : fleetPayment ? (
+                  <span className="text-ink-900">{fleetPayment.providerName} · {fleetPayment.maskedIdentifier}</span>
+                ) : (
+                  <span className="text-ink-500">No active vehicle card/tag registered</span>
+                )}
+              </div>
+              <p className="text-xs text-ink-500">Auto-selected from the vehicle/trip. No PIN or full card number is stored.</p>
+            </div>
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-1.5"><Label>Supplier</Label><Input value={form.supplier} onChange={(event) => setForm((value) => ({ ...value, supplier: event.target.value }))} placeholder="Supplier / service provider" /></div>
             <div className="space-y-1.5"><Label>Reference</Label><Input value={form.referenceNumber} onChange={(event) => setForm((value) => ({ ...value, referenceNumber: event.target.value }))} placeholder="Receipt / invoice no." /></div>
@@ -334,7 +435,7 @@ export default function OperationalExpensesPage() {
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <div className="space-y-1.5 xl:col-span-2">
             <Label>Search</Label>
-            <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" /><Input className="pl-9" value={filters.search} onChange={(event) => setFilters((value) => ({ ...value, search: event.target.value }))} placeholder="Vehicle, supplier, reference or trip…" /></div>
+            <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" /><Input className="pl-9" value={filters.search} onChange={(event) => setFilters((value) => ({ ...value, search: event.target.value }))} placeholder="Vehicle, supplier, payment, reference or trip…" /></div>
           </div>
           <div className="space-y-1.5"><Label>From</Label><Input type="date" value={filters.from} onChange={(event) => setFilters((value) => ({ ...value, from: event.target.value }))} /></div>
           <div className="space-y-1.5"><Label>To</Label><Input type="date" value={filters.to} onChange={(event) => setFilters((value) => ({ ...value, to: event.target.value }))} /></div>
@@ -368,6 +469,7 @@ export default function OperationalExpensesPage() {
                     <p className="text-sm font-semibold text-ink-950">{CATEGORY_LABELS[row.category] || row.category.replaceAll('_', ' ')}</p>
                     <Badge variant={row.verificationStatus === 'verified' ? 'success' : row.verificationStatus === 'rejected' ? 'error' : 'pending'} size="sm">{row.verificationStatus.replaceAll('_', ' ')}</Badge>
                     <Badge variant={row.tripId ? 'info' : 'default'} size="sm">{row.tripId ? 'Trip expense' : 'Vehicle expense'}</Badge>
+                    {row.paymentProviderName && <Badge variant="info" size="sm">{row.paymentProviderName} {row.paymentInstrumentMasked || ''}</Badge>}
                   </div>
                   <div className="mt-2 grid gap-x-6 gap-y-1 text-xs text-ink-500 sm:grid-cols-2 xl:grid-cols-4">
                     <span>{row.vehicleLicence} · {row.vehicleMake} {row.vehicleModel}</span>
@@ -376,6 +478,7 @@ export default function OperationalExpensesPage() {
                     <span className="font-medium text-ink-800">{formatCurrency(Number(row.amount), row.currency)}</span>
                     <span>Trip: {row.tripReference || 'Not linked'}</span>
                     <span>Reference: {row.referenceNumber || '—'}</span>
+                    <span>Payment: {row.paymentProviderName ? `${row.paymentProviderName} ${row.paymentInstrumentMasked || ''}` : PAYMENT_LABELS[row.paymentMethod] || row.paymentMethod}</span>
                     <span>Odometer: {row.odometerReading ? `${row.odometerReading.toLocaleString()} km` : '—'}</span>
                     <span>{row.receiptKey ? 'Receipt attached' : 'No receipt attached'}</span>
                   </div>
