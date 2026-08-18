@@ -2,7 +2,7 @@
  * Server-side session helpers.
  *
  * Provides two helper functions to resolve the current user's session and
- * their associated tenant membership.  Both share the same tenant-resolution
+ * their associated tenant membership. Both share the same tenant-resolution
  * logic via the private `resolveUserTenant` helper.
  *
  * NOTE: These helpers read the session cookie directly from the request
@@ -14,14 +14,16 @@
 
 import { headers } from 'next/headers';
 import { getDb } from '@/db';
-import { user as userTable, session, tenantMemberships, tenants } from '@/db/schema';
+import {
+  demoSandboxes,
+  user as userTable,
+  session,
+  tenantMemberships,
+  tenants,
+} from '@/db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import { parseCookies } from '@/lib/utils';
 import { canTenantOperate, getTenantEntitlements } from '@/lib/entitlements';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 export type SessionUser = {
   id: string;
@@ -36,15 +38,6 @@ export type SessionInfo = {
   tenantSlug: string;
 } | null;
 
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Find a valid session by reading the better-auth.session_token cookie
- * and looking it up in the database. Returns { user, session, token }
- * or null.
- */
 async function findSessionFromCookie(
   cookieHeader: string | null,
 ): Promise<{
@@ -57,16 +50,13 @@ async function findSessionFromCookie(
   if (!token) return null;
 
   const db = getDb();
-
   const [sessionRecord] = await db
     .select()
     .from(session)
     .where(eq(session.token, token))
     .limit(1);
 
-  if (!sessionRecord || new Date(sessionRecord.expiresAt) < new Date()) {
-    return null;
-  }
+  if (!sessionRecord || new Date(sessionRecord.expiresAt) < new Date()) return null;
 
   const [userRecord] = await db
     .select()
@@ -75,15 +65,57 @@ async function findSessionFromCookie(
     .limit(1);
 
   if (!userRecord) return null;
-
   return { user: userRecord, session: sessionRecord, token };
 }
 
 /**
- * Resolve the active tenant membership for a given user ID.
- * Returns the first active membership found (users can belong to
- * multiple tenants, but one session is the "active" context).
+ * Demo sandboxes have their own explicit lifecycle in addition to subscription
+ * trials. Enforce it here so expiry is authoritative even when no scheduled
+ * cleanup job is configured. Any dashboard/API request made after `expiresAt`
+ * suspends the sandbox and stops session resolution immediately.
  */
+async function demoSandboxCanOperate(tenantId: string): Promise<boolean> {
+  const db = getDb();
+  const [sandbox] = await db
+    .select({
+      id: demoSandboxes.id,
+      status: demoSandboxes.status,
+      isActive: demoSandboxes.isActive,
+      expiresAt: demoSandboxes.expiresAt,
+    })
+    .from(demoSandboxes)
+    .where(eq(demoSandboxes.tenantId, tenantId))
+    .limit(1);
+
+  if (!sandbox) return false;
+  const now = new Date();
+  const expired = !sandbox.isActive || sandbox.status !== 'active' || sandbox.expiresAt <= now;
+  if (!expired) return true;
+
+  // Synchronise stale active rows lazily. Idempotent updates make this safe
+  // when several requests arrive around the expiry boundary.
+  if (sandbox.status === 'active' && sandbox.isActive && sandbox.expiresAt <= now) {
+    await Promise.all([
+      db
+        .update(demoSandboxes)
+        .set({ status: 'expired', isActive: false })
+        .where(eq(demoSandboxes.id, sandbox.id)),
+      db
+        .update(tenants)
+        .set({
+          status: 'SUSPENDED',
+          lifecycleStatus: 'SUSPENDED',
+          lifecycleReason: 'Demo sandbox expired',
+          lifecycleChangedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(tenants.id, tenantId)),
+    ]);
+  }
+
+  return false;
+}
+
 async function resolveUserTenant(
   userId: string,
 ): Promise<{ tenantId: string; tenantSlug: string } | null> {
@@ -93,6 +125,7 @@ async function resolveUserTenant(
       .select({
         tenantId: tenantMemberships.tenantId,
         tenantSlug: tenants.slug,
+        tenantType: tenants.type,
       })
       .from(tenantMemberships)
       .innerJoin(tenants, eq(tenantMemberships.tenantId, tenants.id))
@@ -100,10 +133,6 @@ async function resolveUserTenant(
         and(
           eq(tenantMemberships.userId, userId),
           eq(tenantMemberships.status, 'active'),
-          // Case-insensitive: statuses may be legacy lowercase or the
-          // normalised SaaS uppercase (ACTIVE/SUSPENDED/TRIAL/ARCHIVED).
-          // TRIAL tenants are allowed through so the entitlement gate below
-          // can decide on trial expiry; SUSPENDED/ARCHIVED are blocked.
           sql`LOWER(${tenants.status}) IN ('active', 'trial')`,
         ),
       )
@@ -111,11 +140,16 @@ async function resolveUserTenant(
 
     if (membership.length === 0) return null;
 
-    const tenantId = membership[0].tenantId;
+    const activeMembership = membership[0];
+    const tenantId = activeMembership.tenantId;
 
-    // Evaluate the subscription lifecycle on session establishment so the
-    // entitlement gate below reads freshly-transitioned state (trial → active,
-    // grace → expired, etc.). Best-effort: never fail login because of it.
+    if (activeMembership.tenantType === 'demo_sandbox') {
+      const demoAllowed = await demoSandboxCanOperate(tenantId);
+      if (!demoAllowed) return null;
+    }
+
+    // Evaluate subscription lifecycle at session establishment so trial expiry
+    // and entitlement changes are enforced from the same server boundary.
     try {
       const { evaluateSubscriptionLifecycle } = await import('@/lib/platform/subscriptions');
       await evaluateSubscriptionLifecycle(tenantId);
@@ -123,22 +157,22 @@ async function resolveUserTenant(
       console.warn('[session] Subscription lifecycle evaluation skipped:', err);
     }
 
-    // Entitlement gate: block suspended/archived/expired-trial tenants
-    // at the session boundary (server-side, not just in the UI).
     const entitlements = await getTenantEntitlements(tenantId);
     if (entitlements) {
       const gate = canTenantOperate(entitlements);
       if (!gate.ok) return null;
     }
 
-    return membership[0];
+    return { tenantId: activeMembership.tenantId, tenantSlug: activeMembership.tenantSlug };
   } catch {
     return null;
   }
 }
 
 function buildSessionInfo(
-  sessionData: { user: { id: string; email: string; name: string | null; image: string | null } },
+  sessionData: {
+    user: { id: string; email: string; name: string | null; image: string | null };
+  },
   tenant: { tenantId: string; tenantSlug: string },
 ): SessionInfo {
   return {
@@ -153,17 +187,6 @@ function buildSessionInfo(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Get the current session from the request context (server-side).
- * Works in API routes, server components, and route handlers.
- *
- * Uses `headers()` from `next/headers` — only call this from
- * server components / route handlers, NOT from client code.
- */
 export async function getServerSession(): Promise<SessionInfo> {
   try {
     const h = await headers();
@@ -173,20 +196,13 @@ export async function getServerSession(): Promise<SessionInfo> {
 
     const tenant = await resolveUserTenant(result.user.id);
     if (!tenant) return null;
-
     return buildSessionInfo(result, tenant);
   } catch {
     return null;
   }
 }
 
-/**
- * Get the current session from an incoming request's headers.
- * Use this inside API route handlers where you have the `Request` object.
- */
-export async function getServerSessionFromRequest(
-  request: Request,
-): Promise<SessionInfo> {
+export async function getServerSessionFromRequest(request: Request): Promise<SessionInfo> {
   try {
     const cookieHeader = request.headers.get('cookie');
     const result = await findSessionFromCookie(cookieHeader);
@@ -194,7 +210,6 @@ export async function getServerSessionFromRequest(
 
     const tenant = await resolveUserTenant(result.user.id);
     if (!tenant) return null;
-
     return buildSessionInfo(result, tenant);
   } catch {
     return null;
