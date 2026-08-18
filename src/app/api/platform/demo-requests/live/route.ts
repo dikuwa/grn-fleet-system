@@ -6,6 +6,7 @@ import { desc, eq } from 'drizzle-orm';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { publishLiveDemoSandbox } from '@/lib/public-demo';
+import { createDedicatedLiveDemoSandbox } from '@/lib/live-demo-bootstrap';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 export async function GET(request: NextRequest) {
@@ -35,9 +36,13 @@ export async function GET(request: NextRequest) {
       .innerJoin(demoRequests, eq(demoRequests.id, demoSandboxes.demoRequestId))
       .orderBy(desc(demoSandboxes.createdAt));
 
+    const systemRows = rows.filter(
+      (row) => (row.metadata as Record<string, unknown> | null)?.systemLiveDemo === true,
+    );
+
     return NextResponse.json({
       success: true,
-      data: rows.map((row) => ({
+      data: systemRows.map((row) => ({
         ...row,
         isPublicLiveDemo:
           Boolean((row.metadata as Record<string, unknown> | null)?.publicLiveDemo) &&
@@ -60,6 +65,13 @@ export async function POST(request: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await request.json().catch(() => null);
+    const action = typeof body?.action === 'string' ? body.action : '';
+
+    if (action === 'create') {
+      const created = await createDedicatedLiveDemoSandbox(auth.session.user.id);
+      return NextResponse.json({ success: true, data: created }, { status: created.reused ? 200 : 201 });
+    }
+
     const sandboxId = typeof body?.sandboxId === 'string' ? body.sandboxId : '';
     const enabled = body?.enabled === true;
     if (!sandboxId) {
@@ -68,11 +80,17 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
     const [sandbox] = await db
-      .select({ tenantId: demoSandboxes.tenantId })
+      .select({ tenantId: demoSandboxes.tenantId, metadata: demoSandboxes.metadata })
       .from(demoSandboxes)
       .where(eq(demoSandboxes.id, sandboxId))
       .limit(1);
     if (!sandbox) return NextResponse.json({ error: 'Sandbox not found' }, { status: 404 });
+    if ((sandbox.metadata as Record<string, unknown> | null)?.systemLiveDemo !== true) {
+      return NextResponse.json(
+        { error: 'Private prospect sandboxes cannot be published publicly.' },
+        { status: 403 },
+      );
+    }
 
     const updated = await publishLiveDemoSandbox(sandboxId, enabled);
     await recordAuditEvent({
@@ -83,13 +101,13 @@ export async function POST(request: NextRequest) {
       entityType: 'demo_sandbox',
       entityId: sandboxId,
       summary: enabled
-        ? 'Sandbox published as the public live demo.'
-        : 'Sandbox removed from the public live demo.',
+        ? 'System live demo sandbox published.'
+        : 'System live demo sandbox removed from public access.',
     }).catch(() => {});
 
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
-    console.error('[Platform Live Demo] publish failed:', error);
+    console.error('[Platform Live Demo] update failed:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Live demo update failed' },
       { status: 400 },
