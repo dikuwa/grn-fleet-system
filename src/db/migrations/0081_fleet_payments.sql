@@ -245,3 +245,66 @@ CREATE TRIGGER trg_link_fleet_payment_trip
 AFTER INSERT OR UPDATE OF allocation_id
 ON trips
 FOR EACH ROW EXECUTE FUNCTION grn_link_fleet_payment_trip();
+
+-- Existing fuel UI already records payment_method='fuel_card'. Preserve that
+-- UX and mirror such entries into the provider-neutral ledger automatically.
+CREATE OR REPLACE FUNCTION grn_capture_fleet_payment_fuel()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_tenant_id uuid;
+  v_assignment fleet_payment_assignments%ROWTYPE;
+  v_provider_id uuid;
+  v_instrument_id uuid;
+BEGIN
+  IF NEW.payment_method NOT IN ('fuel_card', 'fleet_payment') THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT v.tenant_id INTO v_tenant_id FROM vehicles v WHERE v.id = NEW.vehicle_id;
+  IF v_tenant_id IS NULL THEN RETURN NEW; END IF;
+
+  IF NEW.trip_id IS NOT NULL THEN
+    SELECT a.* INTO v_assignment
+    FROM fleet_payment_assignments a
+    WHERE a.tenant_id = v_tenant_id AND a.trip_id = NEW.trip_id AND a.status = 'assigned'
+    ORDER BY a.assigned_at DESC LIMIT 1;
+  END IF;
+
+  IF v_assignment.id IS NOT NULL THEN
+    v_instrument_id := v_assignment.instrument_id;
+  ELSE
+    SELECT i.id INTO v_instrument_id
+    FROM fleet_payment_instruments i
+    JOIN fleet_payment_providers p ON p.id = i.provider_id
+    WHERE i.tenant_id = v_tenant_id
+      AND i.vehicle_id = NEW.vehicle_id
+      AND i.status = 'active'
+      AND p.status = 'active'
+      AND (i.valid_from IS NULL OR i.valid_from <= NEW.transaction_at)
+      AND (i.valid_until IS NULL OR i.valid_until >= NEW.transaction_at)
+    ORDER BY p.is_default DESC, i.updated_at DESC LIMIT 1;
+  END IF;
+
+  IF v_instrument_id IS NULL THEN RETURN NEW; END IF;
+  SELECT provider_id INTO v_provider_id FROM fleet_payment_instruments WHERE id = v_instrument_id;
+
+  INSERT INTO fleet_payment_transactions (
+    tenant_id, provider_id, instrument_id, assignment_id, trip_id, vehicle_id,
+    driver_employee_id, transaction_at, merchant, category, litres, amount,
+    currency, odometer_reading, status, source, reconciliation_status,
+    reconciliation_confidence, matched_fuel_transaction_id, raw_data, imported_by_user_id
+  ) VALUES (
+    v_tenant_id, v_provider_id, v_instrument_id, v_assignment.id, NEW.trip_id, NEW.vehicle_id,
+    NEW.driver_employee_id, NEW.transaction_at, NEW.station_name, 'fuel', NEW.litres, NEW.amount,
+    'NAD', NEW.odometer_reading, 'approved', 'manual', 'matched', 100, NEW.id,
+    jsonb_build_object('legacyPaymentMethod', NEW.payment_method, 'referenceNumber', NEW.reference_number),
+    NEW.recorded_by_user_id
+  );
+
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_capture_fleet_payment_fuel ON fuel_transactions;
+CREATE TRIGGER trg_capture_fleet_payment_fuel
+AFTER INSERT ON fuel_transactions
+FOR EACH ROW EXECUTE FUNCTION grn_capture_fleet_payment_fuel();
