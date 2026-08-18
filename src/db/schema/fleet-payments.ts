@@ -144,6 +144,7 @@ export const fleetPaymentTransactions = pgTable(
     reconciliationStatus: text('reconciliation_status').notNull().default('unmatched'),
     reconciliationConfidence: integer('reconciliation_confidence'),
     matchedExpenseId: uuid('matched_expense_id'),
+    matchedFuelTransactionId: uuid('matched_fuel_transaction_id'),
     rawData: jsonb('raw_data').$type<Record<string, unknown>>().default({}),
     importedByUserId: text('imported_by_user_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -154,6 +155,7 @@ export const fleetPaymentTransactions = pgTable(
     index('idx_fleet_payment_transactions_tenant_time').on(table.tenantId, table.transactionAt),
     index('idx_fleet_payment_transactions_reconciliation').on(table.tenantId, table.reconciliationStatus),
     index('idx_fleet_payment_transactions_vehicle').on(table.vehicleId),
+    index('idx_fleet_payment_transactions_fuel').on(table.matchedFuelTransactionId),
   ],
 );
 
