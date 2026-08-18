@@ -1,13 +1,13 @@
 /**
  * Hero — the first impression.
  *
- * Content intentionally remains unchanged. The product preview is rendered in
- * a quiet, responsive perspective device shell so it feels like a real
- * application without letting the hardware frame dominate the message.
+ * The product preview is rendered in a quiet, responsive perspective device
+ * shell so it feels like a real application without letting the hardware
+ * frame dominate the message.
  */
 
 import Link from 'next/link';
-import { ArrowRight, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, MonitorPlay } from 'lucide-react';
 import { SectionContainer } from '@/components/public/section';
 import { TechnicalBackdrop } from '@/components/public/technical-backdrop';
 import { ProductDashboardPreview } from '@/components/public/previews';
@@ -31,7 +31,11 @@ const DEFAULT_PROOF_POINTS = [
   'Traceable digital records',
 ];
 
-export function Hero({ title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION, proofPoints }: HeroProps) {
+export function Hero({
+  title = DEFAULT_TITLE,
+  description = DEFAULT_DESCRIPTION,
+  proofPoints,
+}: HeroProps) {
   const points = proofPoints?.length ? proofPoints : DEFAULT_PROOF_POINTS;
 
   return (
@@ -65,19 +69,18 @@ export function Hero({ title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION,
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </Link>
               <Link
-                href="#how-it-works"
-                className="inline-flex h-12 items-center justify-center rounded-[8px] border border-white/25 bg-white/5 px-6 text-sm font-medium text-white transition-[background-color,border-color] duration-200 hover:border-white/35 hover:bg-white/10 motion-reduce:transition-none"
+                href="/demo"
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-[8px] border border-white/25 bg-white/5 px-6 text-sm font-medium text-white transition-[background-color,border-color] duration-200 hover:border-white/35 hover:bg-white/10 motion-reduce:transition-none"
               >
-                See How It Works
+                <MonitorPlay className="h-4 w-4" aria-hidden="true" />
+                Explore Live Demo
               </Link>
             </div>
           </div>
 
           <div className="mx-auto w-full max-w-[760px] px-1 sm:px-4 lg:mx-0 lg:px-0">
             <div className="relative isolate py-3 sm:py-6 lg:py-2">
-              <div
-                className="relative mx-auto w-full transform-gpu transition-transform duration-500 ease-out motion-reduce:transition-none sm:w-[96%] md:[transform:perspective(1500px)_rotateY(-11deg)_rotateX(1.8deg)_rotateZ(-1deg)] lg:w-full lg:[transform:perspective(1600px)_rotateY(-14deg)_rotateX(2.2deg)_rotateZ(-1.35deg)]"
-              >
+              <div className="relative mx-auto w-full transform-gpu transition-transform duration-500 ease-out motion-reduce:transition-none sm:w-[96%] md:[transform:perspective(1500px)_rotateY(-11deg)_rotateX(1.8deg)_rotateZ(-1deg)] lg:w-full lg:[transform:perspective(1600px)_rotateY(-14deg)_rotateX(2.2deg)_rotateZ(-1.35deg)]">
                 <div className="relative rounded-[26px] border border-white/[0.22] bg-[#171a20] p-[7px] shadow-[0_30px_72px_rgba(0,0,0,0.36)] ring-1 ring-white/[0.035] sm:rounded-[32px] sm:p-[9px]">
                   <div
                     aria-hidden="true"
