@@ -65,7 +65,8 @@ export default function PlatformTenantReadinessPage({
   }, [id]);
 
   useEffect(() => {
-    void load();
+    const timeoutId = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timeoutId);
   }, [load]);
 
   if (loading) {
@@ -176,7 +177,7 @@ export default function PlatformTenantReadinessPage({
         </CardHeader>
         <CardContent>
           <p className="text-sm leading-6 text-ink-600">
-            Vehicles, drivers, departments, regions, BlueFuel/Fleet Payments, public employee request access and tenant branding may be configured according to the organisation's operating model. The platform does not force those optional choices simply to activate a tenant.
+            Vehicles, drivers, departments, regions, BlueFuel/Fleet Payments, public employee request access and tenant branding may be configured according to each tenant&apos;s operating model. The platform does not force those optional choices simply to activate a tenant.
           </p>
         </CardContent>
       </Card>
