@@ -82,6 +82,8 @@
     { "idx": 77, "version": "7", "when": 1786860000000, "tag": "0077_official_inspection_current_assignment_guard", "breakpoints": true },
     { "idx": 78, "version": "7", "when": 1786882920000, "tag": "0078_incident_technical_clearance_guard", "breakpoints": true },
     { "idx": 79, "version": "7", "when": 1786890600000, "tag": "0079_incident_clearance_terminal_guard", "breakpoints": true },
-    { "idx": 80, "version": "7", "when": 1786946400000, "tag": "0080_municipal_vehicle_categories", "breakpoints": true }
+    { "idx": 80, "version": "7", "when": 1786946400000, "tag": "0080_municipal_vehicle_categories", "breakpoints": true },
+    { "idx": 81, "version": "7", "when": 1787022000000, "tag": "0081_fleet_payments", "breakpoints": true },
+    { "idx": 82, "version": "7", "when": 1787025600000, "tag": "0082_fleet_payment_release_guard", "breakpoints": true }
   ]
 }
