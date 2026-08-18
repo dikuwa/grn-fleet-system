@@ -1,8 +1,9 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { env } from '@/env';
 import { getDb } from '@/db';
-import { secureRequestSessions } from '@/db/schema';
+import { secureRequestSessions, tenants } from '@/db/schema';
 import { and, eq, gt, isNull } from 'drizzle-orm';
+import { isPublicEmployeeRequestEnabled } from '@/lib/public-request-access';
 
 export const SECURE_REQUEST_COOKIE = 'grn_secure_request';
 const secret = () => env.BETTER_AUTH_SECRET || env.SHARE_TOKEN_PEPPER || 'development-only-secret';
@@ -34,12 +35,20 @@ export function maskDestination(value: string) {
 export async function resolveSecureRequestSession(token?: string | null) {
   if (!token) return null;
   const db = getDb();
-  const [session] = await db.select().from(secureRequestSessions).where(and(
-    eq(secureRequestSessions.tokenHash, secureHash(token)),
-    gt(secureRequestSessions.expiresAt, new Date()),
-    isNull(secureRequestSessions.revokedAt),
-  )).limit(1);
-  return session || null;
+  const [row] = await db
+    .select({ session: secureRequestSessions, tenantMetadata: tenants.metadata })
+    .from(secureRequestSessions)
+    .innerJoin(tenants, eq(tenants.id, secureRequestSessions.tenantId))
+    .where(
+      and(
+        eq(secureRequestSessions.tokenHash, secureHash(token)),
+        gt(secureRequestSessions.expiresAt, new Date()),
+        isNull(secureRequestSessions.revokedAt),
+      ),
+    )
+    .limit(1);
+  if (!row || !isPublicEmployeeRequestEnabled(row.tenantMetadata)) return null;
+  return row.session;
 }
 
 export function publicRequestCsrfAllowed(request: Request) {

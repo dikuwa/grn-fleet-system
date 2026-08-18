@@ -5,6 +5,7 @@ import { tenants } from '@/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
 import { APP_SHORT_NAME } from '@/lib/constants';
 import { PublicThemeToggle } from '@/components/layout/public-theme-toggle';
+import { isPublicEmployeeRequestEnabled } from '@/lib/public-request-access';
 import { SecureRequestForm } from './SecureRequestForm';
 
 export const dynamic = 'force-dynamic';
@@ -17,11 +18,11 @@ export default async function TenantSecureRequestPage({
   const { tenantSlug } = await params;
   const db = getDb();
   const [tenant] = await db
-    .select({ name: tenants.name, slug: tenants.slug })
+    .select({ name: tenants.name, slug: tenants.slug, metadata: tenants.metadata })
     .from(tenants)
     .where(and(eq(tenants.slug, tenantSlug), sql`lower(${tenants.status}) = 'active'`))
     .limit(1);
-  if (!tenant) notFound();
+  if (!tenant || !isPublicEmployeeRequestEnabled(tenant.metadata)) notFound();
 
   return (
     <main className="min-h-screen bg-canvas">

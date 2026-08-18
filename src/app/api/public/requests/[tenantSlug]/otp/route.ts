@@ -16,6 +16,7 @@ import {
   SECURE_REQUEST_COOKIE,
   secureHash,
 } from '@/lib/secure-request';
+import { isPublicEmployeeRequestEnabled } from '@/lib/public-request-access';
 import { sendPlainEmail } from '@/lib/email';
 import { env, hasEnvVar } from '@/env';
 import { recordAuditEvent } from '@/lib/audit-event';
@@ -62,6 +63,7 @@ export async function POST(
     .select({
       tenantId: tenants.id,
       tenantName: tenants.name,
+      tenantMetadata: tenants.metadata,
       employeeId: employees.id,
       employeeNumber: employees.employeeNumber,
       firstName: employees.firstName,
@@ -83,7 +85,9 @@ export async function POST(
     )
     .limit(1);
 
-  if (!match) return NextResponse.json({ message: genericMessage });
+  if (!match || !isPublicEmployeeRequestEnabled(match.tenantMetadata)) {
+    return NextResponse.json({ message: genericMessage });
+  }
 
   const otp = generateOtp();
   const verificationExpiresAt = new Date(Date.now() + 10 * 60_000);
