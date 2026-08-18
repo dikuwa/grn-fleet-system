@@ -236,7 +236,7 @@ export default function PlatformLiveDemoPage() {
                   </div>
                   <Button
                     className="mt-4 w-full"
-                    variant={row.isPublicLiveDemo ? 'secondary' : 'default'}
+                    variant={row.isPublicLiveDemo ? 'secondary' : 'primary'}
                     disabled={!eligible || busy !== null}
                     onClick={() => void publish(row, !row.isPublicLiveDemo)}
                   >
