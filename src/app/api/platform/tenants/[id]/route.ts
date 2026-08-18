@@ -1,7 +1,7 @@
 /**
  * Platform Tenant Detail API
  *
- * GET    /api/platform/tenants/[id] — tenant details + deletion assessment
+ * GET    /api/platform/tenants/[id] — tenant details + deletion/readiness assessment
  * PATCH  /api/platform/tenants/[id] — controlled tenant/lifecycle update
  * DELETE /api/platform/tenants/[id] — controlled hard-delete; populated tenants
  * require suspension/archive plus an explicit force confirmation
@@ -19,6 +19,7 @@ import { programmes } from '@/db/schema/programmes';
 import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { assessTenantOperationalReadiness } from '@/lib/platform/tenant-readiness';
 
 async function getDeletionAssessment(tenantId: string) {
   const db = getDb();
@@ -65,9 +66,10 @@ export async function GET(
     const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
     if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
-    const [[branding], deletion] = await Promise.all([
+    const [[branding], deletion, readiness] = await Promise.all([
       db.select().from(tenantBranding).where(eq(tenantBranding.tenantId, id)).limit(1),
       getDeletionAssessment(id),
+      assessTenantOperationalReadiness(id),
     ]);
 
     return NextResponse.json({
@@ -77,6 +79,7 @@ export async function GET(
         branding: branding || null,
         stats: { memberCount: deletion.blockers.members },
         deletion,
+        readiness,
       },
     });
   } catch (error) {
@@ -126,6 +129,19 @@ export async function PATCH(
           { error: `Invalid lifecycle transition from ${existing.lifecycleStatus} to ${lifecycleTarget}.` },
           { status: 400 },
         );
+      }
+
+      if (lifecycleTarget === 'READY_FOR_ACTIVATION' || lifecycleTarget === 'ACTIVE') {
+        const readiness = await assessTenantOperationalReadiness(id);
+        if (!readiness.readyForActivation) {
+          return NextResponse.json(
+            {
+              error: 'Tenant is not ready for activation. Resolve the operational blockers first.',
+              readiness,
+            },
+            { status: 409 },
+          );
+        }
       }
     }
 
