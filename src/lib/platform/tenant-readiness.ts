@@ -1,4 +1,4 @@
-import { and, count, eq, inArray } from 'drizzle-orm';
+import { and, count, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   departments,
@@ -12,7 +12,7 @@ import {
   workflowDefinitions,
   workflowSteps,
 } from '@/db/schema';
-import { RoleDefinitions } from '@/lib/permissions';
+import { SystemRoles } from '@/lib/workspaces';
 
 export type ReadinessSeverity = 'blocker' | 'warning';
 
@@ -44,6 +44,7 @@ export async function assessTenantOperationalReadiness(
   tenantId: string,
 ): Promise<TenantOperationalReadiness> {
   const db = getDb();
+  const now = new Date();
 
   const [
     [tenant],
@@ -85,7 +86,8 @@ export async function assessTenantOperationalReadiness(
         and(
           eq(tenantMemberships.tenantId, tenantId),
           eq(tenantMemberships.status, 'active'),
-          eq(roles.name, RoleDefinitions.TENANT_ADMIN.name),
+          eq(roles.name, SystemRoles.TENANT_ADMIN),
+          or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
         ),
       ),
     db
@@ -109,14 +111,16 @@ export async function assessTenantOperationalReadiness(
     {
       id: 'workspace-setup',
       label: 'Workspace setup submitted',
-      description: 'Tenant Administrator must complete Organisation, Offices and initial configuration, then submit the workspace for platform review.',
+      description:
+        'Tenant Administrator must complete Organisation, Offices and initial configuration, then submit the workspace for platform review.',
       severity: 'blocker',
       ready: setup?.isReady === true,
     },
     {
       id: 'tenant-admin',
       label: 'Tenant Administrator has access',
-      description: 'At least one active Tenant Administrator account is required to manage the organisation after activation.',
+      description:
+        'At least one active Tenant Administrator account is required to manage the organisation after activation.',
       severity: 'blocker',
       ready: Number(tenantAdminTotal?.total ?? 0) > 0,
       actionHref: `/dashboard/platform/tenants/${tenantId}/invitation`,
@@ -125,35 +129,43 @@ export async function assessTenantOperationalReadiness(
     {
       id: 'office',
       label: 'Operational office or depot',
-      description: 'Tenant Administrator must configure at least one active office, depot or operational location.',
+      description:
+        'Tenant Administrator must configure at least one active office, depot or operational location.',
       severity: 'blocker',
       ready: Number(officeTotal?.total ?? 0) > 0,
     },
     {
       id: 'workflow',
       label: 'Approval workflow configured',
-      description: 'Tenant Administrator must configure at least one active transport-request workflow with approval steps before real requests can be processed.',
+      description:
+        'Tenant Administrator must configure at least one active transport-request workflow with approval steps before real requests can be processed.',
       severity: 'blocker',
       ready: activeWorkflowWithSteps,
     },
     {
       id: 'subscription',
       label: 'Subscription package assigned',
-      description: 'The tenant must be attached to a package so entitlements and limits can be enforced consistently.',
+      description:
+        'The tenant must be attached to a package so entitlements and limits can be enforced consistently.',
       severity: 'blocker',
       ready: Number(subscriptionTotal?.total ?? 0) > 0,
     },
     {
       id: 'departments',
       label: 'Departments or organisational units',
-      description: 'Recommended for routing, reporting and staff organisation, but not required for every tenant type.',
+      description:
+        'Recommended for routing, reporting and staff organisation, but not required for every tenant type.',
       severity: 'warning',
       ready: Number(departmentTotal?.total ?? 0) > 0,
     },
   ];
 
-  const blockerCount = checks.filter((check) => check.severity === 'blocker' && !check.ready).length;
-  const warningCount = checks.filter((check) => check.severity === 'warning' && !check.ready).length;
+  const blockerCount = checks.filter(
+    (check) => check.severity === 'blocker' && !check.ready,
+  ).length;
+  const warningCount = checks.filter(
+    (check) => check.severity === 'warning' && !check.ready,
+  ).length;
 
   return {
     tenantId,
