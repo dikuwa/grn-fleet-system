@@ -8,7 +8,7 @@ import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
 import { roleAssignments, rolePermissions, roles, tenantMemberships, tenants } from '@/db/schema/tenants';
 import { Permissions, RoleDefinitions, type PermissionCode } from '@/lib/permissions';
-import { WorkspaceIds, type WorkspaceId } from '@/lib/workspaces';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 export const LIVE_DEMO_PERSONAS = {
   transport: {
@@ -64,10 +64,7 @@ function demoEmail(persona: LiveDemoPersonaKey, sandboxId: string) {
   return `live-demo-${persona}-${sandboxId.slice(0, 8)}@govfleet.local`;
 }
 
-async function ensureRole(
-  tenantId: string,
-  persona: LiveDemoPersonaKey,
-): Promise<string> {
+async function ensureRole(tenantId: string, persona: LiveDemoPersonaKey): Promise<string> {
   const db = getDb();
   const definition = LIVE_DEMO_PERSONAS[persona].role;
   const marker = `Public live demo: ${persona}`;
@@ -99,7 +96,11 @@ async function ensurePersona(
   const db = getDb();
   const email = demoEmail(persona, sandboxId);
   const definition = LIVE_DEMO_PERSONAS[persona];
-  const [existingUser] = await db.select({ id: user.id }).from(user).where(eq(user.email, email)).limit(1);
+  const [existingUser] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, email))
+    .limit(1);
   if (existingUser) return existingUser.id;
 
   const userId = `live-demo-${persona}-${randomUUID()}`;
@@ -135,7 +136,11 @@ async function ensurePersona(
     })
     .returning({ id: tenantMemberships.id });
   const roleId = await ensureRole(tenantId, persona);
-  await db.insert(roleAssignments).values({ tenantMembershipId: membership.id, roleId, startDate: now });
+  await db.insert(roleAssignments).values({
+    tenantMembershipId: membership.id,
+    roleId,
+    startDate: now,
+  });
 
   const employeeNumber = `DEMO-${persona.toUpperCase().slice(0, 4)}-01`;
   const [employee] = await db
@@ -160,7 +165,11 @@ async function ensurePersona(
   if (persona === 'driver') {
     const [profile] = await db
       .insert(driverProfiles)
-      .values({ employeeId: employee.id, driverStatus: 'authorised', availabilityStatus: 'available' })
+      .values({
+        employeeId: employee.id,
+        driverStatus: 'authorised',
+        availabilityStatus: 'available',
+      })
       .returning({ id: driverProfiles.id });
     await db.insert(driverLicences).values({
       driverProfileId: profile.id,
@@ -293,8 +302,6 @@ export async function publishLiveDemoSandbox(sandboxId: string, enabled: boolean
     throw new Error('Only an active, unexpired sandbox can be published as the live demo');
   }
 
-  // Only one shared public demo may be published. Private prospect sandboxes
-  // remain private and are never discoverable from the public endpoint.
   const allSandboxes = await db
     .select({ id: demoSandboxes.id, metadata: demoSandboxes.metadata })
     .from(demoSandboxes);
@@ -309,7 +316,7 @@ export async function publishLiveDemoSandbox(sandboxId: string, enabled: boolean
     }
   }
 
-  let personaIds: Partial<Record<LiveDemoPersonaKey, string>> = {};
+  const personaIds: Partial<Record<LiveDemoPersonaKey, string>> = {};
   if (enabled) {
     await ensureDemoVehicles(sandbox.tenantId);
     for (const persona of Object.keys(LIVE_DEMO_PERSONAS) as LiveDemoPersonaKey[]) {
