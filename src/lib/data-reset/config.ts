@@ -145,7 +145,11 @@ export const OPERATIONAL_DELETE_STEPS: DeleteStep[] = [
   { table: 'trip_amendments', label: 'Trip amendments', scope: 'authority' },
   // Authorities reference allocations + requests, so delete before both
   { table: 'trip_authorities', label: 'Trip authorities', scope: 'request' },
-  // Allocation children
+  // Allocation children. Fleet payment assignment/transaction history is
+  // operational and is cleared, while provider/instrument master setup below
+  // remains preserved for the tenant.
+  { table: 'fleet_payment_transactions', label: 'Fleet payment transactions', scope: 'tenant' },
+  { table: 'fleet_payment_assignments', label: 'Fleet payment assignments', scope: 'tenant' },
   { table: 'external_driver_assignments', label: 'External driver assignments', scope: 'request' },
   { table: 'trip_issues', label: 'Vehicle issues', scope: 'allocation' },
   // Trip children
@@ -268,6 +272,8 @@ export const PRESERVED_TABLES: Array<{ table: string; label: string }> = [
   { table: 'secure_request_sessions', label: 'Secure request sessions' },
   { table: 'vehicle_categories', label: 'Vehicle categories' },
   { table: 'vehicles', label: 'Vehicles' },
+  { table: 'fleet_payment_providers', label: 'Fleet payment providers' },
+  { table: 'fleet_payment_instruments', label: 'Fleet payment instruments' },
   { table: 'regions', label: 'Regions' },
   { table: 'programmes', label: 'Programmes' },
   { table: 'workflow_definitions', label: 'Workflow definitions' },
