@@ -66,11 +66,21 @@ export async function GET(
     const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
     if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
-    const [[branding], deletion, readiness] = await Promise.all([
+    // Keep the long-standing tenant-detail contract independent from the
+    // readiness summary. A readiness read failure must not hide branding,
+    // activity or deletion information. Activation itself remains strict in
+    // PATCH below and never falls back when readiness cannot be assessed.
+    const [[branding], deletion] = await Promise.all([
       db.select().from(tenantBranding).where(eq(tenantBranding.tenantId, id)).limit(1),
       getDeletionAssessment(id),
-      assessTenantOperationalReadiness(id),
     ]);
+
+    let readiness = null;
+    try {
+      readiness = await assessTenantOperationalReadiness(id);
+    } catch (readinessError) {
+      console.error('[Platform Tenant Detail] Readiness assessment failed:', readinessError);
+    }
 
     return NextResponse.json({
       success: true,
