@@ -176,3 +176,72 @@ WHERE (t."id" = '00000000-0000-0000-0000-000000000001'::uuid
     SELECT 1 FROM "fleet_payment_providers" p
     WHERE p."tenant_id" = t."id" AND p."provider_type" = 'standard_bank_bluefuel'
   );
+
+-- Allocation-side automation: an active instrument linked to the selected
+-- vehicle is assigned without adding another mandatory form step. Default
+-- provider wins; otherwise the newest valid active instrument is used.
+CREATE OR REPLACE FUNCTION grn_auto_assign_fleet_payment()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_tenant_id uuid;
+  v_instrument_id uuid;
+BEGIN
+  IF NEW.state NOT IN ('provisional', 'confirmed') THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT r.tenant_id INTO v_tenant_id
+  FROM transport_requests r
+  WHERE r.id = NEW.request_id;
+
+  IF v_tenant_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT i.id INTO v_instrument_id
+  FROM fleet_payment_instruments i
+  JOIN fleet_payment_providers p ON p.id = i.provider_id
+  WHERE i.tenant_id = v_tenant_id
+    AND i.vehicle_id = NEW.vehicle_id
+    AND i.status = 'active'
+    AND p.status = 'active'
+    AND (i.valid_from IS NULL OR i.valid_from <= NEW.start_at)
+    AND (i.valid_until IS NULL OR i.valid_until >= NEW.end_at)
+  ORDER BY p.is_default DESC, i.updated_at DESC
+  LIMIT 1;
+
+  IF v_instrument_id IS NOT NULL THEN
+    INSERT INTO fleet_payment_assignments (
+      tenant_id, instrument_id, allocation_id, vehicle_id, driver_employee_id,
+      status, assigned_at, assigned_by_user_id, notes
+    ) VALUES (
+      v_tenant_id, v_instrument_id, NEW.id, NEW.vehicle_id, NEW.driver_employee_id,
+      'assigned', now(), NEW.allocated_by_user_id, 'Automatically assigned from vehicle'
+    ) ON CONFLICT DO NOTHING;
+  END IF;
+
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_auto_assign_fleet_payment ON vehicle_allocations;
+CREATE TRIGGER trg_auto_assign_fleet_payment
+AFTER INSERT OR UPDATE OF vehicle_id, driver_employee_id, start_at, end_at, state
+ON vehicle_allocations
+FOR EACH ROW EXECUTE FUNCTION grn_auto_assign_fleet_payment();
+
+CREATE OR REPLACE FUNCTION grn_link_fleet_payment_trip()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE fleet_payment_assignments
+  SET trip_id = NEW.id
+  WHERE allocation_id = NEW.allocation_id
+    AND status = 'assigned'
+    AND (trip_id IS NULL OR trip_id = NEW.id);
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_link_fleet_payment_trip ON trips;
+CREATE TRIGGER trg_link_fleet_payment_trip
+AFTER INSERT OR UPDATE OF allocation_id
+ON trips
+FOR EACH ROW EXECUTE FUNCTION grn_link_fleet_payment_trip();
