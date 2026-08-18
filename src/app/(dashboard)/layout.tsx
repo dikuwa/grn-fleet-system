@@ -38,7 +38,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <span className="font-semibold text-ink-950">Live demo workspace.</span>{' '}
             <span className="text-ink-600">All people, vehicles and records here are synthetic. Changes may be reset.</span>
           </div>
-          <Link href="/logout?redirect=/demo" className="shrink-0 font-medium text-brand-700 hover:underline">
+          <Link href="/logout" className="shrink-0 font-medium text-brand-700 hover:underline">
             Exit demo
           </Link>
         </div>
