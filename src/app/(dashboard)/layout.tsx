@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session';
 import { DashboardShell } from '@/components/layout/dashboard-shell';
@@ -6,18 +7,9 @@ import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { headers } from 'next/headers';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  // Server-side session validation — redirect to login if not authenticated
   const session = await getServerSession();
-
-  if (!session) {
-    redirect('/login?redirect=/dashboard');
-  }
-
-  // Tenant membership validation (belt-and-suspenders)
-  // If the session exists but tenant membership is invalid, redirect to login
-  if (!session.tenantId) {
-    redirect('/login?redirect=/dashboard&error=tenant');
-  }
+  if (!session) redirect('/login?redirect=/dashboard');
+  if (!session.tenantId) redirect('/login?redirect=/dashboard&error=tenant');
 
   const workspaceContext = await getSessionWorkspace(session);
   const { roleNames, activeWorkspace, eligibleWorkspaces } = workspaceContext;
@@ -27,6 +19,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
     if (access.directUrlBehaviour === '404') notFound();
     redirect(`/forbidden?from=${encodeURIComponent(pathname)}`);
   }
+
+  const isPublicDemo = session.user.id.startsWith('live-demo-');
 
   return (
     <DashboardShell
@@ -38,6 +32,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
       activeWorkspace={activeWorkspace}
       eligibleWorkspaces={eligibleWorkspaces.map(({ id, label }) => ({ id, label }))}
     >
+      {isPublicDemo && (
+        <div className="mb-4 flex flex-col gap-2 rounded-[8px] border border-status-warning-text/25 bg-status-warning-bg px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="font-semibold text-ink-950">Live demo workspace.</span>{' '}
+            <span className="text-ink-600">All people, vehicles and records here are synthetic. Changes may be reset.</span>
+          </div>
+          <Link href="/logout?redirect=/demo" className="shrink-0 font-medium text-brand-700 hover:underline">
+            Exit demo
+          </Link>
+        </div>
+      )}
       {children}
     </DashboardShell>
   );
