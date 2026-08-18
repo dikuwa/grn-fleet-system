@@ -10,6 +10,7 @@ import {
   SECURE_REQUEST_COOKIE,
   secureHash,
 } from '@/lib/secure-request';
+import { isPublicEmployeeRequestEnabled } from '@/lib/public-request-access';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ tenantSlug: string }> }) {
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     otpHash: secureRequestVerifications.otpHash,
     attempts: secureRequestVerifications.attempts,
     expiresAt: secureRequestVerifications.expiresAt,
+    tenantMetadata: tenants.metadata,
   }).from(secureRequestVerifications)
     .innerJoin(tenants, eq(tenants.id, secureRequestVerifications.tenantId))
     .where(and(
@@ -37,7 +39,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       gt(secureRequestVerifications.expiresAt, new Date()),
       isNull(secureRequestVerifications.verifiedAt),
     )).limit(1);
-  if (!verification || !verification.employeeId || verification.attempts >= 5 || !safeHashEquals(body.otp, verification.otpHash)) {
+  if (
+    !verification ||
+    !isPublicEmployeeRequestEnabled(verification.tenantMetadata) ||
+    !verification.employeeId ||
+    verification.attempts >= 5 ||
+    !safeHashEquals(body.otp, verification.otpHash)
+  ) {
     if (verification) await db.update(secureRequestVerifications)
       .set({ attempts: sql`${secureRequestVerifications.attempts} + 1` })
       .where(eq(secureRequestVerifications.id, verification.id));
