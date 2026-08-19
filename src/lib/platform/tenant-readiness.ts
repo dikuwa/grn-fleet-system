@@ -1,4 +1,4 @@
-import { and, count, eq, gt, inArray, isNull, or } from 'drizzle-orm';
+import { and, count, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   departments,
@@ -87,6 +87,7 @@ export async function assessTenantOperationalReadiness(
           eq(tenantMemberships.tenantId, tenantId),
           eq(tenantMemberships.status, 'active'),
           eq(roles.name, SystemRoles.TENANT_ADMIN),
+          lte(roleAssignments.startDate, now),
           or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, now)),
         ),
       ),
