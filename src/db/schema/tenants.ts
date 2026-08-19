@@ -107,7 +107,7 @@ export const tenantMemberships = pgTable(
     joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('tenant_memberships_tenant_user_idx').on(table.tenantId, table.userId),
+    uniqueIndex('tenant_memberships_tenant_user_unique').on(table.tenantId, table.userId),
   ],
 );
 
