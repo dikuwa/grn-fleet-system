@@ -14,7 +14,7 @@ import { eq } from 'drizzle-orm';
 
 export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL' | 'ARCHIVED' | 'DRAFT' | 'PENDING_INVITATION' | 'INVITATION_SENT' | 'INVITATION_EXPIRED' | 'SETUP_IN_PROGRESS' | 'PENDING_PLATFORM_REVIEW' | 'READY_FOR_ACTIVATION' | 'RESTRICTED' | 'ONBOARDING_FAILED';
 export type PlanCode = string;
-export type SubscriptionStatusType = 'NOT_CONFIGURED' | 'PENDING_PAYMENT' | 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED' | 'EXPIRED' | 'SUSPENDED' | 'RESTRICTED';
+export type SubscriptionStatusType = 'NOT_CONFIGURED' | 'PENDING_PAYMENT' | 'TRIALING' | 'ACTIVE' | 'GRACE_PERIOD' | 'PAST_DUE' | 'CANCELLED' | 'EXPIRED' | 'SUSPENDED' | 'RESTRICTED';
 
 export interface TenantEntitlements {
   tenantId: string;
@@ -40,6 +40,49 @@ export interface TenantEntitlements {
 const UNLIMITED = Number.MAX_SAFE_INTEGER;
 
 /**
+ * Normalize the live subscription-table status into the entitlement-layer
+ * representation. Keep the legacy tenant mirror as a fallback only for older
+ * tenants that do not yet have a tenant_subscriptions row.
+ */
+export function normalizeSubscriptionStatus(
+  liveStatus: string | null | undefined,
+  legacyStatus: string | null | undefined,
+): SubscriptionStatusType {
+  const value = liveStatus?.trim().toLowerCase();
+  const liveMap: Record<string, SubscriptionStatusType> = {
+    pending_payment: 'PENDING_PAYMENT',
+    trialing: 'TRIALING',
+    active: 'ACTIVE',
+    grace_period: 'GRACE_PERIOD',
+    past_due: 'PAST_DUE',
+    cancelled: 'CANCELLED',
+    expired: 'EXPIRED',
+    suspended: 'SUSPENDED',
+    restricted: 'RESTRICTED',
+    not_configured: 'NOT_CONFIGURED',
+  };
+
+  if (value && liveMap[value]) return liveMap[value];
+
+  const legacy = legacyStatus?.trim().toUpperCase();
+  const accepted = new Set<SubscriptionStatusType>([
+    'NOT_CONFIGURED',
+    'PENDING_PAYMENT',
+    'TRIALING',
+    'ACTIVE',
+    'GRACE_PERIOD',
+    'PAST_DUE',
+    'CANCELLED',
+    'EXPIRED',
+    'SUSPENDED',
+    'RESTRICTED',
+  ]);
+  return accepted.has(legacy as SubscriptionStatusType)
+    ? (legacy as SubscriptionStatusType)
+    : 'NOT_CONFIGURED';
+}
+
+/**
  * Load and normalise the entitlements for a tenant.
  */
 export async function getTenantEntitlements(tenantId: string): Promise<TenantEntitlements | null> {
@@ -49,7 +92,7 @@ export async function getTenantEntitlements(tenantId: string): Promise<TenantEnt
   const [tenantRow] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
   if (!tenantRow) return null;
 
-  // Try to get active subscription with package details
+  // Try to get the tenant's subscription with package details.
   const [subRow] = await db
     .select({
       subscription: tenantSubscriptions,
@@ -80,8 +123,13 @@ export async function getTenantEntitlements(tenantId: string): Promise<TenantEnt
     // accidentally blocked.
     lifecycleStatus: (tenantRow.lifecycleStatus as TenantStatus) ?? 'ACTIVE',
     planCode: (tenantRow.planCode as PlanCode) ?? (pkg?.code ?? 'INTERNAL_DEFAULT'),
-    subscriptionStatus: (tenantRow.subscriptionStatus as SubscriptionStatusType) ?? 'NOT_CONFIGURED',
-    trialEndsAt: tenantRow.trialEndsAt,
+    // Prefer the live subscription record. The tenant column is deliberately a
+    // compatibility mirror and may lag behind lifecycle transitions.
+    subscriptionStatus: normalizeSubscriptionStatus(
+      subscription?.status,
+      tenantRow.subscriptionStatus,
+    ),
+    trialEndsAt: subscription?.trialEndsAt ?? tenantRow.trialEndsAt,
     vehicleLimit,
     userLimit,
     storageLimit,
@@ -143,12 +191,16 @@ export function canTenantOperate(e: TenantEntitlements): {
     };
   }
 
-  // Then check subscription status
+  // Then check subscription status. Grace period deliberately remains usable;
+  // it exists to give a tenant a short payment window without interrupting work.
   if (e.subscriptionStatus === 'EXPIRED') {
     return { ok: false, reason: 'Subscription has expired. Contact the platform administrator to renew.' };
   }
   if (e.subscriptionStatus === 'CANCELLED') {
     return { ok: false, reason: 'Subscription has been cancelled.' };
+  }
+  if (e.subscriptionStatus === 'SUSPENDED') {
+    return { ok: false, reason: 'Subscription has been suspended. Contact the platform administrator.' };
   }
   if (e.subscriptionStatus === 'PAST_DUE' || e.subscriptionStatus === 'RESTRICTED') {
     return { ok: false, reason: 'Subscription is past due. Please make a payment to restore access.' };
