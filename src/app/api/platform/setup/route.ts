@@ -3,15 +3,15 @@
  *
  * The setup wizard intentionally contains only configuration that GovFleet
  * persists and uses operationally:
- *   0. Organisation review
- *   1. Departments / units
- *   2. Offices / depots
- *   3. Branding / contacts
- *   4. Review and submit
+ *   0. Organisation review (required)
+ *   1. Departments / units (optional)
+ *   2. Offices / depots (required)
+ *   3. Branding / contacts (optional)
+ *   4. Review and complete initial setup
  *
- * Operational rules such as licence verification, trip overlap prevention,
- * inspections and role contracts are enforced by their authoritative modules
- * and are not duplicated as inert setup toggles.
+ * Completing this wizard keeps the tenant in SETUP_IN_PROGRESS so the Tenant
+ * Administrator can finish Operational Setup (notably the approval workflow)
+ * before explicitly submitting the tenant for Platform Review.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,12 +21,12 @@ import { tenants, tenantBranding } from '@/db/schema/tenants';
 import { offices, departments } from '@/db/schema/people';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { seedDefaultIncidentCategories } from '@/lib/incidents/categories';
+import { seedTenantOperationalDefaults } from '@/lib/platform/tenant-operational-defaults';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { and, count, eq } from 'drizzle-orm';
 
 const TOTAL_STEPS = 5;
-const REQUIRED_SETUP_STEPS = [0, 1, 2, 3] as const;
+const REQUIRED_SETUP_STEPS = [0, 2] as const;
 const NON_ONBOARDING_LIFECYCLES = new Set([
   'READY_FOR_ACTIVATION',
   'ACTIVE',
@@ -95,6 +95,11 @@ function validateProgress(input: SetupProgressData) {
   return null;
 }
 
+function requiredReadinessScore(completedSteps: number[]) {
+  const ready = REQUIRED_SETUP_STEPS.filter((step) => completedSteps.includes(step)).length;
+  return Math.round((ready / REQUIRED_SETUP_STEPS.length) * 100);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireTenantSetupAccess(request);
@@ -145,6 +150,7 @@ export async function GET(request: NextRequest) {
         departments: tenantDepts,
         branding: branding ?? null,
         totalSteps: TOTAL_STEPS,
+        requiredSteps: [...REQUIRED_SETUP_STEPS],
       },
     });
   } catch (error) {
@@ -195,17 +201,21 @@ export async function POST(request: NextRequest) {
 
     if (body.action === 'complete') {
       if (tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW') {
-        return NextResponse.json({ success: true, data: { lifecycleStatus: tenant.lifecycleStatus } });
+        return NextResponse.json({
+          success: true,
+          data: { lifecycleStatus: tenant.lifecycleStatus, nextHref: '/dashboard/setup/operational' },
+        });
       }
       if (tenant.lifecycleStatus !== SETUP_LIFECYCLE) {
         return NextResponse.json(
-          { error: `Workspace setup can only be submitted while the tenant lifecycle is ${SETUP_LIFECYCLE}. Current lifecycle: ${tenant.lifecycleStatus}.` },
+          { error: `Initial workspace setup can only be completed while the tenant lifecycle is ${SETUP_LIFECYCLE}. Current lifecycle: ${tenant.lifecycleStatus}.` },
           { status: 409 },
         );
       }
       if (!storedProgress) {
-        return NextResponse.json({ error: 'Save the required setup steps before submitting.' }, { status: 409 });
+        return NextResponse.json({ error: 'Save Organisation and Offices before completing initial setup.' }, { status: 409 });
       }
+
       const persisted = normaliseLegacyProgress({
         currentStep: storedProgress.currentStep,
         completedSteps: storedProgress.completedSteps,
@@ -213,7 +223,7 @@ export async function POST(request: NextRequest) {
       });
       if (!REQUIRED_SETUP_STEPS.every((step) => persisted.completedSteps.includes(step))) {
         return NextResponse.json(
-          { error: 'Complete and save Organisation, Departments, Offices and Branding before submitting setup.' },
+          { error: 'Confirm Organisation and save at least one Office or Depot before completing initial setup.' },
           { status: 409 },
         );
       }
@@ -224,17 +234,20 @@ export async function POST(request: NextRequest) {
         .where(and(eq(offices.tenantId, tenantId), eq(offices.isActive, true)));
       if (Number(officeCount?.total ?? 0) < 1) {
         return NextResponse.json(
-          { error: 'At least one active office or depot is required before setup can be submitted.' },
+          { error: 'At least one active office or depot is required before initial setup can be completed.' },
           { status: 409 },
         );
       }
+
+      const finalCompleted = [...new Set([...persisted.completedSteps, ...completedSteps, ...REQUIRED_SETUP_STEPS, TOTAL_STEPS - 1])]
+        .sort((a, b) => a - b);
 
       await db.transaction(async (tx) => {
         await tx
           .update(tenantSetupProgress)
           .set({
             currentStep: TOTAL_STEPS - 1,
-            completedSteps: [...REQUIRED_SETUP_STEPS, TOTAL_STEPS - 1],
+            completedSteps: finalCompleted,
             totalSteps: TOTAL_STEPS,
             stepData: body.stepData,
             isReady: true,
@@ -247,10 +260,8 @@ export async function POST(request: NextRequest) {
         await tx
           .update(tenants)
           .set({
-            lifecycleStatus: 'PENDING_PLATFORM_REVIEW',
             currentOnboardingStep: TOTAL_STEPS - 1,
-            lifecycleReason: 'Tenant workspace setup submitted for platform review',
-            lifecycleChangedAt: now,
+            lifecycleReason: 'Initial workspace setup complete; operational setup in progress',
             updatedAt: now,
           })
           .where(eq(tenants.id, tenantId));
@@ -258,18 +269,31 @@ export async function POST(request: NextRequest) {
         await recordAuditEvent({
           tenantId,
           actorUserId: session.user.id,
-          eventType: 'tenant_setup_submitted',
-          action: 'submit',
+          eventType: 'tenant_initial_setup_completed',
+          action: 'complete',
           entityType: 'tenant',
           entityId: tenantId,
           before: { lifecycleStatus: tenant.lifecycleStatus },
-          after: { lifecycleStatus: 'PENDING_PLATFORM_REVIEW', totalSteps: TOTAL_STEPS },
-          summary: 'Tenant workspace setup submitted for platform review',
+          after: { lifecycleStatus: SETUP_LIFECYCLE, initialSetupReady: true },
+          summary: 'Initial workspace setup completed; operational setup remains available',
         }, tx);
       });
 
-      await seedDefaultIncidentCategories(tenantId, session.user.id).catch(() => undefined);
-      return NextResponse.json({ success: true, data: { lifecycleStatus: 'PENDING_PLATFORM_REVIEW' } });
+      // Safe backfill for tenants created before operational defaults were part
+      // of platform onboarding. Failure here does not undo valid initial setup.
+      await seedTenantOperationalDefaults({
+        tenantId,
+        actorUserId: session.user.id,
+      }).catch(() => undefined);
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          lifecycleStatus: SETUP_LIFECYCLE,
+          initialSetupReady: true,
+          nextHref: '/dashboard/setup/operational',
+        },
+      });
     }
 
     if (NON_ONBOARDING_LIFECYCLES.has(tenant.lifecycleStatus) || tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW') {
@@ -280,7 +304,7 @@ export async function POST(request: NextRequest) {
     }
 
     const isReady = REQUIRED_SETUP_STEPS.every((step) => completedSteps.includes(step));
-    const readinessScore = Math.round((completedSteps.length / (TOTAL_STEPS - 1)) * 100);
+    const readinessScore = requiredReadinessScore(completedSteps);
 
     await db.transaction(async (tx) => {
       if (storedProgress) {
@@ -293,7 +317,7 @@ export async function POST(request: NextRequest) {
             stepData: body.stepData,
             lastSavedAt: now,
             isReady,
-            readinessScore: Math.min(100, readinessScore),
+            readinessScore,
             updatedAt: now,
           })
           .where(eq(tenantSetupProgress.id, storedProgress.id));
@@ -306,7 +330,7 @@ export async function POST(request: NextRequest) {
           stepData: body.stepData,
           lastSavedAt: now,
           isReady,
-          readinessScore: Math.min(100, readinessScore),
+          readinessScore,
         });
       }
 
