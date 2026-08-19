@@ -22,6 +22,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   const isPublicDemo = session.user.id.startsWith('live-demo-');
+  const showSetupGuidance = !pathname.startsWith('/dashboard/setup');
 
   return (
     <DashboardShell
@@ -44,11 +45,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </Link>
         </div>
       )}
-      <TenantSetupGuidance
-        tenantId={session.tenantId}
-        activeWorkspace={activeWorkspace}
-        isPublicDemo={isPublicDemo}
-      />
+      {showSetupGuidance && (
+        <TenantSetupGuidance
+          tenantId={session.tenantId}
+          activeWorkspace={activeWorkspace}
+          isPublicDemo={isPublicDemo}
+        />
+      )}
       {children}
     </DashboardShell>
   );
