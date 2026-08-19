@@ -1,15 +1,9 @@
 /**
  * Server-side session helpers.
  *
- * Provides two helper functions to resolve the current user's session and
- * their associated tenant membership. Both share the same tenant-resolution
- * logic via the private `resolveUserTenant` helper.
- *
- * NOTE: These helpers read the session cookie directly from the request
- * headers and look up the session in the database via Drizzle, rather than
- * calling Better Auth's auth.api.getSession() which expects signed cookies.
- * Our custom auth handler sets unsigned cookies, so we need to parse them
- * manually here.
+ * A Better Auth identity may belong to more than one tenant. The selected
+ * tenant is carried in a non-sensitive cookie and is always revalidated against
+ * active membership, tenant lifecycle, demo expiry and subscription gates.
  */
 
 import { headers } from 'next/headers';
@@ -21,9 +15,11 @@ import {
   tenantMemberships,
   tenants,
 } from '@/db/schema';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, asc } from 'drizzle-orm';
 import { parseCookies } from '@/lib/utils';
 import { canTenantOperate, getTenantEntitlements } from '@/lib/entitlements';
+
+export const ACTIVE_TENANT_COOKIE = 'grn-active-tenant';
 
 export type SessionUser = {
   id: string;
@@ -38,13 +34,22 @@ export type SessionInfo = {
   tenantSlug: string;
 } | null;
 
-async function findSessionFromCookie(
-  cookieHeader: string | null,
-): Promise<{
+export type TenantChoice = {
+  id: string;
+  name: string;
+  slug: string;
+  type: string;
+};
+
+type SessionIdentity = {
   user: typeof userTable.$inferSelect;
   session: typeof session.$inferSelect;
   token: string;
-} | null> {
+};
+
+type TenantCandidate = TenantChoice;
+
+async function findSessionFromCookie(cookieHeader: string | null): Promise<SessionIdentity | null> {
   const cookies = parseCookies(cookieHeader);
   const token = cookies['better-auth.session_token'];
   if (!token) return null;
@@ -66,6 +71,26 @@ async function findSessionFromCookie(
 
   if (!userRecord) return null;
   return { user: userRecord, session: sessionRecord, token };
+}
+
+/**
+ * Return the authenticated global identity without requiring a tenant context.
+ * This is intentionally narrow and is used only while choosing a tenant after
+ * sign-in or switching organisations.
+ */
+export async function getSessionIdentityFromRequest(request: Request): Promise<SessionUser | null> {
+  try {
+    const result = await findSessionFromCookie(request.headers.get('cookie'));
+    if (!result) return null;
+    return {
+      id: result.user.id,
+      email: result.user.email,
+      name: result.user.name,
+      image: result.user.image,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -92,8 +117,6 @@ async function demoSandboxCanOperate(tenantId: string): Promise<boolean> {
   const expired = !sandbox.isActive || sandbox.status !== 'active' || sandbox.expiresAt <= now;
   if (!expired) return true;
 
-  // Synchronise stale active rows lazily. Idempotent updates make this safe
-  // when several requests arrive around the expiry boundary.
   if (sandbox.status === 'active' && sandbox.isActive && sandbox.expiresAt <= now) {
     await Promise.all([
       db
@@ -116,54 +139,80 @@ async function demoSandboxCanOperate(tenantId: string): Promise<boolean> {
   return false;
 }
 
+async function loadTenantCandidates(userId: string): Promise<TenantCandidate[]> {
+  const db = getDb();
+  return db
+    .select({
+      id: tenants.id,
+      name: tenants.name,
+      slug: tenants.slug,
+      type: tenants.type,
+    })
+    .from(tenantMemberships)
+    .innerJoin(tenants, eq(tenantMemberships.tenantId, tenants.id))
+    .where(
+      and(
+        eq(tenantMemberships.userId, userId),
+        eq(tenantMemberships.status, 'active'),
+        sql`LOWER(${tenants.status}) IN ('active', 'trial')`,
+      ),
+    )
+    .orderBy(asc(tenants.name));
+}
+
+async function tenantCandidateCanOperate(candidate: TenantCandidate): Promise<boolean> {
+  const tenantId = candidate.id;
+  if (candidate.type === 'demo_sandbox') {
+    const demoAllowed = await demoSandboxCanOperate(tenantId);
+    if (!demoAllowed) return false;
+  }
+
+  try {
+    const { evaluateSubscriptionLifecycle } = await import('@/lib/platform/subscriptions');
+    await evaluateSubscriptionLifecycle(tenantId);
+  } catch (err) {
+    console.warn('[session] Subscription lifecycle evaluation skipped:', err);
+  }
+
+  const entitlements = await getTenantEntitlements(tenantId);
+  if (!entitlements) return true;
+  return canTenantOperate(entitlements).ok;
+}
+
+export async function getUserTenantChoices(userId: string): Promise<TenantChoice[]> {
+  try {
+    const candidates = await loadTenantCandidates(userId);
+    const choices: TenantChoice[] = [];
+    for (const candidate of candidates) {
+      if (await tenantCandidateCanOperate(candidate)) choices.push(candidate);
+    }
+    return choices;
+  } catch {
+    return [];
+  }
+}
+
 async function resolveUserTenant(
   userId: string,
+  preferredTenantId?: string | null,
 ): Promise<{ tenantId: string; tenantSlug: string } | null> {
   try {
-    const db = getDb();
-    const membership = await db
-      .select({
-        tenantId: tenantMemberships.tenantId,
-        tenantSlug: tenants.slug,
-        tenantType: tenants.type,
-      })
-      .from(tenantMemberships)
-      .innerJoin(tenants, eq(tenantMemberships.tenantId, tenants.id))
-      .where(
-        and(
-          eq(tenantMemberships.userId, userId),
-          eq(tenantMemberships.status, 'active'),
-          sql`LOWER(${tenants.status}) IN ('active', 'trial')`,
-        ),
-      )
-      .limit(1);
+    const candidates = await loadTenantCandidates(userId);
+    if (candidates.length === 0) return null;
 
-    if (membership.length === 0) return null;
+    const ordered = preferredTenantId
+      ? [
+          ...candidates.filter((candidate) => candidate.id === preferredTenantId),
+          ...candidates.filter((candidate) => candidate.id !== preferredTenantId),
+        ]
+      : candidates;
 
-    const activeMembership = membership[0];
-    const tenantId = activeMembership.tenantId;
-
-    if (activeMembership.tenantType === 'demo_sandbox') {
-      const demoAllowed = await demoSandboxCanOperate(tenantId);
-      if (!demoAllowed) return null;
+    for (const candidate of ordered) {
+      if (await tenantCandidateCanOperate(candidate)) {
+        return { tenantId: candidate.id, tenantSlug: candidate.slug };
+      }
     }
-
-    // Evaluate subscription lifecycle at session establishment so trial expiry
-    // and entitlement changes are enforced from the same server boundary.
-    try {
-      const { evaluateSubscriptionLifecycle } = await import('@/lib/platform/subscriptions');
-      await evaluateSubscriptionLifecycle(tenantId);
-    } catch (err) {
-      console.warn('[session] Subscription lifecycle evaluation skipped:', err);
-    }
-
-    const entitlements = await getTenantEntitlements(tenantId);
-    if (entitlements) {
-      const gate = canTenantOperate(entitlements);
-      if (!gate.ok) return null;
-    }
-
-    return { tenantId: activeMembership.tenantId, tenantSlug: activeMembership.tenantSlug };
+    return null;
   } catch {
     return null;
   }
@@ -187,16 +236,19 @@ function buildSessionInfo(
   };
 }
 
+async function buildSessionFromCookie(cookieHeader: string | null): Promise<SessionInfo> {
+  const result = await findSessionFromCookie(cookieHeader);
+  if (!result) return null;
+  const cookies = parseCookies(cookieHeader);
+  const tenant = await resolveUserTenant(result.user.id, cookies[ACTIVE_TENANT_COOKIE]);
+  if (!tenant) return null;
+  return buildSessionInfo(result, tenant);
+}
+
 export async function getServerSession(): Promise<SessionInfo> {
   try {
     const h = await headers();
-    const cookieHeader = h.get('cookie');
-    const result = await findSessionFromCookie(cookieHeader);
-    if (!result) return null;
-
-    const tenant = await resolveUserTenant(result.user.id);
-    if (!tenant) return null;
-    return buildSessionInfo(result, tenant);
+    return await buildSessionFromCookie(h.get('cookie'));
   } catch {
     return null;
   }
@@ -204,13 +256,7 @@ export async function getServerSession(): Promise<SessionInfo> {
 
 export async function getServerSessionFromRequest(request: Request): Promise<SessionInfo> {
   try {
-    const cookieHeader = request.headers.get('cookie');
-    const result = await findSessionFromCookie(cookieHeader);
-    if (!result) return null;
-
-    const tenant = await resolveUserTenant(result.user.id);
-    if (!tenant) return null;
-    return buildSessionInfo(result, tenant);
+    return await buildSessionFromCookie(request.headers.get('cookie'));
   } catch {
     return null;
   }
