@@ -30,6 +30,7 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { sendInvitationEmail } from '@/lib/platform/email-templates';
 import { seedTenantOperationalDefaults } from '@/lib/platform/tenant-operational-defaults';
 import { cleanupFailedTenantOnboarding } from '@/lib/platform/onboarding-cleanup';
+import { writePublicEmployeeRequestConfig } from '@/lib/public-request-access';
 
 interface OnboardingRequest {
   organisation: {
@@ -172,6 +173,7 @@ export async function POST(request: NextRequest) {
           lifecycleChangedAt: new Date(),
           timezone: org.timezone || 'Africa/Windhoek',
           locale: org.locale || 'en-NA',
+          metadata: writePublicEmployeeRequestConfig({}, false),
         })
         .returning();
       createdTenantId = tenant.id;
