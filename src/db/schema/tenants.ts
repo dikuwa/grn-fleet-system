@@ -7,6 +7,7 @@ import {
   jsonb,
   integer,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
 /**
@@ -90,18 +91,25 @@ export const tenantBranding = pgTable('tenant_branding', {
 });
 
 /**
- * Tenant membership linking users to tenants
+ * Tenant membership linking users to tenants. A Better Auth account can belong
+ * to many tenants, but it can only have one membership row per tenant.
  */
-export const tenantMemberships = pgTable('tenant_memberships', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  userId: text('user_id').notNull(), // References Better Auth user
-  status: text('status').notNull().default('active'),
-  activeWorkspace: text('active_workspace'),
-  joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const tenantMemberships = pgTable(
+  'tenant_memberships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(), // References Better Auth user
+    status: text('status').notNull().default('active'),
+    activeWorkspace: text('active_workspace'),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('tenant_memberships_tenant_user_idx').on(table.tenantId, table.userId),
+  ],
+);
 
 /**
  * Roles (capability-based permission groups)
