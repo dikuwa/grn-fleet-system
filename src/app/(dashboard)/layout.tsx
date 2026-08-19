@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session';
 import { DashboardShell } from '@/components/layout/dashboard-shell';
+import { TenantSetupGuidance } from '@/components/layout/tenant-setup-guidance';
 import { getSessionWorkspace } from '@/lib/auth-helpers';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { headers } from 'next/headers';
@@ -21,6 +22,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   const isPublicDemo = session.user.id.startsWith('live-demo-');
+  const showSetupGuidance = !pathname.startsWith('/dashboard/setup');
 
   return (
     <DashboardShell
@@ -42,6 +44,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
             Exit demo
           </Link>
         </div>
+      )}
+      {showSetupGuidance && (
+        <TenantSetupGuidance
+          tenantId={session.tenantId}
+          activeWorkspace={activeWorkspace}
+          isPublicDemo={isPublicDemo}
+        />
       )}
       {children}
     </DashboardShell>
