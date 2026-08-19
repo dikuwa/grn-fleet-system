@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { pgTable, uuid, text, timestamp, integer, jsonb, pgEnum, uniqueIndex, boolean } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
@@ -63,7 +64,12 @@ export const tenantInvitations = pgTable('tenant_invitations', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex('tenant_invitations_token_idx').on(table.token),
-  uniqueIndex('tenant_invitations_email_status_idx').on(table.email, table.status),
+  // One open invitation per person per tenant. Historical accepted/cancelled/
+  // expired invitations remain unconstrained so the same account can belong to
+  // multiple tenants and can be invited again later when responsibilities change.
+  uniqueIndex('tenant_invitations_open_tenant_email_idx')
+    .on(table.tenantId, table.email)
+    .where(sql`${table.status} in ('pending', 'sent')`),
 ]);
 
 /**
