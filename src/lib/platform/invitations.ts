@@ -3,13 +3,12 @@
  *
  * Creates secure, single-use, email-bound invitation tokens for Tenant
  * Administrators (and other roles). Supports resending, expiry, cancellation,
- * and acceptance that provisions a Better Auth user + tenant membership.
+ * and atomic acceptance that provisions or reuses a Better Auth account.
  */
 
 import { getDb } from '@/db';
 import { tenantInvitations, invitationRoles } from '@/db/schema/invitations';
-import { tenantMemberships } from '@/db/schema/tenants';
-import { tenants } from '@/db/schema/tenants';
+import { roleAssignments, tenantMemberships, tenants } from '@/db/schema/tenants';
 import { user, account } from '@/db/schema/better-auth';
 import { eq, and, or, lt, gte, desc } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'crypto';
@@ -21,6 +20,13 @@ import bcrypt from 'bcryptjs';
 
 /** Default invitation validity window. */
 export const INVITATION_TTL_DAYS = 7;
+
+const ONBOARDING_INVITATION_LIFECYCLES = new Set([
+  'DRAFT',
+  'PENDING_INVITATION',
+  'INVITATION_SENT',
+  'INVITATION_EXPIRED',
+]);
 
 // ---------------------------------------------------------------------------
 // Token helpers
@@ -54,6 +60,11 @@ export type InvitationWithDetails = typeof tenantInvitations.$inferSelect & {
   tenantName: string;
 };
 
+export type InvitationAccountState = {
+  existingUser: boolean;
+  requiresPassword: boolean;
+};
+
 /** Find a valid (non-expired, non-used) invitation by its raw token. */
 export async function findInvitationByToken(rawToken: string): Promise<InvitationWithDetails | null> {
   const db = getDb();
@@ -81,6 +92,33 @@ export async function findInvitationByToken(rawToken: string): Promise<Invitatio
 
   if (rows.length === 0) return null;
   return { ...rows[0]!.invitation, tenantName: rows[0]!.tenantName };
+}
+
+/**
+ * Tell the invitation UI whether this email already has a local account.
+ * Existing password credentials are never replaced during invitation acceptance.
+ */
+export async function getInvitationAccountState(email: string): Promise<InvitationAccountState> {
+  const db = getDb();
+  const normalisedEmail = email.trim().toLowerCase();
+  const [existingUser] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, normalisedEmail))
+    .limit(1);
+
+  if (!existingUser) return { existingUser: false, requiresPassword: true };
+
+  const [existingAccount] = await db
+    .select({ password: account.password })
+    .from(account)
+    .where(and(eq(account.userId, existingUser.id), eq(account.providerId, 'email')))
+    .limit(1);
+
+  return {
+    existingUser: true,
+    requiresPassword: !existingAccount?.password,
+  };
 }
 
 /** List invitations for a tenant. */
@@ -114,10 +152,7 @@ export type CreateInvitationInput = {
   ttlDays?: number;
 };
 
-/**
- * Create an invitation and return its raw token (only exposed once).
- * Also marks the tenant lifecycle as awaiting invitation acceptance.
- */
+/** Create an invitation and return its raw token (only exposed once). */
 export async function createInvitation(
   input: CreateInvitationInput,
 ): Promise<{ invitation: InvitationWithDetails; rawToken: string }> {
@@ -141,7 +176,6 @@ export async function createInvitation(
     })
     .returning();
 
-  // Assign requested roles
   if (input.roleIds && input.roleIds.length > 0) {
     await db.insert(invitationRoles).values(
       input.roleIds.map((roleId) => ({ invitationId: invitation.id, roleId })),
@@ -227,22 +261,31 @@ export type AcceptInvitationInput = {
   rawToken: string;
   name: string;
   email: string;
-  password: string;
+  password?: string;
 };
 
 /**
- * Accept an invitation:
- *  - Validates token (exists, unexpired, matching email)
- *  - Creates a Better Auth user + password account (or links an existing user)
- *  - Creates an active tenant membership
- *  - Assigns the invitation's requested roles
- *  - Marks invitation accepted
- *  - Flips the tenant lifecycle to SETUP_IN_PROGRESS
+ * Only the first Tenant Administrator onboarding invitation may advance the
+ * tenant into setup. Later staff/admin invitations must never regress an active
+ * tenant back into onboarding.
+ */
+export function shouldStartTenantSetup(invitationType: string, lifecycleStatus: string): boolean {
+  return invitationType === 'tenant_admin' && ONBOARDING_INVITATION_LIFECYCLES.has(lifecycleStatus);
+}
+
+/**
+ * Accept an invitation atomically:
+ *  - Claims the single-use invitation inside the transaction
+ *  - Reuses an existing account without changing its password
+ *  - Creates a local password credential only when one is actually needed
+ *  - Reuses an existing tenant membership and role assignments when present
+ *  - Advances lifecycle only for the first Tenant Administrator onboarding invite
  */
 export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
   userId: string;
   tenantId: string;
   tenantName: string;
+  existingUser: boolean;
 }> {
   const db = getDb();
   const invitation = await findInvitationByToken(input.rawToken);
@@ -254,123 +297,160 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
   }
 
   const email = input.email.trim().toLowerCase();
+  const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : null;
+  const now = new Date();
 
-  // Find or create the Better Auth user.
-  const [existingUser] = await db
-    .select()
-    .from(user)
-    .where(eq(user.email, email))
-    .limit(1);
+  return db.transaction(async (tx) => {
+    // Atomically claim the invitation. If another acceptance already won the
+    // race, no row is returned. A later failure rolls this status update back.
+    const [claimedInvitation] = await tx
+      .update(tenantInvitations)
+      .set({ status: 'accepted', acceptedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(tenantInvitations.id, invitation.id),
+          or(eq(tenantInvitations.status, 'pending'), eq(tenantInvitations.status, 'sent')),
+          gte(tenantInvitations.expiresAt, now),
+        ),
+      )
+      .returning();
 
-  let userId: string;
-  if (existingUser) {
-    userId = existingUser.id;
-    // Update the display name if the invited name is provided and current is empty.
-    if (!existingUser.name && input.name) {
-      await db.update(user).set({ name: input.name, updatedAt: new Date() }).where(eq(user.id, userId));
+    if (!claimedInvitation) {
+      throw new Error('This invitation has already been used or has expired.');
     }
-  } else {
-    userId = `user-invite-${randomUUID().slice(0, 8)}`;
-    await db.insert(user).values({
-      id: userId,
-      email,
-      emailVerified: true,
-      name: input.name,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }).onConflictDoNothing();
-  }
 
-  // Set/update the password on the account record.
-  const passwordHash = await bcrypt.hash(input.password, 10);
-  const [existingAccount] = await db
-    .select()
-    .from(account)
-    .where(and(eq(account.userId, userId), eq(account.providerId, 'email')))
-    .limit(1);
+    const [existingUser] = await tx
+      .select()
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
 
-  if (existingAccount) {
-    await db
-      .update(account)
-      .set({ password: passwordHash, updatedAt: new Date() })
-      .where(eq(account.id, existingAccount.id));
-  } else {
-    await db.insert(account).values({
-      id: `acc-invite-${randomUUID().slice(0, 8)}`,
-      accountId: email,
-      providerId: 'email',
+    let userId: string;
+    if (existingUser) {
+      userId = existingUser.id;
+      if (!existingUser.name && input.name) {
+        await tx.update(user).set({ name: input.name, updatedAt: now }).where(eq(user.id, userId));
+      }
+    } else {
+      if (!passwordHash) {
+        throw new Error('Create a password to finish setting up this new account.');
+      }
+      userId = `user-invite-${randomUUID().slice(0, 8)}`;
+      await tx.insert(user).values({
+        id: userId,
+        email,
+        emailVerified: true,
+        name: input.name,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const [existingAccount] = await tx
+      .select({ id: account.id, password: account.password })
+      .from(account)
+      .where(and(eq(account.userId, userId), eq(account.providerId, 'email')))
+      .limit(1);
+
+    if (!existingAccount?.password) {
+      if (!passwordHash) {
+        throw new Error('Create a password to finish setting up this account.');
+      }
+      if (existingAccount) {
+        await tx
+          .update(account)
+          .set({ password: passwordHash, updatedAt: now })
+          .where(eq(account.id, existingAccount.id));
+      } else {
+        await tx.insert(account).values({
+          id: `acc-invite-${randomUUID().slice(0, 8)}`,
+          accountId: email,
+          providerId: 'email',
+          userId,
+          password: passwordHash,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+    // Existing password credentials are intentionally preserved.
+
+    const [existingMembership] = await tx
+      .select({ id: tenantMemberships.id })
+      .from(tenantMemberships)
+      .where(
+        and(
+          eq(tenantMemberships.tenantId, invitation.tenantId),
+          eq(tenantMemberships.userId, userId),
+        ),
+      )
+      .limit(1);
+
+    let membershipId = existingMembership?.id;
+    if (!membershipId) {
+      const [membership] = await tx
+        .insert(tenantMemberships)
+        .values({
+          tenantId: invitation.tenantId,
+          userId,
+          status: 'active',
+        })
+        .returning({ id: tenantMemberships.id });
+      membershipId = membership?.id;
+    } else {
+      await tx
+        .update(tenantMemberships)
+        .set({ status: 'active' })
+        .where(eq(tenantMemberships.id, membershipId));
+    }
+
+    if (!membershipId) throw new Error('Could not establish tenant membership.');
+
+    const assignedRoles = await tx
+      .select({ roleId: invitationRoles.roleId })
+      .from(invitationRoles)
+      .where(eq(invitationRoles.invitationId, invitation.id));
+
+    if (assignedRoles.length > 0) {
+      const existing = await tx
+        .select({ roleId: roleAssignments.roleId })
+        .from(roleAssignments)
+        .where(eq(roleAssignments.tenantMembershipId, membershipId));
+      const existingRoleIds = new Set(existing.map((role) => role.roleId));
+      const toInsert = assignedRoles
+        .map((role) => ({ tenantMembershipId: membershipId, roleId: role.roleId }))
+        .filter((role) => !existingRoleIds.has(role.roleId));
+      if (toInsert.length > 0) {
+        await tx.insert(roleAssignments).values(toInsert);
+      }
+    }
+
+    const [tenant] = await tx
+      .select({ lifecycleStatus: tenants.lifecycleStatus })
+      .from(tenants)
+      .where(eq(tenants.id, invitation.tenantId))
+      .limit(1);
+
+    if (!tenant) throw new Error('Tenant not found.');
+
+    if (shouldStartTenantSetup(claimedInvitation.type, tenant.lifecycleStatus)) {
+      await tx
+        .update(tenants)
+        .set({
+          lifecycleStatus: 'SETUP_IN_PROGRESS',
+          invitationAcceptedAt: now,
+          lifecycleChangedAt: now,
+          lifecycleReason: 'Tenant Administrator invitation accepted; initial setup can begin',
+          updatedAt: now,
+        })
+        .where(eq(tenants.id, invitation.tenantId));
+    }
+
+    return {
       userId,
-      password: passwordHash,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }).onConflictDoNothing();
-  }
-
-  // Create the tenant membership.
-  const [membership] = await db
-    .insert(tenantMemberships)
-    .values({
       tenantId: invitation.tenantId,
-      userId,
-      status: 'active',
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  const membershipId =
-    membership?.id ??
-    (
-      await db
-        .select({ id: tenantMemberships.id })
-        .from(tenantMemberships)
-        .where(
-          and(
-            eq(tenantMemberships.tenantId, invitation.tenantId),
-            eq(tenantMemberships.userId, userId),
-          ),
-        )
-        .limit(1)
-    )[0]?.id;
-
-  if (!membershipId) throw new Error('Could not establish tenant membership.');
-
-  // Assign requested roles.
-  const assignedRoles = await db
-    .select()
-    .from(invitationRoles)
-    .where(eq(invitationRoles.invitationId, invitation.id));
-
-  if (assignedRoles.length > 0) {
-    const { roleAssignments } = await import('@/db/schema/tenants');
-    const existing = await db
-      .select({ id: roleAssignments.id, roleId: roleAssignments.roleId })
-      .from(roleAssignments)
-      .where(eq(roleAssignments.tenantMembershipId, membershipId));
-    const existingRoleIds = new Set(existing.map((r) => r.roleId));
-    const toInsert = assignedRoles
-      .map((r) => ({ tenantMembershipId: membershipId, roleId: r.roleId }))
-      .filter((r) => !existingRoleIds.has(r.roleId));
-    if (toInsert.length > 0) {
-      await db.insert(roleAssignments).values(toInsert);
-    }
-  }
-
-  // Mark invitation accepted.
-  await db
-    .update(tenantInvitations)
-    .set({ status: 'accepted', acceptedAt: new Date(), updatedAt: new Date() })
-    .where(eq(tenantInvitations.id, invitation.id));
-
-  // Flip tenant lifecycle to setup in progress.
-  await db
-    .update(tenants)
-    .set({
-      lifecycleStatus: 'SETUP_IN_PROGRESS',
-      invitationAcceptedAt: new Date(),
-      lifecycleChangedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(tenants.id, invitation.tenantId));
-
-  return { userId, tenantId: invitation.tenantId, tenantName: invitation.tenantName };
+      tenantName: invitation.tenantName,
+      existingUser: Boolean(existingUser),
+    };
+  });
 }

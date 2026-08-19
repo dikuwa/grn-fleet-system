@@ -7,10 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { ShieldCheck, Mail, User, Loader2, AlertCircle } from 'lucide-react';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface InvitationInfo {
   id: string;
   email: string;
@@ -19,11 +15,9 @@ interface InvitationInfo {
   tenantName: string;
   expiresAt: string;
   type: string;
+  existingUser: boolean;
+  requiresPassword: boolean;
 }
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 function AcceptInviteContent() {
   const router = useRouter();
@@ -40,10 +34,6 @@ function AcceptInviteContent() {
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-
-  // -----------------------------------------------------------------------
-  // Fetch invitation details
-  // -----------------------------------------------------------------------
 
   const fetchInvitation = useCallback(async () => {
     if (!token) {
@@ -70,27 +60,31 @@ function AcceptInviteContent() {
     fetchInvitation();
   }, [fetchInvitation]);
 
-  // -----------------------------------------------------------------------
-  // Accept
-  // -----------------------------------------------------------------------
-
   const handleAccept = useCallback(async () => {
-    if (!token) return;
-    if (password !== passwordConfirm) {
-      setError('Passwords do not match.');
-      return;
+    if (!token || !invitation) return;
+    if (invitation.requiresPassword) {
+      if (password !== passwordConfirm) {
+        setError('Passwords do not match.');
+        return;
+      }
+      if (password.length < 6) {
+        setError('Password must be at least 6 characters.');
+        return;
+      }
     }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
-      return;
-    }
+
     setError(null);
     setSubmitting(true);
     try {
       const res = await fetch('/api/auth/accept-invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, name: name.trim() || invitation?.name || '', email, password }),
+        body: JSON.stringify({
+          token,
+          name: name.trim() || invitation.name || '',
+          email,
+          ...(invitation.requiresPassword ? { password } : {}),
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to accept invitation');
@@ -100,11 +94,7 @@ function AcceptInviteContent() {
     } finally {
       setSubmitting(false);
     }
-  }, [token, name, email, password, passwordConfirm, invitation]);
-
-  // -----------------------------------------------------------------------
-  // Render
-  // -----------------------------------------------------------------------
+  }, [token, invitation, name, email, password, passwordConfirm]);
 
   if (loading) {
     return (
@@ -119,7 +109,6 @@ function AcceptInviteContent() {
     );
   }
 
-  // Invalid / expired token
   if (error && !invitation && !submitting) {
     return (
       <div className="min-h-screen bg-muted flex items-center justify-center p-4">
@@ -139,8 +128,8 @@ function AcceptInviteContent() {
     );
   }
 
-  // Success screen
   if (submitted) {
+    const setupDestination = invitation?.type === 'tenant_admin' ? '/dashboard/setup' : '/dashboard';
     return (
       <div className="min-h-screen bg-muted flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
@@ -148,22 +137,25 @@ function AcceptInviteContent() {
             <div className="mx-auto h-12 w-12 rounded-full bg-brand-50 flex items-center justify-center">
               <ShieldCheck className="h-6 w-6 text-brand-600" />
             </div>
-            <h2 className="text-lg font-semibold text-ink-900">Account Created Successfully</h2>
+            <h2 className="text-lg font-semibold text-ink-900">Invitation Accepted</h2>
             <p className="text-sm text-ink-500">
-              Welcome to <strong>{invitation?.tenantName}</strong> on the GovFleet platform.
-              Your Tenant Administrator account is now active.
+              Access to <strong>{invitation?.tenantName}</strong> is ready.
+              {invitation?.existingUser
+                ? ' Your existing GRN Fleet sign-in has been kept unchanged.'
+                : ' Your GRN Fleet account has been created.'}
             </p>
             <p className="text-sm text-ink-500">
-              You will be redirected to your workspace setup wizard to complete your
-              organisation profile and begin managing your fleet.
+              {invitation?.type === 'tenant_admin'
+                ? 'Sign in to continue with the organisation setup.'
+                : 'Sign in to continue to your dashboard.'}
             </p>
             <Button
               variant="primary"
               size="default"
-              onClick={() => router.push('/dashboard/setup')}
+              onClick={() => router.push(`/login?redirect=${encodeURIComponent(setupDestination)}`)}
               className="mt-4"
             >
-              Begin Setup →
+              Sign in to Continue →
             </Button>
           </CardContent>
         </Card>
@@ -171,13 +163,16 @@ function AcceptInviteContent() {
     );
   }
 
+  const passwordRequired = invitation?.requiresPassword ?? true;
+  const submitLabel = invitation?.existingUser
+    ? passwordRequired ? 'Accept Invitation & Set Password' : 'Accept Invitation'
+    : 'Accept Invitation & Create Account';
+
   return (
     <div className="min-h-screen bg-muted flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-center">
-            Accept Invitation
-          </CardTitle>
+          <CardTitle className="text-center">Accept Invitation</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {invitation && (
@@ -189,6 +184,12 @@ function AcceptInviteContent() {
               <p className="text-brand-500 text-xs mt-0.5">
                 Expires {new Date(invitation.expiresAt).toLocaleDateString('en-NA', { year: 'numeric', month: 'long', day: 'numeric' })}
               </p>
+            </div>
+          )}
+
+          {invitation?.existingUser && !invitation.requiresPassword && (
+            <div className="rounded-[8px] border border-status-info-text/20 bg-status-info-bg/30 p-3 text-sm text-ink-600">
+              This email already has a GRN Fleet account. Accepting the invitation adds this organisation to your account; your current password stays unchanged.
             </div>
           )}
 
@@ -211,38 +212,40 @@ function AcceptInviteContent() {
               <Label required>Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-                <Input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-9 h-11"
-                  disabled
-                />
+                <Input type="email" value={email} className="pl-9 h-11" disabled />
               </div>
               <p className="text-xs text-ink-400">This matches the invited email address and cannot be changed.</p>
             </div>
 
-            <div className="space-y-1.5">
-              <Label required>Password</Label>
-              <Input
-                type="password"
-                placeholder="At least 6 characters"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="h-11"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label required>Confirm Password</Label>
-              <Input
-                type="password"
-                placeholder="Repeat your password"
-                value={passwordConfirm}
-                onChange={(e) => setPasswordConfirm(e.target.value)}
-                className="h-11"
-              />
-            </div>
+            {passwordRequired && (
+              <>
+                {invitation?.existingUser && (
+                  <p className="text-xs leading-5 text-ink-500">
+                    This account does not yet have a local password. Set one to sign in with email and password.
+                  </p>
+                )}
+                <div className="space-y-1.5">
+                  <Label required>Password</Label>
+                  <Input
+                    type="password"
+                    placeholder="At least 6 characters"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="h-11"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label required>Confirm Password</Label>
+                  <Input
+                    type="password"
+                    placeholder="Repeat your password"
+                    value={passwordConfirm}
+                    onChange={(e) => setPasswordConfirm(e.target.value)}
+                    className="h-11"
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           {error && (
@@ -256,13 +259,17 @@ function AcceptInviteContent() {
             size="default"
             onClick={handleAccept}
             loading={submitting}
-            disabled={submitting || !name.trim() || !password.trim() || !passwordConfirm.trim()}
+            disabled={
+              submitting
+              || !name.trim()
+              || (passwordRequired && (!password.trim() || !passwordConfirm.trim()))
+            }
             className="w-full"
           >
             {submitting ? (
-              <><Loader2 className="h-4 w-4 animate-spin" /> Creating Account…</>
+              <><Loader2 className="h-4 w-4 animate-spin" /> Accepting Invitation…</>
             ) : (
-              <><ShieldCheck className="h-4 w-4" /> Accept Invitation & Create Account</>
+              <><ShieldCheck className="h-4 w-4" /> {submitLabel}</>
             )}
           </Button>
         </CardContent>
