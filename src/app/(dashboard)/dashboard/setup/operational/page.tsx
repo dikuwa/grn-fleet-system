@@ -99,7 +99,7 @@ export default function OperationalSetupPage() {
           icon={<Settings2 className="h-6 w-6" />}
           title="Operational setup unavailable"
           description={error || 'The setup status could not be loaded.'}
-          action={<Button variant="secondary" size="sm" onClick={() => void load()}>Retry</Button>}
+          action={{ label: 'Retry', onClick: () => void load() }}
         />
       </div>
     );
