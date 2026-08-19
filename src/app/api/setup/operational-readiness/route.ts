@@ -11,14 +11,21 @@ import { workflowDefinitions, workflowSteps } from '@/db/schema/workflows';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { isPublicEmployeeRequestEnabled } from '@/lib/public-request-access';
+import { assessTenantOperationalReadiness } from '@/lib/platform/tenant-readiness';
+import { recordAuditEvent } from '@/lib/audit-event';
+
+async function requireOperationalSetupAccess(request: NextRequest) {
+  const auth = await requireRequestAuth(request);
+  if (!auth.ok) return auth;
+  const permission = await requirePermission(auth.session, Permissions.TENANT_MANAGE);
+  if (permission instanceof NextResponse) return { ok: false as const, error: permission };
+  return auth;
+}
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireRequestAuth(request);
+    const auth = await requireOperationalSetupAccess(request);
     if (!auth.ok) return auth.error;
-
-    const permission = await requirePermission(auth.session, Permissions.TENANT_MANAGE);
-    if (permission instanceof NextResponse) return permission;
 
     const tenantId = auth.session.tenantId;
     if (!tenantId) {
@@ -142,18 +149,18 @@ export async function GET(request: NextRequest) {
       {
         id: 'initial-setup',
         label: 'Initial workspace setup',
-        description: 'Organisation identity, offices and initial configuration have been saved.',
+        description: 'Organisation identity and at least one operating location have been confirmed.',
         category: 'required',
         ready: setup?.isReady === true,
         href: '/dashboard/setup',
-        actionLabel: 'Review setup',
+        actionLabel: 'Complete initial setup',
       },
       {
         id: 'workflow',
         label: 'Approval workflow',
         description: workflowReady
           ? `${counts.workflows} active workflow${counts.workflows === 1 ? '' : 's'} configured.`
-          : 'Configure at least one active transport-request workflow with approval steps.',
+          : 'Choose a simple, standard or controlled workflow and confirm who handles each approval stage.',
         category: 'required',
         ready: workflowReady,
         href: '/dashboard/admin/workflows',
@@ -175,7 +182,7 @@ export async function GET(request: NextRequest) {
         label: 'Staff directory',
         description: counts.staff > 0
           ? `${counts.staff} active staff member${counts.staff === 1 ? '' : 's'} available for requests and assignments.`
-          : 'Import or add staff so requesters, passengers and role assignments can be configured.',
+          : 'Import or add staff when you are ready to assign requesters, passengers and operational roles.',
         category: 'recommended',
         ready: counts.staff > 0,
         href: '/dashboard/staff/import',
@@ -219,7 +226,7 @@ export async function GET(request: NextRequest) {
         label: 'Employee request access',
         description: employeeRequestAccessEnabled
           ? 'The secure employee request link is enabled for staff who do not have dashboard accounts.'
-          : 'The secure employee request link is disabled. Enable it only if this organisation wants staff without dashboard accounts to submit requests.',
+          : 'Disabled by default. Enable it only if staff without dashboard accounts should submit requests.',
         category: 'optional',
         ready: employeeRequestAccessEnabled,
         href: '/dashboard/settings/request-access',
@@ -252,11 +259,103 @@ export async function GET(request: NextRequest) {
         },
         counts,
         requiredRemaining,
+        canSubmitForReview:
+          requiredRemaining === 0 && tenant.lifecycleStatus === 'SETUP_IN_PROGRESS',
         checklist,
       },
     });
   } catch (error) {
     console.error('[Operational Setup] GET failed:', error);
     return NextResponse.json({ error: 'Failed to load operational setup status' }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const auth = await requireOperationalSetupAccess(request);
+    if (!auth.ok) return auth.error;
+
+    const tenantId = auth.session.tenantId;
+    if (!tenantId) {
+      return NextResponse.json({ error: 'No tenant context' }, { status: 400 });
+    }
+
+    const body = (await request.json().catch(() => ({}))) as { action?: string };
+    if (body.action !== 'submit_for_review') {
+      return NextResponse.json({ error: 'Unsupported operational setup action.' }, { status: 400 });
+    }
+
+    const db = getDb();
+    const [tenant] = await db
+      .select({ id: tenants.id, lifecycleStatus: tenants.lifecycleStatus })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+
+    if (tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW') {
+      return NextResponse.json({
+        success: true,
+        data: { lifecycleStatus: tenant.lifecycleStatus, alreadySubmitted: true },
+      });
+    }
+    if (tenant.lifecycleStatus !== 'SETUP_IN_PROGRESS') {
+      return NextResponse.json(
+        { error: `This tenant cannot be submitted for review while its lifecycle is ${tenant.lifecycleStatus}.` },
+        { status: 409 },
+      );
+    }
+
+    const readiness = await assessTenantOperationalReadiness(tenantId);
+    if (!readiness.readyForActivation) {
+      const blockers = readiness.checks
+        .filter((check) => check.severity === 'blocker' && !check.ready)
+        .map((check) => check.label);
+      return NextResponse.json(
+        {
+          error: blockers.length
+            ? `Resolve these required items before Platform Review: ${blockers.join(', ')}.`
+            : 'Resolve the remaining activation requirements before Platform Review.',
+          readiness,
+        },
+        { status: 409 },
+      );
+    }
+
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(tenants)
+        .set({
+          lifecycleStatus: 'PENDING_PLATFORM_REVIEW',
+          lifecycleReason: 'Tenant operational setup submitted for platform review',
+          lifecycleChangedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(tenants.id, tenantId));
+
+      await recordAuditEvent({
+        tenantId,
+        actorUserId: auth.session.user.id,
+        eventType: 'tenant_operational_setup_submitted',
+        action: 'submit',
+        entityType: 'tenant',
+        entityId: tenantId,
+        before: { lifecycleStatus: tenant.lifecycleStatus },
+        after: { lifecycleStatus: 'PENDING_PLATFORM_REVIEW' },
+        summary: 'Tenant operational setup submitted for platform review',
+      }, tx);
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        lifecycleStatus: 'PENDING_PLATFORM_REVIEW',
+        readiness,
+      },
+    });
+  } catch (error) {
+    console.error('[Operational Setup] POST failed:', error);
+    return NextResponse.json({ error: 'Failed to submit operational setup for review' }, { status: 500 });
   }
 }
