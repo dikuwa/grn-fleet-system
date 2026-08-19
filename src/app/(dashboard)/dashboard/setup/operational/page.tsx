@@ -39,6 +39,8 @@ interface OperationalSetupData {
     drivers: number;
     vehicles: number;
     workflows: number;
+    inspectionTemplates: number;
+    fleetPaymentProviders: number;
   };
   requiredRemaining: number;
   checklist: ChecklistItem[];
@@ -195,7 +197,7 @@ export default function OperationalSetupPage() {
       <Card>
         <CardContent className="py-5">
           <p className="text-ink-600 text-sm leading-6">
-            <strong className="text-ink-950">Keep onboarding practical:</strong> vehicles, drivers, departments, external request access and Fleet Payments are shown here because they often matter operationally, but they are not all universal activation blockers. Configure only what this organisation actually uses.
+            <strong className="text-ink-950">Keep onboarding practical:</strong> vehicles, drivers, departments, employee request access and Fleet Payments are shown here because they often matter operationally, but they are not all universal activation blockers. Configure only what this organisation actually uses.
           </p>
         </CardContent>
       </Card>
