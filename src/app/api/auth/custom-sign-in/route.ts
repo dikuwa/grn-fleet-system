@@ -1,26 +1,43 @@
 /**
  * Custom Sign-In API
  *
- * POST /api/auth/custom-sign-in
- *
- * Accepts username or email and password.
- * If username is provided, resolves it to the user's email,
- * then creates a session using the same logic as the built-in auth handler.
- *
- * This enables username-based login while maintaining full compatibility
- * with the existing session management in /api/auth/[...all].
+ * Accepts username/email + password and creates the global Better Auth session.
+ * Tenant context is selected separately when the identity belongs to more than
+ * one organisation; a single eligible tenant is selected automatically.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user, account, session } from '@/db/schema/better-auth';
 import { userProfiles } from '@/db/schema/auth';
-
 import { eq, or, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { rateLimit } from '@/lib/rate-limit';
+import { ACTIVE_TENANT_COOKIE, getUserTenantChoices } from '@/lib/session';
 
 const SIGN_IN_SERVICE_UNAVAILABLE = 'Service temporarily unavailable. Please try again later.';
+const SESSION_SECONDS = 7 * 24 * 60 * 60;
+const TENANT_COOKIE_SECONDS = 30 * 24 * 60 * 60;
+
+function setSessionCookie(response: NextResponse, token: string, expiresAt: Date) {
+  response.cookies.set('better-auth.session_token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    expires: expiresAt,
+  });
+}
+
+function setTenantCookie(response: NextResponse, tenantId: string) {
+  response.cookies.set(ACTIVE_TENANT_COOKIE, tenantId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: TENANT_COOKIE_SECONDS,
+  });
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,8 +52,6 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedUsername = username.trim().toLowerCase();
-
-    // Rate limit: 20 sign-in attempts per IP + normalized account identifier per 60 seconds.
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
     if (process.env.NODE_ENV !== 'test' && !process.env.CI) {
       const rl = await rateLimit(`login:${ip}:${normalizedUsername}`, 20, 60);
@@ -51,8 +66,6 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
-
-    // Find user by username or email
     const [userRecord] = await db
       .select()
       .from(user)
@@ -63,7 +76,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 });
     }
 
-    // Find account with password hash
     const [acct] = await db
       .select()
       .from(account)
@@ -79,58 +91,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 });
     }
 
-    // Check if password change is required
-    const [profile] = await db
-      .select()
-      .from(userProfiles)
-      .where(eq(userProfiles.userId, userRecord.id))
-      .limit(1);
+    const [profile, tenantChoices] = await Promise.all([
+      db
+        .select()
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, userRecord.id))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+      getUserTenantChoices(userRecord.id),
+    ]);
 
-    const requiresPasswordChange = profile?.requiresPasswordChange ?? false;
-    if (requiresPasswordChange) {
-      // Still create session so user can navigate to change password page
-      const { v4: uuid } = await import('uuid');
-      const token = uuid();
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-      await db.insert(session).values({
-        id: token,
-        token,
-        userId: userRecord.id,
-        expiresAt,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-      const response = NextResponse.json({
-        redirect: true,
-        redirectTo: '/dashboard/profile',
-        requiresPasswordChange: true,
-        token,
-        user: {
-          id: userRecord.id,
-          email: userRecord.email,
-          emailVerified: userRecord.emailVerified,
-          name: userRecord.name,
-          image: userRecord.image,
-        },
-      });
-
-      response.cookies.set('better-auth.session_token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-        expires: expiresAt,
-      });
-
-      return response;
+    if (tenantChoices.length === 0) {
+      return NextResponse.json(
+        { error: 'No active organisation access is available for this account.' },
+        { status: 403 },
+      );
     }
 
-    // Create session using same pattern as handleSignIn in /api/auth/[...all]
+    const requiresPasswordChange = profile?.requiresPasswordChange ?? false;
     const { v4: uuid } = await import('uuid');
     const token = uuid();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    const expiresAt = new Date(Date.now() + SESSION_SECONDS * 1000);
 
     await db.insert(session).values({
       id: token,
@@ -141,42 +122,18 @@ export async function POST(request: NextRequest) {
       updatedAt: new Date(),
     });
 
-    // Update last login timestamp on user profile
     await db
       .update(userProfiles)
       .set({ lastLoginAt: new Date(), updatedAt: new Date() })
       .where(eq(userProfiles.userId, userRecord.id));
 
-    // Log audit event
-    try {
-      // Find tenant for audit context
-      const { tenantMemberships } = await import('@/db/schema/tenants');
-      const [membership] = await db
-        .select({ tenantId: tenantMemberships.tenantId })
-        .from(tenantMemberships)
-        .where(and(eq(tenantMemberships.userId, userRecord.id), eq(tenantMemberships.status, 'active')))
-        .limit(1);
-
-      if (membership) {
-        const { auditEvents } = await import('@/db/schema/audit');
-        await db.insert(auditEvents).values({
-          tenantId: membership.tenantId,
-          tenantSequence: Date.now(),
-          eventType: 'user_login',
-          actorUserId: userRecord.id,
-          action: 'login',
-          entityType: 'user',
-          entityId: userRecord.id,
-          summary: `User signed in via ${normalizedUsername.includes('@') ? 'email' : 'username'}`,
-        });
-      }
-    } catch {
-      // Non-fatal audit error
-    }
-
-    // Build response (same format as handleSignIn)
+    const requiresTenantSelection = tenantChoices.length > 1;
     const response = NextResponse.json({
-      redirect: false,
+      redirect: requiresPasswordChange,
+      redirectTo: requiresPasswordChange ? '/dashboard/profile' : null,
+      requiresPasswordChange,
+      requiresTenantSelection,
+      tenantChoices: tenantChoices.map(({ id, name, slug }) => ({ id, name, slug })),
       token,
       url: null,
       user: {
@@ -190,19 +147,29 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Set the session cookie
-    response.cookies.set('better-auth.session_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      expires: expiresAt,
-    });
+    setSessionCookie(response, token, expiresAt);
+    if (!requiresTenantSelection) setTenantCookie(response, tenantChoices[0]!.id);
+
+    if (!requiresTenantSelection) {
+      try {
+        const { auditEvents } = await import('@/db/schema/audit');
+        await db.insert(auditEvents).values({
+          tenantId: tenantChoices[0]!.id,
+          tenantSequence: Date.now(),
+          eventType: 'user_login',
+          actorUserId: userRecord.id,
+          action: 'login',
+          entityType: 'user',
+          entityId: userRecord.id,
+          summary: `User signed in via ${normalizedUsername.includes('@') ? 'email' : 'username'}`,
+        });
+      } catch {
+        // Non-fatal audit error
+      }
+    }
 
     return response;
   } catch (error) {
-    // Keep provider/database diagnostics server-side. Never expose raw database,
-    // quota, SQL, HTTP, stack-trace, or infrastructure details to the client.
     console.error('[Custom Sign-In] Failed:', error);
     return NextResponse.json({ error: SIGN_IN_SERVICE_UNAVAILABLE }, { status: 503 });
   }
