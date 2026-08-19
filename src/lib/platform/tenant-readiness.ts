@@ -15,12 +15,14 @@ import {
 import { SystemRoles } from '@/lib/workspaces';
 
 export type ReadinessSeverity = 'blocker' | 'warning';
+export type ReadinessOwner = 'platform' | 'tenant';
 
 export interface TenantReadinessCheck {
   id: string;
   label: string;
   description: string;
   severity: ReadinessSeverity;
+  owner: ReadinessOwner;
   ready: boolean;
   actionHref?: string;
   actionLabel?: string;
@@ -111,10 +113,11 @@ export async function assessTenantOperationalReadiness(
   const checks: TenantReadinessCheck[] = [
     {
       id: 'workspace-setup',
-      label: 'Workspace setup submitted',
+      label: 'Initial workspace setup complete',
       description:
-        'Tenant Administrator must complete Organisation, Offices and initial configuration, then submit the workspace for platform review.',
+        'Tenant Administrator must confirm the organisation and at least one operating location before operational setup can be submitted.',
       severity: 'blocker',
+      owner: 'tenant',
       ready: setup?.isReady === true,
     },
     {
@@ -123,6 +126,7 @@ export async function assessTenantOperationalReadiness(
       description:
         'At least one active Tenant Administrator account is required to manage the organisation after activation.',
       severity: 'blocker',
+      owner: 'platform',
       ready: Number(tenantAdminTotal?.total ?? 0) > 0,
       actionHref: `/dashboard/platform/tenants/${tenantId}/invitation`,
       actionLabel: 'Manage invitation',
@@ -131,8 +135,9 @@ export async function assessTenantOperationalReadiness(
       id: 'office',
       label: 'Operational office or depot',
       description:
-        'Tenant Administrator must configure at least one active office, depot or operational location.',
+        'Tenant Administrator must configure at least one active office, depot or operating location.',
       severity: 'blocker',
+      owner: 'tenant',
       ready: Number(officeTotal?.total ?? 0) > 0,
     },
     {
@@ -141,14 +146,16 @@ export async function assessTenantOperationalReadiness(
       description:
         'Tenant Administrator must configure at least one active transport-request workflow with approval steps before real requests can be processed.',
       severity: 'blocker',
+      owner: 'tenant',
       ready: activeWorkflowWithSteps,
     },
     {
       id: 'subscription',
       label: 'Subscription package assigned',
       description:
-        'The tenant must be attached to a package so entitlements and limits can be enforced consistently.',
+        'Platform Administration must assign a package so entitlements and limits can be enforced consistently.',
       severity: 'blocker',
+      owner: 'platform',
       ready: Number(subscriptionTotal?.total ?? 0) > 0,
     },
     {
@@ -157,6 +164,7 @@ export async function assessTenantOperationalReadiness(
       description:
         'Recommended for routing, reporting and staff organisation, but not required for every tenant type.',
       severity: 'warning',
+      owner: 'tenant',
       ready: Number(departmentTotal?.total ?? 0) > 0,
     },
   ];
