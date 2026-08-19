@@ -100,7 +100,7 @@ export default function OperationalSetupPage() {
       } : current);
       toast({
         title: 'Submitted for platform review',
-        description: 'Required tenant setup is complete. The Platform Administrator can now perform the final activation review.',
+        description: 'Required tenant setup is complete. Tenant access is now paused while the Platform Administrator performs the final activation review.',
         variant: 'success',
       });
     } catch (err) {
@@ -216,7 +216,7 @@ export default function OperationalSetupPage() {
           {data.canSubmitForReview && (
             <div className="border-border mt-5 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-ink-500 text-xs leading-5">
-                Submitting locks initial onboarding and hands the tenant to the Platform Administrator for the final activation decision.
+                Submitting pauses tenant access while Platform Review is in progress. The Platform Administrator can activate the tenant or return it for changes.
               </p>
               <Button variant="primary" size="sm" disabled={submitting} onClick={() => void submitForReview()} className="shrink-0">
                 {submitting ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <ShieldCheck className="h-4 w-4" />}
