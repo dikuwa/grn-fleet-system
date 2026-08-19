@@ -6,6 +6,8 @@ import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+const REVIEW_RETURN_PREFIX = 'Platform review returned for changes:';
+
 /**
  * Return a tenant from Platform Review to Tenant Admin setup.
  *
@@ -27,9 +29,10 @@ export async function POST(
     if (permission instanceof NextResponse) return permission;
 
     const body = (await request.json().catch(() => ({}))) as { reason?: string };
-    const reason = typeof body.reason === 'string' && body.reason.trim()
-      ? body.reason.trim().slice(0, 500)
-      : 'Returned for required setup changes';
+    const note = typeof body.reason === 'string' && body.reason.trim()
+      ? body.reason.trim().slice(0, 440)
+      : 'Please review the required setup items and resubmit when ready.';
+    const reason = `${REVIEW_RETURN_PREFIX} ${note}`;
 
     const db = getDb();
     const [tenant] = await db
