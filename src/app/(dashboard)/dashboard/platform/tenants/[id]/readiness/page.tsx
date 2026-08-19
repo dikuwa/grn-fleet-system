@@ -23,6 +23,7 @@ interface ReadinessCheck {
   label: string;
   description: string;
   severity: 'blocker' | 'warning';
+  owner: 'platform' | 'tenant';
   ready: boolean;
   actionHref?: string;
   actionLabel?: string;
@@ -164,7 +165,7 @@ export default function PlatformTenantReadinessPage({
                 </p>
                 {pendingReview && !readiness.readyForActivation && (
                   <p className="mt-2 text-xs leading-5 text-ink-600">
-                    Return the tenant for changes so its Tenant Administrator can resolve the required items and submit it again. This does not mark onboarding as failed.
+                    Use the action-owner badge on each blocker to see whether Platform Administration can resolve it here or the tenant needs to be returned for changes.
                   </p>
                 )}
               </div>
@@ -217,16 +218,21 @@ export default function PlatformTenantReadinessPage({
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-sm font-medium text-ink-950">{check.label}</p>
                     {!check.ready && (
-                      <Badge variant={check.severity === 'blocker' ? 'error' : 'warning'} size="sm">
-                        {check.severity === 'blocker' ? 'Required' : 'Recommended'}
-                      </Badge>
+                      <>
+                        <Badge variant={check.severity === 'blocker' ? 'error' : 'warning'} size="sm">
+                          {check.severity === 'blocker' ? 'Required' : 'Recommended'}
+                        </Badge>
+                        <Badge variant={check.owner === 'platform' ? 'info' : 'default'} size="sm">
+                          {check.owner === 'platform' ? 'Platform action' : 'Tenant Admin action'}
+                        </Badge>
+                      </>
                     )}
                   </div>
                   <p className="mt-1 text-xs leading-5 text-ink-500">{check.description}</p>
                 </div>
               </div>
               {!check.ready && check.actionHref && check.actionLabel && (
-                <Button variant="secondary" size="sm" asChild className="shrink-0">
+                <Button variant="secondary" size="sm" asChild className="shrink-0 self-start sm:self-auto">
                   <Link href={check.actionHref}>{check.actionLabel}</Link>
                 </Button>
               )}
