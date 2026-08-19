@@ -11,6 +11,7 @@ import { tenants, tenantBranding, tenantMemberships } from '@/db/schema/tenants'
 import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, desc, count, or, ilike, and } from 'drizzle-orm';
+import { writePublicEmployeeRequestConfig } from '@/lib/public-request-access';
 
 // ---------------------------------------------------------------------------
 // GET — List all tenants
@@ -181,6 +182,7 @@ export async function POST(request: NextRequest) {
         status: 'ACTIVE',
         timezone: timezone || 'Africa/Windhoek',
         locale: locale || 'en-NA',
+        metadata: writePublicEmployeeRequestConfig({}, false),
       })
       .returning();
 
