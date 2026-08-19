@@ -14,6 +14,8 @@ import { isPublicEmployeeRequestEnabled } from '@/lib/public-request-access';
 import { assessTenantOperationalReadiness } from '@/lib/platform/tenant-readiness';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+const REVIEW_RETURN_PREFIX = 'Platform review returned for changes:';
+
 async function requireOperationalSetupAccess(request: NextRequest) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth;
@@ -50,6 +52,7 @@ export async function GET(request: NextRequest) {
           id: tenants.id,
           name: tenants.name,
           lifecycleStatus: tenants.lifecycleStatus,
+          lifecycleReason: tenants.lifecycleReason,
           metadata: tenants.metadata,
         })
         .from(tenants)
@@ -133,6 +136,11 @@ export async function GET(request: NextRequest) {
       activeInspectionTypes.has('departure') && activeInspectionTypes.has('return');
     const employeeRequestAccessEnabled = isPublicEmployeeRequestEnabled(tenant.metadata);
     const fleetPaymentsConfigured = Number(fleetPaymentProviderTotal?.total ?? 0) > 0;
+    const reviewFeedback =
+      tenant.lifecycleStatus === 'SETUP_IN_PROGRESS'
+      && tenant.lifecycleReason?.startsWith(REVIEW_RETURN_PREFIX)
+        ? tenant.lifecycleReason.slice(REVIEW_RETURN_PREFIX.length).trim()
+        : null;
 
     const counts = {
       offices: Number(officeTotal?.total ?? 0),
@@ -256,6 +264,7 @@ export async function GET(request: NextRequest) {
           id: tenant.id,
           name: tenant.name,
           lifecycleStatus: tenant.lifecycleStatus,
+          reviewFeedback,
         },
         counts,
         requiredRemaining,
