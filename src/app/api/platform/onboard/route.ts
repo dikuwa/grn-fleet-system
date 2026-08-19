@@ -29,6 +29,7 @@ import { createInvitation, invitationAcceptUrl } from '@/lib/platform/invitation
 import { recordAuditEvent } from '@/lib/audit-event';
 import { sendInvitationEmail } from '@/lib/platform/email-templates';
 import { seedTenantOperationalDefaults } from '@/lib/platform/tenant-operational-defaults';
+import { cleanupFailedTenantOnboarding } from '@/lib/platform/onboarding-cleanup';
 
 interface OnboardingRequest {
   organisation: {
@@ -74,6 +75,24 @@ interface OnboardingRequest {
     code: string;
   }>;
   roles?: string[];
+}
+
+type OnboardingBootstrapResult = {
+  tenant: typeof tenants.$inferSelect;
+  subscription: Awaited<ReturnType<typeof createSubscription>>;
+  createdOffices: Array<{ id: string; code: string | null; name: string }>;
+  createdDepts: Array<{ id: string; name: string }>;
+  createdRoles: Array<{ id: string; name: string }>;
+  invitation: Awaited<ReturnType<typeof createInvitation>>['invitation'];
+  rawToken: string;
+  operationalDefaults: Awaited<ReturnType<typeof seedTenantOperationalDefaults>>;
+};
+
+class SubscriptionSetupError extends Error {
+  constructor(cause: unknown) {
+    super(`Failed to create subscription: ${String(cause)}`);
+    this.name = 'SubscriptionSetupError';
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -133,199 +152,245 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const [tenant] = await db
-      .insert(tenants)
-      .values({
-        name: org.name.trim(),
-        code: org.code.trim().toUpperCase(),
-        slug: org.slug.trim().toLowerCase(),
-        type: org.type || 'regional_council',
-        status: 'ACTIVE',
-        lifecycleStatus: 'PENDING_INVITATION',
-        createdByUserId: session.user.id,
-        primaryContactName: body.primaryContact.name.trim(),
-        primaryContactEmail: body.primaryContact.email.trim().toLowerCase(),
-        primaryContactPhone: body.primaryContact.phone,
-        lifecycleChangedAt: new Date(),
-        timezone: org.timezone || 'Africa/Windhoek',
-        locale: org.locale || 'en-NA',
-      })
-      .returning();
+    let createdTenantId: string | null = null;
+    let bootstrap: OnboardingBootstrapResult;
 
-    let subscription;
     try {
-      subscription = await createSubscription({
-        tenantId: tenant.id,
-        packageId: body.subscription.packageId,
-        billingInterval: body.subscription.billingInterval,
-        trialDays: body.subscription.trialDays,
-        gracePeriodDays: body.subscription.gracePeriodDays,
-      });
-    } catch (subError) {
-      await db.delete(tenants).where(eq(tenants.id, tenant.id));
-      return NextResponse.json(
-        { error: 'Failed to create subscription: ' + String(subError) },
-        { status: 400 },
-      );
-    }
+      const [tenant] = await db
+        .insert(tenants)
+        .values({
+          name: org.name.trim(),
+          code: org.code.trim().toUpperCase(),
+          slug: org.slug.trim().toLowerCase(),
+          type: org.type || 'regional_council',
+          status: 'ACTIVE',
+          lifecycleStatus: 'PENDING_INVITATION',
+          createdByUserId: session.user.id,
+          primaryContactName: body.primaryContact.name.trim(),
+          primaryContactEmail: body.primaryContact.email.trim().toLowerCase(),
+          primaryContactPhone: body.primaryContact.phone,
+          lifecycleChangedAt: new Date(),
+          timezone: org.timezone || 'Africa/Windhoek',
+          locale: org.locale || 'en-NA',
+        })
+        .returning();
+      createdTenantId = tenant.id;
 
-    if (
-      body.branding &&
-      (body.branding.contactEmail || body.branding.address || body.branding.primaryColor)
-    ) {
-      await db.insert(tenantBranding).values({
-        tenantId: tenant.id,
-        primaryColor: body.branding.primaryColor || '#1F4E8C',
-        accentColor: body.branding.accentColor || '#0F766E',
-        contactEmail: body.branding.contactEmail || undefined,
-        contactPhone: body.branding.contactPhone || undefined,
-        address: body.branding.address || undefined,
-      });
-    }
-
-    const createdOffices: Array<{ id: string; code: string | null; name: string }> = [];
-    if (body.offices && body.offices.length > 0) {
-      for (const office of body.offices) {
-        const [created] = await db
-          .insert(offices)
-          .values({
-            tenantId: tenant.id,
-            name: office.name,
-            code: office.code,
-            type: office.type,
-            address: office.address || undefined,
-          })
-          .returning();
-        createdOffices.push({ id: created.id, code: created.code, name: created.name });
+      let subscription: Awaited<ReturnType<typeof createSubscription>>;
+      try {
+        subscription = await createSubscription({
+          tenantId: tenant.id,
+          packageId: body.subscription.packageId,
+          billingInterval: body.subscription.billingInterval,
+          trialDays: body.subscription.trialDays,
+          gracePeriodDays: body.subscription.gracePeriodDays,
+        });
+      } catch (subError) {
+        throw new SubscriptionSetupError(subError);
       }
 
-      for (let i = 0; i < body.offices.length; i++) {
-        const officeBody = body.offices[i];
-        const createdOffice = createdOffices[i];
-        if (officeBody.parentCode) {
-          const parent = createdOffices.find((o) => o.code === officeBody.parentCode);
-          if (parent) {
-            await db
-              .update(offices)
-              .set({ parentId: parent.id })
-              .where(eq(offices.id, createdOffice.id));
+      if (
+        body.branding &&
+        (body.branding.contactEmail || body.branding.address || body.branding.primaryColor)
+      ) {
+        await db.insert(tenantBranding).values({
+          tenantId: tenant.id,
+          primaryColor: body.branding.primaryColor || '#1F4E8C',
+          accentColor: body.branding.accentColor || '#0F766E',
+          contactEmail: body.branding.contactEmail || undefined,
+          contactPhone: body.branding.contactPhone || undefined,
+          address: body.branding.address || undefined,
+        });
+      }
+
+      const createdOffices: Array<{ id: string; code: string | null; name: string }> = [];
+      if (body.offices && body.offices.length > 0) {
+        for (const office of body.offices) {
+          const [created] = await db
+            .insert(offices)
+            .values({
+              tenantId: tenant.id,
+              name: office.name,
+              code: office.code,
+              type: office.type,
+              address: office.address || undefined,
+            })
+            .returning();
+          createdOffices.push({ id: created.id, code: created.code, name: created.name });
+        }
+
+        for (let i = 0; i < body.offices.length; i++) {
+          const officeBody = body.offices[i];
+          const createdOffice = createdOffices[i];
+          if (officeBody.parentCode) {
+            const parent = createdOffices.find((office) => office.code === officeBody.parentCode);
+            if (parent) {
+              await db
+                .update(offices)
+                .set({ parentId: parent.id })
+                .where(eq(offices.id, createdOffice.id));
+            }
           }
         }
       }
-    }
 
-    const createdDepts: Array<{ id: string; name: string }> = [];
-    if (body.departments && body.departments.length > 0) {
-      for (const dept of body.departments) {
-        const [created] = await db
-          .insert(departments)
+      const createdDepts: Array<{ id: string; name: string }> = [];
+      if (body.departments && body.departments.length > 0) {
+        for (const dept of body.departments) {
+          const [created] = await db
+            .insert(departments)
+            .values({
+              tenantId: tenant.id,
+              name: dept.name,
+              code: dept.code,
+            })
+            .returning();
+          createdDepts.push({ id: created.id, name: created.name });
+        }
+      }
+
+      const roleNames = body.roles || [
+        'TENANT_ADMIN',
+        'TRANSPORT_ADMIN',
+        'REQUESTER',
+        'SUPERVISOR',
+        'CONTROL_ADMIN_OFFICER',
+        'DEPUTY_DIRECTOR',
+        'DIRECTOR',
+        'CHIEF_REGIONAL_OFFICER',
+        'DRIVER',
+        'TENANT_AUDITOR',
+      ];
+
+      const createdRoles: Array<{ id: string; name: string }> = [];
+      for (const roleKey of roleNames) {
+        const roleDef = RoleDefinitions[roleKey as keyof typeof RoleDefinitions];
+        if (!roleDef) continue;
+
+        const [role] = await db
+          .insert(roles)
           .values({
             tenantId: tenant.id,
-            name: dept.name,
-            code: dept.code,
+            name: roleDef.name,
+            isSystem: true,
           })
           .returning();
-        createdDepts.push({ id: created.id, name: created.name });
+
+        createdRoles.push({ id: role.id, name: roleDef.name });
+
+        if (roleDef.permissions.length > 0) {
+          await db.insert(rolePermissions).values(
+            roleDef.permissions.map((permCode: string) => ({
+              roleId: role.id,
+              permissionCode: permCode,
+            })),
+          );
+        }
       }
+
+      const tenantAdminRole = createdRoles.find(
+        (role) => role.name === RoleDefinitions.TENANT_ADMIN.name,
+      );
+      const adminRoleIds = tenantAdminRole ? [tenantAdminRole.id] : [];
+
+      const { invitation, rawToken } = await createInvitation({
+        tenantId: tenant.id,
+        email: body.tenantAdmin.email.trim(),
+        name: body.tenantAdmin.name.trim(),
+        type: 'tenant_admin',
+        invitedByUserId: session.user.id,
+        roleIds: adminRoleIds,
+      });
+
+      // Universal defaults are part of the database/bootstrap boundary. They
+      // must succeed before an invitation email can leave the system.
+      const operationalDefaults = await seedTenantOperationalDefaults({
+        tenantId: tenant.id,
+        actorUserId: session.user.id,
+      });
+
+      bootstrap = {
+        tenant,
+        subscription,
+        createdOffices,
+        createdDepts,
+        createdRoles,
+        invitation,
+        rawToken,
+        operationalDefaults,
+      };
+    } catch (bootstrapError) {
+      if (createdTenantId) {
+        try {
+          await cleanupFailedTenantOnboarding(createdTenantId);
+        } catch (cleanupError) {
+          console.error('[Onboard] Failed to compensate incomplete tenant onboarding:', {
+            tenantId: createdTenantId,
+            bootstrapError,
+            cleanupError,
+          });
+          return NextResponse.json(
+            {
+              error:
+                'Tenant onboarding failed and automatic cleanup could not complete. Platform support must review the incomplete tenant before retrying.',
+            },
+            { status: 500 },
+          );
+        }
+      }
+
+      if (bootstrapError instanceof SubscriptionSetupError) {
+        return NextResponse.json({ error: bootstrapError.message }, { status: 400 });
+      }
+
+      throw bootstrapError;
     }
 
-    const roleNames = body.roles || [
-      'TENANT_ADMIN',
-      'TRANSPORT_ADMIN',
-      'REQUESTER',
-      'SUPERVISOR',
-      'CONTROL_ADMIN_OFFICER',
-      'DEPUTY_DIRECTOR',
-      'DIRECTOR',
-      'CHIEF_REGIONAL_OFFICER',
-      'DRIVER',
-      'TENANT_AUDITOR',
-    ];
+    const acceptUrl = invitationAcceptUrl(bootstrap.rawToken);
 
-    const createdRoles: Array<{ id: string; name: string }> = [];
-    for (const roleKey of roleNames) {
-      const roleDef = RoleDefinitions[roleKey as keyof typeof RoleDefinitions];
-      if (!roleDef) continue;
-
-      const [role] = await db
-        .insert(roles)
-        .values({
-          tenantId: tenant.id,
-          name: roleDef.name,
-          isSystem: true,
-        })
-        .returning();
-
-      createdRoles.push({ id: role.id, name: roleDef.name });
-
-      if (roleDef.permissions.length > 0) {
-        await db.insert(rolePermissions).values(
-          roleDef.permissions.map((permCode: string) => ({
-            roleId: role.id,
-            permissionCode: permCode,
-          })),
-        );
-      }
-    }
-
-    const tenantAdminRole = createdRoles.find(
-      (r) => r.name === RoleDefinitions.TENANT_ADMIN.name,
-    );
-    const adminRoleIds = tenantAdminRole ? [tenantAdminRole.id] : [];
-
-    const { invitation, rawToken } = await createInvitation({
-      tenantId: tenant.id,
-      email: body.tenantAdmin.email.trim(),
-      name: body.tenantAdmin.name.trim(),
-      type: 'tenant_admin',
-      invitedByUserId: session.user.id,
-      roleIds: adminRoleIds,
-    });
-
-    const acceptUrl = invitationAcceptUrl(rawToken);
-
+    // Email is intentionally outside the bootstrap/compensation boundary. A
+    // provider outage must never destroy a valid tenant that was fully created.
     let emailSent = false;
     try {
       await sendInvitationEmail({
-        to: invitation.email,
-        tenantName: tenant.name,
+        to: bootstrap.invitation.email,
+        tenantName: bootstrap.tenant.name,
         inviteeName: body.tenantAdmin.name.trim(),
         invitedByName: session.user.name ?? 'Platform Administrator',
         acceptUrl,
-        expiresAt: invitation.expiresAt,
+        expiresAt: bootstrap.invitation.expiresAt,
       });
       emailSent = true;
     } catch (emailError) {
       console.error('[Onboard] Invitation email failed:', emailError);
     }
 
-    const operationalDefaults = await seedTenantOperationalDefaults({
-      tenantId: tenant.id,
-      actorUserId: session.user.id,
-    });
-
     await recordAuditEvent({
-      tenantId: tenant.id,
+      tenantId: bootstrap.tenant.id,
       actorUserId: session.user.id,
       eventType: 'tenant_onboarded',
       action: 'CREATE',
       entityType: 'tenant',
-      entityId: tenant.id,
-      summary: `Lifecycle: PENDING_INVITATION, package: ${subscription.packageCode}, email sent: ${emailSent}, inspection defaults ready: ${operationalDefaults.inspectionsReady}`,
+      entityId: bootstrap.tenant.id,
+      summary: `Lifecycle: PENDING_INVITATION, package: ${bootstrap.subscription.packageCode}, email sent: ${emailSent}, inspection defaults ready: ${bootstrap.operationalDefaults.inspectionsReady}`,
     }).catch(() => {});
 
     return NextResponse.json(
       {
         success: true,
         data: {
-          tenant,
-          subscription,
+          tenant: bootstrap.tenant,
+          subscription: bootstrap.subscription,
           branding: body.branding,
-          offices: createdOffices,
-          departments: createdDepts,
-          roles: createdRoles,
-          operationalDefaults,
-          invitation: { id: invitation.id, email: invitation.email, sent: emailSent },
+          offices: bootstrap.createdOffices,
+          departments: bootstrap.createdDepts,
+          roles: bootstrap.createdRoles,
+          operationalDefaults: bootstrap.operationalDefaults,
+          invitation: {
+            id: bootstrap.invitation.id,
+            email: bootstrap.invitation.email,
+            sent: emailSent,
+          },
           acceptUrl,
         },
       },
