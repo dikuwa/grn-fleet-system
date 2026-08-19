@@ -11,7 +11,8 @@
  * - Departments (optional)
  * - Subscription record (package + billing interval)
  * - Branding (optional)
- * - A secure Tenant Administrator invitation (email delivered)
+ * - A secure Tenant Administrator invitation (email delivered when configured)
+ * - Universal operational defaults (incident categories + inspection templates)
  *
  * Requires TENANT_MANAGE / PLATFORM_ADMIN permission.
  */
@@ -27,11 +28,7 @@ import { createSubscription } from '@/lib/platform/subscriptions';
 import { createInvitation, invitationAcceptUrl } from '@/lib/platform/invitations';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { sendInvitationEmail } from '@/lib/platform/email-templates';
-import { seedDefaultIncidentCategories } from '@/lib/incidents/categories';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { seedTenantOperationalDefaults } from '@/lib/platform/tenant-operational-defaults';
 
 interface OnboardingRequest {
   organisation: {
@@ -76,12 +73,8 @@ interface OnboardingRequest {
     name: string;
     code: string;
   }>;
-  roles?: string[]; // Role names to create (from RoleDefinitions keys)
+  roles?: string[];
 }
-
-// ---------------------------------------------------------------------------
-// POST — Onboard a new tenant
-// ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
   try {
@@ -93,10 +86,6 @@ export async function POST(request: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body: OnboardingRequest = await request.json();
-
-    // -----------------------------------------------------------------------
-    // Validation
-    // -----------------------------------------------------------------------
 
     if (!body.organisation?.name?.trim()) {
       return NextResponse.json({ error: 'Organisation name is required' }, { status: 400 });
@@ -126,7 +115,6 @@ export async function POST(request: NextRequest) {
     const db = getDb();
     const org = body.organisation;
 
-    // Check for duplicate slug or code
     const [existing] = await db
       .select()
       .from(tenants)
@@ -144,10 +132,6 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
-
-    // -----------------------------------------------------------------------
-    // Step 1: Create tenant (DRAFT lifecycle)
-    // -----------------------------------------------------------------------
 
     const [tenant] = await db
       .insert(tenants)
@@ -168,10 +152,6 @@ export async function POST(request: NextRequest) {
       })
       .returning();
 
-    // -----------------------------------------------------------------------
-    // Step 2: Create subscription
-    // -----------------------------------------------------------------------
-
     let subscription;
     try {
       subscription = await createSubscription({
@@ -182,7 +162,6 @@ export async function POST(request: NextRequest) {
         gracePeriodDays: body.subscription.gracePeriodDays,
       });
     } catch (subError) {
-      // Roll back tenant creation on subscription failure.
       await db.delete(tenants).where(eq(tenants.id, tenant.id));
       return NextResponse.json(
         { error: 'Failed to create subscription: ' + String(subError) },
@@ -190,11 +169,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // -----------------------------------------------------------------------
-    // Step 3: Create branding (optional)
-    // -----------------------------------------------------------------------
-
-    if (body.branding && (body.branding.contactEmail || body.branding.address || body.branding.primaryColor)) {
+    if (
+      body.branding &&
+      (body.branding.contactEmail || body.branding.address || body.branding.primaryColor)
+    ) {
       await db.insert(tenantBranding).values({
         tenantId: tenant.id,
         primaryColor: body.branding.primaryColor || '#1F4E8C',
@@ -204,10 +182,6 @@ export async function POST(request: NextRequest) {
         address: body.branding.address || undefined,
       });
     }
-
-    // -----------------------------------------------------------------------
-    // Step 4: Create offices
-    // -----------------------------------------------------------------------
 
     const createdOffices: Array<{ id: string; code: string | null; name: string }> = [];
     if (body.offices && body.offices.length > 0) {
@@ -224,7 +198,7 @@ export async function POST(request: NextRequest) {
           .returning();
         createdOffices.push({ id: created.id, code: created.code, name: created.name });
       }
-      // Second pass: resolve parent references.
+
       for (let i = 0; i < body.offices.length; i++) {
         const officeBody = body.offices[i];
         const createdOffice = createdOffices[i];
@@ -240,10 +214,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // -----------------------------------------------------------------------
-    // Step 5: Create departments
-    // -----------------------------------------------------------------------
-
     const createdDepts: Array<{ id: string; name: string }> = [];
     if (body.departments && body.departments.length > 0) {
       for (const dept of body.departments) {
@@ -258,10 +228,6 @@ export async function POST(request: NextRequest) {
         createdDepts.push({ id: created.id, name: created.name });
       }
     }
-
-    // -----------------------------------------------------------------------
-    // Step 6: Create default roles with permissions
-    // -----------------------------------------------------------------------
 
     const roleNames = body.roles || [
       'TENANT_ADMIN',
@@ -302,15 +268,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Assign TENANT_ADMIN role to the invitation.
     const tenantAdminRole = createdRoles.find(
       (r) => r.name === RoleDefinitions.TENANT_ADMIN.name,
     );
     const adminRoleIds = tenantAdminRole ? [tenantAdminRole.id] : [];
-
-    // -----------------------------------------------------------------------
-    // Step 7: Create + send the Tenant Administrator invitation
-    // -----------------------------------------------------------------------
 
     const { invitation, rawToken } = await createInvitation({
       tenantId: tenant.id,
@@ -323,7 +284,6 @@ export async function POST(request: NextRequest) {
 
     const acceptUrl = invitationAcceptUrl(rawToken);
 
-    // Attempt to send the invitation email; failure does not fail the onboard.
     let emailSent = false;
     try {
       await sendInvitationEmail({
@@ -339,15 +299,10 @@ export async function POST(request: NextRequest) {
       console.error('[Onboard] Invitation email failed:', emailError);
     }
 
-    // -----------------------------------------------------------------------
-    // Step 8: Seed default incident categories & metadata
-    // -----------------------------------------------------------------------
-
-    await seedDefaultIncidentCategories(tenant.id, session.user.id).catch(() => {});
-
-    // -----------------------------------------------------------------------
-    // Step 9: Audit trail
-    // -----------------------------------------------------------------------
+    const operationalDefaults = await seedTenantOperationalDefaults({
+      tenantId: tenant.id,
+      actorUserId: session.user.id,
+    });
 
     await recordAuditEvent({
       tenantId: tenant.id,
@@ -356,7 +311,7 @@ export async function POST(request: NextRequest) {
       action: 'CREATE',
       entityType: 'tenant',
       entityId: tenant.id,
-      summary: `Lifecycle: PENDING_INVITATION, package: ${subscription.packageCode}, email sent: ${emailSent}`,
+      summary: `Lifecycle: PENDING_INVITATION, package: ${subscription.packageCode}, email sent: ${emailSent}, inspection defaults ready: ${operationalDefaults.inspectionsReady}`,
     }).catch(() => {});
 
     return NextResponse.json(
@@ -369,6 +324,7 @@ export async function POST(request: NextRequest) {
           offices: createdOffices,
           departments: createdDepts,
           roles: createdRoles,
+          operationalDefaults,
           invitation: { id: invitation.id, email: invitation.email, sent: emailSent },
           acceptUrl,
         },
@@ -383,10 +339,6 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// GET — onboarding prerequisites (packages available for selection)
-// ---------------------------------------------------------------------------
 
 export async function GET() {
   try {
