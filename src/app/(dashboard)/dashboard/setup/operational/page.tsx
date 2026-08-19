@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CircleDashed,
   Loader2,
+  MessageSquareText,
   RefreshCw,
   Settings2,
   ShieldCheck,
@@ -33,6 +34,7 @@ interface OperationalSetupData {
     id: string;
     name: string;
     lifecycleStatus: string;
+    reviewFeedback: string | null;
   };
   counts: {
     offices: number;
@@ -93,7 +95,7 @@ export default function OperationalSetupPage() {
       if (!response.ok) throw new Error(json.error || 'Could not submit operational setup for review');
       setData((current) => current ? {
         ...current,
-        tenant: { ...current.tenant, lifecycleStatus: json.data.lifecycleStatus },
+        tenant: { ...current.tenant, lifecycleStatus: json.data.lifecycleStatus, reviewFeedback: null },
         canSubmitForReview: false,
       } : current);
       toast({
@@ -162,6 +164,19 @@ export default function OperationalSetupPage() {
           <RefreshCw className="h-4 w-4" /> Recheck
         </Button>
       </PageHeader>
+
+      {data.tenant.reviewFeedback && (
+        <div className="border-status-info-text/25 bg-status-info-bg/25 rounded-[8px] border px-4 py-3">
+          <div className="flex items-start gap-3">
+            <MessageSquareText className="text-status-info-text mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="text-ink-950 text-sm font-semibold">Platform review feedback</p>
+              <p className="text-ink-600 mt-1 text-sm leading-6">{data.tenant.reviewFeedback}</p>
+              <p className="text-ink-500 mt-1 text-xs">Resolve the relevant setup item below, recheck, then submit for Platform Review again.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardContent className="py-5">
