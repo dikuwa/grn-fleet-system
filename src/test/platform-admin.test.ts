@@ -2,7 +2,7 @@
  * Platform Admin API — Unit Tests
  *
  * Tests the route handler logic for:
- * - /api/platform/tenants (GET list, POST create)
+ * - /api/platform/tenants (GET list, POST retirement guard)
  * - /api/platform/tenants/[id] (GET detail, PATCH update)
  * - /api/trip-logs (GET list, POST create)
  *
@@ -237,88 +237,28 @@ describe('Platform Tenants API — POST /api/platform/tenants', () => {
     expect(res.status).toBe(403);
   });
 
-  it('validates required fields', async () => {
-    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
-    vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
-    vi.mocked(requirePermission).mockResolvedValue(true as never);
-
-    // Missing name
-    const req1 = {
-      url: 'http://localhost:3000/api/platform/tenants',
-      method: 'POST',
-      json: async () => ({ code: 'TEST', slug: 'test' }),
-    };
-    const res1 = await route.POST(req1 as unknown as Request);
-    expect(res1.status).toBe(400);
-
-    // Missing code
-    const req2 = {
-      url: 'http://localhost:3000/api/platform/tenants',
-      method: 'POST',
-      json: async () => ({ name: 'Test', slug: 'test' }),
-    };
-    const res2 = await route.POST(req2 as unknown as Request);
-    expect(res2.status).toBe(400);
-
-    // Missing slug
-    const req3 = {
-      url: 'http://localhost:3000/api/platform/tenants',
-      method: 'POST',
-      json: async () => ({ name: 'Test', code: 'TEST' }),
-    };
-    const res3 = await route.POST(req3 as unknown as Request);
-    expect(res3.status).toBe(400);
-  });
-
-  it('creates a tenant successfully with default branding', async () => {
+  it('retires direct creation and points Platform Admin to full onboarding', async () => {
     const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
     const { getDb } = await import('@/db');
     vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
     vi.mocked(requirePermission).mockResolvedValue(true as never);
 
     const mockDb = createMockDb();
-    // Check for existing tenant — none found
-    mockDb.pushResult([]);
-    // Insert returning
-    mockDb.pushResult([{ id: 'new-tenant', name: 'Test Tenant', code: 'TEST', slug: 'test', type: 'regional_council', status: 'active', timezone: 'Africa/Windhoek', locale: 'en-NA', createdAt: new Date(), updatedAt: new Date() }]);
-
     vi.mocked(getDb).mockReturnValue(mockDb as never);
 
     const req = {
       url: 'http://localhost:3000/api/platform/tenants',
       method: 'POST',
-      json: async () => ({ name: 'Test Tenant', code: 'TEST', slug: 'test-tenant', type: 'regional_council' }),
+      json: async () => ({ name: 'Test Tenant', code: 'TEST', slug: 'test-tenant' }),
     };
     const res = await route.POST(req as unknown as Request);
     const json = await res.json();
 
-    expect(res.status).toBe(201);
-    expect(json.success).toBe(true);
-    expect(json.data.name).toBe('Test Tenant');
-
-    // Verify branding was created
-    expect(mockDb.insert).toHaveBeenCalledTimes(2); // tenant + branding
-  });
-
-  it('rejects duplicate code or slug', async () => {
-    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
-    const { getDb } = await import('@/db');
-    vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
-    vi.mocked(requirePermission).mockResolvedValue(true as never);
-
-    const mockDb = createMockDb();
-    // Existing tenant found with same code
-    mockDb.pushResult([{ id: 'existing', code: 'TEST', slug: 'other' }]);
-
-    vi.mocked(getDb).mockReturnValue(mockDb as never);
-
-    const req = {
-      url: 'http://localhost:3000/api/platform/tenants',
-      method: 'POST',
-      json: async () => ({ name: 'Dup Tenant', code: 'TEST', slug: 'test-dup' }),
-    };
-    const res = await route.POST(req as unknown as Request);
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(410);
+    expect(json.code).toBe('TENANT_ONBOARDING_REQUIRED');
+    expect(json.onboardingPath).toBe('/dashboard/platform/onboard');
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(mockDb.update).not.toHaveBeenCalled();
   });
 });
 
