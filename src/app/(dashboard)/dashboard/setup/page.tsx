@@ -18,7 +18,7 @@ import {
   Palette,
   Plus,
   Save,
-  ShieldCheck,
+  Settings2,
   Sparkles,
   Users,
   X,
@@ -26,21 +26,24 @@ import {
 import { useToast } from '@/lib/use-toast';
 
 const STEPS = [
-  { label: 'Organisation', description: 'Confirm the tenant identity created during onboarding.', icon: Building2 },
-  { label: 'Departments', description: 'Add the organisation units staff already work within.', icon: Users },
-  { label: 'Offices', description: 'Add offices, depots and workshops used for operations.', icon: MapPin },
-  { label: 'Branding', description: 'Set tenant colours and contact details used by the workspace.', icon: Palette },
-  { label: 'Review', description: 'Review the persisted configuration and submit it for platform review.', icon: ShieldCheck },
+  { label: 'Organisation', description: 'Confirm the tenant identity created during onboarding.', category: 'required', icon: Building2 },
+  { label: 'Departments', description: 'Add organisational units if this tenant uses them.', category: 'optional', icon: Users },
+  { label: 'Locations', description: 'Add at least one office, depot or other operating location.', category: 'required', icon: MapPin },
+  { label: 'Branding', description: 'Set workspace colours and contact details if needed.', category: 'optional', icon: Palette },
+  { label: 'Review', description: 'Complete initial setup and continue to operational setup.', category: 'final', icon: Settings2 },
 ] as const;
 
 const TOTAL_STEPS = STEPS.length;
-const REQUIRED_STEPS = [0, 1, 2, 3];
+const REQUIRED_STEPS = [0, 2] as const;
 const LOCKED_LIFECYCLES = new Set(['READY_FOR_ACTIVATION', 'ACTIVE', 'SUSPENDED', 'RESTRICTED', 'ARCHIVED']);
 
 const ORG_TYPES: Record<string, string> = {
   regional_council: 'Regional Council',
   ministry: 'Ministry / National Office',
   agency: 'Government Agency',
+  municipality: 'Municipality',
+  public_enterprise: 'Public Enterprise',
+  private_organisation: 'Private Organisation',
 };
 
 interface TenantInfo {
@@ -172,18 +175,14 @@ export default function SetupWizardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }));
-      next.push({
-        id: json.data.id,
-        name: json.data.name,
-        code: json.data.code ?? '',
-      });
+      next.push({ id: json.data.id, name: json.data.name, code: json.data.code ?? '' });
     }
     setDepartments(next);
   }, [departments]);
 
   const persistOffices = useCallback(async () => {
     const candidates = offices.filter((office) => office.name.trim());
-    if (!candidates.length) throw new Error('Add at least one office or depot before continuing.');
+    if (!candidates.length) throw new Error('Add at least one office, depot or operating location before continuing.');
 
     const next: OfficeInput[] = [];
     for (const office of candidates) {
@@ -231,7 +230,7 @@ export default function SetupWizardPage() {
       body: JSON.stringify({
         currentStep: step,
         completedSteps: [...new Set(completed)].sort((a, b) => a - b),
-        stepData: { setupVersion: 2 },
+        stepData: { setupVersion: 3 },
       }),
     }));
   }, []);
@@ -253,7 +252,7 @@ export default function SetupWizardPage() {
         title: advance ? 'Step saved' : 'Progress saved',
         description: currentStep === 1 || currentStep === 2 || currentStep === 3
           ? 'Changes were saved to the live tenant configuration.'
-          : 'Workspace setup progress was saved.',
+          : 'Initial setup progress was saved.',
         variant: 'success',
       });
     } catch (err) {
@@ -265,39 +264,37 @@ export default function SetupWizardPage() {
     }
   }, [completedSteps, currentStep, persistCurrentConfiguration, saveProgress, tenant, toast]);
 
-  const submitSetup = useCallback(async () => {
+  const completeInitialSetup = useCallback(async () => {
     if (!tenant) return;
     setSaving(true);
     setError(null);
     try {
-      await persistBranding();
-      const completed = [...new Set([...completedSteps, ...REQUIRED_STEPS])].sort((a, b) => a - b);
       const json = await readJson(await fetch('/api/platform/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           currentStep: TOTAL_STEPS - 1,
-          completedSteps: completed,
-          stepData: { setupVersion: 2 },
+          completedSteps: [...new Set([...completedSteps, TOTAL_STEPS - 1])].sort((a, b) => a - b),
+          stepData: { setupVersion: 3 },
           action: 'complete',
         }),
       }));
       setTenant((current) => current ? { ...current, lifecycleStatus: json.data.lifecycleStatus } : current);
-      setCompletedSteps([...REQUIRED_STEPS, TOTAL_STEPS - 1]);
+      setCompletedSteps((steps) => [...new Set([...steps, TOTAL_STEPS - 1])].sort((a, b) => a - b));
       toast({
-        title: 'Workspace submitted',
-        description: 'The tenant setup is now waiting for platform review.',
+        title: 'Initial setup complete',
+        description: 'Next, configure the required operational workflow and review the recommended setup items.',
         variant: 'success',
       });
-      router.push('/dashboard');
+      router.push(json.data.nextHref || '/dashboard/setup/operational');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not submit workspace setup.';
+      const message = err instanceof Error ? err.message : 'Could not complete initial setup.';
       setError(message);
-      toast({ title: 'Submission failed', description: message, variant: 'error' });
+      toast({ title: 'Initial setup incomplete', description: message, variant: 'error' });
     } finally {
       setSaving(false);
     }
-  }, [branding, completedSteps, persistBranding, router, tenant, toast]);
+  }, [completedSteps, router, tenant, toast]);
 
   const canContinue = useMemo(() => {
     if (!tenant) return false;
@@ -309,6 +306,7 @@ export default function SetupWizardPage() {
   const activeStep = STEPS[currentStep];
   const setupClosed = Boolean(tenant && LOCKED_LIFECYCLES.has(tenant.lifecycleStatus));
   const alreadySubmitted = tenant?.lifecycleStatus === 'PENDING_PLATFORM_REVIEW';
+  const requiredReady = REQUIRED_STEPS.every((step) => completedSteps.includes(step));
 
   if (loading) {
     return (
@@ -322,7 +320,7 @@ export default function SetupWizardPage() {
   if (!tenant) {
     return (
       <div className="mx-auto max-w-2xl space-y-5">
-        <PageHeader title="Workspace Setup" />
+        <PageHeader title="Initial Setup" />
         <Card><CardContent className="py-10 text-center"><p className="text-status-error-text text-sm">{error || 'Tenant context could not be loaded.'}</p><Button variant="secondary" size="sm" className="mt-4" onClick={() => void load()}>Retry</Button></CardContent></Card>
       </div>
     );
@@ -331,8 +329,8 @@ export default function SetupWizardPage() {
   if (setupClosed || alreadySubmitted) {
     return (
       <div className="mx-auto max-w-2xl space-y-5 sm:space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Workspace Setup' }]} />
-        <PageHeader title="Workspace Setup" description="Initial tenant configuration" />
+        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Initial Setup' }]} />
+        <PageHeader title="Initial Setup" description="Initial tenant configuration" />
         <Card>
           <CardContent className="py-8 sm:py-10">
             <div className="mx-auto max-w-lg text-center">
@@ -340,8 +338,8 @@ export default function SetupWizardPage() {
               <h2 className="text-ink-950 mt-4 text-lg font-semibold">{alreadySubmitted ? 'Setup submitted for platform review' : 'Initial setup is closed'}</h2>
               <p className="text-ink-500 mt-2 text-sm leading-6">
                 {alreadySubmitted
-                  ? 'The initial workspace configuration has been submitted. Further onboarding lifecycle changes are controlled by the platform review process.'
-                  : 'This tenant has moved beyond initial onboarding. Use the Administration and Settings pages for normal configuration changes.'}
+                  ? 'The tenant has completed its setup handoff. The Platform Administrator now controls the activation decision.'
+                  : 'This tenant has moved beyond onboarding. Use Administration and Settings for normal configuration changes.'}
               </p>
               <Badge variant={alreadySubmitted ? 'pending' : 'info'} size="sm" className="mt-4">{tenant.lifecycleStatus.replaceAll('_', ' ')}</Badge>
               <div className="mt-6 flex flex-col justify-center gap-2 sm:flex-row">
@@ -367,7 +365,7 @@ export default function SetupWizardPage() {
       ];
       return (
         <div className="space-y-4">
-          <p className="text-ink-500 text-sm leading-6">The platform created this identity during tenant onboarding. Confirm it before configuring the organisation structure.</p>
+          <p className="text-ink-500 text-sm leading-6">Confirm the organisation created by the Platform Administrator. Identity fields remain platform-controlled so tenant codes and URLs stay stable.</p>
           <div className="border-border divide-border overflow-hidden rounded-[8px] border divide-y">
             {rows.map(([label, value]) => (
               <div key={label} className="grid gap-1 px-4 py-3 text-sm sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center">
@@ -376,9 +374,6 @@ export default function SetupWizardPage() {
               </div>
             ))}
           </div>
-          <div className="border-brand-200 bg-brand-50/50 rounded-[8px] border px-4 py-3 dark:border-brand-900/60 dark:bg-brand-950/20">
-            <p className="text-ink-700 text-xs leading-5">Organisation identity changes that affect tenant codes, slugs or onboarding ownership remain platform-controlled. Normal contact and branding details are configured later in this setup.</p>
-          </div>
         </div>
       );
     }
@@ -386,7 +381,9 @@ export default function SetupWizardPage() {
     if (currentStep === 1) {
       return (
         <div className="space-y-4">
-          <p className="text-ink-500 text-sm leading-6">Departments are optional. Saved units immediately become available to Staff Management and workflow selectors.</p>
+          <div className="border-border bg-muted/20 rounded-[8px] border px-4 py-3">
+            <p className="text-ink-700 text-xs leading-5"><strong>Optional.</strong> Small organisations can skip departments entirely. Add them when they improve staff organisation, workflow routing or reporting.</p>
+          </div>
           <div className="space-y-3">
             {departments.map((department, index) => (
               <div key={department.id ?? `new-${index}`} className="border-border grid gap-2 rounded-[8px] border p-3 sm:grid-cols-[minmax(0,1fr)_8rem_auto] sm:items-center">
@@ -401,7 +398,7 @@ export default function SetupWizardPage() {
             ))}
           </div>
           <Button type="button" variant="secondary" size="sm" onClick={() => setDepartments((rows) => [...rows, { name: '', code: '' }])}><Plus className="h-4 w-4" /> Add Department</Button>
-          <p className="text-ink-400 text-xs">Existing saved departments are not deleted from setup. Archive or restructure them later from Organisation Management so linked staff records remain safe.</p>
+          <p className="text-ink-400 text-xs">Saved departments are preserved here. Archive or restructure them later from Organisation Management so linked staff records remain safe.</p>
         </div>
       );
     }
@@ -409,21 +406,24 @@ export default function SetupWizardPage() {
     if (currentStep === 2) {
       return (
         <div className="space-y-4">
-          <p className="text-ink-500 text-sm leading-6">At least one active office or depot is required. Saved locations immediately become available to tenant operations.</p>
+          <div className="border-brand-200 bg-brand-50/50 rounded-[8px] border px-4 py-3 dark:border-brand-900/60 dark:bg-brand-950/20">
+            <p className="text-ink-700 text-xs leading-5"><strong>Required.</strong> Add at least one real operating location. It can be a head office, branch, depot, workshop or another location that makes sense for this organisation.</p>
+          </div>
           <div className="space-y-3">
             {offices.map((office, index) => (
               <div key={office.id ?? `new-${index}`} className="border-border space-y-3 rounded-[8px] border p-3 sm:p-4">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-ink-500 text-xs font-semibold uppercase tracking-wider">Location {index + 1}</span>
-                  {office.id ? <Badge variant="success" size="sm">Saved</Badge> : offices.length > 1 ? <Button type="button" variant="ghost" size="icon-sm" className="text-status-error-text" aria-label="Remove unsaved office" onClick={() => setOffices((rows) => rows.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button> : null}
+                  {office.id ? <Badge variant="success" size="sm">Saved</Badge> : offices.length > 1 ? <Button type="button" variant="ghost" size="icon-sm" className="text-status-error-text" aria-label="Remove unsaved location" onClick={() => setOffices((rows) => rows.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button> : null}
                 </div>
                 <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
-                  <Input value={office.name} placeholder="Office or depot name" onChange={(event) => setOffices((rows) => rows.map((row, i) => i === index ? { ...row, name: event.target.value } : row))} />
+                  <Input value={office.name} placeholder="Office, depot or location name" onChange={(event) => setOffices((rows) => rows.map((row, i) => i === index ? { ...row, name: event.target.value } : row))} />
                   <Input value={office.code} placeholder="Auto code" className="font-mono" onChange={(event) => setOffices((rows) => rows.map((row, i) => i === index ? { ...row, code: event.target.value.toUpperCase() } : row))} />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <StyledSelect value={office.type} aria-label={`Location ${index + 1} type`} onChange={(event) => setOffices((rows) => rows.map((row, i) => i === index ? { ...row, type: event.target.value } : row))}>
                     <option value="head_office">Head Office</option>
+                    <option value="satellite_office">Satellite / Branch Office</option>
                     <option value="regional_office">Regional Office</option>
                     <option value="constituency_office">Constituency Office</option>
                     <option value="settlement_office">Settlement Office</option>
@@ -436,8 +436,7 @@ export default function SetupWizardPage() {
               </div>
             ))}
           </div>
-          <Button type="button" variant="secondary" size="sm" onClick={() => setOffices((rows) => [...rows, { name: '', code: '', type: 'constituency_office', address: '' }])}><Plus className="h-4 w-4" /> Add Office or Depot</Button>
-          <p className="text-ink-400 text-xs">Existing saved locations are preserved here. Archive them later from Organisation Management to protect staff and workflow references.</p>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setOffices((rows) => [...rows, { name: '', code: '', type: 'other', address: '' }])}><Plus className="h-4 w-4" /> Add Location</Button>
         </div>
       );
     }
@@ -445,36 +444,39 @@ export default function SetupWizardPage() {
     if (currentStep === 3) {
       return (
         <div className="space-y-5">
-          <p className="text-ink-500 text-sm leading-6">These values are written to the same tenant branding record used by Settings and generated documents.</p>
+          <div className="border-border bg-muted/20 rounded-[8px] border px-4 py-3">
+            <p className="text-ink-700 text-xs leading-5"><strong>Optional.</strong> The system works with the default branding. Change these values only when the organisation wants its own colours and document contacts.</p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5"><Label>Primary Colour</Label><div className="flex items-center gap-2"><span className="border-border h-10 w-10 shrink-0 rounded-[7px] border" style={{ backgroundColor: branding.primaryColor }} /><Input value={branding.primaryColor} className="font-mono" onChange={(event) => setBranding((value) => ({ ...value, primaryColor: event.target.value }))} /></div></div>
             <div className="space-y-1.5"><Label>Accent Colour</Label><div className="flex items-center gap-2"><span className="border-border h-10 w-10 shrink-0 rounded-[7px] border" style={{ backgroundColor: branding.accentColor }} /><Input value={branding.accentColor} className="font-mono" onChange={(event) => setBranding((value) => ({ ...value, accentColor: event.target.value }))} /></div></div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5"><Label>Contact Email</Label><Input type="email" value={branding.contactEmail} placeholder="transport@organisation.gov.na" onChange={(event) => setBranding((value) => ({ ...value, contactEmail: event.target.value }))} /></div>
-            <div className="space-y-1.5"><Label>Contact Phone</Label><Input value={branding.contactPhone} placeholder="+264 …" onChange={(event) => setBranding((value) => ({ ...value, contactPhone: event.target.value }))} /></div>
+            <div className="space-y-1.5"><Label>Contact Email</Label><Input type="email" value={branding.contactEmail} placeholder="transport@organisation.example" onChange={(event) => setBranding((value) => ({ ...value, contactEmail: event.target.value }))} /></div>
+            <div className="space-y-1.5"><Label>Contact Phone</Label><Input value={branding.contactPhone} placeholder="Contact number" onChange={(event) => setBranding((value) => ({ ...value, contactPhone: event.target.value }))} /></div>
           </div>
-          <div className="border-border bg-muted/20 rounded-[8px] border px-4 py-3">
-            <p className="text-ink-700 text-xs leading-5">Driver licence verification, trip conflict protection, inspection requirements and system role contracts are operational safety rules. They remain enforced by GovFleet and are intentionally not presented as setup switches.</p>
-          </div>
+          <p className="text-ink-400 text-xs">Operational safety rules such as licence verification, inspections and trip-conflict protection are enforced by the system and are intentionally not presented as setup switches.</p>
         </div>
       );
     }
 
     const savedDepartments = departments.filter((department) => department.id).length;
     const savedOffices = offices.filter((office) => office.id).length;
+    const requiredCompleted = REQUIRED_STEPS.filter((step) => completedSteps.includes(step)).length;
+
     return (
       <div className="space-y-5">
         <div className="text-center">
           <div className="bg-brand-50 text-brand-700 mx-auto flex h-12 w-12 items-center justify-center rounded-full dark:bg-brand-950/30 dark:text-brand-300"><Sparkles className="h-6 w-6" /></div>
-          <h3 className="text-ink-950 mt-3 text-lg font-semibold">Ready for platform review</h3>
-          <p className="text-ink-500 mt-1 text-sm">Only persisted tenant configuration is included in this readiness check.</p>
+          <h3 className="text-ink-950 mt-3 text-lg font-semibold">Complete initial setup</h3>
+          <p className="text-ink-500 mt-1 text-sm">This does not activate the tenant or submit it for Platform Review.</p>
         </div>
-        <section className="border-border grid grid-cols-3 gap-px overflow-hidden rounded-[10px] border bg-border" aria-label="Setup summary">
+
+        <section className="border-border grid grid-cols-3 gap-px overflow-hidden rounded-[10px] border bg-border" aria-label="Initial setup summary">
           {[
+            ['Locations', savedOffices],
             ['Departments', savedDepartments],
-            ['Offices', savedOffices],
-            ['Required steps', `${REQUIRED_STEPS.filter((step) => completedSteps.includes(step)).length}/4`],
+            ['Required', `${requiredCompleted}/${REQUIRED_STEPS.length}`],
           ].map(([label, value]) => (
             <div key={String(label)} className="bg-surface px-2 py-4 text-center sm:px-4">
               <p className="text-brand-700 text-xl font-semibold tabular-nums">{value}</p>
@@ -482,21 +484,25 @@ export default function SetupWizardPage() {
             </div>
           ))}
         </section>
+
         <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-sm">Configuration summary</CardTitle></CardHeader>
-          <CardContent><dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2"><div><dt className="text-ink-500 text-xs">Organisation</dt><dd className="text-ink-950 mt-0.5 font-medium">{tenant.name}</dd></div><div><dt className="text-ink-500 text-xs">Primary colour</dt><dd className="text-ink-950 mt-0.5 flex items-center gap-2"><span className="border-border inline-block h-3 w-3 rounded-full border" style={{ backgroundColor: branding.primaryColor }} />{branding.primaryColor}</dd></div><div><dt className="text-ink-500 text-xs">Contact email</dt><dd className="text-ink-950 mt-0.5 break-all">{branding.contactEmail || 'Not set'}</dd></div><div><dt className="text-ink-500 text-xs">Lifecycle after submit</dt><dd className="text-ink-950 mt-0.5">Pending platform review</dd></div></dl></CardContent>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">What happens next?</CardTitle></CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex items-start gap-3"><span className="bg-brand-50 text-brand-700 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold dark:bg-brand-950/30 dark:text-brand-300">1</span><p className="text-ink-600 leading-5">Complete this initial setup.</p></div>
+            <div className="flex items-start gap-3"><span className="bg-brand-50 text-brand-700 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold dark:bg-brand-950/30 dark:text-brand-300">2</span><p className="text-ink-600 leading-5">Operational Setup guides you to configure the required approval workflow and shows recommended items such as staff, vehicles and drivers.</p></div>
+            <div className="flex items-start gap-3"><span className="bg-brand-50 text-brand-700 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold dark:bg-brand-950/30 dark:text-brand-300">3</span><p className="text-ink-600 leading-5">Only when the required operational checks pass do you submit the tenant for final Platform Review.</p></div>
+          </CardContent>
         </Card>
-        <div className="border-brand-200 bg-brand-50/50 rounded-[8px] border p-4 dark:border-brand-900/60 dark:bg-brand-950/20"><div className="flex items-start gap-3"><CheckCircle2 className="text-brand-700 mt-0.5 h-5 w-5 shrink-0" /><div><p className="text-ink-950 text-sm font-medium">Submission is a lifecycle action</p><p className="text-ink-600 mt-1 text-xs leading-5">After submission, initial setup is locked and the Platform Administrator reviews the tenant before activation. Normal organisation and branding management remains available later through Administration.</p></div></div></div>
       </div>
     );
   };
 
   return (
     <div className="mx-auto max-w-3xl space-y-5 sm:space-y-6">
-      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Workspace Setup' }]} />
-      <PageHeader title="Workspace Setup" description="Configure the real tenant data required before operational use" />
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Initial Setup' }]} />
+      <PageHeader title="Initial Setup" description="Confirm the minimum tenant structure, then continue to operational setup." />
 
-      <section aria-label="Setup progress" className="space-y-2">
+      <section aria-label="Initial setup progress" className="space-y-2">
         <div className="flex items-center justify-between gap-3"><p className="text-ink-600 text-xs font-medium">Step {currentStep + 1} of {TOTAL_STEPS} · {activeStep.label}</p><p className="text-ink-500 text-xs tabular-nums">{progress}%</p></div>
         <div className="bg-muted h-1.5 overflow-hidden rounded-full"><div className="bg-brand-700 h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${progress}%` }} /></div>
       </section>
@@ -517,7 +523,18 @@ export default function SetupWizardPage() {
       </div>
 
       <Card>
-        <CardHeader className="pb-4"><div className="flex items-start gap-3"><div className="bg-brand-50 text-brand-700 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] dark:bg-brand-950/30 dark:text-brand-300"><activeStep.icon className="h-4 w-4" /></div><div className="min-w-0"><CardTitle>{activeStep.label}</CardTitle><p className="text-ink-500 mt-1 text-sm">{activeStep.description}</p></div></div></CardHeader>
+        <CardHeader className="pb-4">
+          <div className="flex items-start gap-3">
+            <div className="bg-brand-50 text-brand-700 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] dark:bg-brand-950/30 dark:text-brand-300"><activeStep.icon className="h-4 w-4" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle>{activeStep.label}</CardTitle>
+                {activeStep.category !== 'final' && <Badge variant={activeStep.category === 'required' ? 'error' : 'default'} size="sm">{activeStep.category === 'required' ? 'Required' : 'Optional'}</Badge>}
+              </div>
+              <p className="text-ink-500 mt-1 text-sm">{activeStep.description}</p>
+            </div>
+          </div>
+        </CardHeader>
         <CardContent className="space-y-5">
           {error && <div className="border-status-error-border bg-status-error-bg text-status-error-text rounded-[8px] border px-3 py-2.5 text-sm" role="alert">{error}</div>}
           {renderStep()}
@@ -529,7 +546,7 @@ export default function SetupWizardPage() {
             {currentStep < TOTAL_STEPS - 1 ? (
               <Button type="button" variant="primary" size="sm" disabled={saving || !canContinue} onClick={() => void saveStep(true)} className="w-full sm:w-auto">{saving && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />} Continue <ChevronRight className="h-4 w-4" /></Button>
             ) : (
-              <Button type="button" variant="primary" size="sm" disabled={saving || !REQUIRED_STEPS.every((step) => completedSteps.includes(step)) || offices.filter((office) => office.id).length < 1} onClick={() => void submitSetup()} className="w-full sm:w-auto">{saving ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <ShieldCheck className="h-4 w-4" />} Submit for Platform Review</Button>
+              <Button type="button" variant="primary" size="sm" disabled={saving || !requiredReady || offices.filter((office) => office.id).length < 1} onClick={() => void completeInitialSetup()} className="w-full sm:w-auto">{saving ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Settings2 className="h-4 w-4" />} Complete & Continue to Operational Setup</Button>
             )}
           </div>
         </CardContent>
