@@ -6,6 +6,7 @@ import { subscriptionPackages } from '@/db/schema/packages';
 import { tenants } from '@/db/schema/tenants';
 import { createSubscription } from '@/lib/platform/subscriptions';
 import { publishLiveDemoSandbox } from '@/lib/public-demo';
+import { ensureLiveDemoOperationalSetup } from '@/lib/live-demo-operational-setup';
 
 const PUBLIC_DEMO_DAYS = 30;
 
@@ -16,6 +17,7 @@ export async function createDedicatedLiveDemoSandbox(createdByUserId: string) {
   const existing = await db
     .select({
       sandboxId: demoSandboxes.id,
+      tenantId: demoSandboxes.tenantId,
       expiresAt: demoSandboxes.expiresAt,
       metadata: demoSandboxes.metadata,
       status: demoSandboxes.status,
@@ -31,6 +33,10 @@ export async function createDedicatedLiveDemoSandbox(createdByUserId: string) {
   );
   if (current) {
     await publishLiveDemoSandbox(current.sandboxId, true);
+    await ensureLiveDemoOperationalSetup({
+      tenantId: current.tenantId,
+      actorUserId: createdByUserId,
+    });
     return { sandboxId: current.sandboxId, expiresAt: current.expiresAt, reused: true };
   }
 
@@ -129,6 +135,7 @@ export async function createDedicatedLiveDemoSandbox(createdByUserId: string) {
       .returning({ id: demoSandboxes.id });
 
     await publishLiveDemoSandbox(sandbox.id, true);
+    await ensureLiveDemoOperationalSetup({ tenantId, actorUserId: createdByUserId });
     return { sandboxId: sandbox.id, expiresAt, reused: false };
   } catch (error) {
     if (tenantId) await db.delete(tenants).where(eq(tenants.id, tenantId)).catch(() => {});
