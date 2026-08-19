@@ -1,8 +1,10 @@
 /**
  * Platform Tenant Administration API
  *
- * GET  /api/platform/tenants  — List all tenants (requires PLATFORM_ADMIN)
- * POST /api/platform/tenants — Create a new tenant (requires TENANT_MANAGE)
+ * GET  /api/platform/tenants — List all tenants.
+ * POST /api/platform/tenants — Retired. Tenant creation must use the full
+ * Platform onboarding flow so subscription, roles, invitation, operational
+ * defaults and lifecycle controls are provisioned consistently.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,7 +13,6 @@ import { tenants, tenantBranding, tenantMemberships } from '@/db/schema/tenants'
 import { requireRequestAuth, requirePermission, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, desc, count, or, ilike, and } from 'drizzle-orm';
-import { writePublicEmployeeRequestConfig } from '@/lib/public-request-access';
 
 // ---------------------------------------------------------------------------
 // GET — List all tenants
@@ -22,9 +23,11 @@ export async function GET(request: NextRequest) {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-    const permCheck = await requireAnyPermission(session, [Permissions.PLATFORM_ADMIN, Permissions.TENANT_VIEW]);
+    const permCheck = await requireAnyPermission(session, [
+      Permissions.PLATFORM_ADMIN,
+      Permissions.TENANT_VIEW,
+    ]);
     if (permCheck instanceof NextResponse) return permCheck;
-
 
     const { searchParams } = new URL(request.url);
     const q = searchParams.get('q') || '';
@@ -36,7 +39,6 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
 
-    // Build filters
     const conditions: ReturnType<typeof and>[] = [];
     if (q) {
       conditions.push(
@@ -56,7 +58,6 @@ export async function GET(request: NextRequest) {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Get total count
     const [totalResult] = await db
       .select({ count: count() })
       .from(tenants)
@@ -64,7 +65,6 @@ export async function GET(request: NextRequest) {
 
     const total = totalResult?.count || 0;
 
-    // Fetch tenants with branding info
     const rows = await db
       .select({
         id: tenants.id,
@@ -87,7 +87,6 @@ export async function GET(request: NextRequest) {
       .limit(limit)
       .offset(offset);
 
-    // Get member counts per tenant
     const memberCounts = await db
       .select({
         tenantId: tenantMemberships.tenantId,
@@ -97,12 +96,12 @@ export async function GET(request: NextRequest) {
       .groupBy(tenantMemberships.tenantId);
 
     const memberCountMap = new Map(
-      memberCounts.map((m) => [m.tenantId, m.count]),
+      memberCounts.map((membership) => [membership.tenantId, membership.count]),
     );
 
-    const enriched = rows.map((t) => ({
-      ...t,
-      memberCount: memberCountMap.get(t.id) || 0,
+    const enriched = rows.map((tenant) => ({
+      ...tenant,
+      memberCount: memberCountMap.get(tenant.id) || 0,
     }));
 
     return NextResponse.json({
@@ -125,7 +124,7 @@ export async function GET(request: NextRequest) {
 }
 
 // ---------------------------------------------------------------------------
-// POST — Create a new tenant
+// POST — Retired direct creation path
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
@@ -137,67 +136,19 @@ export async function POST(request: NextRequest) {
     const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const body = await request.json();
-    const { name, code, slug, type, timezone, locale } = body;
-
-    // Validate required fields
-    if (!name?.trim()) {
-      return NextResponse.json({ error: 'Tenant name is required' }, { status: 400 });
-    }
-    if (!code?.trim()) {
-      return NextResponse.json({ error: 'Tenant code is required' }, { status: 400 });
-    }
-    if (!slug?.trim()) {
-      return NextResponse.json({ error: 'Tenant slug is required' }, { status: 400 });
-    }
-
-    const db = getDb();
-
-    // Check for duplicate code or slug
-    const [existing] = await db
-      .select()
-      .from(tenants)
-      .where(
-        or(
-          eq(tenants.code, code.trim().toUpperCase()),
-          eq(tenants.slug, slug.trim().toLowerCase()),
-        )!,
-      )
-      .limit(1);
-
-    if (existing) {
-      return NextResponse.json(
-        { error: `A tenant with code "${code}" or slug "${slug}" already exists` },
-        { status: 409 },
-      );
-    }
-
-    const [tenant] = await db
-      .insert(tenants)
-      .values({
-        name: name.trim(),
-        code: code.trim().toUpperCase(),
-        slug: slug.trim().toLowerCase(),
-        type: type || 'regional_council',
-        status: 'ACTIVE',
-        timezone: timezone || 'Africa/Windhoek',
-        locale: locale || 'en-NA',
-        metadata: writePublicEmployeeRequestConfig({}, false),
-      })
-      .returning();
-
-    // Create default branding config
-    await db.insert(tenantBranding).values({
-      tenantId: tenant.id,
-      primaryColor: '#1F4E8C',
-      accentColor: '#0F766E',
-    });
-
-    return NextResponse.json({ success: true, data: tenant }, { status: 201 });
+    return NextResponse.json(
+      {
+        error:
+          'Direct tenant creation has been retired. Use the Platform tenant onboarding workflow so the organisation receives its subscription, roles, administrator invitation, operational defaults and lifecycle controls.',
+        code: 'TENANT_ONBOARDING_REQUIRED',
+        onboardingPath: '/dashboard/platform/onboard',
+      },
+      { status: 410 },
+    );
   } catch (error) {
     console.error('[Platform Tenants] POST failed:', error);
     return NextResponse.json(
-      { error: 'Failed to create tenant: ' + String(error) },
+      { error: 'Failed to route tenant creation: ' + String(error) },
       { status: 500 },
     );
   }
