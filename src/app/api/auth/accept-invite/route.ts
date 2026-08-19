@@ -2,11 +2,15 @@
  * Accept Invitation API
  *
  * GET  /api/auth/accept-invite?token=xxx — Validate invitation token and return details
- * POST /api/auth/accept-invite — Accept invitation, create user + membership
+ * POST /api/auth/accept-invite — Accept invitation, create/reuse user + membership
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { findInvitationByToken, acceptInvitation } from '@/lib/platform/invitations';
+import {
+  acceptInvitation,
+  findInvitationByToken,
+  getInvitationAccountState,
+} from '@/lib/platform/invitations';
 
 // ---------------------------------------------------------------------------
 // GET — Validate invitation token
@@ -24,6 +28,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid or expired invitation' }, { status: 404 });
     }
 
+    const accountState = await getInvitationAccountState(invitation.email);
+
     return NextResponse.json({
       success: true,
       data: {
@@ -34,11 +40,12 @@ export async function GET(request: NextRequest) {
         tenantName: invitation.tenantName,
         expiresAt: invitation.expiresAt,
         type: invitation.type,
+        ...accountState,
       },
     });
   } catch (error) {
     console.error('[AcceptInvite GET] Error:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: 'Could not validate invitation' }, { status: 500 });
   }
 }
 
@@ -51,9 +58,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { token, name, email, password } = body;
 
-    if (!token || !email || !password) {
+    if (!token || !email) {
       return NextResponse.json(
-        { error: 'Token, email, and password are required' },
+        { error: 'Token and email are required' },
         { status: 400 },
       );
     }
@@ -62,7 +69,7 @@ export async function POST(request: NextRequest) {
       rawToken: token,
       name: name || '',
       email,
-      password,
+      password: typeof password === 'string' && password.length > 0 ? password : undefined,
     });
 
     return NextResponse.json({
@@ -71,6 +78,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[AcceptInvite POST] Error:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to accept invitation' },
+      { status: 400 },
+    );
   }
 }
