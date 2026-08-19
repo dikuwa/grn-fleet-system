@@ -8,10 +8,13 @@ import {
   tenantMemberships,
   tenants,
   tenantSetupProgress,
-  tenantSubscriptions,
   workflowDefinitions,
   workflowSteps,
 } from '@/db/schema';
+import {
+  getTenantEntitlements,
+  type SubscriptionStatusType,
+} from '@/lib/entitlements';
 import { SystemRoles } from '@/lib/workspaces';
 
 export type ReadinessSeverity = 'blocker' | 'warning';
@@ -36,6 +39,14 @@ export interface TenantOperationalReadiness {
   checks: TenantReadinessCheck[];
 }
 
+export function isActivationSubscriptionReady(status: SubscriptionStatusType): boolean {
+  return status === 'TRIALING' || status === 'ACTIVE' || status === 'GRACE_PERIOD';
+}
+
+function subscriptionStatusLabel(status: SubscriptionStatusType) {
+  return status.replaceAll('_', ' ').toLowerCase();
+}
+
 /**
  * Operational activation readiness deliberately checks only universal tenant
  * prerequisites. Tenant-specific choices such as BlueFuel, regions, public
@@ -53,9 +64,9 @@ export async function assessTenantOperationalReadiness(
     [setup],
     [officeTotal],
     [departmentTotal],
-    [subscriptionTotal],
     [tenantAdminTotal],
     activeWorkflows,
+    entitlements,
   ] = await Promise.all([
     db
       .select({ id: tenants.id, lifecycleStatus: tenants.lifecycleStatus })
@@ -77,10 +88,6 @@ export async function assessTenantOperationalReadiness(
       .where(and(eq(departments.tenantId, tenantId), eq(departments.isActive, true))),
     db
       .select({ total: count() })
-      .from(tenantSubscriptions)
-      .where(eq(tenantSubscriptions.tenantId, tenantId)),
-    db
-      .select({ total: count() })
       .from(tenantMemberships)
       .innerJoin(roleAssignments, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
       .innerJoin(roles, eq(roles.id, roleAssignments.roleId))
@@ -97,6 +104,7 @@ export async function assessTenantOperationalReadiness(
       .select({ id: workflowDefinitions.id, name: workflowDefinitions.name })
       .from(workflowDefinitions)
       .where(and(eq(workflowDefinitions.tenantId, tenantId), eq(workflowDefinitions.isActive, true))),
+    getTenantEntitlements(tenantId),
   ]);
 
   if (!tenant) throw new Error('Tenant not found');
@@ -109,6 +117,12 @@ export async function assessTenantOperationalReadiness(
       .where(inArray(workflowSteps.definitionId, activeWorkflows.map((workflow) => workflow.id)));
     activeWorkflowWithSteps = Number(stepTotal?.total ?? 0) > 0;
   }
+
+  const subscriptionStatus = entitlements?.subscriptionStatus ?? 'NOT_CONFIGURED';
+  const subscriptionReady = isActivationSubscriptionReady(subscriptionStatus);
+  const subscriptionDescription = subscriptionReady
+    ? `${entitlements?.packageName ?? 'Subscription package'} is ${subscriptionStatusLabel(subscriptionStatus)} and usable for tenant operation.`
+    : `Platform Administration must assign or restore a usable subscription before activation. Current status: ${subscriptionStatusLabel(subscriptionStatus)}.`;
 
   const checks: TenantReadinessCheck[] = [
     {
@@ -151,12 +165,13 @@ export async function assessTenantOperationalReadiness(
     },
     {
       id: 'subscription',
-      label: 'Subscription package assigned',
-      description:
-        'Platform Administration must assign a package so entitlements and limits can be enforced consistently.',
+      label: 'Usable subscription',
+      description: subscriptionDescription,
       severity: 'blocker',
       owner: 'platform',
-      ready: Number(subscriptionTotal?.total ?? 0) > 0,
+      ready: subscriptionReady,
+      actionHref: '/dashboard/platform/subscriptions',
+      actionLabel: 'Manage subscriptions',
     },
     {
       id: 'departments',
