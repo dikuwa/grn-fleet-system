@@ -15,6 +15,7 @@ import {
   Database,
   Globe2,
   Palette,
+  RotateCcw,
   Save,
   ShieldAlert,
   ShieldCheck,
@@ -205,6 +206,32 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
       await tenantQuery.refetch();
     } catch (error) {
       toast({ title: 'Lifecycle update failed', description: error instanceof Error ? error.message : 'Could not update lifecycle', variant: 'error' });
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const returnForChanges = async () => {
+    if (!tenant || tenant.lifecycleStatus !== 'PENDING_PLATFORM_REVIEW') return;
+    setIsApproving(true);
+    try {
+      const res = await fetch(`/api/platform/tenants/${id}/return-for-changes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: lifecycleReason.trim() || 'Returned for setup changes requested during Platform Review' }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Could not return tenant for changes');
+      toast({
+        title: 'Returned for changes',
+        description: 'The Tenant Administrator can update setup and submit the tenant for Platform Review again.',
+        variant: 'success',
+      });
+      setLifecycleReason('');
+      setReviewDialogOpen(false);
+      await tenantQuery.refetch();
+    } catch (error) {
+      toast({ title: 'Return failed', description: error instanceof Error ? error.message : 'Could not return tenant for changes', variant: 'error' });
     } finally {
       setIsApproving(false);
     }
@@ -407,9 +434,16 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
 
       <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle>Review tenant setup</DialogTitle><DialogDescription>Record a review note and decide whether this tenant is ready for activation.</DialogDescription></DialogHeader>
-          <div className="space-y-1.5"><Label htmlFor="lifecycle-review-note">Review note</Label><Textarea id="lifecycle-review-note" rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} /></div>
-          <DialogFooter className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void handleLifecycleChange('ONBOARDING_FAILED')} loading={isApproving}>Return / fail setup</Button><Button onClick={() => void handleLifecycleChange('READY_FOR_ACTIVATION')} loading={isApproving}>Ready for activation</Button></DialogFooter>
+          <DialogHeader><DialogTitle>Review tenant setup</DialogTitle><DialogDescription>Check activation readiness first. Approve when the required checks are satisfied, or return the tenant for normal setup changes without marking onboarding as failed.</DialogDescription></DialogHeader>
+          <div className="rounded-[8px] border border-border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-ink-600">
+            Activation readiness is the authoritative checklist. A returned tenant regains Tenant Admin setup access and can submit for review again.
+          </div>
+          <div className="space-y-1.5"><Label htmlFor="lifecycle-review-note">Review note</Label><Textarea id="lifecycle-review-note" rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} placeholder="Optional note for the tenant or audit trail" /></div>
+          <DialogFooter className="flex flex-wrap gap-2">
+            <Button variant="ghost" asChild><Link href={`/dashboard/platform/tenants/${id}/readiness`}>View readiness</Link></Button>
+            <Button variant="secondary" onClick={() => void returnForChanges()} loading={isApproving}><RotateCcw className="h-4 w-4" /> Return for changes</Button>
+            <Button onClick={() => void handleLifecycleChange('READY_FOR_ACTIVATION')} loading={isApproving}>Ready for activation</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
