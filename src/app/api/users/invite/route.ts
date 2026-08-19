@@ -4,7 +4,7 @@ import { user, account } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles, tenants } from '@/db/schema/tenants';
 import { employees, driverProfiles } from '@/db/schema/people';
 import { userProfiles } from '@/db/schema/auth';
-import { eq, and, inArray, count, or, isNull } from 'drizzle-orm';
+import { eq, and, inArray, count, isNull } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
@@ -87,29 +87,51 @@ export async function POST(req: NextRequest) {
     const displayName = typeof name === 'string' && name.trim()
       ? name.trim()
       : `${employee.firstName} ${employee.lastName}`.trim() || normalizedEmail.split('@')[0];
-    const username = normalizeUsername(
+    const requestedUsername = normalizeUsername(
       typeof inputUsername === 'string' && inputUsername.trim()
         ? inputUsername
         : displayName || normalizedEmail.split('@')[0],
     );
-    if (username.length < 3) {
+    if (requestedUsername.length < 3) {
       return NextResponse.json({ error: 'Username must contain at least 3 valid characters' }, { status: 422 });
     }
 
-    const [duplicateAccount] = await db
-      .select({ id: user.id, email: user.email, username: user.username })
-      .from(user)
-      .where(or(eq(user.email, normalizedEmail), eq(user.username, username)))
-      .limit(1);
-    if (duplicateAccount) {
+    const [[existingAccountUser], [usernameOwner]] = await Promise.all([
+      db
+        .select({ id: user.id, email: user.email, username: user.username, name: user.name })
+        .from(user)
+        .where(eq(user.email, normalizedEmail))
+        .limit(1),
+      db
+        .select({ id: user.id, email: user.email, username: user.username })
+        .from(user)
+        .where(eq(user.username, requestedUsername))
+        .limit(1),
+    ]);
+
+    if (!existingAccountUser && usernameOwner) {
       return NextResponse.json(
-        {
-          error: duplicateAccount.email === normalizedEmail
-            ? 'A user with this email already exists'
-            : `Username "${username}" is already in use. Choose another username.`,
-        },
+        { error: `Username "${requestedUsername}" is already in use. Choose another username.` },
         { status: 409 },
       );
+    }
+
+    if (existingAccountUser) {
+      const [existingMembership] = await db
+        .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+        .from(tenantMemberships)
+        .where(and(
+          eq(tenantMemberships.tenantId, session.tenantId),
+          eq(tenantMemberships.userId, existingAccountUser.id),
+        ))
+        .limit(1);
+
+      if (existingMembership) {
+        const message = existingMembership.status === 'active'
+          ? 'This GRN Fleet account already has access to your organisation.'
+          : 'This GRN Fleet account already has an organisation membership. Restore or manage that access from User Management instead of creating another membership.';
+        return NextResponse.json({ error: message }, { status: 409 });
+      }
     }
 
     const entitlements = await getTenantEntitlements(session.tenantId);
@@ -142,40 +164,51 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'One or more roles were not found in your organisation' }, { status: 404 });
     }
 
-    const tempPassword = `Gf!${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
-    const userId = crypto.randomUUID();
-    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const isExistingAccount = Boolean(existingAccountUser);
+    const userId = existingAccountUser?.id ?? crypto.randomUUID();
+    const resolvedUsername = existingAccountUser?.username ?? requestedUsername;
+    const tempPassword = isExistingAccount
+      ? null
+      : `Gf!${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const passwordHash = tempPassword ? await bcrypt.hash(tempPassword, 10) : null;
     const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
     const resolvedDeliveryMode = deliveryMode === 'manual' || sendInvite === false ? 'manual' : 'email';
 
     await db.transaction(async (tx) => {
-      await tx.insert(user).values({
-        id: userId,
-        email: normalizedEmail,
-        username,
-        name: displayName,
-        emailVerified: false,
-        createdAt: now,
-        updatedAt: now,
-      });
-      await tx.insert(userProfiles).values({
-        id: userId,
-        userId,
-        displayName,
-        requiresPasswordChange: forcePasswordChange,
-        passwordStatus: 'temporary',
-        status: 'active',
-        accountEnabled: true,
-      });
-      await tx.insert(account).values({
-        id: crypto.randomUUID(),
-        accountId: userId,
-        providerId: 'email',
-        userId,
-        password: passwordHash,
-        createdAt: now,
-        updatedAt: now,
-      });
+      if (!existingAccountUser) {
+        await tx.insert(user).values({
+          id: userId,
+          email: normalizedEmail,
+          username: requestedUsername,
+          name: displayName,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await tx.insert(userProfiles).values({
+          id: userId,
+          userId,
+          displayName,
+          requiresPasswordChange: forcePasswordChange,
+          passwordStatus: 'temporary',
+          status: 'active',
+          accountEnabled: true,
+        });
+        await tx.insert(account).values({
+          id: crypto.randomUUID(),
+          accountId: userId,
+          providerId: 'email',
+          userId,
+          password: passwordHash!,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else if (!existingAccountUser.name && displayName) {
+        await tx
+          .update(user)
+          .set({ name: displayName, updatedAt: now })
+          .where(eq(user.id, userId));
+      }
 
       const [membership] = await tx
         .insert(tenantMemberships)
@@ -249,17 +282,21 @@ export async function POST(req: NextRequest) {
       await recordAuditEvent({
         tenantId: session.tenantId,
         actorUserId: session.user.id,
-        eventType: 'user_account_created',
-        action: 'create',
+        eventType: isExistingAccount ? 'user_existing_account_linked' : 'user_account_created',
+        action: isExistingAccount ? 'link' : 'create',
         entityType: 'user',
         entityId: userId,
-        summary: `Login account created for ${displayName}`,
+        summary: isExistingAccount
+          ? `Existing GRN Fleet account linked to ${displayName}`
+          : `Login account created for ${displayName}`,
         after: {
           userId,
           employeeId,
-          username,
+          username: resolvedUsername,
           roleIds: selectedRoles.map((role) => role.id),
           deliveryMode: resolvedDeliveryMode,
+          existingAccount: isExistingAccount,
+          passwordChanged: false,
         },
       }, tx);
     });
@@ -269,6 +306,7 @@ export async function POST(req: NextRequest) {
       .from(tenants)
       .where(eq(tenants.id, session.tenantId))
       .limit(1);
+    const tenantName = tenant?.name || 'GovFleet Namibia';
     const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`;
 
     let emailResult: { success: boolean; error?: string; deliveredManually?: boolean } = {
@@ -279,17 +317,28 @@ export async function POST(req: NextRequest) {
       emailResult = { success: false, deliveredManually: true };
     } else {
       try {
-        const element = createElement(UserInviteEmail, {
-          tenantName: tenant?.name || 'GovFleet Namibia',
-          recipientName: displayName,
-          recipientEmail: normalizedEmail,
-          tempPassword,
-          loginUrl,
-          invitedByName: session.user.name || 'A tenant administrator',
-        });
+        const element = isExistingAccount
+          ? createElement(
+              'div',
+              null,
+              createElement('p', null, `Hello ${existingAccountUser?.name || displayName},`),
+              createElement('p', null, `Your existing GRN Fleet account now has access to ${tenantName}.`),
+              createElement('p', null, 'Your current password and sign-in details have not changed.'),
+              createElement('p', null, `Sign in at ${loginUrl}`),
+            )
+          : createElement(UserInviteEmail, {
+              tenantName,
+              recipientName: displayName,
+              recipientEmail: normalizedEmail,
+              tempPassword: tempPassword!,
+              loginUrl,
+              invitedByName: session.user.name || 'A tenant administrator',
+            });
         emailResult = await sendReactEmail(
           normalizedEmail,
-          `Your ${tenant?.name || 'GovFleet'} account is ready`,
+          isExistingAccount
+            ? `You now have access to ${tenantName}`
+            : `Your ${tenantName} account is ready`,
           element,
         );
       } catch (error) {
@@ -303,17 +352,20 @@ export async function POST(req: NextRequest) {
       data: {
         id: userId,
         email: normalizedEmail,
-        name: displayName,
-        username,
+        name: existingAccountUser?.name || displayName,
+        username: resolvedUsername,
+        existingAccount: isExistingAccount,
         tempPassword,
-        credentials: {
-          fullName: displayName,
-          username,
-          email: normalizedEmail,
-          tempPassword,
-          roleName: selectedRoles.map((role) => role.name).join(', ') || 'No role assigned',
-          loginUrl,
-        },
+        credentials: isExistingAccount
+          ? null
+          : {
+              fullName: displayName,
+              username: resolvedUsername,
+              email: normalizedEmail,
+              tempPassword: tempPassword!,
+              roleName: selectedRoles.map((role) => role.name).join(', ') || 'No role assigned',
+              loginUrl,
+            },
       },
       emailSent: emailResult.success,
       emailError: emailResult.error ?? null,
@@ -324,8 +376,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'This staff member already has a login account' }, { status: 409 });
     }
     if (databaseCode(error) === '23505') {
-      return NextResponse.json({ error: 'A user with this email or username already exists' }, { status: 409 });
+      return NextResponse.json({ error: 'This account or organisation membership already exists' }, { status: 409 });
     }
-    return NextResponse.json({ error: 'Failed to create user account' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to create or link user account' }, { status: 500 });
   }
 }
