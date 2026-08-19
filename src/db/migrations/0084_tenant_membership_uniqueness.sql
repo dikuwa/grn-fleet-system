@@ -73,5 +73,8 @@ USING ranked_memberships AS ranked
 WHERE membership."id" = ranked."id"
   AND ranked.rn > 1;
 
-CREATE UNIQUE INDEX IF NOT EXISTS "tenant_memberships_tenant_user_idx"
+-- Production already has this historical invariant under this name. Keeping
+-- the canonical name makes this migration a no-op there while fresh databases
+-- receive the same protection.
+CREATE UNIQUE INDEX IF NOT EXISTS "tenant_memberships_tenant_user_unique"
 ON "tenant_memberships" ("tenant_id", "user_id");
