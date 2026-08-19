@@ -4,10 +4,13 @@ import { getDb } from '@/db';
 import { tenantSetupProgress } from '@/db/schema/invitations';
 import { departments, employees, offices } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
+import { fleetPaymentProviders } from '@/db/schema/fleet-payments';
 import { tenants } from '@/db/schema/tenants';
+import { inspectionTemplates } from '@/db/schema/trips';
 import { workflowDefinitions, workflowSteps } from '@/db/schema/workflows';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { isPublicEmployeeRequestEnabled } from '@/lib/public-request-access';
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,9 +35,16 @@ export async function GET(request: NextRequest) {
       [driverTotal],
       [vehicleTotal],
       activeWorkflows,
+      activeInspectionTemplates,
+      [fleetPaymentProviderTotal],
     ] = await Promise.all([
       db
-        .select({ id: tenants.id, name: tenants.name, lifecycleStatus: tenants.lifecycleStatus })
+        .select({
+          id: tenants.id,
+          name: tenants.name,
+          lifecycleStatus: tenants.lifecycleStatus,
+          metadata: tenants.metadata,
+        })
         .from(tenants)
         .where(eq(tenants.id, tenantId))
         .limit(1),
@@ -78,6 +88,24 @@ export async function GET(request: NextRequest) {
             eq(workflowDefinitions.isActive, true),
           ),
         ),
+      db
+        .select({ type: inspectionTemplates.type })
+        .from(inspectionTemplates)
+        .where(
+          and(
+            eq(inspectionTemplates.tenantId, tenantId),
+            eq(inspectionTemplates.isActive, true),
+          ),
+        ),
+      db
+        .select({ total: count() })
+        .from(fleetPaymentProviders)
+        .where(
+          and(
+            eq(fleetPaymentProviders.tenantId, tenantId),
+            eq(fleetPaymentProviders.status, 'active'),
+          ),
+        ),
     ]);
 
     if (!tenant) {
@@ -93,6 +121,12 @@ export async function GET(request: NextRequest) {
       workflowReady = Number(stepTotal?.total ?? 0) > 0;
     }
 
+    const activeInspectionTypes = new Set(activeInspectionTemplates.map((template) => template.type));
+    const inspectionTemplatesReady =
+      activeInspectionTypes.has('departure') && activeInspectionTypes.has('return');
+    const employeeRequestAccessEnabled = isPublicEmployeeRequestEnabled(tenant.metadata);
+    const fleetPaymentsConfigured = Number(fleetPaymentProviderTotal?.total ?? 0) > 0;
+
     const counts = {
       offices: Number(officeTotal?.total ?? 0),
       departments: Number(departmentTotal?.total ?? 0),
@@ -100,6 +134,8 @@ export async function GET(request: NextRequest) {
       drivers: Number(driverTotal?.total ?? 0),
       vehicles: Number(vehicleTotal?.total ?? 0),
       workflows: activeWorkflows.length,
+      inspectionTemplates: activeInspectionTypes.size,
+      fleetPaymentProviders: Number(fleetPaymentProviderTotal?.total ?? 0),
     };
 
     const checklist = [
@@ -122,6 +158,17 @@ export async function GET(request: NextRequest) {
         ready: workflowReady,
         href: '/dashboard/admin/workflows',
         actionLabel: 'Configure workflow',
+      },
+      {
+        id: 'inspection-templates',
+        label: 'Vehicle inspection checklists',
+        description: inspectionTemplatesReady
+          ? 'Active departure and return inspection templates are available for safe vehicle issue and return.'
+          : 'Review inspection templates before physical vehicle issue. A passing departure inspection is required before release.',
+        category: 'recommended',
+        ready: inspectionTemplatesReady,
+        href: '/dashboard/inspections/templates',
+        actionLabel: 'Review templates',
       },
       {
         id: 'staff',
@@ -169,19 +216,23 @@ export async function GET(request: NextRequest) {
       },
       {
         id: 'request-access',
-        label: 'External request access',
-        description: 'Optional: enable the secure public request channel only if the organisation accepts requests from non-users.',
+        label: 'Employee request access',
+        description: employeeRequestAccessEnabled
+          ? 'The secure employee request link is enabled for staff who do not have dashboard accounts.'
+          : 'The secure employee request link is disabled. Enable it only if this organisation wants staff without dashboard accounts to submit requests.',
         category: 'optional',
-        ready: false,
+        ready: employeeRequestAccessEnabled,
         href: '/dashboard/settings/request-access',
         actionLabel: 'Review request access',
       },
       {
         id: 'fleet-payments',
         label: 'Fleet Payments / BlueFuel',
-        description: 'Optional: configure a payment provider or manual import workflow only if the organisation uses fleet-payment services.',
+        description: fleetPaymentsConfigured
+          ? `${counts.fleetPaymentProviders} active fleet-payment provider${counts.fleetPaymentProviders === 1 ? '' : 's'} configured.`
+          : 'Optional: configure a provider or manual import workflow only if the organisation uses fleet-payment services.',
         category: 'optional',
-        ready: false,
+        ready: fleetPaymentsConfigured,
         href: '/dashboard/fuel/fleet-payments',
         actionLabel: 'Review Fleet Payments',
       },
