@@ -22,6 +22,12 @@ export default async function PlatformTenantLayout({
           Tenant Details
         </Link>
         <Link
+          href={`/dashboard/platform/tenants/${id}/readiness`}
+          className="rounded-[8px] px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-muted hover:text-ink-950"
+        >
+          Activation Readiness
+        </Link>
+        <Link
           href={`/dashboard/platform/tenants/${id}/invitation`}
           className="rounded-[8px] px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-muted hover:text-ink-950"
         >
