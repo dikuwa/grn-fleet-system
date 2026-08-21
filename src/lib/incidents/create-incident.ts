@@ -70,6 +70,8 @@ const MVA_CATEGORY_CODES = new Set([
   'property_damage',
 ]);
 
+const STRONGER_VEHICLE_STATUSES = new Set(['out_of_service', 'written_off', 'decommissioned']);
+
 function isMvaSeverity(severity: string): boolean {
   return ['serious', 'critical'].includes(severity);
 }
@@ -88,6 +90,7 @@ async function deliverIncidentSideEffects(
   officialNumber: string,
   maintenanceAssigneeUserId: string | null,
   tripStatus: string,
+  vehicleRestricted: boolean,
 ) {
   const documentType = requiresMvaForm(input) ? 'accident_report' : 'trip_incident_report';
   const effects: Promise<unknown>[] = [
@@ -121,7 +124,7 @@ async function deliverIncidentSideEffects(
         entityId: incident.id,
         actionUrl: `/dashboard/trips/${input.tripId}`,
         workspace: WorkspaceIds.TRANSPORT_ADMIN,
-        priority: input.severity === 'critical' ? 'emergency' : 'high',
+        priority: input.severity === 'critical' || vehicleRestricted ? 'emergency' : 'high',
       }),
     ),
     generateDocument({
@@ -149,19 +152,19 @@ async function deliverIncidentSideEffects(
     );
   }
 
-  if (input.severity === 'critical' && maintenanceAssigneeUserId) {
+  if (vehicleRestricted && maintenanceAssigneeUserId) {
     effects.push(createScopedNotifications({
       tenantId: input.tenantId,
       recipientUserIds: [maintenanceAssigneeUserId],
       category: 'action_required',
-      eventType: 'critical_incident_maintenance',
+      eventType: input.severity === 'critical' ? 'critical_incident_maintenance' : 'unsafe_vehicle_maintenance',
       title: `${officialNumber} requires maintenance review`,
       body: `${input.description.slice(0, 180)}. Resolve the assigned blocking defect; operational technical clearance remains a separate review step before the vehicle can return to service.`,
       entityType: 'trip_incident',
       entityId: incident.id,
       actionUrl: '/dashboard/fleet/defects?status=open',
       workspace: WorkspaceIds.MAINTENANCE,
-      priority: 'emergency',
+      priority: input.severity === 'critical' ? 'emergency' : 'high',
     }));
   }
 
@@ -196,7 +199,12 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
     .limit(1);
   if (!trip) throw new Error('Trip not found in your organisation');
 
-  const maintenanceUsers = input.severity === 'critical'
+  const vehicleSafe = input.vehicleSafe ?? input.safeToContinue;
+  const requiresVehicleRestriction = input.severity === 'critical' || vehicleSafe === false;
+  const restrictedVehicleStatus = STRONGER_VEHICLE_STATUSES.has(trip.vehicleStatus)
+    ? trip.vehicleStatus
+    : 'maintenance';
+  const maintenanceUsers = requiresVehicleRestriction
     ? await resolveActiveRoleRecipients(input.tenantId, [SystemRoles.MAINTENANCE])
     : [];
   const maintenanceAssigneeUserId = maintenanceUsers[0] ?? null;
@@ -241,7 +249,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
           emergencyServicesContacted: input.emergencyServicesContacted,
           safeToContinue: input.safeToContinue,
           continuationState: input.continuationState,
-          vehicleSafe: input.vehicleSafe ?? input.safeToContinue,
+          vehicleSafe,
           passengerSafe: input.passengerSafe ?? !input.injuries,
           numberInjured,
           detailsRequired: needsMvaDetails,
@@ -273,15 +281,17 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
           after: {
             tripId: input.tripId,
             severity: input.severity,
+            vehicleSafe,
             continuationState: input.continuationState,
             detailsRequired: needsMvaDetails,
             maintenanceAssigneeUserId,
             journeyHeldForCriticalIncident: input.severity === 'critical',
+            journeyHeldForSafetyIncident: requiresVehicleRestriction,
           },
         }),
       ];
 
-      if (input.severity === 'critical') {
+      if (requiresVehicleRestriction) {
         mutations.push(
           tx
             .update(tripAuthorities)
@@ -293,22 +303,13 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             )),
           tx
             .update(vehicles)
-            .set({ status: 'maintenance', updatedAt: new Date() })
+            .set({ status: restrictedVehicleStatus, updatedAt: new Date() })
             .where(and(eq(vehicles.id, trip.vehicleId), eq(vehicles.tenantId, input.tenantId))),
-          tx.insert(vehicleStatusEvents).values({
-            vehicleId: trip.vehicleId,
-            previousStatus: trip.vehicleStatus,
-            newStatus: 'maintenance',
-            reason: `Critical incident ${officialNumber} — vehicle restricted`,
-            changedByUserId: input.reportedByUserId,
-            referenceEntityType: 'trip_incident',
-            referenceEntityId: incidentId,
-          }),
           tx.insert(vehicleDefects).values({
             vehicleId: trip.vehicleId,
             tripId: input.tripId,
-            severity: 'critical',
-            description: `Critical incident ${officialNumber}: ${input.description.slice(0, 200)}`,
+            severity: input.severity === 'critical' ? 'critical' : 'major',
+            description: `${input.severity === 'critical' ? 'Critical incident' : 'Unsafe vehicle incident'} ${officialNumber}: ${input.description.slice(0, 200)}`,
             isBlocking: true,
             reportedByUserId: input.reportedByUserId,
             assignedToUserId: maintenanceAssigneeUserId,
@@ -318,11 +319,25 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             serviceDate,
             serviceOdometer: input.odometerReading ?? null,
             serviceType: 'repair',
-            description: `Follow-up from critical incident ${officialNumber}. Vehicle must be inspected and cleared before returning to service.`,
+            description: `Follow-up from ${input.severity === 'critical' ? 'critical' : 'unsafe-vehicle'} incident ${officialNumber}. Vehicle must be inspected and cleared before returning to service.`,
             createdByUserId: input.reportedByUserId,
             assignedToUserId: maintenanceAssigneeUserId,
           }),
         );
+
+        if (trip.vehicleStatus !== restrictedVehicleStatus) {
+          mutations.push(
+            tx.insert(vehicleStatusEvents).values({
+              vehicleId: trip.vehicleId,
+              previousStatus: trip.vehicleStatus,
+              newStatus: restrictedVehicleStatus,
+              reason: `${input.severity === 'critical' ? 'Critical' : 'Unsafe vehicle'} incident ${officialNumber} — vehicle restricted`,
+              changedByUserId: input.reportedByUserId,
+              referenceEntityType: 'trip_incident',
+              referenceEntityId: incidentId,
+            }),
+          );
+        }
       }
       return mutations;
     });
@@ -352,6 +367,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
     officialNumber,
     maintenanceAssigneeUserId,
     trip.status,
+    requiresVehicleRestriction,
   );
   return { incident, officialNumber };
 }
