@@ -3,7 +3,7 @@
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Eye, EyeOff, LogIn, AlertCircle, User } from 'lucide-react';
+import { Eye, EyeOff, LogIn, AlertCircle, User, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input, FieldWrapper } from '@/components/ui/input';
 import { APP_NAME } from '@/lib/constants';
@@ -11,7 +11,12 @@ import { ThemeSelector } from '@/components/layout/theme-selector';
 
 const SIGN_IN_SERVICE_UNAVAILABLE = 'Service temporarily unavailable. Please try again later.';
 
-/** Inner form component that calls useSearchParams */
+type TenantChoice = {
+  id: string;
+  name: string;
+  slug: string;
+};
+
 function LoginForm() {
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirect') || '/dashboard';
@@ -20,6 +25,9 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [tenantChoices, setTenantChoices] = useState<TenantChoice[]>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState('');
+  const [postTenantRedirect, setPostTenantRedirect] = useState('/dashboard');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,7 +60,23 @@ function LoginForm() {
         return;
       }
 
-      if (json.requiresPasswordChange) {
+      const choices = Array.isArray(json.tenantChoices)
+        ? (json.tenantChoices as TenantChoice[]).filter(
+            (item) => item && typeof item.id === 'string' && typeof item.name === 'string',
+          )
+        : [];
+      const requiresSelection = json.requiresTenantSelection === true;
+      const requiresPasswordChange = json.requiresPasswordChange === true;
+
+      if (requiresSelection) {
+        setTenantChoices(choices);
+        setSelectedTenantId(choices[0]?.id ?? '');
+        setPostTenantRedirect(requiresPasswordChange ? '/dashboard/profile' : redirectTo);
+        setLoading(false);
+        return;
+      }
+
+      if (requiresPasswordChange) {
         window.location.assign('/dashboard/profile');
         return;
       }
@@ -64,6 +88,41 @@ function LoginForm() {
     }
   };
 
+  const handleTenantSelection = async () => {
+    if (!selectedTenantId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/auth/tenant-context', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: selectedTenantId }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || 'Could not select organisation');
+      window.location.assign(postTenantRedirect);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not select organisation');
+      setLoading(false);
+    }
+  };
+
+  const resetLogin = async () => {
+    setLoading(true);
+    try {
+      await fetch('/api/auth/sign-out', { method: 'POST' });
+    } catch {
+      // The form is still reset; the server cookie expiry is best-effort here.
+    }
+    setTenantChoices([]);
+    setSelectedTenantId('');
+    setPostTenantRedirect('/dashboard');
+    setUsername('');
+    setPassword('');
+    setError(null);
+    setLoading(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="relative text-center">
@@ -71,8 +130,14 @@ function LoginForm() {
         <div className="bg-brand-800 mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white">
           G
         </div>
-        <h1 className="text-ink-950 text-xl font-[650] tracking-tight">Sign in to {APP_NAME}</h1>
-        <p className="text-ink-500 mt-1 text-sm">Authorised government personnel only</p>
+        <h1 className="text-ink-950 text-xl font-[650] tracking-tight">
+          {tenantChoices.length > 0 ? 'Choose your organisation' : `Sign in to ${APP_NAME}`}
+        </h1>
+        <p className="text-ink-500 mt-1 text-sm">
+          {tenantChoices.length > 0
+            ? 'Your login is linked to more than one organisation.'
+            : 'Authorised government personnel only'}
+        </p>
       </div>
 
       {error && (
@@ -82,48 +147,91 @@ function LoginForm() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <FieldWrapper label="Username or email" required>
-          <div className="relative">
-            <User className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-            <Input
-              type="text"
-              placeholder="Enter your username or email"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              autoComplete="username"
-              className="pl-9"
-            />
+      {tenantChoices.length > 0 ? (
+        <div className="space-y-4">
+          <div className="space-y-2" role="radiogroup" aria-label="Organisation">
+            {tenantChoices.map((tenant) => {
+              const selected = tenant.id === selectedTenantId;
+              return (
+                <button
+                  key={tenant.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setSelectedTenantId(tenant.id)}
+                  className={`focus-ring flex w-full items-center gap-3 rounded-[10px] border px-4 py-3 text-left transition-colors motion-reduce:transition-none ${
+                    selected
+                      ? 'border-brand-600 bg-brand-50/70'
+                      : 'border-border bg-surface hover:bg-muted/50'
+                  }`}
+                >
+                  <span className="bg-muted text-ink-600 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]">
+                    <Building2 className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="text-ink-900 block truncate text-sm font-medium">{tenant.name}</span>
+                    <span className="text-ink-500 block truncate text-xs">{tenant.slug}</span>
+                  </span>
+                  <span
+                    className={`h-4 w-4 rounded-full border ${selected ? 'border-brand-700 bg-brand-700 ring-2 ring-white ring-inset' : 'border-ink-300'}`}
+                    aria-hidden="true"
+                  />
+                </button>
+              );
+            })}
           </div>
-        </FieldWrapper>
 
-        <FieldWrapper label="Password" required>
-          <div className="relative">
-            <Input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Enter your password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="text-ink-500 hover:text-ink-700 absolute top-1/2 right-3 -translate-y-1/2"
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-            >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
-        </FieldWrapper>
+          <Button type="button" className="w-full" loading={loading} disabled={!selectedTenantId} onClick={() => void handleTenantSelection()}>
+            Continue
+          </Button>
+          <Button type="button" variant="secondary" className="w-full" disabled={loading} onClick={() => void resetLogin()}>
+            Use another account
+          </Button>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <FieldWrapper label="Username or email" required>
+            <div className="relative">
+              <User className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+              <Input
+                type="text"
+                placeholder="Enter your username or email"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                autoComplete="username"
+                className="pl-9"
+              />
+            </div>
+          </FieldWrapper>
 
-        <Button type="submit" className="w-full" loading={loading}>
-          <LogIn className="h-4 w-4" />
-          Sign In
-        </Button>
-      </form>
+          <FieldWrapper label="Password" required>
+            <div className="relative">
+              <Input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="text-ink-500 hover:text-ink-700 absolute top-1/2 right-3 -translate-y-1/2"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </FieldWrapper>
+
+          <Button type="submit" className="w-full" loading={loading}>
+            <LogIn className="h-4 w-4" />
+            Sign In
+          </Button>
+        </form>
+      )}
 
       <p className="text-ink-500 text-center text-xs">
         Only authorised administrators can create accounts.{' '}

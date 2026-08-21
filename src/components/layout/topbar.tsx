@@ -69,9 +69,6 @@ export function Topbar({
     staleTime: 30_000,
   });
 
-  // Keep the topbar responsive without hammering the notifications endpoint on
-  // every authenticated page. Broadcast events, focus and reconnect still
-  // refresh immediately; the interval is only a quiet safety net.
   const notificationQuery = useQuery({
     queryKey: notificationQueryKey,
     queryFn: ({ signal }) => fetchNotifications(signal),
@@ -237,6 +234,9 @@ export function Topbar({
               <div className="mt-1 space-y-0.5">
                 <Link href="/dashboard/profile" className={menuItemClass} onClick={() => setShowAccountMenu(false)} role="menuitem">
                   <User className="h-4 w-4" aria-hidden="true" /> My Profile
+                </Link>
+                <Link href="/dashboard/switch-organisation" className={menuItemClass} onClick={() => setShowAccountMenu(false)} role="menuitem">
+                  <Building2 className="h-4 w-4" aria-hidden="true" /> Switch Organisation
                 </Link>
                 {roleNames.includes(SystemRoles.TENANT_ADMIN) && (
                   <Link href="/dashboard/settings" className={menuItemClass} onClick={() => setShowAccountMenu(false)} role="menuitem">
