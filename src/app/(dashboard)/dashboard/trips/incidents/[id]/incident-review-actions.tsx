@@ -24,19 +24,21 @@ export function IncidentReviewActions({
   incidentId,
   initial,
   vehicleStatus,
-  vehicleDamage,
+  requiresTechnicalClearance,
   canInvestigate,
   canInsurance,
-  canTechnical,
+  canGrantTechnicalClearance,
+  canReturnVehicleToService,
   canClose,
 }: {
   incidentId: string;
   initial: IncidentReviewState;
   vehicleStatus: string;
-  vehicleDamage: boolean;
+  requiresTechnicalClearance: boolean;
   canInvestigate: boolean;
   canInsurance: boolean;
-  canTechnical: boolean;
+  canGrantTechnicalClearance: boolean;
+  canReturnVehicleToService: boolean;
   canClose: boolean;
 }) {
   const router = useRouter();
@@ -126,18 +128,18 @@ export function IncidentReviewActions({
         </Card>
       )}
 
-      {(canTechnical || canClose) && (
+      {(canGrantTechnicalClearance || canReturnVehicleToService || canClose) && (
         <Card>
           <CardHeader><CardTitle>Clearance & closure</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <p className="text-ink-500 text-xs leading-5">
-              Technical clearance is blocked while any safety-critical vehicle defect remains unresolved. Returning the vehicle to service is separately blocked while an active trip still owns the vehicle.
+              Technical clearance is blocked while any blocking vehicle defect remains unresolved. Returning the vehicle to service is separately blocked while an active trip or another unresolved vehicle-safety incident still restricts the vehicle.
             </p>
             <div className="flex flex-wrap gap-2">
-              {canTechnical && initial.technicalClearanceStatus !== 'cleared' && (
+              {canGrantTechnicalClearance && initial.technicalClearanceStatus !== 'cleared' && (
                 <Button variant="secondary" loading={working === 'technical_clearance'} onClick={() => void submit('technical_clearance')}>Grant technical clearance</Button>
               )}
-              {canTechnical && initial.technicalClearanceStatus === 'cleared' && vehicleStatus !== 'available' && (
+              {canReturnVehicleToService && initial.technicalClearanceStatus === 'cleared' && vehicleStatus !== 'available' && (
                 <Button loading={working === 'return_vehicle_to_service'} onClick={() => void submit('return_vehicle_to_service')}>Return vehicle to service</Button>
               )}
               {canClose && initial.investigationClosedAt == null && (
@@ -146,8 +148,8 @@ export function IncidentReviewActions({
                 </Button>
               )}
             </div>
-            {vehicleDamage && initial.technicalClearanceStatus !== 'cleared' && (
-              <p className="text-status-pending-text text-xs">Vehicle damage is recorded. The investigation cannot be closed until technical clearance is complete.</p>
+            {requiresTechnicalClearance && initial.technicalClearanceStatus !== 'cleared' && (
+              <p className="text-status-pending-text text-xs">This incident placed the vehicle under a safety hold. The investigation cannot be closed until technical clearance is complete.</p>
             )}
           </CardContent>
         </Card>
