@@ -10,7 +10,6 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
 const investigationStatuses = new Set(['pending', 'in_progress', 'awaiting_information', 'closed']);
-const activeTripStatuses = ['pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review'];
 const NON_REVIVABLE_VEHICLE_STATUSES = new Set(['written_off', 'decommissioned']);
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -115,27 +114,65 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (unresolved.length) {
         return NextResponse.json({ error: 'Resolve all blocking vehicle defects before technical clearance.' }, { status: 409 });
       }
-      await runAtomicMutations((tx) => [
-        tx.update(tripIncidents).set({
-          technicalClearanceStatus: 'cleared',
-          technicalClearanceAt: now,
-          technicalClearanceByUserId: auth.session.user.id,
-          updatedAt: now,
-        }).where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, auth.session.tenantId))),
-        tx.insert(auditEvents).values({
-          ...commonAudit,
-          eventType: 'incident_technical_clearance',
-          action: 'incident.technical_clearance',
-          summary: `${context.incident.officialNumber || id}: technical clearance granted`,
-          after: { technicalClearanceStatus: 'cleared' },
-        }),
-      ]);
+
+      await db.execute(sql`
+        WITH incident_claim AS (
+          UPDATE trip_incidents ti
+          SET technical_clearance_status = 'cleared',
+              technical_clearance_at = ${now},
+              technical_clearance_by_user_id = ${auth.session.user.id},
+              updated_at = ${now}
+          WHERE ti.id = ${id}::uuid
+            AND ti.tenant_id = ${auth.session.tenantId}::uuid
+            AND ti.trip_id = ${context.incident.tripId}::uuid
+            AND NOT EXISTS (
+              SELECT 1
+              FROM vehicle_defects vd
+              WHERE vd.vehicle_id = ${context.vehicleId}::uuid
+                AND vd.is_blocking = true
+                AND vd.resolved_at IS NULL
+            )
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id,
+            action, entity_type, entity_id, summary, after, source_channel
+          )
+          SELECT
+            ${auth.session.tenantId}::uuid,
+            ${Date.now()},
+            'incident_technical_clearance',
+            ${auth.session.user.id},
+            'incident.technical_clearance',
+            'trip_incident',
+            ${id}::uuid,
+            ${`${context.incident.officialNumber || id}: technical clearance granted`},
+            jsonb_build_object('technicalClearanceStatus', 'cleared'),
+            'web'
+          FROM incident_claim
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM incident_claim) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN '1'
+          ELSE 'incident_technical_clearance_blocked'
+        END AS integer) AS committed
+      `);
       return NextResponse.json({ success: true });
     }
 
     if (action === 'close_investigation') {
-      if (context.incident.vehicleDamage && context.incident.technicalClearanceStatus !== 'cleared') {
-        return NextResponse.json({ error: 'Vehicle-damage investigations require technical clearance before closure.' }, { status: 409 });
+      const requiresTechnicalClearance =
+        context.incident.vehicleDamage ||
+        context.incident.vehicleSafe === false ||
+        context.incident.severity === 'critical';
+      if (requiresTechnicalClearance && context.incident.technicalClearanceStatus !== 'cleared') {
+        return NextResponse.json(
+          { error: 'Vehicle-safety incidents require technical clearance before investigation closure.' },
+          { status: 409 },
+        );
       }
       await runAtomicMutations((tx) => [
         tx.update(tripIncidents).set({
@@ -213,7 +250,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
               WHERE pending_trip.vehicle_id = v.id
                 AND pending_trip.tenant_id = ${auth.session.tenantId}::uuid
                 AND pending_incident.tenant_id = ${auth.session.tenantId}::uuid
-                AND pending_incident.vehicle_damage = true
+                AND (
+                  pending_incident.vehicle_damage = true
+                  OR pending_incident.vehicle_safe = false
+                  OR pending_incident.severity = 'critical'
+                )
                 AND pending_incident.status <> 'resolved'
                 AND pending_incident.technical_clearance_status <> 'cleared'
             )
