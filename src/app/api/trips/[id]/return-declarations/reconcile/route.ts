@@ -76,17 +76,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const declaration = readReturnDeclaration(record.authorityData);
-    const incidentDeclared = declaration?.incidentDeclared === true;
-    const receiptsDeclared = declaration?.outstandingReceiptsDeclared === true;
-    if (!incidentDeclared && !receiptsDeclared) {
+    if (!declaration) {
       return NextResponse.json(
-        { error: 'No positive return declaration requires reconciliation.' },
+        { error: 'A recorded return declaration is required before reconciliation.' },
         { status: 409 },
       );
     }
-    if (declaration?.reconciledAt) {
+    if (declaration.reconciledAt) {
       return NextResponse.json({ success: true, idempotentReplay: true, reconciledAt: declaration.reconciledAt });
     }
+
+    const incidentDeclared = declaration.incidentDeclared === true;
+    const receiptsDeclared = declaration.outstandingReceiptsDeclared === true;
 
     const [[incidentEvidence], [receiptEvidence], [expenseReceiptEvidence], [unverifiedFuel], [unverifiedExpense]] =
       await Promise.all([
@@ -144,6 +145,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
           .limit(1),
       ]);
 
+    const incidentEvidenceMismatch = !incidentDeclared && Boolean(incidentEvidence);
+    const hasPositiveDeclaration = incidentDeclared || receiptsDeclared;
+    if (!hasPositiveDeclaration && !incidentEvidenceMismatch) {
+      return NextResponse.json(
+        { error: 'The recorded return declarations already match the available trip evidence.' },
+        { status: 409 },
+      );
+    }
+
     if (incidentDeclared && !incidentEvidence) {
       return NextResponse.json(
         { error: 'An incident was declared at return, but no incident record has been captured for this trip.' },
@@ -169,13 +179,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
         UPDATE trip_authorities ta
         SET data = jsonb_set(
               jsonb_set(
-                COALESCE(ta.data, '{}'::jsonb),
-                '{returnDeclaration,reconciledAt}',
-                to_jsonb(${now}::timestamptz),
+                jsonb_set(
+                  COALESCE(ta.data, '{}'::jsonb),
+                  '{returnDeclaration,reconciledAt}',
+                  to_jsonb(${now}::timestamptz),
+                  true
+                ),
+                '{returnDeclaration,reconciledByUserId}',
+                to_jsonb(${session.user.id}::text),
                 true
               ),
-              '{returnDeclaration,reconciledByUserId}',
-              to_jsonb(${session.user.id}::text),
+              '{returnDeclaration,reconciliationReason}',
+              to_jsonb(${incidentEvidenceMismatch ? 'incident_evidence_after_negative_declaration' : 'positive_return_declaration'}::text),
               true
             ),
             updated_at = ${now}
@@ -183,16 +198,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
           AND ta.tenant_id = ${tenantId}::uuid
           AND ta.status IN ('awaiting_reconciliation', 'completed')
           AND NULLIF(ta.data -> 'returnDeclaration' ->> 'reconciledAt', '') IS NULL
-          AND (
-            COALESCE((ta.data -> 'returnDeclaration' ->> 'incidentDeclared')::boolean, false)
-            OR COALESCE((ta.data -> 'returnDeclaration' ->> 'outstandingReceiptsDeclared')::boolean, false)
-          )
           AND EXISTS (
             SELECT 1
             FROM trips t
             WHERE t.id = ${tripId}::uuid
               AND t.tenant_id = ${tenantId}::uuid
               AND t.status IN ('return_inspection', 'closure_review')
+          )
+          AND (
+            COALESCE((ta.data -> 'returnDeclaration' ->> 'incidentDeclared')::boolean, false)
+            OR COALESCE((ta.data -> 'returnDeclaration' ->> 'outstandingReceiptsDeclared')::boolean, false)
+            OR (
+              NOT COALESCE((ta.data -> 'returnDeclaration' ->> 'incidentDeclared')::boolean, false)
+              AND EXISTS (
+                SELECT 1 FROM trip_incidents ti
+                WHERE ti.trip_id = ${tripId}::uuid
+                  AND ti.tenant_id = ${tenantId}::uuid
+              )
+            )
           )
           AND (
             NOT COALESCE((ta.data -> 'returnDeclaration' ->> 'incidentDeclared')::boolean, false)
@@ -251,10 +274,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
           'reconcile',
           'trip',
           ${tripId}::uuid,
-          'Return declarations reconciled before trip closure',
+          ${incidentEvidenceMismatch
+            ? 'Return declaration reconciled after incident evidence contradicted the recorded negative declaration'
+            : 'Return declarations reconciled before trip closure'},
           jsonb_build_object(
             'incidentDeclared', ${incidentDeclared}::boolean,
             'outstandingReceiptsDeclared', ${receiptsDeclared}::boolean,
+            'incidentEvidencePresent', ${Boolean(incidentEvidence)}::boolean,
+            'incidentEvidenceMismatch', ${incidentEvidenceMismatch}::boolean,
             'reconciledAt', ${now}::timestamptz
           ),
           'web'
@@ -269,7 +296,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
       END AS integer) AS committed
     `);
 
-    return NextResponse.json({ success: true, idempotentReplay: false, reconciledAt: now.toISOString() });
+    return NextResponse.json({
+      success: true,
+      idempotentReplay: false,
+      reconciledAt: now.toISOString(),
+      incidentEvidenceMismatch,
+    });
   } catch (error) {
     console.error('[return-declarations/reconcile] POST failed:', error);
     if (String(error).includes('return_declaration_reconciliation_conflict')) {

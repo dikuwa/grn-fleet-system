@@ -294,6 +294,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         { status: 409 },
       );
     }
+    if (returnDeclaration && !incidentDeclared && anyIncident && !returnDeclaration.reconciledAt) {
+      return NextResponse.json(
+        {
+          error:
+            'Incident evidence exists for this trip but the return declaration recorded no incident. Reconcile the declaration evidence before closure.',
+        },
+        { status: 409 },
+      );
+    }
     if (receiptsDeclared && !fuelReceiptEvidence && !expenseReceiptEvidence) {
       return NextResponse.json(
         { error: 'Outstanding receipts were declared at return, but no receipt evidence exists for this trip.' },
@@ -412,6 +421,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const now = new Date();
     await runAtomicMutations((tx) => {
       const mutations: Array<PromiseLike<unknown>> = [
+        tx.execute(sql`
+          SELECT CAST(CASE
+            WHEN NOT EXISTS (
+              SELECT 1
+              FROM trip_incidents ti
+              JOIN trip_authorities ta
+                ON ta.trip_id = ti.trip_id
+               AND ta.tenant_id = ti.tenant_id
+              WHERE ti.trip_id = ${id}::uuid
+                AND ti.tenant_id = ${tenantId}::uuid
+                AND COALESCE((ta.data -> 'returnDeclaration' ->> 'incidentDeclared')::boolean, false) = false
+                AND NULLIF(ta.data -> 'returnDeclaration' ->> 'reconciledAt', '') IS NULL
+            )
+            THEN '1'
+            ELSE 'trip_closure_lifecycle_conflict'
+          END AS integer) AS guard
+        `),
         tx.insert(tripClosures).values({
           id: closureId,
           tripId: id,

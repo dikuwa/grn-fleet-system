@@ -8,7 +8,15 @@
  * the `useOfflineSync` hook in a component that stays mounted.
  */
 
-import { listDrafts, getDraft, markDraftSynced, markDraftFailed, removeSyncedDrafts, updateDraft } from '@/lib/offline-drafts';
+import {
+  listDrafts,
+  getDraft,
+  markDraftSynced,
+  markDraftFailed,
+  markDraftConflict,
+  removeSyncedDrafts,
+  updateDraft,
+} from '@/lib/offline-drafts';
 import type { OfflineDraft } from '@/lib/offline-drafts';
 import { computeSha256 } from '@/lib/storage-dedup';
 
@@ -147,6 +155,21 @@ export async function syncSingleDraft(
 ): Promise<{ synced: boolean; error?: string; entityId?: string | null } | null> {
   const draft = await getDraft(draftId);
   if (!draft) return null;
+
+  // Older clients allowed “breakdown” to be saved as ordinary trip progress.
+  // A breakdown is safety-significant and must go through the structured
+  // incident/defect workflow so vehicle restriction, Transport review and
+  // maintenance follow-up cannot be bypassed. Quarantine legacy drafts as a
+  // conflict rather than retrying them indefinitely as failed progress writes.
+  if (
+    draft.draftType === 'trip_progress' &&
+    fd<string>(draft.formData, 'entryType', '') === 'breakdown'
+  ) {
+    const message =
+      'This saved breakdown must be re-entered using “Report incident, damage or defect” so the required safety and maintenance workflow is created.';
+    await markDraftConflict(draft.id, message);
+    return { synced: false, error: message };
+  }
 
   const endpoint = getEndpoint(draft);
   if (!endpoint) {

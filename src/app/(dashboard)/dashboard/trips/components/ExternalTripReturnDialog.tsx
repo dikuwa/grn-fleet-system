@@ -35,8 +35,8 @@ export function ExternalTripReturnDialog({
   );
   const [fuelLevel, setFuelLevel] = useState('');
   const [returnLocation, setReturnLocation] = useState('');
-  const [incidentDeclared, setIncidentDeclared] = useState(false);
-  const [outstandingReceiptsDeclared, setOutstandingReceiptsDeclared] = useState(false);
+  const [incidentDeclared, setIncidentDeclared] = useState<boolean | null>(null);
+  const [outstandingReceiptsDeclared, setOutstandingReceiptsDeclared] = useState<boolean | null>(null);
   const [comments, setComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -45,8 +45,8 @@ export function ExternalTripReturnDialog({
     setEndingOdometer(minimumOdometer == null ? '' : String(minimumOdometer));
     setFuelLevel('');
     setReturnLocation('');
-    setIncidentDeclared(false);
-    setOutstandingReceiptsDeclared(false);
+    setIncidentDeclared(null);
+    setOutstandingReceiptsDeclared(null);
     setComments('');
     setError('');
   };
@@ -68,6 +68,10 @@ export function ExternalTripReturnDialog({
     }
     if (!fuelLevel.trim() || !returnLocation.trim()) {
       setError('Fuel level and physical return location are required.');
+      return;
+    }
+    if (incidentDeclared === null || outstandingReceiptsDeclared === null) {
+      setError('Answer both return declarations with Yes or No before recording the vehicle return.');
       return;
     }
 
@@ -164,36 +168,20 @@ export function ExternalTripReturnDialog({
             />
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            <button
-              type="button"
-              aria-pressed={incidentDeclared}
-              onClick={() => setIncidentDeclared((value) => !value)}
-              disabled={submitting}
-              className={`focus-ring rounded-[8px] border p-3 text-left text-sm transition-colors disabled:opacity-60 ${
-                incidentDeclared
-                  ? 'border-status-warning-border bg-status-warning-bg/30 text-ink-950'
-                  : 'border-border bg-surface text-ink-700 hover:bg-muted/40'
-              }`}
-            >
-              <span className="font-medium">Incident or damage declared</span>
-              <span className="text-ink-500 mt-1 block text-xs">Select when an incident, damage or defect must be reconciled.</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={outstandingReceiptsDeclared}
-              onClick={() => setOutstandingReceiptsDeclared((value) => !value)}
-              disabled={submitting}
-              className={`focus-ring rounded-[8px] border p-3 text-left text-sm transition-colors disabled:opacity-60 ${
-                outstandingReceiptsDeclared
-                  ? 'border-status-warning-border bg-status-warning-bg/30 text-ink-950'
-                  : 'border-border bg-surface text-ink-700 hover:bg-muted/40'
-              }`}
-            >
-              <span className="font-medium">Outstanding receipts declared</span>
-              <span className="text-ink-500 mt-1 block text-xs">Select when fuel or trip evidence is still outstanding.</span>
-            </button>
-          </div>
+          <RequiredDeclaration
+            label="Any incident, damage or defect to declare?"
+            description="Choose Yes when an incident, damage or defect must be reconciled with the official trip record."
+            value={incidentDeclared}
+            onChange={setIncidentDeclared}
+            disabled={submitting}
+          />
+          <RequiredDeclaration
+            label="Any outstanding receipts to declare?"
+            description="Choose Yes when fuel or trip expense evidence is still outstanding."
+            value={outstandingReceiptsDeclared}
+            onChange={setOutstandingReceiptsDeclared}
+            disabled={submitting}
+          />
 
           <div className="space-y-1.5">
             <Label htmlFor={`external-return-comments-${tripId}`}>Return comments</Label>
@@ -225,5 +213,49 @@ export function ExternalTripReturnDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function RequiredDeclaration({
+  label,
+  description,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  description: string;
+  value: boolean | null;
+  onChange: (value: boolean) => void;
+  disabled: boolean;
+}) {
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-sm font-medium text-ink-700">
+        {label} <span className="text-status-error-text" aria-hidden="true">*</span>
+      </legend>
+      <p className="text-xs text-ink-500">{description}</p>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          type="button"
+          variant={value === true ? 'primary' : 'secondary'}
+          aria-pressed={value === true}
+          onClick={() => onChange(true)}
+          disabled={disabled}
+        >
+          Yes
+        </Button>
+        <Button
+          type="button"
+          variant={value === false ? 'primary' : 'secondary'}
+          aria-pressed={value === false}
+          onClick={() => onChange(false)}
+          disabled={disabled}
+        >
+          No
+        </Button>
+      </div>
+      {value === null && <p className="text-xs text-status-warning-text">Answer required</p>}
+    </fieldset>
   );
 }

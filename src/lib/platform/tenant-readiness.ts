@@ -11,6 +11,7 @@ import {
   workflowDefinitions,
   workflowSteps,
 } from '@/db/schema';
+import { inspectionTemplates } from '@/db/schema/trips';
 import {
   getTenantEntitlements,
   type SubscriptionStatusType,
@@ -43,6 +44,11 @@ export function isActivationSubscriptionReady(status: SubscriptionStatusType): b
   return status === 'TRIALING' || status === 'ACTIVE' || status === 'GRACE_PERIOD';
 }
 
+export function hasRequiredInspectionTemplates(types: Iterable<string>): boolean {
+  const activeTypes = new Set(types);
+  return activeTypes.has('departure') && activeTypes.has('return');
+}
+
 function subscriptionStatusLabel(status: SubscriptionStatusType) {
   return status.replaceAll('_', ' ').toLowerCase();
 }
@@ -66,6 +72,7 @@ export async function assessTenantOperationalReadiness(
     [departmentTotal],
     [tenantAdminTotal],
     activeWorkflows,
+    activeInspectionTemplates,
     entitlements,
   ] = await Promise.all([
     db
@@ -104,6 +111,15 @@ export async function assessTenantOperationalReadiness(
       .select({ id: workflowDefinitions.id, name: workflowDefinitions.name })
       .from(workflowDefinitions)
       .where(and(eq(workflowDefinitions.tenantId, tenantId), eq(workflowDefinitions.isActive, true))),
+    db
+      .select({ type: inspectionTemplates.type })
+      .from(inspectionTemplates)
+      .where(
+        and(
+          eq(inspectionTemplates.tenantId, tenantId),
+          eq(inspectionTemplates.isActive, true),
+        ),
+      ),
     getTenantEntitlements(tenantId),
   ]);
 
@@ -117,6 +133,10 @@ export async function assessTenantOperationalReadiness(
       .where(inArray(workflowSteps.definitionId, activeWorkflows.map((workflow) => workflow.id)));
     activeWorkflowWithSteps = Number(stepTotal?.total ?? 0) > 0;
   }
+
+  const inspectionTemplatesReady = hasRequiredInspectionTemplates(
+    activeInspectionTemplates.map((template) => template.type),
+  );
 
   const subscriptionStatus = entitlements?.subscriptionStatus ?? 'NOT_CONFIGURED';
   const subscriptionReady = isActivationSubscriptionReady(subscriptionStatus);
@@ -162,6 +182,15 @@ export async function assessTenantOperationalReadiness(
       severity: 'blocker',
       owner: 'tenant',
       ready: activeWorkflowWithSteps,
+    },
+    {
+      id: 'inspection-templates',
+      label: 'Departure and return inspection checklists',
+      description:
+        'Both active inspection checklists are required so vehicles cannot be issued or returned outside the governed inspection process.',
+      severity: 'blocker',
+      owner: 'tenant',
+      ready: inspectionTemplatesReady,
     },
     {
       id: 'subscription',

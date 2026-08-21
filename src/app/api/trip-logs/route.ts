@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { tripLogEntries, trips, vehicleAllocations } from '@/db/schema/trips';
+import { tripAuthorities, tripLogEntries, trips, vehicleAllocations } from '@/db/schema/trips';
 import { requestDrivers } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
@@ -195,16 +195,24 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
 
-    // Verify the trip exists and belongs to the tenant
+    // Verify the trip exists and belongs to the tenant. The current Trip
+    // Authority supplies the immutable departure odometer floor used below;
+    // unlike a "latest server reading" check, this remains safe when older
+    // offline daily logs reconnect and sync after newer journey evidence.
     const [trip] = await db
       .select({
         id: trips.id,
         tenantId: trips.tenantId,
         status: trips.status,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        beginningOdometer: tripAuthorities.beginningOdometer,
       })
       .from(trips)
       .innerJoin(vehicleAllocations, eq(trips.allocationId, vehicleAllocations.id))
+      .innerJoin(
+        tripAuthorities,
+        and(eq(tripAuthorities.tripId, trips.id), eq(tripAuthorities.tenantId, trips.tenantId)),
+      )
       .where(eq(trips.id, tripId))
       .limit(1);
 
@@ -276,6 +284,18 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: 'Odometer readings must be non-negative whole numbers' },
+        { status: 422 },
+      );
+    }
+    const authorityFloor = trip.beginningOdometer ?? 0;
+    if (
+      (out !== null && out < authorityFloor) ||
+      (incoming !== null && incoming < authorityFloor)
+    ) {
+      return NextResponse.json(
+        {
+          error: `Daily log odometer readings cannot be lower than the Trip Authority departure reading (${authorityFloor})`,
+        },
         { status: 422 },
       );
     }

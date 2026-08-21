@@ -10,7 +10,6 @@ import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { EmptyState } from '@/components/ui/empty-state';
 import { getSessionPermissions } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getServerSession } from '@/lib/session';
@@ -61,12 +60,15 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
 
   const canInvestigate = permissions.includes(Permissions.INCIDENT_INVESTIGATE) || permissions.includes(Permissions.TRIP_INCIDENT_MANAGE);
   const canInsurance = permissions.includes(Permissions.INCIDENT_INSURANCE_UPDATE);
-  const canTechnical = permissions.includes(Permissions.INCIDENT_TECHNICAL_CLEARANCE) || permissions.includes(Permissions.MAINTENANCE_MANAGE);
+  const canGrantTechnicalClearance = permissions.includes(Permissions.INCIDENT_TECHNICAL_CLEARANCE);
+  const canReturnVehicleToService = canGrantTechnicalClearance || permissions.includes(Permissions.MAINTENANCE_MANAGE);
   const canClose = permissions.includes(Permissions.INCIDENT_CLOSE_INVESTIGATION);
-  const readAllowed = canInvestigate || canInsurance || canTechnical || canClose || permissions.includes(Permissions.AUDIT_READ);
+  const readAllowed = canInvestigate || canInsurance || canReturnVehicleToService || canClose || permissions.includes(Permissions.AUDIT_READ);
   if (!readAllowed) notFound();
 
   const incident = row.incident;
+  const requiresTechnicalClearance =
+    incident.vehicleDamage || incident.vehicleSafe === false || incident.severity === 'critical';
   const thirdPartyDetails = incident.thirdPartyDetails as Record<string, unknown> | null;
   const witnessStatements = Array.isArray(incident.witnessStatements) ? incident.witnessStatements : [];
 
@@ -87,6 +89,7 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
                 <Badge variant={incident.severity === 'critical' || incident.severity === 'serious' ? 'error' : 'pending'} size="sm">{incident.severity}</Badge>
                 <Badge variant={incident.investigationStatus === 'closed' ? 'success' : 'info'} size="sm">{incident.investigationStatus.replaceAll('_', ' ')}</Badge>
                 {incident.detailsRequired && <Badge variant="warning" size="sm">Additional details required</Badge>}
+                {requiresTechnicalClearance && incident.technicalClearanceStatus !== 'cleared' && <Badge variant="warning" size="sm">Vehicle safety hold</Badge>}
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -96,6 +99,7 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
                 <div><dt className="text-ink-500 text-xs">Odometer</dt><dd className="text-ink-950 mt-0.5">{incident.odometerReading == null ? 'Not recorded' : `${incident.odometerReading.toLocaleString()} km`}</dd></div>
                 <div><dt className="text-ink-500 text-xs">Injuries</dt><dd className="text-ink-950 mt-0.5">{incident.injuries ? `${incident.numberInjured} recorded` : 'No'}</dd></div>
                 <div><dt className="text-ink-500 text-xs">Vehicle damage</dt><dd className="text-ink-950 mt-0.5">{incident.vehicleDamage ? 'Yes' : 'No'}</dd></div>
+                <div><dt className="text-ink-500 text-xs">Vehicle safe</dt><dd className="text-ink-950 mt-0.5">{incident.vehicleSafe === false ? 'No' : incident.vehicleSafe === true ? 'Yes' : 'Not recorded'}</dd></div>
                 <div><dt className="text-ink-500 text-xs">Third party involved</dt><dd className="text-ink-950 mt-0.5">{incident.thirdPartyInvolvement ? 'Yes' : 'No'}</dd></div>
                 <div><dt className="text-ink-500 text-xs">Continuation</dt><dd className="text-ink-950 mt-0.5 capitalize">{incident.continuationState.replaceAll('_', ' ')}</dd></div>
               </dl>
@@ -139,10 +143,11 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
               investigationClosedAt: incident.investigationClosedAt?.toISOString() || null,
             }}
             vehicleStatus={row.vehicleStatus}
-            vehicleDamage={incident.vehicleDamage}
+            requiresTechnicalClearance={requiresTechnicalClearance}
             canInvestigate={canInvestigate}
             canInsurance={canInsurance}
-            canTechnical={canTechnical}
+            canGrantTechnicalClearance={canGrantTechnicalClearance}
+            canReturnVehicleToService={canReturnVehicleToService}
             canClose={canClose}
           />
         </div>
@@ -181,7 +186,7 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
           </Card>
 
           <div className="border-brand-200 bg-brand-50/50 dark:border-brand-900 dark:bg-brand-950/20 rounded-[10px] border p-4">
-            <div className="flex items-start gap-3"><ShieldCheck className="text-brand-700 mt-0.5 h-5 w-5 shrink-0" /><p className="text-ink-700 text-xs leading-5">A vehicle cannot be returned to available service from this MVA until technical clearance is granted, all blocking defects are resolved, and no active trip still owns the vehicle.</p></div>
+            <div className="flex items-start gap-3"><ShieldCheck className="text-brand-700 mt-0.5 h-5 w-5 shrink-0" /><p className="text-ink-700 text-xs leading-5">A vehicle cannot be returned to available service from this incident until technical clearance is granted where required, all blocking defects are resolved, no active trip still owns the vehicle, and no other unresolved vehicle-safety incident remains uncleared.</p></div>
           </div>
         </aside>
       </div>

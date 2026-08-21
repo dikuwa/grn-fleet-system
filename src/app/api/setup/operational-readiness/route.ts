@@ -179,8 +179,8 @@ export async function GET(request: NextRequest) {
         label: 'Vehicle inspection checklists',
         description: inspectionTemplatesReady
           ? 'Active departure and return inspection templates are available for safe vehicle issue and return.'
-          : 'Review inspection templates before physical vehicle issue. A passing departure inspection is required before release.',
-        category: 'recommended',
+          : 'Active departure and return inspection templates are required before operational setup can be submitted. A passing departure inspection remains mandatory before physical vehicle release.',
+        category: 'required',
         ready: inspectionTemplatesReady,
         href: '/dashboard/inspections/templates',
         actionLabel: 'Review templates',
