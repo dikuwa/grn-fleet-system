@@ -2,8 +2,9 @@
 -- one membership row inside each tenant. Older data can contain duplicate rows
 -- because tenant_memberships previously had no uniqueness constraint.
 
--- Choose one canonical membership per tenant/user. Prefer the membership that
--- currently grants the most usable access, then the earliest membership.
+-- Build a canonical membership mapping for every tenant/user group. Prefer the
+-- membership that currently grants the most usable access, then the earliest
+-- membership.
 WITH ranked_memberships AS (
   SELECT
     "id",
@@ -20,8 +21,33 @@ WITH ranked_memberships AS (
         END,
         "joined_at" ASC,
         "id" ASC
-    ) AS canonical_id,
+    ) AS canonical_id
+  FROM "tenant_memberships"
+), ranked_assignments AS (
+  SELECT
+    assignment."id",
+    membership."canonical_id",
     row_number() OVER (
+      PARTITION BY membership."canonical_id", assignment."role_id"
+      ORDER BY
+        CASE WHEN assignment."tenant_membership_id" = membership."canonical_id" THEN 0 ELSE 1 END,
+        assignment."start_date" ASC,
+        assignment."id" ASC
+    ) AS rn
+  FROM "role_assignments" AS assignment
+  INNER JOIN ranked_memberships AS membership
+    ON membership."id" = assignment."tenant_membership_id"
+)
+DELETE FROM "role_assignments" AS assignment
+USING ranked_assignments AS ranked
+WHERE assignment."id" = ranked."id"
+  AND ranked.rn > 1;
+
+-- Reparent the remaining non-colliding role history to the canonical membership.
+WITH ranked_memberships AS (
+  SELECT
+    "id",
+    first_value("id") OVER (
       PARTITION BY "tenant_id", "user_id"
       ORDER BY
         CASE "status"
@@ -34,21 +60,17 @@ WITH ranked_memberships AS (
         END,
         "joined_at" ASC,
         "id" ASC
-    ) AS rn
+    ) AS canonical_id
   FROM "tenant_memberships"
-), duplicate_memberships AS (
-  SELECT "id", "canonical_id"
-  FROM ranked_memberships
-  WHERE rn > 1
 )
 UPDATE "role_assignments" AS assignment
-SET "tenant_membership_id" = duplicate."canonical_id"
-FROM duplicate_memberships AS duplicate
-WHERE assignment."tenant_membership_id" = duplicate."id";
+SET "tenant_membership_id" = membership."canonical_id"
+FROM ranked_memberships AS membership
+WHERE assignment."tenant_membership_id" = membership."id"
+  AND membership."id" <> membership."canonical_id";
 
--- Remove only the duplicate membership rows after their role history has been
--- moved to the canonical membership. Staff records reference the global user,
--- not the membership row, so no employee identity is lost.
+-- Remove only duplicate membership rows after their role assignments have been
+-- safely consolidated onto the canonical membership.
 WITH ranked_memberships AS (
   SELECT
     "id",

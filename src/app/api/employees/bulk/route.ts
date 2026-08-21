@@ -129,6 +129,7 @@ export async function POST(request: NextRequest) {
       lastName: employees.lastName,
       employmentStatus: employees.employmentStatus,
       availabilityStatus: employees.availabilityStatus,
+      archivedAt: employees.archivedAt,
       userId: employees.userId,
       officeId: employees.officeId,
       departmentId: employees.departmentId,
@@ -164,6 +165,7 @@ export async function POST(request: NextRequest) {
   // staff action disable the current/final Tenant Administrator or a driver
   // with live operational responsibility.
   let accessUserIds: string[] = [];
+  let globalProfileUserIds: string[] = [];
   if (action === 'archive') {
     const linkedUserIds = employeesFound
       .map((employee) => employee.userId)
@@ -249,6 +251,25 @@ export async function POST(request: NextRequest) {
             { status: 409 },
           );
         }
+
+        // The Better Auth identity is global. Archive only this tenant's
+        // membership unless the user has no remaining organisation membership
+        // that could still legitimately use the shared login.
+        const otherMemberships = await db
+          .select({ userId: tenantMemberships.userId, status: tenantMemberships.status })
+          .from(tenantMemberships)
+          .where(and(
+            inArray(tenantMemberships.userId, accessUserIds),
+            ne(tenantMemberships.tenantId, tenantId),
+          ));
+        const usersWithOtherUsableMemberships = new Set(
+          otherMemberships
+            .filter((membership) => membership.status !== 'access_removed')
+            .map((membership) => membership.userId),
+        );
+        globalProfileUserIds = accessUserIds.filter(
+          (userId) => !usersWithOtherUsableMemberships.has(userId),
+        );
       }
     }
   }
@@ -291,6 +312,26 @@ export async function POST(request: NextRequest) {
             );
           }
         }
+
+        // Only re-enable a global profile when this exact staff archive disabled
+        // it. A security suspension or disablement from another workflow remains
+        // authoritative and is never undone by bulk staff restore.
+        const archivedAtByUserId = new Map(
+          employeesFound
+            .filter((employee): employee is typeof employee & { userId: string } => Boolean(employee.userId))
+            .map((employee) => [employee.userId, employee.archivedAt] as const),
+        );
+        const profiles = await db
+          .select({ userId: userProfiles.userId, status: userProfiles.status, disabledAt: userProfiles.disabledAt })
+          .from(userProfiles)
+          .where(inArray(userProfiles.userId, accessUserIds));
+        globalProfileUserIds = profiles
+          .filter((profile) => {
+            if (profile.status !== 'disabled' || !profile.disabledAt) return false;
+            const archivedAt = archivedAtByUserId.get(profile.userId);
+            return Boolean(archivedAt) && new Date(archivedAt!).getTime() === new Date(profile.disabledAt).getTime();
+          })
+          .map((profile) => profile.userId);
       }
     }
   }
@@ -393,42 +434,33 @@ export async function POST(request: NextRequest) {
 
       if (accessUserIds.length === 0) return [employeeUpdate];
 
-      if (isArchive) {
-        return [
-          employeeUpdate,
-          executor
-            .update(tenantMemberships)
-            .set({ status: 'inactive' })
-            .where(and(
-              eq(tenantMemberships.tenantId, tenantId),
-              eq(tenantMemberships.status, 'active'),
-              inArray(tenantMemberships.userId, accessUserIds),
-            )),
-          executor
-            .update(userProfiles)
-            .set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
-            .where(and(inArray(userProfiles.userId, accessUserIds), eq(userProfiles.status, 'active'))),
-        ];
+      const membershipUpdate = executor
+        .update(tenantMemberships)
+        .set({ status: isArchive ? 'inactive' : 'active' })
+        .where(and(
+          eq(tenantMemberships.tenantId, tenantId),
+          eq(tenantMemberships.status, isArchive ? 'active' : 'inactive'),
+          inArray(tenantMemberships.userId, accessUserIds),
+        ));
+
+      if (globalProfileUserIds.length === 0) {
+        return [employeeUpdate, membershipUpdate];
       }
 
-      return [
-        employeeUpdate,
-        executor
-          .update(tenantMemberships)
-          .set({ status: 'active' })
-          .where(and(
-            eq(tenantMemberships.tenantId, tenantId),
-            eq(tenantMemberships.status, 'inactive'),
-            inArray(tenantMemberships.userId, accessUserIds),
-          )),
-        executor
-          .update(userProfiles)
-          .set({ accountEnabled: true, status: 'active', disabledAt: null, updatedAt: now })
-          .where(and(inArray(userProfiles.userId, accessUserIds), eq(userProfiles.status, 'disabled'))),
-      ];
+      const profileUpdate = executor
+        .update(userProfiles)
+        .set(isArchive
+          ? { accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now }
+          : { accountEnabled: true, status: 'active', disabledAt: null, updatedAt: now })
+        .where(and(
+          inArray(userProfiles.userId, globalProfileUserIds),
+          eq(userProfiles.status, isArchive ? 'active' : 'disabled'),
+        ));
+
+      return [employeeUpdate, membershipUpdate, profileUpdate];
     });
     updated = employeesFound.length;
-    disabledAccounts = accessUserIds.length;
+    disabledAccounts = globalProfileUserIds.length;
   }
 
   const actionLabel: Record<BulkAction, string> = {
@@ -449,6 +481,7 @@ export async function POST(request: NextRequest) {
     after: {
       count: updated,
       accountAccessChanges: disabledAccounts,
+      tenantMembershipAccessChanges: accessUserIds.length,
       reason: body.reason,
       availability,
       officeId: body.officeId,
