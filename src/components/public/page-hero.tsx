@@ -2,15 +2,14 @@
  * PageHero — restrained hero for public sub-pages.
  *
  * The background includes quiet technical linework so secondary public pages
- * feel intentional without competing with the copy. Eyebrow props remain
- * accepted for backwards compatibility but are not shown.
+ * feel intentional without competing with the copy. Public sub-page heroes
+ * begin directly with their title and do not support eyebrow labels.
  */
 
 import { SectionContainer } from '@/components/public/section';
 import { TechnicalBackdrop } from '@/components/public/technical-backdrop';
 
 export interface PageHeroProps {
-  eyebrow?: string;
   title: string;
   description?: string;
 }

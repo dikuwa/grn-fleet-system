@@ -21,6 +21,8 @@ export interface AppNotification {
 export interface NotificationFeed {
   notifications: AppNotification[];
   unreadCount: number;
+  actionRequiredCount: number;
+  attentionCount: number;
   preferences: {
     emailNotifications: boolean;
     inAppNotifications: boolean;

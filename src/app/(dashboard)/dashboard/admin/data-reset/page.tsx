@@ -23,7 +23,11 @@ import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
 import { TENANT_RESET_REQUEST_PHRASE } from '@/lib/reset-workflow';
 import { ResetSpecBuilder, type ResetBuilderValue } from '@/components/reset/reset-spec-builder';
-import { RESET_CATEGORY_CATALOG, type ResetSpec } from '@/lib/reset-catalog';
+import {
+  RESET_ALWAYS_PROTECTED,
+  RESET_CATEGORY_CATALOG,
+  type ResetSpec,
+} from '@/lib/reset-catalog';
 
 interface TenantResetRequest {
   id: string;
@@ -34,17 +38,25 @@ interface TenantResetRequest {
   tenantExecutable?: boolean;
   platformExecutionRequired?: boolean;
   backupCreated: boolean;
+  rollbackPossible: boolean;
   backupRecordCount: number | null;
   reviewedAt: string | null;
+  reviewedByName: string | null;
   reviewNotes: string | null;
   failureReason: string | null;
-  validationResults: { dryRunSummary?: { total?: number } } | null;
+  validationResults: {
+    dryRunSummary?: { total?: number };
+    protected?: string[];
+    plannedAt?: string;
+  } | null;
   results: { dryRunSummary?: { total?: number } } | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
   metadata: { resetSpec?: ResetSpec } | null;
+  approvalExpired?: boolean;
+  approvalExpiresAt?: string | null;
 }
 
 const STATUS: Record<string, { label: string; variant: BadgeProps['variant']; detail: string }> = {
@@ -270,13 +282,15 @@ export default function TenantDataResetPage() {
         <div className="flex items-start gap-3">
           <ShieldCheck className="text-status-warning-text mt-0.5 h-5 w-5 shrink-0" />
           <div>
-            <p className="text-ink-950 text-sm font-semibold">Approval and execution are separate safeguards</p>
+            <p className="text-ink-950 text-sm font-semibold">
+              Approval and execution are separate safeguards
+            </p>
             <p className="text-ink-600 mt-1 text-sm leading-relaxed">
               Submitting a request never deletes data. Platform Administration reviews the impact,
               approves the exact scope and verifies a recovery point. Operational and selective
-              resets then return here as <strong>Ready to Execute</strong> for Tenant Administration.
-              Protected clean-slate resets remain Platform-executed because they remove organisation,
-              people, fleet, access and configuration data.
+              resets then return here as <strong>Ready to Execute</strong> for Tenant
+              Administration. Protected clean-slate resets remain Platform-executed because they
+              remove organisation, people, fleet, access and configuration data.
             </p>
           </div>
         </div>
@@ -375,6 +389,9 @@ export default function TenantDataResetPage() {
                       : approvedWaitingRecovery
                         ? 'Approved. Platform Administration is verifying the recovery point before execution is enabled.'
                         : status.detail;
+                  const protectedCategories = item.validationResults?.protected?.length
+                    ? item.validationResults.protected
+                    : [...RESET_ALWAYS_PROTECTED];
 
                   return (
                     <article
@@ -391,13 +408,17 @@ export default function TenantDataResetPage() {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant={isReady ? 'success' : status.variant}>
-                            {isReady ? 'Ready to Execute' : status.label}
+                            {isReady ? 'Approved — Ready to execute' : status.label}
                           </Badge>
                           {item.backupCreated && (
-                            <Badge variant="success" size="sm">Recovery point verified</Badge>
+                            <Badge variant="success" size="sm">
+                              Recovery point verified
+                            </Badge>
                           )}
                           {item.platformExecutionRequired && (
-                            <Badge variant="warning" size="sm">Platform execution</Badge>
+                            <Badge variant="warning" size="sm">
+                              Platform execution
+                            </Badge>
                           )}
                         </div>
                         <span className="text-ink-400 text-xs">{formatDate(item.createdAt)}</span>
@@ -408,7 +429,8 @@ export default function TenantDataResetPage() {
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {item.metadata.resetSpec.categories.map((id) => (
                             <Badge key={id} variant="info" size="sm">
-                              {RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label ?? id}
+                              {RESET_CATEGORY_CATALOG.find((category) => category.id === id)
+                                ?.label ?? id}
                             </Badge>
                           ))}
                         </div>
@@ -418,12 +440,69 @@ export default function TenantDataResetPage() {
                         {typeof impact === 'number' ? ` Impact preview: ${impact} rows.` : ''}
                       </p>
 
+                      {item.reviewedAt && (
+                        <dl className="border-border mt-3 grid gap-3 rounded-[8px] border p-3 text-xs sm:grid-cols-2">
+                          <div>
+                            <dt className="text-ink-400">Approved/reviewed</dt>
+                            <dd className="text-ink-700 mt-0.5 font-medium">
+                              {formatDate(item.reviewedAt)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-ink-400">Platform reviewer</dt>
+                            <dd className="text-ink-700 mt-0.5 font-medium">
+                              {item.reviewedByName || 'Platform Administrator'}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-ink-400">Impact preview</dt>
+                            <dd className="text-ink-700 mt-0.5 font-medium">
+                              {typeof impact === 'number' ? `${impact} rows` : 'Not available'}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-ink-400">Approval expires</dt>
+                            <dd
+                              className={`mt-0.5 font-medium ${item.approvalExpired ? 'text-status-error-text' : 'text-ink-700'}`}
+                            >
+                              {formatDate(item.approvalExpiresAt ?? null)}
+                              {item.approvalExpired ? ' · expired' : ''}
+                            </dd>
+                          </div>
+                        </dl>
+                      )}
+
+                      {['approved', 'in_progress', 'completed'].includes(item.status) && (
+                        <div className="mt-3 space-y-2 text-xs">
+                          <div>
+                            <p className="text-ink-700 font-semibold">Approved scope</p>
+                            <p className="text-ink-500 mt-0.5">
+                              {(item.metadata?.resetSpec?.categories ?? [])
+                                .map(
+                                  (id) =>
+                                    RESET_CATEGORY_CATALOG.find((category) => category.id === id)
+                                      ?.label ?? id,
+                                )
+                                .join(', ') || item.scope.replaceAll('_', ' ')}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-ink-700 font-semibold">Explicitly preserved</p>
+                            <p className="text-ink-500 mt-0.5">{protectedCategories.join(', ')}</p>
+                          </div>
+                        </div>
+                      )}
+
                       {!['rejected', 'failed', 'cancelled'].includes(item.status) && (
                         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                           {[
                             ['Requested', true],
                             ['Impact reviewed', Boolean(item.validationResults?.dryRunSummary)],
-                            ['Approved', Boolean(item.reviewedAt) && ['approved', 'in_progress', 'completed'].includes(item.status)],
+                            [
+                              'Approved',
+                              Boolean(item.reviewedAt) &&
+                                ['approved', 'in_progress', 'completed'].includes(item.status),
+                            ],
                             ['Recovery verified', item.backupCreated],
                             ['In progress', Boolean(item.startedAt)],
                             ['Completed', item.status === 'completed'],
@@ -432,7 +511,11 @@ export default function TenantDataResetPage() {
                               key={String(label)}
                               className={`flex items-center gap-1.5 text-xs ${done ? 'text-status-success-text' : 'text-ink-400'}`}
                             >
-                              {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Clock3 className="h-3.5 w-3.5" />}
+                              {done ? (
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              ) : (
+                                <Clock3 className="h-3.5 w-3.5" />
+                              )}
                               <span>{String(label)}</span>
                             </div>
                           ))}
@@ -442,7 +525,9 @@ export default function TenantDataResetPage() {
                       {(item.reviewNotes || item.failureReason) && (
                         <div className="bg-muted/60 mt-3 rounded-[8px] p-3">
                           <p className="text-ink-700 text-xs font-semibold">Platform response</p>
-                          <p className="text-ink-600 mt-1 text-xs">{item.reviewNotes || item.failureReason}</p>
+                          <p className="text-ink-600 mt-1 text-xs">
+                            {item.reviewNotes || item.failureReason}
+                          </p>
                         </div>
                       )}
 
@@ -452,16 +537,22 @@ export default function TenantDataResetPage() {
                             <PlayCircle className="text-status-success-text mt-0.5 h-4 w-4 shrink-0" />
                             <div className="min-w-0 flex-1 space-y-2">
                               <div>
-                                <p className="text-ink-950 text-xs font-semibold">Final tenant execution</p>
+                                <p className="text-ink-950 text-xs font-semibold">
+                                  Final tenant execution
+                                </p>
                                 <p className="text-ink-600 mt-0.5 text-xs">
-                                  Type <strong>{item.confirmationPhrase}</strong>. The server will execute only the already-approved scope.
+                                  Type <strong>{item.confirmationPhrase}</strong>. The server will
+                                  execute only the already-approved scope.
                                 </p>
                               </div>
                               <Input
                                 aria-label="Reset execution confirmation"
                                 value={executionInputs[item.id] || ''}
                                 onChange={(event) =>
-                                  setExecutionInputs((current) => ({ ...current, [item.id]: event.target.value }))
+                                  setExecutionInputs((current) => ({
+                                    ...current,
+                                    [item.id]: event.target.value,
+                                  }))
                                 }
                                 autoComplete="off"
                               />
@@ -471,7 +562,8 @@ export default function TenantDataResetPage() {
                                 onClick={() => executeRequest(item)}
                                 loading={executingId === item.id}
                                 disabled={
-                                  executingId !== null || executionInputs[item.id] !== item.confirmationPhrase
+                                  executingId !== null ||
+                                  executionInputs[item.id] !== item.confirmationPhrase
                                 }
                               >
                                 Execute approved reset
@@ -484,11 +576,13 @@ export default function TenantDataResetPage() {
                       <div className="text-ink-400 mt-3 flex flex-wrap items-center gap-3 text-xs">
                         {item.status === 'completed' ? (
                           <>
-                            <CheckCircle2 className="text-status-success-text h-4 w-4" /> Completed {formatDate(item.completedAt)}
+                            <CheckCircle2 className="text-status-success-text h-4 w-4" /> Completed{' '}
+                            {formatDate(item.completedAt)}
                           </>
                         ) : item.status === 'rejected' ? (
                           <>
-                            <XCircle className="text-status-error-text h-4 w-4" /> Reviewed {formatDate(item.reviewedAt)}
+                            <XCircle className="text-status-error-text h-4 w-4" /> Reviewed{' '}
+                            {formatDate(item.reviewedAt)}
                           </>
                         ) : (
                           <>

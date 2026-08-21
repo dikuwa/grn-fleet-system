@@ -34,7 +34,7 @@ import { StyledSelect } from '@/components/ui/styled-select';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
 import { normalizeResetPreview, type ResetPreviewData } from '@/lib/reset-preview';
-import { tenantExecutionResetPhrase } from '@/lib/reset-workflow';
+import { resetExecutionOwner, tenantExecutionResetPhrase } from '@/lib/reset-workflow';
 import { PlatformOperationalReset } from './platform-operational-reset';
 import { ResetSpecBuilder, type ResetBuilderValue } from '@/components/reset/reset-spec-builder';
 import { RESET_CATEGORY_CATALOG, type ResetSpec } from '@/lib/reset-catalog';
@@ -356,10 +356,11 @@ export default function PlatformResetPage() {
     const requestPreview = normalizeResetPreview(request.validationResults);
     if (!request.tenantCode || !request.backupCreated || !requestPreview) return;
     const phrase = tenantExecutionResetPhrase(request.tenantCode);
-    const selectedCategories = requestPreview.resetSpec?.categories
-      .map((id) => RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label)
-      .filter(Boolean)
-      .join(', ') || 'Requests & operations';
+    const selectedCategories =
+      requestPreview.resetSpec?.categories
+        .map((id) => RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label)
+        .filter(Boolean)
+        .join(', ') || 'Requests & operations';
     setDetailOpen(false);
     confirm({
       title: `Execute this reset for ${request.tenantName || request.tenantCode}?`,
@@ -401,14 +402,22 @@ export default function PlatformResetPage() {
     [createTenantId, tenants],
   );
   const preview = normalizeResetPreview(selected?.validationResults);
-  const selectedSpec = (preview?.resetSpec ?? selected?.metadata?.resetSpec) as ResetSpec | undefined;
+  const selectedSpec = (preview?.resetSpec ?? selected?.metadata?.resetSpec) as
+    ResetSpec | undefined;
+  const selectedExecutionOwner = resetExecutionOwner({
+    createdFrom: selected?.metadata?.createdFrom,
+    preset: selectedSpec?.preset,
+  });
   const canExecute = Boolean(
     selected?.status === 'approved' &&
     preview?.fingerprint &&
     selected?.backupCreated &&
     selected?.rollbackPossible,
   );
-  const legacyUnsupported = Boolean(selected && selected.scope !== 'operational' && !selected.metadata?.resetSpec);
+  const canPlatformExecute = canExecute && selectedExecutionOwner === 'platform';
+  const legacyUnsupported = Boolean(
+    selected && selected.scope !== 'operational' && !selected.metadata?.resetSpec,
+  );
 
   return (
     <div className="space-y-6">
@@ -705,11 +714,14 @@ export default function PlatformResetPage() {
 
                 {selectedSpec && (
                   <section className="border-border rounded-[8px] border p-4">
-                    <h3 className="text-ink-950 text-sm font-semibold">Selected reset categories</h3>
+                    <h3 className="text-ink-950 text-sm font-semibold">
+                      Selected reset categories
+                    </h3>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {selectedSpec.categories.map((id) => (
                         <Badge key={id} variant="warning" size="sm">
-                          {RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label ?? id}
+                          {RESET_CATEGORY_CATALOG.find((category) => category.id === id)?.label ??
+                            id}
                         </Badge>
                       ))}
                       {selectedSpec.cutoff && (
@@ -765,13 +777,15 @@ export default function PlatformResetPage() {
                       These records are explicitly outside every reset plan.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {(preview.protected ?? [
-                        'Tenant identity and branding',
-                        'Subscription, billing and payments',
-                        'One Tenant Owner and all Platform Administrators',
-                        'Audit history',
-                        'Backups and reset history',
-                      ]).map((label) => (
+                      {(
+                        preview.protected ?? [
+                          'Tenant identity and branding',
+                          'Subscription, billing and payments',
+                          'One Tenant Owner and all Platform Administrators',
+                          'Audit history',
+                          'Backups and reset history',
+                        ]
+                      ).map((label) => (
                         <Badge key={label} variant="success" size="sm">
                           {label}
                         </Badge>
@@ -792,6 +806,25 @@ export default function PlatformResetPage() {
                           {selected.backupRecordCount ?? 0} records ·{' '}
                           {formatBytes(selected.backupSizeBytes)}. The archive is retained outside
                           Postgres and can be managed from Backup & Restore.
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                {selected.status === 'approved' && selectedExecutionOwner === 'tenant' && (
+                  <section className="border-status-success-text/25 bg-status-success-bg/20 rounded-[8px] border p-4">
+                    <div className="flex items-start gap-3">
+                      <ShieldCheck className="text-status-success-text mt-0.5 h-5 w-5 shrink-0" />
+                      <div>
+                        <p className="text-ink-950 text-sm font-semibold">
+                          Tenant execution handoff
+                        </p>
+                        <p className="text-ink-600 mt-1 text-xs leading-relaxed">
+                          This tenant-originated operational/selective plan is executed from Tenant
+                          Administration after the recovery point is verified. Platform
+                          Administration retains review, recovery and audit visibility but cannot
+                          execute this handed-off plan.
                         </p>
                       </div>
                     </div>
@@ -907,7 +940,7 @@ export default function PlatformResetPage() {
                         <HardDriveDownload className="h-4 w-4" /> Create recovery point
                       </Button>
                     )}
-                    {canExecute && (
+                    {canPlatformExecute && (
                       <Button
                         variant="destructive"
                         onClick={() => requestExecution(selected)}

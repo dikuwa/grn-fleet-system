@@ -19,6 +19,7 @@ import {
   tenantExecutionResetPhrase,
 } from '@/lib/reset-workflow';
 import { normalizeResetSpec, type ResetSpec } from '@/lib/reset-catalog';
+import { resetExecutionOwner } from '@/lib/reset-workflow';
 import { buildAdvancedResetPlan, type AdvancedResetPlan } from './advanced-reset-plan';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
@@ -174,7 +175,7 @@ async function executeResetPlanAtomically(
 export async function executeApprovedTenantOperationalReset(input: {
   resetRequestId: string;
   actorUserId: string;
-  actorTenantId: string;
+  actorTenantId?: string;
   confirmationPhrase: string;
   onStarted?: (context: {
     requestId: string;
@@ -199,6 +200,18 @@ export async function executeApprovedTenantOperationalReset(input: {
   const resetRequest = requestRow.request;
   const metadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
   const resetSpec = normalizeResetSpec(metadata.resetSpec, { target: 'tenant' });
+  if (input.actorTenantId && resetRequest.tenantId !== input.actorTenantId) {
+    throw new Error('Reset request not found');
+  }
+  if (
+    input.actorTenantId &&
+    resetExecutionOwner({ createdFrom: metadata.createdFrom, preset: resetSpec.preset }) !==
+      'tenant'
+  ) {
+    throw new Error(
+      'This reset remains Platform-executed. Tenant Administration can execute only tenant-originated operational or selective plans.',
+    );
+  }
   if (resetRequest.status !== 'approved')
     throw new Error('Reset request must be approved before execution');
 
