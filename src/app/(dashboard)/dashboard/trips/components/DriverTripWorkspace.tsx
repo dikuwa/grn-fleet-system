@@ -148,6 +148,8 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
     continuationState: 'safe_to_continue',
     vehicleSafe: true,
     passengerSafe: true,
+    incidentDeclared: '',
+    outstandingReceiptsDeclared: '',
   });
 
   const load = useCallback(async () => {
@@ -233,13 +235,16 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
             );
           }
         }
+        if (typeof form.incidentDeclared !== 'boolean' || typeof form.outstandingReceiptsDeclared !== 'boolean') {
+          throw new Error('Answer both return declarations with Yes or No before recording the vehicle return.');
+        }
         endpoint = `/api/trips/${tripId}/return`;
         payload = {
           endingOdometer: Number(form.endingOdometer),
           fuelLevel: form.fuelLevel,
           returnLocation: form.returnLocation,
-          incidentDeclared: form.incidentDeclared === true,
-          outstandingReceiptsDeclared: form.outstandingReceiptsDeclared === true,
+          incidentDeclared: form.incidentDeclared,
+          outstandingReceiptsDeclared: form.outstandingReceiptsDeclared,
           comments: form.comments,
         };
       } else {
@@ -316,7 +321,17 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
       setWorking(false);
       setAction(null);
       setIncidentFiles([]);
-      setForm({ fuelLevel: 'half', entryType: 'official_stop', incidentType: 'mechanical_defect', severity: 'minor', continuationState: 'safe_to_continue', vehicleSafe: true, passengerSafe: true });
+      setForm({
+        fuelLevel: 'half',
+        entryType: 'official_stop',
+        incidentType: 'mechanical_defect',
+        severity: 'minor',
+        continuationState: 'safe_to_continue',
+        vehicleSafe: true,
+        passengerSafe: true,
+        incidentDeclared: '',
+        outstandingReceiptsDeclared: '',
+      });
       void load();
       router.refresh();
     } catch (submitError) {
@@ -426,8 +441,18 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
               <div><Label required>Ending odometer</Label><Input inputMode="numeric" type="number" className="h-14 text-xl" value={String(form.endingOdometer || '')} onChange={(event) => patch('endingOdometer', event.target.value)} /></div>
               <FuelLevel value={String(form.fuelLevel)} onChange={(value) => patch('fuelLevel', value)} />
               <div><Label required>Return location</Label><Input value={String(form.returnLocation || '')} onChange={(event) => patch('returnLocation', event.target.value)} /></div>
-              <BooleanDeclaration label="Any incident or accident to declare?" value={form.incidentDeclared === true} onChange={(value) => patch('incidentDeclared', value)} />
-              <BooleanDeclaration label="Any outstanding receipts?" value={form.outstandingReceiptsDeclared === true} onChange={(value) => patch('outstandingReceiptsDeclared', value)} />
+              <BooleanDeclaration
+                label="Any incident, damage or defect to declare?"
+                value={typeof form.incidentDeclared === 'boolean' ? form.incidentDeclared : null}
+                onChange={(value) => patch('incidentDeclared', value)}
+                required
+              />
+              <BooleanDeclaration
+                label="Any outstanding receipts?"
+                value={typeof form.outstandingReceiptsDeclared === 'boolean' ? form.outstandingReceiptsDeclared : null}
+                onChange={(value) => patch('outstandingReceiptsDeclared', value)}
+                required
+              />
               <div><Label>Driver comments</Label><Textarea value={String(form.comments || '')} onChange={(event) => patch('comments', event.target.value)} /></div>
             </div>
           )}
@@ -541,14 +566,27 @@ function FuelLevel({ value, onChange }: { value: string; onChange: (value: strin
   return <div><Label required>Fuel level</Label><StyledSelect value={value} onChange={(event) => onChange(event.target.value)}><option value="empty">Empty</option><option value="quarter">¼ tank</option><option value="half">½ tank</option><option value="three_quarters">¾ tank</option><option value="full">Full</option></StyledSelect></div>;
 }
 
-function BooleanDeclaration({ label, value, onChange }: { label: string; value: boolean; onChange: (value: boolean) => void }) {
+function BooleanDeclaration({
+  label,
+  value,
+  onChange,
+  required = false,
+}: {
+  label: string;
+  value: boolean | null;
+  onChange: (value: boolean) => void;
+  required?: boolean;
+}) {
   return (
     <fieldset>
-      <legend className="mb-1.5 text-sm font-medium text-ink-700">{label}</legend>
+      <legend className="mb-1.5 text-sm font-medium text-ink-700">
+        {label}{required && <span className="text-status-error-text" aria-hidden="true"> *</span>}
+      </legend>
       <div className="grid grid-cols-2 gap-2">
-        <Button type="button" variant={value ? 'primary' : 'secondary'} onClick={() => onChange(true)}>Yes</Button>
-        <Button type="button" variant={!value ? 'primary' : 'secondary'} onClick={() => onChange(false)}>No</Button>
+        <Button type="button" variant={value === true ? 'primary' : 'secondary'} aria-pressed={value === true} onClick={() => onChange(true)}>Yes</Button>
+        <Button type="button" variant={value === false ? 'primary' : 'secondary'} aria-pressed={value === false} onClick={() => onChange(false)}>No</Button>
       </div>
+      {required && value === null && <p className="mt-1 text-xs text-status-warning-text">Answer required</p>}
     </fieldset>
   );
 }
