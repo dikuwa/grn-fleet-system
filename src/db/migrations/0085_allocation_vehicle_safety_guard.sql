@@ -10,6 +10,7 @@ AS $$
 DECLARE
   conflicting_id uuid;
   current_vehicle_status text;
+  requires_available_vehicle boolean;
 BEGIN
   -- Cancelled/released allocations do not reserve resources.
   IF NEW.state NOT IN ('provisional', 'confirmed', 'issued') THEN
@@ -30,9 +31,9 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('allocation-driver:' || NEW.driver_employee_id::text, 0));
   END IF;
 
-  -- Lock the vehicle row before accepting a new/provisional/confirmed live
-  -- allocation. Critical incident and inspection workflows update the same row,
-  -- so whichever transaction obtains this lock first establishes the ordering.
+  -- Lock the vehicle row before accepting a live allocation. Critical incident
+  -- and inspection workflows update the same row, so whichever transaction
+  -- obtains this lock first establishes the ordering.
   SELECT v.status
   INTO current_vehicle_status
   FROM vehicles v
@@ -44,18 +45,23 @@ BEGIN
       USING ERRCODE = '23503';
   END IF;
 
+  requires_available_vehicle := false;
+  IF NEW.state IN ('provisional', 'confirmed') THEN
+    IF TG_OP = 'INSERT' THEN
+      requires_available_vehicle := true;
+    ELSE
+      requires_available_vehicle :=
+        OLD.state NOT IN ('provisional', 'confirmed', 'issued')
+        OR NEW.vehicle_id IS DISTINCT FROM OLD.vehicle_id
+        OR NEW.start_at IS DISTINCT FROM OLD.start_at
+        OR NEW.end_at IS DISTINCT FROM OLD.end_at;
+    END IF;
+  END IF;
+
   -- A fresh or reactivated allocation may reserve only a currently available
   -- vehicle. Issued allocations are excluded from this status check because the
   -- physical-issue lifecycle can legitimately move the vehicle out of available.
-  IF NEW.state IN ('provisional', 'confirmed')
-     AND (
-       TG_OP = 'INSERT'
-       OR OLD.state NOT IN ('provisional', 'confirmed', 'issued')
-       OR NEW.vehicle_id IS DISTINCT FROM OLD.vehicle_id
-       OR NEW.start_at IS DISTINCT FROM OLD.start_at
-       OR NEW.end_at IS DISTINCT FROM OLD.end_at
-     )
-     AND current_vehicle_status <> 'available' THEN
+  IF requires_available_vehicle AND current_vehicle_status <> 'available' THEN
     RAISE EXCEPTION 'allocation_vehicle_not_available'
       USING ERRCODE = '23514';
   END IF;
