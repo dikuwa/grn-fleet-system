@@ -3,17 +3,11 @@
  *
  * Handles sign-in, session, and sign-out using Drizzle directly.
  * Compatible with the `better-auth/react` client library.
- *
- * The Better Auth v1.6.x client sends requests to:
- *   - POST /api/auth/sign-in/email  → sign-in (not /sign-in)
- *   - GET  /api/auth/get-session    → session info (not /session)
- *   - POST /api/auth/sign-out       → sign-out
- *
- * This handler matches those paths AND the shorter fallback paths.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user, account, session } from '@/db/schema';
+import { userProfiles } from '@/db/schema/auth';
 import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { parseCookies } from '@/lib/utils';
@@ -61,11 +55,18 @@ async function handleSignIn(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
     }
 
-    const [accountRecord] = await db
-      .select()
-      .from(account)
-      .where(and(eq(account.userId, userRecord.id), eq(account.providerId, 'email')))
-      .limit(1);
+    const [[accountRecord], [profile]] = await Promise.all([
+      db
+        .select()
+        .from(account)
+        .where(and(eq(account.userId, userRecord.id), eq(account.providerId, 'email')))
+        .limit(1),
+      db
+        .select({ status: userProfiles.status, accountEnabled: userProfiles.accountEnabled })
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, userRecord.id))
+        .limit(1),
+    ]);
 
     if (!accountRecord?.password) {
       return NextResponse.json({ error: 'No password set for this account' }, { status: 401 });
@@ -74,6 +75,13 @@ async function handleSignIn(request: NextRequest) {
     const isValid = await bcrypt.compare(password, accountRecord.password);
     if (!isValid) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+    }
+
+    if (profile && (!profile.accountEnabled || profile.status !== 'active')) {
+      return NextResponse.json(
+        { error: 'This account is disabled. Contact an administrator for assistance.' },
+        { status: 403 },
+      );
     }
 
     const { v4: uuid } = await import('uuid');
