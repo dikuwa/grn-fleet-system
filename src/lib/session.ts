@@ -200,19 +200,19 @@ async function resolveUserTenant(
     const candidates = await loadTenantCandidates(userId);
     if (candidates.length === 0) return null;
 
-    const ordered = preferredTenantId
-      ? [
-          ...candidates.filter((candidate) => candidate.id === preferredTenantId),
-          ...candidates.filter((candidate) => candidate.id !== preferredTenantId),
-        ]
-      : candidates;
-
-    for (const candidate of ordered) {
-      if (await tenantCandidateCanOperate(candidate)) {
-        return { tenantId: candidate.id, tenantSlug: candidate.slug };
-      }
+    // Single-tenant identities remain frictionless. Multi-tenant identities
+    // must present an explicit valid tenant context; never choose by row order.
+    if (candidates.length === 1) {
+      const onlyCandidate = candidates[0]!;
+      if (!(await tenantCandidateCanOperate(onlyCandidate))) return null;
+      return { tenantId: onlyCandidate.id, tenantSlug: onlyCandidate.slug };
     }
-    return null;
+
+    if (!preferredTenantId) return null;
+    const selected = candidates.find((candidate) => candidate.id === preferredTenantId);
+    if (!selected) return null;
+    if (!(await tenantCandidateCanOperate(selected))) return null;
+    return { tenantId: selected.id, tenantSlug: selected.slug };
   } catch {
     return null;
   }
