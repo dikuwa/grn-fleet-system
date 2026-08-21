@@ -163,7 +163,7 @@ export async function syncSingleDraft(
   // conflict rather than retrying them indefinitely as failed progress writes.
   if (
     draft.draftType === 'trip_progress' &&
-    fd(draft.formData, 'entryType', '') === 'breakdown'
+    fd<string>(draft.formData, 'entryType', '') === 'breakdown'
   ) {
     const message =
       'This saved breakdown must be re-entered using “Report incident, damage or defect” so the required safety and maintenance workflow is created.';
