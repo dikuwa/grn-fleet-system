@@ -87,6 +87,7 @@
     { "idx": 82, "version": "7", "when": 1787025600000, "tag": "0082_fleet_payment_release_guard", "breakpoints": true },
     { "idx": 83, "version": "7", "when": 1787158800000, "tag": "0083_multitenant_invitation_uniqueness", "breakpoints": true },
     { "idx": 84, "version": "7", "when": 1787159400000, "tag": "0084_tenant_membership_uniqueness", "breakpoints": true },
-    { "idx": 85, "version": "7", "when": 1787348400000, "tag": "0085_allocation_vehicle_safety_guard", "breakpoints": true }
+    { "idx": 85, "version": "7", "when": 1787348400000, "tag": "0085_allocation_vehicle_safety_guard", "breakpoints": true },
+    { "idx": 86, "version": "7", "when": 1787349000000, "tag": "0086_unified_incident_clearance_guard", "breakpoints": true }
   ]
 }
