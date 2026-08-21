@@ -107,12 +107,20 @@ function LoginForm() {
     }
   };
 
-  const resetLogin = () => {
+  const resetLogin = async () => {
+    setLoading(true);
+    try {
+      await fetch('/api/auth/sign-out', { method: 'POST' });
+    } catch {
+      // The form is still reset; the server cookie expiry is best-effort here.
+    }
     setTenantChoices([]);
     setSelectedTenantId('');
     setPostTenantRedirect('/dashboard');
+    setUsername('');
     setPassword('');
     setError(null);
+    setLoading(false);
   };
 
   return (
@@ -176,7 +184,7 @@ function LoginForm() {
           <Button type="button" className="w-full" loading={loading} disabled={!selectedTenantId} onClick={() => void handleTenantSelection()}>
             Continue
           </Button>
-          <Button type="button" variant="secondary" className="w-full" disabled={loading} onClick={resetLogin}>
+          <Button type="button" variant="secondary" className="w-full" disabled={loading} onClick={() => void resetLogin()}>
             Use another account
           </Button>
         </div>
