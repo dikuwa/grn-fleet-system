@@ -9,6 +9,7 @@ AS $$
 DECLARE
   v_vehicle_id uuid;
   v_requires_clearance boolean;
+  v_old_requires_clearance boolean;
 BEGIN
   IF TG_OP = 'UPDATE'
      AND OLD.technical_clearance_status = 'cleared'
@@ -22,11 +23,22 @@ BEGIN
     OR NEW.vehicle_safe IS FALSE
     OR NEW.severity = 'critical';
 
+  v_old_requires_clearance := false;
+  IF TG_OP = 'UPDATE' THEN
+    v_old_requires_clearance :=
+      OLD.vehicle_damage IS TRUE
+      OR OLD.vehicle_safe IS FALSE
+      OR OLD.severity = 'critical';
+  END IF;
+
+  -- Recheck when technical clearance is first granted, and also when an already
+  -- cleared incident later changes from non-safety to a safety-relevant state.
   IF NEW.technical_clearance_status <> 'cleared'
      OR NOT v_requires_clearance
      OR (
        TG_OP = 'UPDATE'
        AND OLD.technical_clearance_status IS NOT DISTINCT FROM NEW.technical_clearance_status
+       AND v_old_requires_clearance
      ) THEN
     RETURN NEW;
   END IF;
