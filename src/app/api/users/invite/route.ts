@@ -117,14 +117,28 @@ export async function POST(req: NextRequest) {
     }
 
     if (existingAccountUser) {
-      const [existingMembership] = await db
-        .select({ id: tenantMemberships.id, status: tenantMemberships.status })
-        .from(tenantMemberships)
-        .where(and(
-          eq(tenantMemberships.tenantId, session.tenantId),
-          eq(tenantMemberships.userId, existingAccountUser.id),
-        ))
-        .limit(1);
+      const [[existingMembership], [existingProfile]] = await Promise.all([
+        db
+          .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+          .from(tenantMemberships)
+          .where(and(
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(tenantMemberships.userId, existingAccountUser.id),
+          ))
+          .limit(1),
+        db
+          .select({ status: userProfiles.status, accountEnabled: userProfiles.accountEnabled })
+          .from(userProfiles)
+          .where(eq(userProfiles.userId, existingAccountUser.id))
+          .limit(1),
+      ]);
+
+      if (existingProfile && (!existingProfile.accountEnabled || existingProfile.status !== 'active')) {
+        return NextResponse.json(
+          { error: 'This GRN Fleet identity is disabled and cannot be linked to another organisation until it is re-enabled.' },
+          { status: 409 },
+        );
+      }
 
       if (existingMembership) {
         const message = existingMembership.status === 'active'
