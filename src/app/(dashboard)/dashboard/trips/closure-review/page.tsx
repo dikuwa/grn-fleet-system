@@ -63,6 +63,7 @@ interface ClosureTrip {
   latestReturnInspectionStatus: string | null;
   hasClosureRecord: boolean;
   returnDeclaration: ReturnDeclaration | null;
+  incidentEvidenceMismatch: boolean;
   returnDeclarationNeedsReconciliation: boolean;
   reconciliationReady: boolean;
   reconciliationBlockers: string[];
@@ -164,6 +165,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
     unverifiedFuelRows,
     unverifiedExpenseRows,
     unsafeIncidentRows,
+    allIncidentRows,
   ] = await Promise.all([
     tripIds.length
       ? db
@@ -241,6 +243,17 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
             ),
           )
       : Promise.resolve([] as Array<{ tripId: string }>),
+    tripIds.length
+      ? db
+          .select({ tripId: tripIncidents.tripId })
+          .from(tripIncidents)
+          .where(
+            and(
+              eq(tripIncidents.tenantId, tenantId),
+              inArray(tripIncidents.tripId, tripIds),
+            ),
+          )
+      : Promise.resolve([] as Array<{ tripId: string }>),
   ]);
 
   const latestReturnInspectionByTrip = new Map<string, { status: string }>();
@@ -254,6 +267,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
   const unverifiedFuelTripIds = new Set(unverifiedFuelRows.map((row) => row.tripId));
   const unverifiedExpenseTripIds = new Set(unverifiedExpenseRows.map((row) => row.tripId));
   const unsafeIncidentTripIds = new Set(unsafeIncidentRows.map((row) => row.tripId));
+  const allIncidentTripIds = new Set(allIncidentRows.map((row) => row.tripId));
   const driverMap = new Map(driverRows.map((driver) => [driver.id, driver]));
 
   return rows.map((row) => {
@@ -272,8 +286,13 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
     const hasPositiveReturnDeclaration = Boolean(
       returnDeclaration?.incidentDeclared || returnDeclaration?.outstandingReceiptsDeclared,
     );
+    const incidentEvidenceMismatch = Boolean(
+      returnDeclaration &&
+      !returnDeclaration.incidentDeclared &&
+      allIncidentTripIds.has(row.id),
+    );
     const returnDeclarationNeedsReconciliation = Boolean(
-      hasPositiveReturnDeclaration && !returnDeclaration?.reconciledAt,
+      (hasPositiveReturnDeclaration || incidentEvidenceMismatch) && !returnDeclaration?.reconciledAt,
     );
     const reconciliationBlockers: string[] = [];
 
@@ -297,7 +316,11 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       reconciliationBlockers.push('Safety-critical incident unresolved');
     }
     if (returnDeclarationNeedsReconciliation) {
-      reconciliationBlockers.push('Return declarations await reconciliation');
+      reconciliationBlockers.push(
+        incidentEvidenceMismatch
+          ? 'Incident evidence conflicts with the return declaration'
+          : 'Return declarations await reconciliation',
+      );
     }
 
     return {
@@ -320,6 +343,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       latestReturnInspectionStatus: latestReturnInspection?.status ?? null,
       hasClosureRecord: closureTripIds.has(row.id),
       returnDeclaration,
+      incidentEvidenceMismatch,
       returnDeclarationNeedsReconciliation,
       reconciliationReady: reconciliationBlockers.length === 0,
       reconciliationBlockers,
@@ -476,6 +500,9 @@ export default async function ClosureReviewPage() {
                           )}
                           {trip.returnDeclaration?.outstandingReceiptsDeclared && (
                             <Badge variant="pending" size="sm">Receipts declared</Badge>
+                          )}
+                          {trip.incidentEvidenceMismatch && !trip.returnDeclaration?.reconciledAt && (
+                            <Badge variant="emergency" size="sm">Incident declaration mismatch</Badge>
                           )}
                           {trip.returnDeclaration?.reconciledAt && (
                             <Badge variant="success" size="sm">Return declarations reconciled</Badge>
