@@ -9,7 +9,7 @@ import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
-const investigationStatuses = new Set(['pending', 'in_progress', 'awaiting_information', 'closed']);
+const investigationStatuses = new Set(['pending', 'in_progress', 'awaiting_information']);
 const NON_REVIVABLE_VEHICLE_STATUSES = new Set(['written_off', 'decommissioned']);
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -56,7 +56,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (action === 'investigation_update') {
       const investigationStatus = String(body.investigationStatus || context.incident.investigationStatus);
       if (!investigationStatuses.has(investigationStatus)) {
-        return NextResponse.json({ error: 'Select a valid investigation status' }, { status: 422 });
+        return NextResponse.json(
+          { error: 'Select pending, in progress, or awaiting information. Use Close investigation for final closure.' },
+          { status: 422 },
+        );
       }
       await runAtomicMutations((tx) => [
         tx.update(tripIncidents).set({
@@ -65,7 +68,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           policeReference: body.policeReference == null ? context.incident.policeReference : String(body.policeReference).trim() || null,
           policeReportFiled: typeof body.policeReportFiled === 'boolean' ? body.policeReportFiled : context.incident.policeReportFiled,
           administratorResponse: body.administratorResponse == null ? context.incident.administratorResponse : String(body.administratorResponse).trim() || null,
-          status: investigationStatus === 'closed' ? context.incident.status : 'under_review',
+          status: 'under_review',
           updatedAt: now,
         }).where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, auth.session.tenantId))),
         tx.insert(auditEvents).values({
@@ -274,6 +277,29 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             'trip_incident',
             ${id}::uuid
           FROM vehicle_claim
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id,
+            action, entity_type, entity_id, summary, after, source_channel
+          )
+          SELECT
+            ${auth.session.tenantId}::uuid,
+            ${Date.now()},
+            'vehicle_returned_to_service',
+            ${auth.session.user.id},
+            'vehicle.return_to_service',
+            'trip_incident',
+            ${id}::uuid,
+            ${`${context.incident.officialNumber || id}: vehicle returned to available service`},
+            jsonb_build_object(
+              'vehicleId', ${context.vehicleId}::text,
+              'previousStatus', ${context.vehicleStatus},
+              'newStatus', 'available'
+            ),
+            'web'
+          FROM status_event
           RETURNING id
         ),
         audit_insert AS (
