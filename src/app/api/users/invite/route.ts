@@ -116,6 +116,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let reactivateRemovedIdentity = false;
     if (existingAccountUser) {
       const [[existingMembership], [existingProfile]] = await Promise.all([
         db
@@ -133,7 +134,13 @@ export async function POST(req: NextRequest) {
           .limit(1),
       ]);
 
-      if (existingProfile && (!existingProfile.accountEnabled || existingProfile.status !== 'active')) {
+      // `removed` means the identity lost its final tenant membership through
+      // normal User Management removal. A new organisation grant may safely
+      // reactivate that reversible state. Deliberate security disablements,
+      // suspensions or other non-active states remain authoritative.
+      if (existingProfile?.status === 'removed') {
+        reactivateRemovedIdentity = true;
+      } else if (existingProfile && (!existingProfile.accountEnabled || existingProfile.status !== 'active')) {
         return NextResponse.json(
           { error: 'This GRN Fleet identity is disabled and cannot be linked to another organisation until it is re-enabled.' },
           { status: 409 },
@@ -217,11 +224,19 @@ export async function POST(req: NextRequest) {
           createdAt: now,
           updatedAt: now,
         });
-      } else if (!existingAccountUser.name && displayName) {
-        await tx
-          .update(user)
-          .set({ name: displayName, updatedAt: now })
-          .where(eq(user.id, userId));
+      } else {
+        if (!existingAccountUser.name && displayName) {
+          await tx
+            .update(user)
+            .set({ name: displayName, updatedAt: now })
+            .where(eq(user.id, userId));
+        }
+        if (reactivateRemovedIdentity) {
+          await tx
+            .update(userProfiles)
+            .set({ status: 'active', accountEnabled: true, disabledAt: null, updatedAt: now })
+            .where(and(eq(userProfiles.userId, userId), eq(userProfiles.status, 'removed')));
+        }
       }
 
       const [membership] = await tx
@@ -310,6 +325,7 @@ export async function POST(req: NextRequest) {
           roleIds: selectedRoles.map((role) => role.id),
           deliveryMode: resolvedDeliveryMode,
           existingAccount: isExistingAccount,
+          reactivatedRemovedIdentity: reactivateRemovedIdentity,
           passwordChanged: false,
         },
       }, tx);
@@ -369,6 +385,7 @@ export async function POST(req: NextRequest) {
         name: existingAccountUser?.name || displayName,
         username: resolvedUsername,
         existingAccount: isExistingAccount,
+        reactivatedRemovedIdentity: reactivateRemovedIdentity,
         tempPassword,
         credentials: isExistingAccount
           ? null
