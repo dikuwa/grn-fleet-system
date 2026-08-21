@@ -31,7 +31,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input, Label, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
-import { saveDraft } from '@/lib/offline-drafts';
+import { listDrafts, saveDraft } from '@/lib/offline-drafts';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
 import { useToast } from '@/lib/use-toast';
 import { computeSha256 } from '@/lib/storage-dedup';
@@ -214,6 +214,25 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
           passengersConfirmed: form.passengersConfirmed === true,
         };
       } else if (action === 'return') {
+        if (!online) {
+          throw new Error('Vehicle return must be recorded online so return declarations can be reconciled immediately.');
+        }
+        if (profile) {
+          const pendingIncidentDrafts = await listDrafts({
+            draftType: 'trip_incident',
+            syncStatuses: ['pending', 'failed', 'conflict'],
+            userId: profile.id,
+            tenantId: profile.tenantId,
+          });
+          const hasPendingTripIncident = pendingIncidentDrafts.some(
+            (draft) => draft.formData.tripId === tripId,
+          );
+          if (hasPendingTripIncident) {
+            throw new Error(
+              'This trip still has an incident, damage or defect draft waiting for sync or review. Sync or resolve that draft before recording the vehicle return.',
+            );
+          }
+        }
         endpoint = `/api/trips/${tripId}/return`;
         payload = {
           endingOdometer: Number(form.endingOdometer),
@@ -415,7 +434,8 @@ export function DriverTripWorkspace({ tripId }: { tripId: string }) {
 
           {action === 'progress' && (
             <div className="space-y-4">
-              <div><Label required>Stop type</Label><StyledSelect value={String(form.entryType)} onChange={(event) => patch('entryType', event.target.value)}><option value="official_stop">Official stop</option><option value="passenger_pickup">Passenger pickup</option><option value="passenger_drop_off">Passenger drop-off</option><option value="fuel_stop">Fuel stop</option><option value="destination_reached">Destination reached</option><option value="route_deviation">Route deviation</option><option value="breakdown">Breakdown</option></StyledSelect></div>
+              <div><Label required>Stop type</Label><StyledSelect value={String(form.entryType)} onChange={(event) => patch('entryType', event.target.value)}><option value="official_stop">Official stop</option><option value="passenger_pickup">Passenger pickup</option><option value="passenger_drop_off">Passenger drop-off</option><option value="fuel_stop">Fuel stop</option><option value="destination_reached">Destination reached</option><option value="route_deviation">Route deviation</option></StyledSelect></div>
+              <p className="text-xs text-ink-500">Breakdowns, defects and vehicle damage must be recorded with “Report incident, damage or defect” so the safety and maintenance workflow is created.</p>
               <div><Label>Location</Label><Input value={String(form.location || '')} onChange={(event) => patch('location', event.target.value)} /></div>
               <div><Label>Odometer</Label><Input inputMode="numeric" type="number" value={String(form.odometerReading || '')} onChange={(event) => patch('odometerReading', event.target.value)} /></div>
               {form.entryType === 'route_deviation' && <div><Label required>Deviation reason</Label><Textarea value={String(form.routeDeviationReason || '')} onChange={(event) => patch('routeDeviationReason', event.target.value)} /></div>}
