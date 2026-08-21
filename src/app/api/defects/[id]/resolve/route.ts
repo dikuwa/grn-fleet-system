@@ -13,9 +13,9 @@ import { createScopedNotifications } from '@/lib/notification-service';
  * Unassigned defects may be claimed by the first authorised Maintenance Officer.
  *
  * Resolving the last blocking defect only returns a vehicle to `available` when
- * the vehicle is no longer owned by an active trip and no MVA/incident record
- * still requires technical clearance. This prevents a repaired vehicle from
- * becoming allocatable before operational and safety review is complete.
+ * the vehicle is no longer owned by an active trip and no safety incident still
+ * requires technical clearance. This prevents a repaired vehicle from becoming
+ * allocatable before operational and safety review is complete.
  */
 export async function POST(
   request: NextRequest,
@@ -117,9 +117,13 @@ export async function POST(
             FROM trip_incidents ti
             INNER JOIN trips incident_trip ON incident_trip.id = ti.trip_id
             WHERE incident_trip.vehicle_id = v.id
+              AND incident_trip.tenant_id = ${session.tenantId}::uuid
               AND ti.tenant_id = ${session.tenantId}::uuid
-              AND ti.vehicle_damage = true
-              AND ti.status <> 'resolved'
+              AND (
+                ti.vehicle_damage = true
+                OR ti.vehicle_safe = false
+                OR ti.severity = 'critical'
+              )
               AND ti.technical_clearance_status <> 'cleared'
           )
         RETURNING v.id
@@ -197,27 +201,31 @@ export async function POST(
              FROM trip_incidents ti
              INNER JOIN trips incident_trip ON incident_trip.id = ti.trip_id
             WHERE incident_trip.vehicle_id = ${defect.vehicleId}::uuid
+              AND incident_trip.tenant_id = ${session.tenantId}::uuid
               AND ti.tenant_id = ${session.tenantId}::uuid
-              AND ti.vehicle_damage = true
-              AND ti.status <> 'resolved'
-              AND ti.technical_clearance_status <> 'cleared') AS pending_mva_clearance
+              AND (
+                ti.vehicle_damage = true
+                OR ti.vehicle_safe = false
+                OR ti.severity = 'critical'
+              )
+              AND ti.technical_clearance_status <> 'cleared') AS pending_safety_clearance
       `);
       const blockers = blockerResult.rows?.[0] as {
         blocking_defects?: number | string;
         active_trips?: number | string;
-        pending_mva_clearance?: number | string;
+        pending_safety_clearance?: number | string;
       } | undefined;
       const blockingDefects = Number(blockers?.blocking_defects ?? 0);
       const activeTrips = Number(blockers?.active_trips ?? 0);
-      const pendingMva = Number(blockers?.pending_mva_clearance ?? 0);
+      const pendingSafetyClearance = Number(blockers?.pending_safety_clearance ?? 0);
       if (blockingDefects > 0) {
         releaseBlockers.push(`${blockingDefects} other unresolved blocking defect${blockingDefects === 1 ? '' : 's'} remain.`);
       }
       if (activeTrips > 0) {
         releaseBlockers.push('The vehicle is still linked to an active trip lifecycle.');
       }
-      if (pendingMva > 0) {
-        releaseBlockers.push(`${pendingMva} incident/MVA record${pendingMva === 1 ? '' : 's'} still require technical clearance.`);
+      if (pendingSafetyClearance > 0) {
+        releaseBlockers.push(`${pendingSafetyClearance} safety incident/MVA record${pendingSafetyClearance === 1 ? '' : 's'} still require technical clearance.`);
       }
       if (releaseBlockers.length === 0) {
         releaseBlockers.push('The vehicle did not meet the automatic return-to-service conditions. Refresh the vehicle record before changing its operational status.');
