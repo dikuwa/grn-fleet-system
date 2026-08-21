@@ -73,11 +73,11 @@ export default async function LiveDemoPage() {
               </div>
             </>
           ) : (
-            <div className="border-border bg-surface max-w-2xl rounded-[10px] border p-6 sm:p-8">
+            <div className="border-border bg-surface mx-auto max-w-2xl rounded-[10px] border p-6 text-center sm:p-8">
               <h2 className="text-ink-950 text-2xl font-semibold tracking-tight">
                 Live demo temporarily unavailable
               </h2>
-              <p className="text-ink-500 mt-3 max-w-xl text-sm leading-relaxed sm:text-base">
+              <p className="text-ink-500 mx-auto mt-3 max-w-xl text-sm leading-relaxed sm:text-base">
                 No active public demo sandbox is currently published. You can still request an
                 isolated private evaluation workspace.
               </p>

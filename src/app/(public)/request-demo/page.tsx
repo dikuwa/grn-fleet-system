@@ -35,7 +35,6 @@ export default async function RequestDemoPage() {
   return (
     <>
       <PageHero
-        eyebrow={demo.pageTitle}
         title={`See ${siteName} Working`}
         description={demo.description}
       />
