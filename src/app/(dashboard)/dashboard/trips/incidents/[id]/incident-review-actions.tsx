@@ -86,8 +86,8 @@ export function IncidentReviewActions({
                   <option value="pending">Pending</option>
                   <option value="in_progress">In progress</option>
                   <option value="awaiting_information">Awaiting information</option>
-                  <option value="closed">Closed</option>
                 </StyledSelect>
+                <p className="text-ink-500 text-xs leading-5">Use the dedicated Close investigation action for final closure so technical-clearance and closure permissions are enforced.</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="police-reference">Police reference</Label>
