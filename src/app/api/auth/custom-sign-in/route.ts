@@ -101,6 +101,13 @@ export async function POST(request: NextRequest) {
       getUserTenantChoices(userRecord.id),
     ]);
 
+    if (profile && (!profile.accountEnabled || profile.status !== 'active')) {
+      return NextResponse.json(
+        { error: 'This account is disabled. Contact an administrator for assistance.' },
+        { status: 403 },
+      );
+    }
+
     if (tenantChoices.length === 0) {
       return NextResponse.json(
         { error: 'No active organisation access is available for this account.' },
