@@ -258,7 +258,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                   OR pending_incident.vehicle_safe = false
                   OR pending_incident.severity = 'critical'
                 )
-                AND pending_incident.status <> 'resolved'
                 AND pending_incident.technical_clearance_status <> 'cleared'
             )
           RETURNING id
@@ -277,29 +276,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             'trip_incident',
             ${id}::uuid
           FROM vehicle_claim
-          RETURNING id
-        ),
-        audit_insert AS (
-          INSERT INTO audit_events (
-            tenant_id, tenant_sequence, event_type, actor_user_id,
-            action, entity_type, entity_id, summary, after, source_channel
-          )
-          SELECT
-            ${auth.session.tenantId}::uuid,
-            ${Date.now()},
-            'vehicle_returned_to_service',
-            ${auth.session.user.id},
-            'vehicle.return_to_service',
-            'trip_incident',
-            ${id}::uuid,
-            ${`${context.incident.officialNumber || id}: vehicle returned to available service`},
-            jsonb_build_object(
-              'vehicleId', ${context.vehicleId}::text,
-              'previousStatus', ${context.vehicleStatus},
-              'newStatus', 'available'
-            ),
-            'web'
-          FROM status_event
           RETURNING id
         ),
         audit_insert AS (
