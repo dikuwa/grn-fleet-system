@@ -20,7 +20,6 @@ const progressTypes = [
   'passenger_drop_off',
   'fuel_stop',
   'overnight_stop',
-  'breakdown',
   'border_point',
   'destination_reached',
   'return_departure',
@@ -162,6 +161,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (action === 'progress') {
       const entryType = String(body.entryType || '');
+      if (entryType === 'breakdown') {
+        return NextResponse.json(
+          {
+            error:
+              'Breakdowns must be reported with “Report incident, damage or defect” so vehicle safety, Transport review and maintenance follow-up cannot be bypassed.',
+          },
+          { status: 422 },
+        );
+      }
       if (!progressTypes.includes(entryType as (typeof progressTypes)[number])) {
         return NextResponse.json({ error: 'Select a valid progress or stop type' }, { status: 422 });
       }
