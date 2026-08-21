@@ -7,15 +7,13 @@ import { tenantResetRequests } from '@/db/schema/reset-requests';
 import { previewTenantOperationalReset } from '@/lib/data-protection/reset-service';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { normalizeResetSpec } from '@/lib/reset-catalog';
+import { resolveTenantResetReadyNotification } from '@/lib/platform/reset-notifications';
 
 /**
  * Production-safe dry run. This never mutates tenant operational data and does
  * not use the development-only environment reset guard.
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -25,10 +23,18 @@ export async function POST(
 
     const { id } = await params;
     const db = getDb();
-    const [resetRequest] = await db.select().from(tenantResetRequests).where(eq(tenantResetRequests.id, id)).limit(1);
-    if (!resetRequest) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
+    const [resetRequest] = await db
+      .select()
+      .from(tenantResetRequests)
+      .where(eq(tenantResetRequests.id, id))
+      .limit(1);
+    if (!resetRequest)
+      return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
     if (!['approved', 'pending_review'].includes(resetRequest.status)) {
-      return NextResponse.json({ error: 'Dry run is available after submission/review and before execution.' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Dry run is available after submission/review and before execution.' },
+        { status: 400 },
+      );
     }
 
     const previousMetadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
@@ -38,35 +44,42 @@ export async function POST(
     // A fresh plan invalidates an earlier recovery point for this request. The
     // old snapshot remains safely retained in Backup & Restore, but execution
     // requires a new snapshot tied to this exact plan.
-    await db.update(tenantResetRequests).set({
-      validationResults: {
-        dryRunSummary: preview.dryRunSummary,
-        steps: preview.steps,
-        preserved: preview.preserved,
-        review: preview.review,
-        warnings: [],
-        errors: [],
-        fingerprint: preview.fingerprint,
-        plannedAt: preview.plannedAt,
-        resetSpec,
-        categoryCounts: preview.categoryCounts,
-        protected: preview.protected,
-      },
-      backupCreated: false,
-      backupLocation: null,
-      backupSizeBytes: null,
-      backupRecordCount: null,
-      rollbackPossible: false,
-      metadata: {
-        ...previousMetadata,
-        dryRunAt: preview.plannedAt,
-        dryRunFingerprint: preview.fingerprint,
-        dryRunTotal: preview.dryRunSummary.total,
-        backupSnapshotId: null,
-        resetSpec,
-      },
-      updatedAt: new Date(),
-    }).where(eq(tenantResetRequests.id, id));
+    await db
+      .update(tenantResetRequests)
+      .set({
+        validationResults: {
+          dryRunSummary: preview.dryRunSummary,
+          steps: preview.steps,
+          preserved: preview.preserved,
+          review: preview.review,
+          warnings: [],
+          errors: [],
+          fingerprint: preview.fingerprint,
+          plannedAt: preview.plannedAt,
+          resetSpec,
+          categoryCounts: preview.categoryCounts,
+          protected: preview.protected,
+        },
+        backupCreated: false,
+        backupLocation: null,
+        backupSizeBytes: null,
+        backupRecordCount: null,
+        rollbackPossible: false,
+        metadata: {
+          ...previousMetadata,
+          dryRunAt: preview.plannedAt,
+          dryRunFingerprint: preview.fingerprint,
+          dryRunTotal: preview.dryRunSummary.total,
+          backupSnapshotId: null,
+          resetSpec,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(tenantResetRequests.id, id));
+
+    // A refreshed plan invalidates any earlier recovery point and therefore
+    // also resolves an earlier tenant "ready to execute" action.
+    await resolveTenantResetReadyNotification(id);
 
     await recordAuditEvent({
       tenantId: resetRequest.tenantId,
@@ -89,6 +102,9 @@ export async function POST(
     });
   } catch (error) {
     console.error('[Platform Reset Dry-Run] POST failed:', error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
   }
 }

@@ -29,6 +29,7 @@ const publicRoutes = [
   '/services',
   '/contact',
   '/privacy',
+  '/demo',
   '/request-demo',
   '/faq',
 ];

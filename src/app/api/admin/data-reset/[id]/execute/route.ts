@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tenantResetRequests } from '@/db/schema/reset-requests';
+import { tenants } from '@/db/schema/tenants';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/reset-service';
 import { normalizeResetSpec } from '@/lib/reset-catalog';
-import { notifyResetRequesterOutcome } from '@/lib/platform/reset-notifications';
+import { resetExecutionOwner } from '@/lib/reset-workflow';
+import {
+  notifyPlatformResetExecution,
+  notifyResetRequesterOutcome,
+  resolveTenantResetReadyNotification,
+} from '@/lib/platform/reset-notifications';
 import { recordAuditEvent } from '@/lib/audit-event';
 import {
   acquireResetExecutionClaim,
@@ -22,12 +28,15 @@ export const maxDuration = 300;
  * after Platform Administration has approved the immutable plan and verified
  * a recovery point. Protected clean-slate resets remain Platform-executed.
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   let claimId: string | null = null;
   let resetRequestId = '';
+  let executionContext: {
+    tenantId: string;
+    tenantName: string;
+    tenantCode: string;
+    requesterUserId: string;
+  } | null = null;
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -49,14 +58,17 @@ export async function POST(
         requestedByUserId: tenantResetRequests.requestedByUserId,
         status: tenantResetRequests.status,
         backupCreated: tenantResetRequests.backupCreated,
+        rollbackPossible: tenantResetRequests.rollbackPossible,
+        reviewedAt: tenantResetRequests.reviewedAt,
+        validationResults: tenantResetRequests.validationResults,
         metadata: tenantResetRequests.metadata,
+        tenantName: tenants.name,
+        tenantCode: tenants.code,
       })
       .from(tenantResetRequests)
+      .innerJoin(tenants, eq(tenantResetRequests.tenantId, tenants.id))
       .where(
-        and(
-          eq(tenantResetRequests.id, id),
-          eq(tenantResetRequests.tenantId, session.tenantId),
-        ),
+        and(eq(tenantResetRequests.id, id), eq(tenantResetRequests.tenantId, session.tenantId)),
       )
       .limit(1);
 
@@ -68,18 +80,29 @@ export async function POST(
       (resetRequest.metadata as { resetSpec?: unknown } | null)?.resetSpec,
       { target: 'tenant' },
     );
+    const metadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
 
-    if (resetSpec.preset === 'clean_slate') {
+    if (
+      resetExecutionOwner({ createdFrom: metadata.createdFrom, preset: resetSpec.preset }) !==
+      'tenant'
+    ) {
       return NextResponse.json(
         {
           error:
-            'Protected clean-slate resets must be executed by Platform Administration after final recovery verification.',
+            'Tenant Administration can execute only tenant-originated operational or selective resets. This reset requires Platform execution.',
         },
         { status: 403 },
       );
     }
 
-    if (resetRequest.status !== 'approved' || !resetRequest.backupCreated) {
+    const validation = (resetRequest.validationResults ?? {}) as Record<string, unknown>;
+    if (
+      resetRequest.status !== 'approved' ||
+      !resetRequest.reviewedAt ||
+      !resetRequest.backupCreated ||
+      !resetRequest.rollbackPossible ||
+      typeof validation.fingerprint !== 'string'
+    ) {
       return NextResponse.json(
         {
           error:
@@ -88,6 +111,12 @@ export async function POST(
         { status: 409 },
       );
     }
+    executionContext = {
+      tenantId: resetRequest.tenantId,
+      tenantName: resetRequest.tenantName,
+      tenantCode: resetRequest.tenantCode,
+      requesterUserId: resetRequest.requestedByUserId,
+    };
 
     const claim = await acquireResetExecutionClaim({
       resetRequestId: id,
@@ -123,12 +152,21 @@ export async function POST(
       confirmationPhrase,
       onStarted: async (context) => {
         if (!context.tenantOrigin) return;
-        await notifyResetRequesterOutcome({
-          requestId: context.requestId,
-          tenantId: context.tenantId,
-          requesterUserId: context.requesterUserId,
-          status: 'in_progress',
-        });
+        await Promise.all([
+          resolveTenantResetReadyNotification(context.requestId),
+          notifyResetRequesterOutcome({
+            requestId: context.requestId,
+            tenantId: context.tenantId,
+            requesterUserId: context.requesterUserId,
+            status: 'in_progress',
+          }),
+          notifyPlatformResetExecution({
+            requestId: context.requestId,
+            tenantName: resetRequest.tenantName,
+            tenantCode: resetRequest.tenantCode,
+            status: 'in_progress',
+          }),
+        ]);
       },
     });
 
@@ -137,15 +175,27 @@ export async function POST(
     }
 
     if (result.tenantOrigin) {
-      await notifyResetRequesterOutcome({
-        requestId: id,
-        tenantId: result.tenantId,
-        requesterUserId: result.requesterUserId,
-        status: result.result,
-        notes:
-          result.result === 'failed'
-            ? 'The reset did not pass every integrity check. The verified recovery point remains available to Platform Administration.'
-            : null,
+      const failureNotes =
+        result.result === 'failed'
+          ? 'The reset did not pass every integrity check. The verified recovery point remains available to Platform Administration.'
+          : null;
+      await Promise.all([
+        notifyResetRequesterOutcome({
+          requestId: id,
+          tenantId: result.tenantId,
+          requesterUserId: result.requesterUserId,
+          status: result.result,
+          notes: failureNotes,
+        }),
+        notifyPlatformResetExecution({
+          requestId: id,
+          tenantName: result.tenantName,
+          tenantCode: result.tenantCode,
+          status: result.result,
+          notes: failureNotes,
+        }),
+      ]).catch((notificationError) => {
+        console.error('[Tenant Data Reset Execute] Outcome notification failed:', notificationError);
       });
     }
 
@@ -156,13 +206,41 @@ export async function POST(
   } catch (error) {
     if (claimId && resetRequestId) {
       await releaseResetExecutionClaim({ resetRequestId, claimId }).catch((releaseError) => {
-        console.error('[Tenant Data Reset Execute] Could not release execution claim:', releaseError);
+        console.error(
+          '[Tenant Data Reset Execute] Could not release execution claim:',
+          releaseError,
+        );
       });
     }
     console.error('[Tenant Data Reset Execute] POST failed:', error);
     const message = error instanceof Error ? error.message : String(error);
+    if (claimId && executionContext) {
+      await Promise.all([
+        notifyResetRequesterOutcome({
+          requestId: resetRequestId,
+          tenantId: executionContext.tenantId,
+          requesterUserId: executionContext.requesterUserId,
+          status: 'failed',
+          notes: message,
+        }),
+        notifyPlatformResetExecution({
+          requestId: resetRequestId,
+          tenantName: executionContext.tenantName,
+          tenantCode: executionContext.tenantCode,
+          status: 'failed',
+          notes: message,
+        }),
+      ]).catch((notificationError) => {
+        console.error(
+          '[Tenant Data Reset Execute] Failure notification failed:',
+          notificationError,
+        );
+      });
+    }
     const isPrecondition =
-      /approve|expired|dry run|recovery point|confirmation|changed|operational reset|ready|execution claim/i.test(message);
+      /approve|expired|dry run|recovery point|confirmation|changed|operational reset|ready|execution claim/i.test(
+        message,
+      );
     return NextResponse.json({ error: message }, { status: isPrecondition ? 409 : 500 });
   }
 }

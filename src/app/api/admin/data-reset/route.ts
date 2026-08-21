@@ -5,16 +5,16 @@ import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { tenantResetRequests } from '@/db/schema/reset-requests';
 import { tenants } from '@/db/schema/tenants';
+import { user } from '@/db/schema/better-auth';
 import { recordAuditEvent } from '@/lib/audit-event';
 import {
   notifyPlatformResetRequested,
   resolvePlatformResetRequestNotification,
 } from '@/lib/platform/reset-notifications';
-import {
-  matchesTenantResetRequestPhrase,
-  tenantExecutionResetPhrase,
-} from '@/lib/reset-workflow';
+import { matchesTenantResetRequestPhrase, tenantExecutionResetPhrase } from '@/lib/reset-workflow';
 import { normalizeResetSpec, resetScopeForSpec } from '@/lib/reset-catalog';
+import { isResetApprovalExpired, resetApprovalExpiresAt } from '@/lib/reset-execution-guard';
+import { resetExecutionOwner } from '@/lib/reset-workflow';
 
 const OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
 
@@ -40,8 +40,10 @@ export async function GET(request: NextRequest) {
         requestedByUserId: tenantResetRequests.requestedByUserId,
         confirmationPhrase: tenantResetRequests.confirmationPhrase,
         backupCreated: tenantResetRequests.backupCreated,
+        rollbackPossible: tenantResetRequests.rollbackPossible,
         backupRecordCount: tenantResetRequests.backupRecordCount,
         reviewedAt: tenantResetRequests.reviewedAt,
+        reviewedByName: user.name,
         reviewNotes: tenantResetRequests.reviewNotes,
         failureReason: tenantResetRequests.failureReason,
         validationResults: tenantResetRequests.validationResults,
@@ -53,6 +55,7 @@ export async function GET(request: NextRequest) {
         updatedAt: tenantResetRequests.updatedAt,
       })
       .from(tenantResetRequests)
+      .leftJoin(user, eq(tenantResetRequests.reviewedByUserId, user.id))
       .where(eq(tenantResetRequests.tenantId, auth.session.tenantId))
       .orderBy(desc(tenantResetRequests.createdAt));
 
@@ -64,13 +67,29 @@ export async function GET(request: NextRequest) {
             (item.metadata as { resetSpec?: unknown } | null)?.resetSpec,
             { target: 'tenant' },
           );
+          const metadata = (item.metadata ?? {}) as Record<string, unknown>;
+          const approvalExpired = isResetApprovalExpired(item.reviewedAt);
+          const validation = (item.validationResults ?? {}) as Record<string, unknown>;
           const tenantExecutable =
-            item.status === 'approved' && item.backupCreated && resetSpec.preset !== 'clean_slate';
+            item.status === 'approved' &&
+            Boolean(item.reviewedAt) &&
+            !approvalExpired &&
+            item.backupCreated &&
+            item.rollbackPossible &&
+            typeof validation.fingerprint === 'string' &&
+            resetExecutionOwner({ createdFrom: metadata.createdFrom, preset: resetSpec.preset }) ===
+              'tenant';
           return {
             ...item,
             confirmationPhrase: tenantExecutable ? item.confirmationPhrase : null,
             tenantExecutable,
-            platformExecutionRequired: resetSpec.preset === 'clean_slate',
+            platformExecutionRequired:
+              resetExecutionOwner({
+                createdFrom: metadata.createdFrom,
+                preset: resetSpec.preset,
+              }) === 'platform',
+            approvalExpired,
+            approvalExpiresAt: resetApprovalExpiresAt(item.reviewedAt)?.toISOString() ?? null,
           };
         }),
       },

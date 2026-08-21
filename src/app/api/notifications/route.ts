@@ -152,6 +152,12 @@ export async function GET(request: NextRequest) {
     const filtered = unreadOnly ? normalized.filter((item) => !item.isRead) : normalized;
     const items = filtered.slice(0, limit);
     const unreadCount = normalized.filter((item) => !item.isRead).length;
+    const actionRequiredCount = normalized.filter(
+      (item) => item.status === 'action_required',
+    ).length;
+    const attentionCount = normalized.filter(
+      (item) => !item.isRead || item.status === 'action_required',
+    ).length;
     const [preferences] = await db
       .select({
         emailNotifications: notificationPreferences.emailNotifications,
@@ -173,6 +179,8 @@ export async function GET(request: NextRequest) {
       data: {
         notifications: items,
         unreadCount,
+        actionRequiredCount,
+        attentionCount,
         preferences: preferences || {
           emailNotifications: true,
           inAppNotifications: true,
