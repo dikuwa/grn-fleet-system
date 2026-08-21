@@ -25,7 +25,14 @@ export async function GET(request: NextRequest) {
   }
 
   const tenants = await getUserTenantChoices(identity.id);
-  return NextResponse.json({ success: true, data: { tenants } });
+  const requestedTenantId = request.cookies.get(ACTIVE_TENANT_COOKIE)?.value ?? null;
+  const activeTenantId = tenants.some((tenant) => tenant.id === requestedTenantId)
+    ? requestedTenantId
+    : tenants.length === 1
+      ? tenants[0]!.id
+      : null;
+
+  return NextResponse.json({ success: true, data: { tenants, activeTenantId } });
 }
 
 export async function POST(request: NextRequest) {
