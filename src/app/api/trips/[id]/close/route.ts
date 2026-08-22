@@ -19,7 +19,7 @@ import { externalDriverAssignments } from '@/db/schema/external-driver-assignmen
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
-import { eq, and, desc, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
@@ -250,8 +250,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         .where(and(
           eq(tripIncidents.tripId, id),
           eq(tripIncidents.tenantId, tenantId),
-          eq(tripIncidents.safeToContinue, false),
-          ne(tripIncidents.status, 'resolved'),
+          or(
+            eq(tripIncidents.safeToContinue, false),
+            eq(tripIncidents.vehicleSafe, false),
+            eq(tripIncidents.vehicleDamage, true),
+            eq(tripIncidents.severity, 'critical'),
+          ),
+          or(
+            ne(tripIncidents.status, 'resolved'),
+            ne(tripIncidents.technicalClearanceStatus, 'cleared'),
+          ),
         ))
         .limit(1),
       db
@@ -310,7 +318,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
     if (unsafeIncident) {
-      return NextResponse.json({ error: 'A safety-critical incident remains unresolved' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'A vehicle-safety incident remains unresolved or still requires technical clearance.' },
+        { status: 409 },
+      );
     }
     if (!['awaiting_reconciliation', 'completed'].includes(authority.status)) {
       return NextResponse.json({ error: `Trip Authority is not ready for reconciliation (${authority.status})` }, { status: 409 });
@@ -433,6 +444,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 AND ti.tenant_id = ${tenantId}::uuid
                 AND COALESCE((ta.data -> 'returnDeclaration' ->> 'incidentDeclared')::boolean, false) = false
                 AND NULLIF(ta.data -> 'returnDeclaration' ->> 'reconciledAt', '') IS NULL
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM trip_incidents safety_incident
+              WHERE safety_incident.trip_id = ${id}::uuid
+                AND safety_incident.tenant_id = ${tenantId}::uuid
+                AND (
+                  safety_incident.safe_to_continue = false
+                  OR safety_incident.vehicle_safe = false
+                  OR safety_incident.vehicle_damage = true
+                  OR safety_incident.severity = 'critical'
+                )
+                AND (
+                  safety_incident.status <> 'resolved'
+                  OR safety_incident.technical_clearance_status <> 'cleared'
+                )
             )
             THEN '1'
             ELSE 'trip_closure_lifecycle_conflict'
