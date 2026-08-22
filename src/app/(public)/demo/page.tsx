@@ -21,22 +21,18 @@ export default async function LiveDemoPage() {
       <PageHero
         title="Explore the real fleet workflow."
         description="Choose an operational role and enter the actual GRN Fleet dashboard using synthetic demo data. No real organisation, employee, vehicle or payment information is used."
-      />
-
-      <section className="border-border bg-canvas border-b py-5">
-        <SectionContainer>
-          <div className="text-ink-600 flex flex-col gap-3 text-sm sm:flex-row sm:flex-wrap sm:gap-x-8">
-            <span className="inline-flex items-center gap-2">
-              <ShieldCheck className="text-brand-700 h-4 w-4" aria-hidden="true" />
-              Isolated demo tenant
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <Clock3 className="text-brand-700 h-4 w-4" aria-hidden="true" />
-              Sessions expire automatically
-            </span>
-          </div>
-        </SectionContainer>
-      </section>
+      >
+        <ul className="flex flex-col gap-3 text-sm font-medium text-white/90 sm:flex-row sm:flex-wrap sm:gap-x-8">
+          <li className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-teal-400" aria-hidden="true" />
+            Isolated demo tenant
+          </li>
+          <li className="flex items-center gap-2">
+            <Clock3 className="h-4 w-4 shrink-0 text-teal-400" aria-hidden="true" />
+            Sessions expire automatically
+          </li>
+        </ul>
+      </PageHero>
 
       <section className="bg-canvas py-12 md:py-16">
         <SectionContainer>
