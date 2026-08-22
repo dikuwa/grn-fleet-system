@@ -73,6 +73,7 @@ export const RESETTABLE_TABLES = [
   'transport_requests',
   'trip_amendments',
   'trip_authorised_drivers',
+  'trip_authorised_external_drivers',
   'trip_authorities',
   'trip_authority_passengers',
   'trip_authority_sequences',
