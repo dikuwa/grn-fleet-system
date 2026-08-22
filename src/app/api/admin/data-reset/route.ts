@@ -191,7 +191,38 @@ export async function POST(request: NextRequest) {
           resetSpec,
         },
       })
+      .onConflictDoNothing()
       .returning();
+
+    // The partial unique creation-slot index is the final race guard. A second
+    // request that lost a simultaneous insert returns a normal conflict instead
+    // of surfacing a database error or producing duplicate governance records.
+    if (!created) {
+      const competingRows = await db
+        .select({
+          id: tenantResetRequests.id,
+          status: tenantResetRequests.status,
+          reviewedAt: tenantResetRequests.reviewedAt,
+        })
+        .from(tenantResetRequests)
+        .where(
+          and(
+            eq(tenantResetRequests.tenantId, tenant.id),
+            inArray(tenantResetRequests.status, [...OPEN_STATUSES]),
+          ),
+        )
+        .orderBy(desc(tenantResetRequests.createdAt));
+      const competingRequest = competingRows.find((item) => isResetRequestBlocking(item));
+      return NextResponse.json(
+        {
+          error: competingRequest
+            ? `Your organisation already has an open reset request (${competingRequest.status.replace(/_/g, ' ')}).`
+            : 'Another reset request was created at the same time. Refresh before trying again.',
+          requestId: competingRequest?.id ?? null,
+        },
+        { status: 409 },
+      );
+    }
 
     await Promise.all([
       recordAuditEvent({

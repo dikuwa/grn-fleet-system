@@ -25,6 +25,8 @@ import {
   resetApprovalExpiresAt,
 } from '@/lib/reset-execution-guard';
 
+const RESET_OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -219,14 +221,7 @@ export async function POST(request: NextRequest) {
             reviewedAt: tenantResetRequests.reviewedAt,
           })
           .from(tenantResetRequests)
-          .where(
-            inArray(tenantResetRequests.status, [
-              'draft',
-              'pending_review',
-              'approved',
-              'in_progress',
-            ]),
-          ),
+          .where(inArray(tenantResetRequests.status, [...RESET_OPEN_STATUSES])),
       ]);
       const openTenantIds = new Set(
         openRows.filter((row) => isResetRequestBlocking(row)).map((row) => row.tenantId),
@@ -261,6 +256,7 @@ export async function POST(request: NextRequest) {
             },
           })),
         )
+        .onConflictDoNothing()
         .returning();
       return NextResponse.json(
         {
@@ -268,7 +264,9 @@ export async function POST(request: NextRequest) {
           data: {
             batchId,
             createdCount: created.length,
-            skippedCount: tenantRows.length - candidates.length,
+            // Includes demo sandboxes, pre-existing open requests, and any
+            // same-millisecond request that won the database creation slot.
+            skippedCount: tenantRows.length - created.length,
             requests: created,
           },
         },
@@ -293,12 +291,7 @@ export async function POST(request: NextRequest) {
       .where(
         and(
           eq(tenantResetRequests.tenantId, tenantId),
-          inArray(tenantResetRequests.status, [
-            'draft',
-            'pending_review',
-            'approved',
-            'in_progress',
-          ]),
+          inArray(tenantResetRequests.status, [...RESET_OPEN_STATUSES]),
         ),
       );
     const existingRequest = existingRows.find((item) => isResetRequestBlocking(item));
@@ -325,7 +318,34 @@ export async function POST(request: NextRequest) {
         rollbackPossible: false,
         metadata: { createdFrom: 'platform_admin', productionSafeFlow: true, resetSpec },
       })
+      .onConflictDoNothing()
       .returning();
+
+    if (!created) {
+      const competingRows = await db
+        .select({
+          id: tenantResetRequests.id,
+          status: tenantResetRequests.status,
+          reviewedAt: tenantResetRequests.reviewedAt,
+        })
+        .from(tenantResetRequests)
+        .where(
+          and(
+            eq(tenantResetRequests.tenantId, tenantId),
+            inArray(tenantResetRequests.status, [...RESET_OPEN_STATUSES]),
+          ),
+        );
+      const competingRequest = competingRows.find((item) => isResetRequestBlocking(item));
+      return NextResponse.json(
+        {
+          error: competingRequest
+            ? `This tenant already has an active reset request (${competingRequest.status.replaceAll('_', ' ')}).`
+            : 'Another reset request was created at the same time. Refresh before trying again.',
+          requestId: competingRequest?.id ?? null,
+        },
+        { status: 409 },
+      );
+    }
 
     return NextResponse.json(
       { success: true, data: { ...created, tenantName: tenant.name, tenantCode: tenant.code } },
