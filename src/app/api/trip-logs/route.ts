@@ -27,6 +27,7 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 
 const LOG_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const WINDHOEK_OFFSET_MS = 2 * 60 * 60 * 1000;
 
 function isValidLogDate(value: unknown): value is string {
   if (typeof value !== 'string' || !LOG_DATE_PATTERN.test(value)) return false;
@@ -46,6 +47,10 @@ function isValidOptionalTime(value: unknown): value is string | null | undefined
 
 function windhoekDateTime(logDate: string, time: string): Date {
   return new Date(`${logDate}T${time}:00+02:00`);
+}
+
+function windhoekCalendarDate(value: Date): string {
+  return new Date(value.getTime() + WINDHOEK_OFFSET_MS).toISOString().slice(0, 10);
 }
 
 /**
@@ -204,6 +209,9 @@ export async function POST(request: NextRequest) {
         id: trips.id,
         tenantId: trips.tenantId,
         status: trips.status,
+        startedAt: trips.startedAt,
+        returnedAt: trips.returnedAt,
+        closedAt: trips.closedAt,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         beginningOdometer: tripAuthorities.beginningOdometer,
       })
@@ -294,6 +302,27 @@ export async function POST(request: NextRequest) {
           { error: 'Only an assigned driver may add trip logs' },
           { status: 403 },
         );
+    }
+
+    // Daily logs represent actual journey days, not planned allocation dates.
+    // The lower bound is the recorded physical start; the upper bound is the
+    // recorded return/closure day, or today's Windhoek calendar day while the
+    // journey is still active. Idempotent offline replays were recovered above
+    // so an already-committed historical entry is never rejected by these live
+    // bounds after the trip advances.
+    const journeyStartDate = trip.startedAt ? windhoekCalendarDate(trip.startedAt) : null;
+    const journeyEndDate = windhoekCalendarDate(trip.returnedAt ?? trip.closedAt ?? new Date());
+    if (journeyStartDate && logDate < journeyStartDate) {
+      return NextResponse.json(
+        { error: `Log date cannot be before the recorded journey start (${journeyStartDate})` },
+        { status: 422 },
+      );
+    }
+    if (logDate > journeyEndDate) {
+      return NextResponse.json(
+        { error: `Log date cannot be after the current journey day (${journeyEndDate})` },
+        { status: 422 },
+      );
     }
 
     const out =
