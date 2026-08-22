@@ -20,7 +20,7 @@ import {
   requirePermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, desc, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { tripScopeCondition } from '@/lib/record-scope';
 import { runAtomicMutations } from '@/lib/db-atomic';
@@ -359,6 +359,60 @@ export async function POST(request: NextRequest) {
         { error: 'Odometer-in cannot be lower than odometer-out' },
         { status: 422 },
       );
+
+    // Enforce odometer chronology by journey date rather than server arrival
+    // order. This allows an older offline log to sync after a newer one while
+    // still preventing impossible backwards movement across different days.
+    // Same-day entries are intentionally ignored because multiple driver
+    // segments/handover records can legitimately share one Daily Log date.
+    const currentLogDate = new Date(`${logDate}T00:00:00+02:00`);
+    const [[previousLog], [nextLog]] = await Promise.all([
+      db
+        .select({
+          logDate: tripLogEntries.logDate,
+          odometerOut: tripLogEntries.odometerOut,
+          odometerIn: tripLogEntries.odometerIn,
+        })
+        .from(tripLogEntries)
+        .where(and(eq(tripLogEntries.tripId, tripId), lt(tripLogEntries.logDate, currentLogDate)))
+        .orderBy(desc(tripLogEntries.logDate))
+        .limit(1),
+      db
+        .select({
+          logDate: tripLogEntries.logDate,
+          odometerOut: tripLogEntries.odometerOut,
+          odometerIn: tripLogEntries.odometerIn,
+        })
+        .from(tripLogEntries)
+        .where(and(eq(tripLogEntries.tripId, tripId), gt(tripLogEntries.logDate, currentLogDate)))
+        .orderBy(asc(tripLogEntries.logDate))
+        .limit(1),
+    ]);
+    const previousFloor = previousLog?.odometerIn ?? previousLog?.odometerOut ?? null;
+    if (
+      previousFloor !== null &&
+      ((out !== null && out < previousFloor) || (incoming !== null && incoming < previousFloor))
+    ) {
+      return NextResponse.json(
+        {
+          error: `Daily log odometer cannot be lower than the previous journey day (${previousFloor})`,
+        },
+        { status: 422 },
+      );
+    }
+    const nextCeiling = nextLog?.odometerOut ?? nextLog?.odometerIn ?? null;
+    if (
+      nextCeiling !== null &&
+      ((out !== null && out > nextCeiling) || (incoming !== null && incoming > nextCeiling))
+    ) {
+      return NextResponse.json(
+        {
+          error: `Daily log odometer cannot exceed the next recorded journey day (${nextCeiling})`,
+        },
+        { status: 422 },
+      );
+    }
+
     const calculatedDistance = out !== null && incoming !== null ? incoming - out : null;
     const submittedDistance =
       distanceKm === null || distanceKm === undefined || distanceKm === ''
@@ -411,7 +465,7 @@ export async function POST(request: NextRequest) {
           tripId,
           clientSyncId: syncId,
           driverEmployeeId: employee.id,
-          logDate: new Date(`${logDate}T00:00:00+02:00`),
+          logDate: currentLogDate,
           odometerOut: out,
           odometerIn: incoming,
           departureTime: departureTime ? windhoekDateTime(logDate, departureTime) : null,
