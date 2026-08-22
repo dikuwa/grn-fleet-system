@@ -37,7 +37,19 @@ export async function PATCH(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = (await request.json().catch(() => ({}))) as { reason?: string };
-    const reason = body.reason?.trim() || 'Cancelled by user';
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+    if (reason.length < 5) {
+      return NextResponse.json(
+        { error: 'A cancellation reason of at least 5 characters is required.' },
+        { status: 400 },
+      );
+    }
+    if (reason.length > 500) {
+      return NextResponse.json(
+        { error: 'Cancellation reason must be 500 characters or fewer.' },
+        { status: 422 },
+      );
+    }
     const db = getDb();
 
     const [req] = await db

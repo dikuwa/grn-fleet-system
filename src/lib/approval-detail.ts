@@ -1,9 +1,11 @@
 import 'server-only';
 
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
+import { externalParties } from '@/db/schema/external-parties';
 import {
   requestActivities,
   requestAttachments,
@@ -96,6 +98,7 @@ export async function getApprovalDetail(input: {
     routes,
     attachments,
     allocation,
+    externalDriverAssignment,
     revision,
     override,
   ] = await Promise.all([
@@ -179,7 +182,44 @@ export async function getApprovalDetail(input: {
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .where(eq(vehicleAllocations.requestId, instance.requestId))
-      .orderBy(desc(vehicleAllocations.createdAt))
+      .orderBy(
+        sql`CASE
+          WHEN ${vehicleAllocations.state} = 'confirmed' THEN 0
+          WHEN ${vehicleAllocations.state} = 'issued' THEN 1
+          WHEN ${vehicleAllocations.state} = 'provisional' THEN 2
+          ELSE 3
+        END`,
+        desc(vehicleAllocations.updatedAt),
+        desc(vehicleAllocations.createdAt),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
+    db
+      .select({
+        id: externalDriverAssignments.id,
+        allocationId: externalDriverAssignments.allocationId,
+        state: externalDriverAssignments.state,
+        externalPartyId: externalDriverAssignments.externalPartyId,
+        firstName: externalParties.firstName,
+        lastName: externalParties.lastName,
+        organisationName: externalParties.organisationName,
+      })
+      .from(externalDriverAssignments)
+      .innerJoin(
+        externalParties,
+        and(
+          eq(externalParties.id, externalDriverAssignments.externalPartyId),
+          eq(externalParties.tenantId, input.tenantId),
+        ),
+      )
+      .where(
+        and(
+          eq(externalDriverAssignments.tenantId, input.tenantId),
+          eq(externalDriverAssignments.requestId, instance.requestId),
+          inArray(externalDriverAssignments.state, ['pending_acceptance', 'accepted']),
+        ),
+      )
+      .orderBy(desc(externalDriverAssignments.updatedAt), desc(externalDriverAssignments.createdAt))
       .limit(1)
       .then((rows) => rows[0] ?? null),
     db
@@ -195,6 +235,11 @@ export async function getApprovalDetail(input: {
       .where(eq(emergencyOverrides.instanceId, input.instanceId))
       .then((rows) => rows[0] ?? null),
   ]);
+
+  const currentExternalDriverAssignment =
+    allocation && externalDriverAssignment?.allocationId === allocation.id
+      ? externalDriverAssignment
+      : null;
 
   // `workflowSteps.assignedUserId` is definition-level data. Runtime role-holder
   // resolution (including acting delegations and availability) happens in the
@@ -237,6 +282,7 @@ export async function getApprovalDetail(input: {
     routes,
     attachments,
     allocation,
+    externalDriverAssignment: currentExternalDriverAssignment,
     revision,
     override,
     canAct,

@@ -44,12 +44,20 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
   });
 
   const isTransportReview = detail.currentStep.actionType === 'transport_review';
+  const hasCurrentDriver = Boolean(
+    detail.allocation?.driverEmployeeId || detail.externalDriverAssignment,
+  );
   const operationalAssignmentReady = Boolean(
     detail.allocation?.id &&
       detail.allocation.state === 'confirmed' &&
       detail.allocation.vehicleId &&
-      detail.allocation.driverEmployeeId,
+      hasCurrentDriver,
   );
+  const driverSummary = detail.allocation?.driverEmployeeId
+    ? 'employee driver assigned'
+    : detail.externalDriverAssignment
+      ? `external driver ${detail.externalDriverAssignment.firstName} ${detail.externalDriverAssignment.lastName} (${detail.externalDriverAssignment.state.replaceAll('_', ' ')})`
+      : 'driver not assigned';
 
   return (
     <div className="space-y-6">
@@ -82,7 +90,7 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
               <div className="min-w-0">
                 <p className="text-ink-950 text-sm font-semibold">Operational assignment ready</p>
                 <p className="text-ink-500 mt-1 text-xs leading-5">
-                  {detail.allocation.make} {detail.allocation.model} · {detail.allocation.licenceNumber} · confirmed vehicle and driver assignment.
+                  {detail.allocation.make} {detail.allocation.model} · {detail.allocation.licenceNumber} · {driverSummary}.
                   Use Allocation Detail for any vehicle or driver replacement so the mandatory reason and audit trail are captured.
                 </p>
               </div>
