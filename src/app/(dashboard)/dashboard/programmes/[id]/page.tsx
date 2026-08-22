@@ -71,6 +71,12 @@ interface LinkedRequest {
   createdAt: string;
 }
 
+interface ProgrammeCapabilities {
+  edit: boolean;
+  delete: boolean;
+  actions: Record<string, boolean>;
+}
+
 const STATUS_VARIANT: Record<string, 'success' | 'pending' | 'info' | 'error' | 'cancelled'> = {
   draft: 'pending',
   submitted: 'info',
@@ -154,6 +160,11 @@ export default function ProgrammeDetailPage() {
 
   const programme: Programme | undefined = data?.data?.programme;
   const linkedRequests: LinkedRequest[] = data?.data?.linkedRequests || [];
+  const capabilities: ProgrammeCapabilities = data?.data?.capabilities || {
+    edit: false,
+    delete: false,
+    actions: {},
+  };
 
   const openAction = useCallback((action: string) => {
     setNote('');
@@ -246,7 +257,9 @@ export default function ProgrammeDetailPage() {
     );
   }
 
-  const actions = ALLOWED_ACTIONS[programme.status] || [];
+  const actions = (ALLOWED_ACTIONS[programme.status] || []).filter(
+    (action) => capabilities.actions[action.action],
+  );
   const requiresNote = actionDialog === 'request_changes' || actionDialog === 'reject';
 
   return (
@@ -268,14 +281,14 @@ export default function ProgrammeDetailPage() {
               <ArrowLeft className="h-4 w-4" /> Back
             </Link>
           </Button>
-          {programme.status === 'draft' && (
+          {capabilities.edit && (
             <Button variant="secondary" size="sm" asChild>
               <Link href={`/dashboard/programmes/${id}/edit`}>
                 <Pencil className="h-4 w-4" /> Edit
               </Link>
             </Button>
           )}
-          {programme.status === 'draft' && (
+          {capabilities.delete && (
             <Button
               variant="destructive"
               size="sm"

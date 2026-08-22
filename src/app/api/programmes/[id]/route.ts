@@ -4,7 +4,7 @@ import { programmes } from '@/db/schema/programmes';
 import { transportRequests } from '@/db/schema/requests';
 import { employees, departments, offices } from '@/db/schema/people';
 import { regions } from '@/db/schema/fleet';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { hasPermission, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { eq, and, or, sql } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
@@ -123,7 +123,49 @@ export async function GET(
       .where(and(...linkedConditions))
       .orderBy(sql`${transportRequests.createdAt} DESC`);
 
-    return NextResponse.json({ success: true, data: { programme, linkedRequests } });
+    const [
+      canEditOwn,
+      canEditAny,
+      canSubmit,
+      canReview,
+      canApprove,
+      canReject,
+      canPublish,
+      canArchive,
+    ] = await Promise.all([
+      hasPermission(session, Permissions.PROGRAMME_EDIT_OWN),
+      hasPermission(session, Permissions.PROGRAMME_EDIT_ANY),
+      hasPermission(session, Permissions.PROGRAMME_SUBMIT),
+      hasPermission(session, Permissions.PROGRAMME_REVIEW),
+      hasPermission(session, Permissions.PROGRAMME_APPROVE),
+      hasPermission(session, Permissions.PROGRAMME_REJECT),
+      hasPermission(session, Permissions.PROGRAMME_PUBLISH),
+      hasPermission(session, Permissions.PROGRAMME_ARCHIVE),
+    ]);
+
+    const canEdit =
+      ['draft', 'changes_requested'].includes(programme.status) &&
+      (isOwner ? canEditOwn : canEditAny);
+    const capabilities = {
+      edit: canEdit,
+      delete: programme.status === 'draft' && (isOwner ? canEditOwn : canEditAny),
+      actions: {
+        submit:
+          ['draft', 'changes_requested'].includes(programme.status) &&
+          canSubmit &&
+          (isOwner || canEditAny),
+        request_changes: programme.status === 'submitted' && !isOwner && canReview,
+        approve: programme.status === 'submitted' && !isOwner && canApprove,
+        reject: programme.status === 'submitted' && !isOwner && canReject,
+        publish: programme.status === 'approved' && canPublish,
+        archive:
+          ['draft', 'changes_requested', 'approved', 'published', 'completed'].includes(programme.status) &&
+          canArchive,
+        complete: programme.status === 'published' && canPublish,
+      },
+    };
+
+    return NextResponse.json({ success: true, data: { programme, linkedRequests, capabilities } });
   } catch (error) {
     console.error('[Programmes] GET detail failed:', error);
     return NextResponse.json({ error: 'Failed to load programme' }, { status: 500 });

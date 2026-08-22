@@ -43,6 +43,9 @@ export default function EditProgrammePage() {
         const res = await fetch(`/api/programmes/${id}`);
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Failed to load programme');
+        if (!json.data?.capabilities?.edit) {
+          throw new Error('This programme cannot be edited in your current workspace or status.');
+        }
         const p = json.data?.programme;
         if (!cancelled) {
           setForm({
@@ -63,8 +66,9 @@ export default function EditProgrammePage() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load programme');
-          toast({ title: 'Load Failed', description: 'Could not load the programme.', variant: 'error' });
+          const message = err instanceof Error ? err.message : 'Failed to load programme';
+          setError(message);
+          toast({ title: 'Load Failed', description: message, variant: 'error' });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -92,23 +96,23 @@ export default function EditProgrammePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: form.title.trim(),
-          description: form.description.trim() || undefined,
-          purpose: form.purpose.trim() || undefined,
-          department: form.department.trim() || undefined,
+          description: form.description.trim() || null,
+          purpose: form.purpose.trim() || null,
+          department: form.department.trim() || null,
           ownerEmployeeId: form.ownerEmployeeId.trim() || undefined,
           startDate: form.startDate,
-          endDate: form.endDate || undefined,
-          venue: form.venue.trim() || undefined,
-          region: form.region.trim() || undefined,
-          expectedParticipants: form.expectedParticipants ? Number(form.expectedParticipants) : undefined,
-          plannedActivities: form.plannedActivities.trim() || undefined,
-          estimatedTravelRequirement: form.estimatedTravelRequirement.trim() || undefined,
-          estimatedKilometres: form.estimatedKilometres ? Number(form.estimatedKilometres) : undefined,
+          endDate: form.endDate || null,
+          venue: form.venue.trim() || null,
+          region: form.region.trim() || null,
+          expectedParticipants: form.expectedParticipants !== '' ? Number(form.expectedParticipants) : null,
+          plannedActivities: form.plannedActivities.trim() || null,
+          estimatedTravelRequirement: form.estimatedTravelRequirement.trim() || null,
+          estimatedKilometres: form.estimatedKilometres !== '' ? Number(form.estimatedKilometres) : null,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update programme');
-      toast({ title: 'Programme Updated', description: 'Draft changes saved.', variant: 'success' });
+      toast({ title: 'Programme Updated', description: 'Programme changes saved.', variant: 'success' });
       router.push(`/dashboard/programmes/${id}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to update programme';
@@ -229,7 +233,7 @@ export default function EditProgrammePage() {
                 size="sm"
                 type="submit"
                 loading={isSubmitting}
-                disabled={!form.title.trim() || !form.startDate || isSubmitting}
+                disabled={!form.title.trim() || !form.startDate || isSubmitting || Boolean(error && !form.title.trim())}
               >
                 <Save className="h-4 w-4" /> Save Changes
               </Button>
