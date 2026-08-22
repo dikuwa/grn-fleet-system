@@ -8,8 +8,26 @@ import {
   matchesPlatformExecutionResetPhrase,
   resetExecutionOwner,
 } from './reset-workflow';
+import { isResetRequestBlocking } from './reset-execution-guard';
 
 describe('tenant-to-platform reset confirmation phrases', () => {
+  it('does not let an expired approval permanently block a new request', () => {
+    const now = new Date('2026-08-22T12:00:00.000Z');
+    expect(
+      isResetRequestBlocking(
+        { status: 'approved', reviewedAt: new Date('2026-08-18T12:00:00.000Z') },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isResetRequestBlocking(
+        { status: 'approved', reviewedAt: new Date('2026-08-21T12:00:00.000Z') },
+        now,
+      ),
+    ).toBe(true);
+    expect(isResetRequestBlocking({ status: 'pending_review', reviewedAt: null }, now)).toBe(true);
+  });
+
   it('requires the exact tenant request phrase', () => {
     expect(TENANT_RESET_REQUEST_PHRASE).toBe('REQUEST RESET');
     expect(matchesTenantResetRequestPhrase('REQUEST RESET')).toBe(true);

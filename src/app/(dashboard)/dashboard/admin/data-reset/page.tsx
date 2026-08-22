@@ -149,11 +149,28 @@ export default function TenantDataResetPage() {
 
   const openRequest = useMemo(
     () =>
-      requests.find((item) =>
-        ['draft', 'pending_review', 'approved', 'in_progress'].includes(item.status),
+      requests.find(
+        (item) =>
+          ['draft', 'pending_review', 'approved', 'in_progress'].includes(item.status) &&
+          !(item.status === 'approved' && item.approvalExpired),
       ),
     [requests],
   );
+  const readyRequest = useMemo(
+    () => requests.find((item) => item.tenantExecutable && item.confirmationPhrase),
+    [requests],
+  );
+  const expiredApproval = useMemo(
+    () => requests.find((item) => item.status === 'approved' && item.approvalExpired),
+    [requests],
+  );
+  const currentRequest = readyRequest ?? openRequest;
+
+  const showRequest = (id: string) => {
+    document
+      .getElementById(`reset-request-${id}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
 
   const submit = async () => {
     setSubmitting(true);
@@ -296,21 +313,125 @@ export default function TenantDataResetPage() {
         </div>
       </section>
 
+      {!loading && currentRequest && (
+        <section
+          className={`rounded-[10px] border p-5 ${
+            readyRequest
+              ? 'border-status-success-text/30 bg-status-success-bg/20'
+              : 'border-status-info-text/25 bg-status-info-bg/20'
+          }`}
+          aria-label="Current reset request"
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex items-start gap-3">
+              {readyRequest ? (
+                <PlayCircle className="text-status-success-text mt-0.5 h-5 w-5 shrink-0" />
+              ) : (
+                <Clock3 className="text-status-info-text mt-0.5 h-5 w-5 shrink-0" />
+              )}
+              <div>
+                <p className="text-ink-950 text-sm font-semibold">
+                  {readyRequest
+                    ? 'Approved reset ready to execute'
+                    : currentRequest.status === 'pending_review'
+                      ? 'Reset request sent — awaiting Platform review'
+                      : currentRequest.status === 'draft'
+                        ? 'Reset plan drafted by Platform Administration'
+                        : currentRequest.status === 'approved' &&
+                            currentRequest.platformExecutionRequired
+                          ? 'Protected clean slate approved — Platform execution pending'
+                          : currentRequest.status === 'approved'
+                            ? 'Reset approved — recovery point being verified'
+                            : 'Reset currently in progress'}
+                </p>
+                <p className="text-ink-600 mt-1 max-w-3xl text-sm leading-relaxed">
+                  {readyRequest
+                    ? 'Platform Administration approved the exact scope and verified its recovery point. Review the confirmation phrase and execute it here when your organisation is ready.'
+                    : currentRequest.reason}
+                </p>
+              </div>
+            </div>
+            {!readyRequest && (
+              <Button variant="secondary" size="sm" onClick={() => showRequest(currentRequest.id)}>
+                View request status
+              </Button>
+            )}
+          </div>
+          {readyRequest?.confirmationPhrase && (
+            <div className="border-status-success-text/20 mt-4 grid gap-3 border-t pt-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+              <div className="space-y-1.5">
+                <Label htmlFor={`current-reset-${readyRequest.id}`}>
+                  Type <strong>{readyRequest.confirmationPhrase}</strong> to execute only the
+                  approved scope
+                </Label>
+                <Input
+                  id={`current-reset-${readyRequest.id}`}
+                  aria-label="Reset execution confirmation"
+                  value={executionInputs[readyRequest.id] || ''}
+                  onChange={(event) =>
+                    setExecutionInputs((current) => ({
+                      ...current,
+                      [readyRequest.id]: event.target.value,
+                    }))
+                  }
+                  autoComplete="off"
+                />
+              </div>
+              <Button
+                variant="destructive"
+                onClick={() => executeRequest(readyRequest)}
+                loading={executingId === readyRequest.id}
+                disabled={
+                  executingId !== null ||
+                  executionInputs[readyRequest.id] !== readyRequest.confirmationPhrase
+                }
+              >
+                Execute approved reset
+              </Button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {!loading && !currentRequest && expiredApproval && (
+        <section className="border-status-warning-text/25 bg-status-warning-bg/20 rounded-[10px] border p-4">
+          <div className="flex items-start gap-3">
+            <Clock3 className="text-status-warning-text mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="text-ink-950 text-sm font-semibold">Previous approval expired</p>
+              <p className="text-ink-600 mt-1 text-sm">
+                It can no longer be executed and no longer blocks this form. Submit a new request
+                for a fresh Platform review, impact preview and recovery point.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
       <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <Card>
           <CardHeader>
             <CardTitle>Request a reset</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <ResetSpecBuilder value={resetBuilder} onChange={setResetBuilder} />
-            {openRequest ? (
-              <div className="border-status-info-text/20 bg-status-info-bg/20 rounded-[8px] border p-4">
-                <p className="text-ink-950 text-sm font-semibold">A request is already open</p>
-                <p className="text-ink-600 mt-1 text-xs">
-                  Track it in the history panel. Only one reset request can be active at a time.
-                </p>
+            {loading ? (
+              <div className="text-ink-500 flex min-h-48 items-center justify-center gap-2 text-sm">
+                <Loader2 className="h-5 w-5 animate-spin" /> Checking current reset status…
               </div>
             ) : (
+              <ResetSpecBuilder value={resetBuilder} onChange={setResetBuilder} />
+            )}
+            {!loading && openRequest ? (
+              <div className="border-status-info-text/20 bg-status-info-bg/20 rounded-[8px] border p-4">
+                <p className="text-ink-950 text-sm font-semibold">
+                  This request is already in progress
+                </p>
+                <p className="text-ink-600 mt-1 text-xs">
+                  Its current status and next action are shown above. Only one active request is
+                  allowed at a time.
+                </p>
+              </div>
+            ) : !loading ? (
               <>
                 <div className="space-y-1.5">
                   <Label htmlFor="reset-reason">Reset reason</Label>
@@ -350,7 +471,7 @@ export default function TenantDataResetPage() {
                   <Database className="h-4 w-4" /> Send for platform approval
                 </Button>
               </>
-            )}
+            ) : null}
           </CardContent>
         </Card>
 
@@ -381,14 +502,17 @@ export default function TenantDataResetPage() {
                     item.results?.dryRunSummary?.total ??
                     item.validationResults?.dryRunSummary?.total;
                   const isReady = Boolean(item.tenantExecutable && item.confirmationPhrase);
-                  const approvedWaitingRecovery = item.status === 'approved' && !item.backupCreated;
-                  const detail = isReady
-                    ? 'Platform approval and recovery verification are complete. Review the scope and execute when your organisation is ready.'
-                    : item.platformExecutionRequired && item.status === 'approved'
-                      ? 'Protected clean slate is approved. Platform Administration performs the final execution after recovery verification.'
-                      : approvedWaitingRecovery
-                        ? 'Approved. Platform Administration is verifying the recovery point before execution is enabled.'
-                        : status.detail;
+                  const approvedWaitingRecovery =
+                    item.status === 'approved' && !item.backupCreated && !item.approvalExpired;
+                  const detail = item.approvalExpired
+                    ? 'This approval expired and cannot be executed. Submit a new request for a fresh safety review.'
+                    : isReady
+                      ? 'Platform approval and recovery verification are complete. Review the scope and execute when your organisation is ready.'
+                      : item.platformExecutionRequired && item.status === 'approved'
+                        ? 'Protected clean slate is approved. Platform Administration performs the final execution after recovery verification.'
+                        : approvedWaitingRecovery
+                          ? 'Approved. Platform Administration is verifying the recovery point before execution is enabled.'
+                          : status.detail;
                   const protectedCategories = item.validationResults?.protected?.length
                     ? item.validationResults.protected
                     : [...RESET_ALWAYS_PROTECTED];
@@ -407,8 +531,16 @@ export default function TenantDataResetPage() {
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant={isReady ? 'success' : status.variant}>
-                            {isReady ? 'Approved — Ready to execute' : status.label}
+                          <Badge
+                            variant={
+                              item.approvalExpired ? 'error' : isReady ? 'success' : status.variant
+                            }
+                          >
+                            {item.approvalExpired
+                              ? 'Approval expired'
+                              : isReady
+                                ? 'Approved — Ready to execute'
+                                : status.label}
                           </Badge>
                           {item.backupCreated && (
                             <Badge variant="success" size="sm">
@@ -541,32 +673,16 @@ export default function TenantDataResetPage() {
                                   Final tenant execution
                                 </p>
                                 <p className="text-ink-600 mt-0.5 text-xs">
-                                  Type <strong>{item.confirmationPhrase}</strong>. The server will
-                                  execute only the already-approved scope.
+                                  Execution controls are shown in the prominent current-request
+                                  panel above.
                                 </p>
                               </div>
-                              <Input
-                                aria-label="Reset execution confirmation"
-                                value={executionInputs[item.id] || ''}
-                                onChange={(event) =>
-                                  setExecutionInputs((current) => ({
-                                    ...current,
-                                    [item.id]: event.target.value,
-                                  }))
-                                }
-                                autoComplete="off"
-                              />
                               <Button
                                 size="sm"
-                                variant="destructive"
-                                onClick={() => executeRequest(item)}
-                                loading={executingId === item.id}
-                                disabled={
-                                  executingId !== null ||
-                                  executionInputs[item.id] !== item.confirmationPhrase
-                                }
+                                variant="secondary"
+                                onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
                               >
-                                Execute approved reset
+                                Go to execution controls
                               </Button>
                             </div>
                           </div>

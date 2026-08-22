@@ -71,6 +71,9 @@ interface ResetRequest {
   completedAt: string | null;
   executionTimeMs: number | null;
   reviewNotes: string | null;
+  reviewedAt: string | null;
+  approvalExpired?: boolean;
+  approvalExpiresAt?: string | null;
   metadata: Record<string, unknown> | null;
 }
 interface ResetStats {
@@ -78,6 +81,7 @@ interface ResetStats {
   draft: number;
   pendingReview: number;
   approved: number;
+  expiredApprovals: number;
   completed: number;
   failed: number;
 }
@@ -124,6 +128,7 @@ export default function PlatformResetPage() {
     draft: 0,
     pendingReview: 0,
     approved: 0,
+    expiredApprovals: 0,
     completed: 0,
     failed: 0,
   });
@@ -261,7 +266,10 @@ export default function PlatformResetPage() {
     }
   };
 
-  const patchRequest = async (request: ResetRequest, action: 'submit' | 'approve' | 'reject') => {
+  const patchRequest = async (
+    request: ResetRequest,
+    action: 'submit' | 'approve' | 'renew' | 'reject',
+  ) => {
     setProcessingId(request.id);
     try {
       const res = await fetch(`/api/platform/reset/${request.id}`, {
@@ -281,7 +289,9 @@ export default function PlatformResetPage() {
             ? 'Reset submitted for review'
             : action === 'approve'
               ? 'Reset approved'
-              : 'Reset rejected',
+              : action === 'renew'
+                ? 'Reset approval renewed'
+                : 'Reset rejected',
         variant: 'success',
       });
       setDetailOpen(false);
@@ -410,9 +420,16 @@ export default function PlatformResetPage() {
   });
   const canExecute = Boolean(
     selected?.status === 'approved' &&
+    !selected?.approvalExpired &&
     preview?.fingerprint &&
     selected?.backupCreated &&
     selected?.rollbackPossible,
+  );
+  const freshPreviewAfterExpiry = Boolean(
+    selected?.approvalExpired &&
+    selected.reviewedAt &&
+    preview?.plannedAt &&
+    new Date(preview.plannedAt) > new Date(selected.reviewedAt),
   );
   const canPlatformExecute = canExecute && selectedExecutionOwner === 'platform';
   const legacyUnsupported = Boolean(
@@ -458,13 +475,18 @@ export default function PlatformResetPage() {
 
       <section
         aria-label="Reset summary"
-        className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6"
+        className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7"
       >
         {[
           ['Total', stats.total, 'text-ink-950'],
           ['Draft', stats.draft, 'text-ink-700'],
           ['Pending', stats.pendingReview, 'text-status-warning-text'],
-          ['Approved', stats.approved, 'text-status-info-text'],
+          [
+            'Approved',
+            Math.max(0, stats.approved - stats.expiredApprovals),
+            'text-status-info-text',
+          ],
+          ['Expired', stats.expiredApprovals, 'text-status-error-text'],
           ['Completed', stats.completed, 'text-status-success-text'],
           ['Failed', stats.failed, 'text-status-error-text'],
         ].map(([label, value, tone]) => (
@@ -530,8 +552,8 @@ export default function PlatformResetPage() {
                     <p className="text-ink-950 text-sm font-semibold">
                       {request.tenantName || request.tenantId}
                     </p>
-                    <Badge variant={config.variant} size="sm">
-                      {config.label}
+                    <Badge variant={request.approvalExpired ? 'error' : config.variant} size="sm">
+                      {request.approvalExpired ? 'Approval expired' : config.label}
                     </Badge>
                     <Badge variant={request.scope === 'operational' ? 'info' : 'warning'} size="sm">
                       {request.scope.replace(/_/g, ' ')}
@@ -669,8 +691,14 @@ export default function PlatformResetPage() {
               <DialogHeader>
                 <div className="flex flex-wrap items-center gap-2">
                   <DialogTitle>{selected.tenantName || 'Tenant'} reset</DialogTitle>
-                  <Badge variant={STATUS_CONFIG[selected.status]?.variant}>
-                    {STATUS_CONFIG[selected.status]?.label || selected.status}
+                  <Badge
+                    variant={
+                      selected.approvalExpired ? 'error' : STATUS_CONFIG[selected.status]?.variant
+                    }
+                  >
+                    {selected.approvalExpired
+                      ? 'Approval expired'
+                      : STATUS_CONFIG[selected.status]?.label || selected.status}
                   </Badge>
                 </div>
                 <DialogDescription>{selected.reason}</DialogDescription>
@@ -687,6 +715,24 @@ export default function PlatformResetPage() {
                       </p>
                     </div>
                   </div>
+                )}
+
+                {selected.approvalExpired && (
+                  <section className="border-status-error-text/25 bg-status-error-bg/20 rounded-[8px] border p-4">
+                    <div className="flex items-start gap-3">
+                      <TriangleAlert className="text-status-error-text mt-0.5 h-5 w-5 shrink-0" />
+                      <div>
+                        <p className="text-ink-950 text-sm font-semibold">
+                          Tenant execution is no longer authorised
+                        </p>
+                        <p className="text-ink-600 mt-1 text-xs leading-relaxed">
+                          Approval expired {formatDate(selected.approvalExpiresAt ?? null)}. Run a
+                          fresh impact preview, record new review notes and renew approval. Any old
+                          recovery point remains retained but cannot authorise execution.
+                        </p>
+                      </div>
+                    </div>
+                  </section>
                 )}
 
                 <section className="grid gap-3 sm:grid-cols-3">
@@ -812,24 +858,26 @@ export default function PlatformResetPage() {
                   </section>
                 )}
 
-                {selected.status === 'approved' && selectedExecutionOwner === 'tenant' && (
-                  <section className="border-status-success-text/25 bg-status-success-bg/20 rounded-[8px] border p-4">
-                    <div className="flex items-start gap-3">
-                      <ShieldCheck className="text-status-success-text mt-0.5 h-5 w-5 shrink-0" />
-                      <div>
-                        <p className="text-ink-950 text-sm font-semibold">
-                          Tenant execution handoff
-                        </p>
-                        <p className="text-ink-600 mt-1 text-xs leading-relaxed">
-                          This tenant-originated operational/selective plan is executed from Tenant
-                          Administration after the recovery point is verified. Platform
-                          Administration retains review, recovery and audit visibility but cannot
-                          execute this handed-off plan.
-                        </p>
+                {selected.status === 'approved' &&
+                  !selected.approvalExpired &&
+                  selectedExecutionOwner === 'tenant' && (
+                    <section className="border-status-success-text/25 bg-status-success-bg/20 rounded-[8px] border p-4">
+                      <div className="flex items-start gap-3">
+                        <ShieldCheck className="text-status-success-text mt-0.5 h-5 w-5 shrink-0" />
+                        <div>
+                          <p className="text-ink-950 text-sm font-semibold">
+                            Tenant execution handoff
+                          </p>
+                          <p className="text-ink-600 mt-1 text-xs leading-relaxed">
+                            This tenant-originated operational/selective plan is executed from
+                            Tenant Administration after the recovery point is verified. Platform
+                            Administration retains review, recovery and audit visibility but cannot
+                            execute this handed-off plan.
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  </section>
-                )}
+                    </section>
+                  )}
 
                 {steps.length > 0 && (
                   <section>
@@ -851,7 +899,7 @@ export default function PlatformResetPage() {
                   </section>
                 )}
 
-                {selected.status === 'pending_review' && (
+                {(selected.status === 'pending_review' || selected.approvalExpired) && (
                   <section className="space-y-3">
                     <div className="space-y-1.5">
                       <Label>Review notes</Label>
@@ -862,17 +910,20 @@ export default function PlatformResetPage() {
                         placeholder="Record why this reset is appropriate after reviewing the impact preview."
                       />
                       <p className="text-ink-400 text-xs">
-                        Required for approval and returned to the Tenant Administrator.
+                        Required for {selected.approvalExpired ? 'renewal' : 'approval'} and
+                        returned to the Tenant Administrator.
                       </p>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Rejection reason</Label>
-                      <Input
-                        value={rejectionReason}
-                        onChange={(event) => setRejectionReason(event.target.value)}
-                        placeholder="Required only when rejecting"
-                      />
-                    </div>
+                    {selected.status === 'pending_review' && (
+                      <div className="space-y-1.5">
+                        <Label>Rejection reason</Label>
+                        <Input
+                          value={rejectionReason}
+                          onChange={(event) => setRejectionReason(event.target.value)}
+                          placeholder="Required only when rejecting"
+                        />
+                      </div>
+                    )}
                   </section>
                 )}
                 {selected.failureReason && (
@@ -931,7 +982,20 @@ export default function PlatformResetPage() {
                     >
                       <Eye className="h-4 w-4" /> {preview ? 'Rerun dry run' : 'Run dry run'}
                     </Button>
-                    {preview && !selected.backupCreated && (
+                    {selected.approvalExpired && (
+                      <Button
+                        onClick={() => void patchRequest(selected, 'renew')}
+                        loading={processingId === selected.id}
+                        disabled={
+                          !freshPreviewAfterExpiry ||
+                          reviewNotes.trim().length < 10 ||
+                          reviewNotes.trim() === selected.reviewNotes?.trim()
+                        }
+                      >
+                        <CheckCircle2 className="h-4 w-4" /> Renew approval
+                      </Button>
+                    )}
+                    {!selected.approvalExpired && preview && !selected.backupCreated && (
                       <Button
                         variant="secondary"
                         onClick={() => void createRecoveryPoint(selected)}
@@ -940,7 +1004,7 @@ export default function PlatformResetPage() {
                         <HardDriveDownload className="h-4 w-4" /> Create recovery point
                       </Button>
                     )}
-                    {canPlatformExecute && (
+                    {!selected.approvalExpired && canPlatformExecute && (
                       <Button
                         variant="destructive"
                         onClick={() => requestExecution(selected)}

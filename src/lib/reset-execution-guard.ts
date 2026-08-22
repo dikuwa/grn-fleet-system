@@ -31,12 +31,23 @@ export function isResetApprovalExpired(reviewedAt: Date | null, now = new Date()
   return Boolean(expiresAt && expiresAt <= now);
 }
 
+export function isResetRequestBlocking(
+  request: { status: string; reviewedAt: Date | null },
+  now = new Date(),
+) {
+  if (request.status === 'approved') {
+    return !isResetApprovalExpired(request.reviewedAt, now);
+  }
+  return ['draft', 'pending_review', 'in_progress'].includes(request.status);
+}
+
 export type ResetExecutionClaimResult =
   | { ok: true; claimId: string; approvalExpiresAt: string | null }
   | {
       ok: false;
       status: 404 | 409;
-      code: 'not_found' | 'completed' | 'in_progress' | 'not_approved' | 'approval_expired' | 'claimed';
+      code:
+        'not_found' | 'completed' | 'in_progress' | 'not_approved' | 'approval_expired' | 'claimed';
       message: string;
       data?: Record<string, unknown>;
     };
@@ -146,7 +157,8 @@ export async function acquireResetExecutionClaim(input: {
       ok: false,
       status: 409,
       code: 'claimed',
-      message: 'Another reset execution request already holds the execution claim. Refresh the reset status before trying again.',
+      message:
+        'Another reset execution request already holds the execution claim. Refresh the reset status before trying again.',
     };
   }
 

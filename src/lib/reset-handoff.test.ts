@@ -52,7 +52,24 @@ describe('tenant reset execution handoff boundary', () => {
     const page = source('src/app/(dashboard)/dashboard/platform/reset/page.tsx');
     expect(page).toContain("selectedExecutionOwner === 'platform'");
     expect(page).toContain('Tenant execution handoff');
-    expect(page).toContain('{canPlatformExecute && (');
+    expect(page).toContain('{!selected.approvalExpired && canPlatformExecute && (');
+  });
+
+  it('treats expiry as a recoverable workflow state without weakening execution guards', () => {
+    const tenantRoute = source('src/app/api/admin/data-reset/route.ts');
+    expect(tenantRoute).toContain('isResetRequestBlocking');
+
+    const platformRoute = source('src/app/api/platform/reset/[id]/route.ts');
+    expect(platformRoute).toContain("case 'renew'");
+    expect(platformRoute).toContain(
+      'Run and review a fresh impact preview before renewing approval',
+    );
+    expect(platformRoute).toContain('plannedAt <= current.reviewedAt');
+    expect(platformRoute).toContain('isResetRequestBlocking');
+
+    const backupRoute = source('src/app/api/platform/reset/[id]/backup/route.ts');
+    expect(backupRoute).toContain('isResetApprovalExpired(resetRequest.reviewedAt)');
+    expect(backupRoute).toContain('renew Platform approval before creating a recovery point');
   });
 });
 
@@ -65,6 +82,8 @@ describe('reset notification delivery contract', () => {
     expect(notifications).toContain("status: 'action_required'");
     expect(notifications).toContain('mandatory: true');
     expect(notifications).toContain('WorkspaceIds.TENANT_ADMIN');
+    expect(notifications).toContain('.onConflictDoUpdate({');
+    expect(notifications).toContain('resolvedAt: null');
 
     const backupRoute = source('src/app/api/platform/reset/[id]/backup/route.ts');
     expect(backupRoute).toContain('notifyResetRequesterReady');

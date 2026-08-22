@@ -144,9 +144,10 @@ export function PlatformOperationalReset() {
           <div>
             <h2 className="text-ink-950 text-sm font-semibold">Platform operational reset</h2>
             <p className="text-ink-600 mt-1 max-w-3xl text-xs leading-relaxed">
-              Clears public enquiries, unconverted demo requests and their Platform Admin
-              notifications. It never resets tenants and never deletes platform users, billing,
-              configuration, CMS content, backups or audit history.
+              Clears public enquiries, unconverted demo requests, their notifications and other
+              resolved, dismissed or archived Platform Admin notifications. Open action-required
+              notifications remain protected. It never resets tenants or deletes platform users,
+              billing, configuration, CMS content, backups or audit history.
             </p>
             <p className="text-ink-500 mt-2 max-w-3xl text-xs leading-relaxed">
               Dashboard effect: Demo Requests and Public Enquiries return to zero. Tenant requests
@@ -172,11 +173,14 @@ export function PlatformOperationalReset() {
 
       {plan ? (
         <div className="space-y-4 p-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
             {[
               ['Public enquiries', plan.counts.enquiries],
               ['Unconverted demos', plan.counts.demoRequests],
               ['Notifications', plan.counts.notifications],
+              ['Deliveries', plan.counts.notificationDeliveries],
+              ['Read states', plan.counts.notificationReads],
+              ['Dismissals', plan.counts.notificationDismissals],
               ['Total rows', plan.counts.total],
             ].map(([label, value]) => (
               <div key={String(label)} className="border-border rounded-[8px] border p-3">

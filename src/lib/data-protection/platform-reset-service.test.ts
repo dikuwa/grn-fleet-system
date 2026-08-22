@@ -21,6 +21,9 @@ describe('platform operational reset boundary', () => {
     expect(PLATFORM_OPERATIONAL_PRESERVED).toContain('Tenants and tenant operational data');
     expect(PLATFORM_OPERATIONAL_PRESERVED).toContain('Payments and financial records');
     expect(PLATFORM_OPERATIONAL_PRESERVED).toContain('Audit events');
+    expect(PLATFORM_OPERATIONAL_PRESERVED).toContain(
+      'Open Platform Admin action-required notifications',
+    );
   });
 
   it('uses a stable fingerprint and detects a changed reset plan', () => {

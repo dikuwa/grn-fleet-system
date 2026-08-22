@@ -16,8 +16,14 @@ import {
   resetScopeEnum,
 } from '@/db/schema/reset-requests';
 import { tenants, user } from '@/db/schema';
-import { eq, and, desc, count, ilike, or, inArray } from 'drizzle-orm';
+import { eq, and, desc, count, ilike, lte, or, inArray } from 'drizzle-orm';
 import { normalizeResetSpec, resetScopeForSpec } from '@/lib/reset-catalog';
+import {
+  isResetApprovalExpired,
+  isResetRequestBlocking,
+  RESET_APPROVAL_TTL_HOURS,
+  resetApprovalExpiresAt,
+} from '@/lib/reset-execution-guard';
 
 export async function GET(request: NextRequest) {
   try {
@@ -109,12 +115,29 @@ export async function GET(request: NextRequest) {
       .select({ status: tenantResetRequests.status, count: count() })
       .from(tenantResetRequests)
       .groupBy(tenantResetRequests.status);
+    const [expiredApprovalResult] = await db
+      .select({ count: count() })
+      .from(tenantResetRequests)
+      .where(
+        and(
+          eq(tenantResetRequests.status, 'approved'),
+          lte(
+            tenantResetRequests.reviewedAt,
+            new Date(Date.now() - RESET_APPROVAL_TTL_HOURS * 60 * 60 * 1000),
+          ),
+        ),
+      );
     const byStatus = Object.fromEntries(statusCounts.map((row) => [row.status, Number(row.count)]));
+    const requestRows = requests.map((item) => ({
+      ...item,
+      approvalExpired: item.status === 'approved' && isResetApprovalExpired(item.reviewedAt),
+      approvalExpiresAt: resetApprovalExpiresAt(item.reviewedAt)?.toISOString() ?? null,
+    }));
 
     return NextResponse.json({
       success: true,
       data: {
-        requests,
+        requests: requestRows,
         total,
         page,
         limit,
@@ -124,6 +147,7 @@ export async function GET(request: NextRequest) {
           draft: byStatus.draft ?? 0,
           pendingReview: byStatus.pending_review ?? 0,
           approved: byStatus.approved ?? 0,
+          expiredApprovals: Number(expiredApprovalResult?.count ?? 0),
           completed: byStatus.completed ?? 0,
           failed: byStatus.failed ?? 0,
         },
@@ -157,11 +181,17 @@ export async function POST(request: NextRequest) {
     } = body;
     let resetSpec;
     try {
-      resetSpec = normalizeResetSpec(resetSpecInput ?? { preset: scope === 'full' ? 'clean_slate' : 'operational' }, {
-        target: target === 'platform' ? 'all_tenants' : 'tenant',
-      });
+      resetSpec = normalizeResetSpec(
+        resetSpecInput ?? { preset: scope === 'full' ? 'clean_slate' : 'operational' },
+        {
+          target: target === 'platform' ? 'all_tenants' : 'tenant',
+        },
+      );
     } catch (error) {
-      return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid reset selection' }, { status: 400 });
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Invalid reset selection' },
+        { status: 400 },
+      );
     }
     if ((target !== 'platform' && !tenantId) || !scope || !String(reason || '').trim())
       return NextResponse.json(
@@ -183,7 +213,11 @@ export async function POST(request: NextRequest) {
           .select({ id: tenants.id, name: tenants.name, code: tenants.code, type: tenants.type })
           .from(tenants),
         db
-          .select({ tenantId: tenantResetRequests.tenantId })
+          .select({
+            tenantId: tenantResetRequests.tenantId,
+            status: tenantResetRequests.status,
+            reviewedAt: tenantResetRequests.reviewedAt,
+          })
           .from(tenantResetRequests)
           .where(
             inArray(tenantResetRequests.status, [
@@ -194,7 +228,9 @@ export async function POST(request: NextRequest) {
             ]),
           ),
       ]);
-      const openTenantIds = new Set(openRows.map((row) => row.tenantId));
+      const openTenantIds = new Set(
+        openRows.filter((row) => isResetRequestBlocking(row)).map((row) => row.tenantId),
+      );
       const candidates = tenantRows.filter(
         (tenant) => tenant.type !== 'demo_sandbox' && !openTenantIds.has(tenant.id),
       );
@@ -246,6 +282,35 @@ export async function POST(request: NextRequest) {
       .where(eq(tenants.id, tenantId))
       .limit(1);
     if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+
+    const existingRows = await db
+      .select({
+        id: tenantResetRequests.id,
+        status: tenantResetRequests.status,
+        reviewedAt: tenantResetRequests.reviewedAt,
+      })
+      .from(tenantResetRequests)
+      .where(
+        and(
+          eq(tenantResetRequests.tenantId, tenantId),
+          inArray(tenantResetRequests.status, [
+            'draft',
+            'pending_review',
+            'approved',
+            'in_progress',
+          ]),
+        ),
+      );
+    const existingRequest = existingRows.find((item) => isResetRequestBlocking(item));
+    if (existingRequest) {
+      return NextResponse.json(
+        {
+          error: `This tenant already has an active reset request (${existingRequest.status.replaceAll('_', ' ')}).`,
+          requestId: existingRequest.id,
+        },
+        { status: 409 },
+      );
+    }
 
     const [created] = await db
       .insert(tenantResetRequests)
