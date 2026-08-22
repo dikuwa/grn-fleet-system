@@ -77,6 +77,15 @@ export async function GET(request: NextRequest) {
     const lifecycleStatuses = type === 'departure'
       ? ['pending']
       : ['in_progress', 'return_due', 'return_inspection'];
+    const vehicleSafetyGuard = type === 'departure'
+      ? sql`not exists (
+          select 1
+          from vehicle_defects vd
+          where vd.vehicle_id = ${trips.vehicleId}
+            and vd.is_blocking = true
+            and vd.resolved_at is null
+        )`
+      : sql`true`;
 
     const [tripRows, acceptedExternalRows] = await Promise.all([
       db.select({
@@ -137,6 +146,7 @@ export async function GET(request: NextRequest) {
           eq(vehicles.tenantId, session.tenantId),
           eq(tripAuthorities.tenantId, session.tenantId),
           inArray(trips.status, lifecycleStatuses),
+          vehicleSafetyGuard,
         ))
         .orderBy(trips.createdAt),
       db
