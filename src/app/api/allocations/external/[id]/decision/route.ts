@@ -7,18 +7,22 @@ import { transportRequests } from '@/db/schema/requests';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
-import {
-  createScopedNotifications,
-  resolveActiveRoleRecipients,
-} from '@/lib/notification-service';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
-import { SystemRoles } from '@/lib/workspaces';
 
 const ACCEPTANCE_METHODS = ['in_person', 'phone', 'signed_paper', 'secure_link'] as const;
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+/**
+ * Record or cancel an external driver's acceptance of an operational assignment.
+ *
+ * External acceptance deliberately happens BEFORE final Trip Authority
+ * authorisation. The accepted assignment is the evidence the final authoriser
+ * consumes when provisioning the immutable Trip Authority. Requiring an
+ * authority here would create a circular dependency (authority needs accepted
+ * driver evidence, while acceptance would need an authority).
+ */
 export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const auth = await requireRequestAuth(request);
@@ -67,7 +71,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       .innerJoin(vehicleAllocations, eq(vehicleAllocations.id, externalDriverAssignments.allocationId))
       .innerJoin(trips, eq(trips.id, externalDriverAssignments.tripId))
       .innerJoin(transportRequests, eq(transportRequests.id, externalDriverAssignments.requestId))
-      .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
+      .leftJoin(
+        tripAuthorities,
+        and(
+          eq(tripAuthorities.tripId, trips.id),
+          eq(tripAuthorities.tenantId, tenantId),
+        ),
+      )
       .innerJoin(externalParties, eq(externalParties.id, externalDriverAssignments.externalPartyId))
       .innerJoin(externalDriverLicences, eq(externalDriverLicences.id, externalDriverAssignments.licenceId))
       .where(
@@ -76,7 +86,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           eq(externalDriverAssignments.tenantId, tenantId),
           eq(trips.tenantId, tenantId),
           eq(transportRequests.tenantId, tenantId),
-          eq(tripAuthorities.tenantId, tenantId),
           eq(externalParties.tenantId, tenantId),
           eq(externalDriverLicences.tenantId, tenantId),
         ),
@@ -235,13 +244,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             allocationState: record.allocationState,
             tripStatus: record.tripStatus,
             vehicleId: record.vehicleId,
+            authorityStatus: record.authorityStatus,
           },
           after: {
             state: 'cancelled',
             allocationState: 'cancelled',
             tripStatus: 'cancelled',
             requestStatus: 'transport_review',
-            tripAuthorityDocumentStatus: 'cancelled',
+            tripAuthorityDocumentStatus: record.authorityId ? 'cancelled' : 'not_yet_issued',
             reason,
           },
         }),
@@ -267,12 +277,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       return NextResponse.json(
         { error: 'Select how the external driver acceptance was confirmed' },
         { status: 422 },
-      );
-    }
-    if (record.authorityStatus !== 'awaiting_driver_acceptance') {
-      return NextResponse.json(
-        { error: `Trip Authority cannot be accepted from "${record.authorityStatus}"` },
-        { status: 409 },
       );
     }
     if (record.partyStatus !== 'active' || record.licenceStatus !== 'verified') {
@@ -349,58 +353,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           AND external_party_id = ${record.assignment.externalPartyId}::uuid
           AND EXISTS (SELECT 1 FROM assignment_claim)
         RETURNING id
-      ),
-      authority_claim AS (
-        UPDATE trip_authorities
-        SET status = 'driver_accepted',
-            accepted_at = ${now},
-            accepted_by_employee_id = NULL,
-            acceptance_data = jsonb_build_object(
-              'source', 'transport_office_external',
-              'externalDriverAssignmentId', ${id}::text,
-              'externalPartyId', ${record.assignment.externalPartyId}::text,
-              'acceptedVehicleId', ${record.vehicleId}::text,
-              'allocationVersion', ${record.allocationVersion + 1}::integer,
-              'acceptanceMethod', ${acceptanceMethod},
-              'acceptanceNote', ${note},
-              'acceptedAt', ${now}::text,
-              'recordedByUserId', ${session.user.id}
-            ),
-            updated_at = ${now}
-        WHERE id = ${record.authorityId}::uuid
-          AND tenant_id = ${tenantId}::uuid
-          AND trip_id = ${record.assignment.tripId}::uuid
-          AND allocation_id = ${record.assignment.allocationId}::uuid
-          AND status = 'awaiting_driver_acceptance'
-          AND EXISTS (SELECT 1 FROM assignment_claim)
-        RETURNING id
-      ),
-      trip_ack AS (
-        UPDATE trips
-        SET driver_acknowledged_at = ${now},
-            driver_acknowledged_by_employee_id = NULL,
-            updated_at = ${now}
-        WHERE id = ${record.assignment.tripId}::uuid
-          AND tenant_id = ${tenantId}::uuid
-          AND status = 'pending'
-          AND issued_at IS NULL
-          AND vehicle_id = ${record.vehicleId}::uuid
-          AND allocation_id = ${record.assignment.allocationId}::uuid
-          AND EXISTS (SELECT 1 FROM authority_claim)
-        RETURNING id
       )
       SELECT CAST(CASE
         WHEN (SELECT count(*) FROM allocation_claim) = 1
          AND (SELECT count(*) FROM assignment_claim) = 1
          AND (SELECT count(*) FROM request_driver_claim) = 1
-         AND (SELECT count(*) FROM authority_claim) = 1
-         AND (SELECT count(*) FROM trip_ack) = 1
         THEN '1'
         ELSE 'atomic_external_driver_accept_failed_'
           || (SELECT count(*) FROM allocation_claim)::text
           || (SELECT count(*) FROM assignment_claim)::text
-          || (SELECT count(*) FROM authority_claim)::text
-          || (SELECT count(*) FROM trip_ack)::text
+          || (SELECT count(*) FROM request_driver_claim)::text
       END AS integer) AS committed
     `);
 
@@ -411,16 +373,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         action: 'allocation.external_driver_acceptance_recorded',
         entityType: 'external_driver_assignment',
         entityId: id,
-        summary: `Transport Office recorded ${driverName}'s trip acceptance via ${acceptanceMethod.replace(/_/g, ' ')}`,
+        summary: `Transport Office recorded ${driverName}'s assignment acceptance via ${acceptanceMethod.replace(/_/g, ' ')}`,
         before: {
           state: 'pending_acceptance',
-          authorityStatus: record.authorityStatus,
+          authorityStatus: record.authorityStatus ?? 'not_yet_issued',
           vehicleId: record.vehicleId,
           allocationVersion: record.allocationVersion,
         },
         after: {
           state: 'accepted',
-          authorityStatus: 'driver_accepted',
+          authorityStatus: record.authorityStatus ?? 'not_yet_issued',
           acceptedVehicleId: record.vehicleId,
           allocationVersion: record.allocationVersion + 1,
           acceptanceMethod,
@@ -433,37 +395,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         tenantId,
         requestId: record.assignment.requestId,
         reference: record.requestReference,
-        stage: 'driver_accepted',
+        stage: 'external_driver_accepted',
         officeLabel: 'Transport office',
       }),
     ]);
 
-    const inspectionRecipients = await resolveActiveRoleRecipients(tenantId, [
-      SystemRoles.INSPECTOR,
-      SystemRoles.RELEASE_OFFICER,
-    ]).catch(() => []);
-    if (inspectionRecipients.length) {
-      await createScopedNotifications({
-        tenantId,
-        recipientUserIds: inspectionRecipients,
-        category: 'action_required',
-        eventType: 'departure_inspection_required',
-        title: 'Departure inspection required',
-        body: `External driver acceptance has been recorded for ${record.requestReference}. Complete the official departure inspection before the vehicle can be issued.`,
-        entityType: 'trip',
-        entityId: record.assignment.tripId,
-        actionUrl: `/dashboard/inspections/new?type=departure&tripId=${record.assignment.tripId}&vehicleId=${record.vehicleId}`,
-        workspace: null,
-        priority: 'high',
-      }).catch((error) =>
-        console.warn('[allocations/external/decision] Inspection notification failed:', error),
-      );
-    }
-
     return NextResponse.json({
       success: true,
       state: 'accepted',
-      authorityStatus: 'driver_accepted',
+      authorityStatus: record.authorityStatus ?? 'not_yet_issued',
+      readyForTransportReview: true,
       acceptedAt: now.toISOString(),
       acceptanceMethod,
       acceptedVehicleId: record.vehicleId,
@@ -472,7 +413,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   } catch (error) {
     console.error('[allocations/external/decision] PATCH failed:', error);
     return NextResponse.json(
-      { error: 'External driver decision, vehicle assignment, or trip state changed concurrently. Refresh and review the latest assignment before trying again.' },
+      {
+        error:
+          'External driver decision, vehicle assignment, or trip state changed concurrently. Refresh and review the latest assignment before trying again.',
+      },
       { status: 409 },
     );
   }
